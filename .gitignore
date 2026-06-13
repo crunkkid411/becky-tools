@@ -1,0 +1,88 @@
+# Compiled binaries
+*.exe
+becky-go/bin/
+bin/
+
+# ML model files (large, download separately)
+*.onnx
+*.gguf
+*.bin
+models/
+
+# Video / audio files
+*.mp4
+*.mov
+*.MOV
+*.avi
+*.mkv
+*.wav
+*.mp3
+*.aac
+*.flac
+
+# Image outputs (from osint-export, framematch, etc.)
+osint-export/
+becky-go/osint-export/
+framematch-*/
+test-runs/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.JPG
+
+# Debug / test output files
+*.err.txt
+*.out.json
+cluster-voice.*
+diar.*.txt
+diar.*.json
+id.videos*
+transcript.json
+forensic.db
+*.db
+
+# Agent / session working notes (not project docs)
+.remember/
+.claude/
+ralph-loop.local.md
+NOTE-FROM-ORCHESTRATOR.md
+RESUME-INSTRUCTIONS.md
+LINK-VERIFICATION-REPORT.md
+OVERNIGHT-STATUS-AND-PLAN.md
+BECKY-VALIDATE-PROPOSAL.md
+BECKY-ORCHESTRATOR-SPEC.md
+AUTORESEARCH-SPEC.md
+investigation-review.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+becky-go/.ruff_cache/
+
+# Garbage files left by agents in becky-go root
+XAI-2*
+*_err.txt
+*_out.json
+becky-go/fixture_*.wav
+becky-go/fx_*.wav
+becky-go/shifted*.wav
+becky-go/test_audio.wav
+becky-go/json*encoder*decoder*
+
+# Knowledge base data (case-specific, not for repo)
+kb-*/
+kb-final/
+enrollment-registry.json
+
+# Test calibration runs
+calib-run-2026/
+
+# Eval example outputs (keep manifests, not video outputs)
+becky-go/eval/*.mp4
+becky-go/eval/*.json
+
+# Go test cache
+.cache/

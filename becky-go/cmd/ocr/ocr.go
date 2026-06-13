@@ -1,0 +1,403 @@
+// ocr.go — the OCR runner and I/O types for becky-ocr.
+//
+// It owns: (1) gathering frames-to-OCR from a becky-osint manifest or a frames
+// dir, with provenance; (2) running the embedded Python OCR helper (PP-OCRv5 via
+// ONNX Runtime / RapidOCR) over a batch of frames in one warm-model invocation,
+// under the SAME interpreter + PYTHONPATH that internal/faceembed uses; (3) the
+// stdout JSON output contract; (4) turning each helper result into a FrameResult,
+// splitting asserted (high-confidence) lines from flagged low-confidence ones and
+// attaching the cheap candidate_* category.
+//
+// The Python helper is EMBEDDED here (not in the shared internal/pyhelpers
+// package) and materialized to a temp dir at runtime, mirroring the
+// pyhelpers.Materialize pattern, so becky-ocr.exe stays self-contained without
+// editing a shared file. Heavy compute stays in ONNX; Go is glue + parsing.
+package main
+
+import (
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"becky-go/internal/beckyio"
+	"becky-go/internal/config"
+)
+
+//go:embed ocr_paddle.py
+var ocrPaddlePy []byte
+
+// FrameToOCR is one frame queued for OCR, with the provenance carried from the
+// becky-osint manifest/sidecar (or synthesized for a bare frames-dir input).
+type FrameToOCR struct {
+	FramePath    string
+	SourceFile   string
+	SourceSHA256 string
+	Timestamp    float64
+	FrameIndex   int
+}
+
+// HelperFrame mirrors one entry in ocr_paddle.py's "results" array.
+type HelperFrame struct {
+	Path            string       `json:"path"`
+	Found           bool         `json:"found"`
+	RotationApplied int          `json:"rotation_applied"`
+	Lines           []HelperLine `json:"lines"`
+	Error           string       `json:"error,omitempty"`
+}
+
+// HelperLine mirrors one recognized line from the helper.
+type HelperLine struct {
+	Text       string  `json:"text"`
+	Confidence float64 `json:"confidence"`
+	BBox       []int   `json:"bbox"`
+}
+
+// HelperResult mirrors ocr_paddle.py's stdout JSON contract.
+type HelperResult struct {
+	Skipped bool          `json:"skipped"`
+	Reason  string        `json:"reason"`
+	Engine  string        `json:"engine"`
+	Results []HelperFrame `json:"results"`
+}
+
+// Line is one recognized line in the becky-ocr output: text, confidence, where on
+// the frame, and a cheap candidate_* category for triage/search.
+type Line struct {
+	Text       string  `json:"text"`
+	Confidence float64 `json:"confidence"`
+	BBox       []int   `json:"bbox,omitempty"`
+	Category   string  `json:"category"`
+}
+
+// FrameResult is one frame's OCR output with full provenance. Lines are the
+// ASSERTED (>= min-confidence) reads; LowConfidenceLines are flagged, not hidden.
+type FrameResult struct {
+	FramePath          string  `json:"frame_path"`
+	SourceFile         string  `json:"source_file"`
+	SourceSHA256       string  `json:"source_sha256,omitempty"`
+	Timestamp          float64 `json:"timestamp"`
+	FrameIndex         int     `json:"frame_index"`
+	RotationApplied    int     `json:"rotation_applied"`
+	Lines              []Line  `json:"lines"`
+	LowConfidenceLines []Line  `json:"low_confidence_lines"`
+	FullText           string  `json:"full_text"`
+}
+
+// SkipRecord notes a frame that produced no usable OCR result and why.
+type SkipRecord struct {
+	FramePath string `json:"frame_path"`
+	Reason    string `json:"reason"`
+}
+
+// Output is the becky-ocr stdout/--output JSON document.
+type Output struct {
+	Tool           string            `json:"tool"`
+	Engine         string            `json:"engine"`
+	SourceManifest string            `json:"source_manifest"`
+	FramesOCRd     int               `json:"frames_ocrd"`
+	RowsWritten    int               `json:"rows_written,omitempty"`
+	Results        []FrameResult     `json:"results"`
+	Skipped        []SkipRecord      `json:"skipped"`
+	Notes          map[string]string `json:"notes"`
+}
+
+// RunOCR materializes the embedded helper, runs it over the batch of frame paths
+// under the face interpreter + PYTHONPATH (the OCR deps live in the same --target
+// site-packages dir as the face deps), and parses its JSON. A helper "skipped"
+// result (missing deps/models) is surfaced as an error so main() can degrade
+// gracefully with a clear note.
+func RunOCR(cfg config.Config, paths []string, engine string, tryRotations, verbose bool) (HelperResult, error) {
+	if len(paths) == 0 {
+		return HelperResult{}, nil
+	}
+	script, err := materialize("ocr_paddle.py", ocrPaddlePy)
+	if err != nil {
+		return HelperResult{}, fmt.Errorf("materialize ocr helper: %w", err)
+	}
+
+	args := append([]string{script}, paths...)
+	args = append(args, "--engine", engine)
+	if tryRotations {
+		args = append(args, "--try-rotations")
+	}
+
+	cmd := exec.Command(ocrPython(cfg), args...)
+	cmd.Env = childEnv(cfg)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	if verbose {
+		cmd.Stderr = os.Stderr
+	} else {
+		cmd.Stderr = &stderr
+	}
+	if err := cmd.Run(); err != nil {
+		return HelperResult{}, fmt.Errorf("ocr helper failed: %v\n%s", err, tail(stderr.String()))
+	}
+
+	res, ok := parseHelperJSON(stdout.String())
+	if !ok {
+		return HelperResult{}, fmt.Errorf("could not parse ocr helper output:\n%s", tail(stdout.String()))
+	}
+	if res.Skipped {
+		return HelperResult{}, fmt.Errorf("ocr helper skipped: %s", res.Reason)
+	}
+	beckyio.Logf(verbose, "ocr: engine=%s, %d frame result(s)", res.Engine, len(res.Results))
+	return res, nil
+}
+
+// buildFrameResult turns one helper frame result into a FrameResult: it attaches
+// provenance, splits asserted vs low-confidence lines at minConf, assigns each line
+// a candidate_* category, and builds the asserted-only full_text (so the index gets
+// the text we stand behind, not the shaky reads).
+func buildFrameResult(f FrameToOCR, hr HelperFrame, minConf float64) FrameResult {
+	res := FrameResult{
+		FramePath:          f.FramePath,
+		SourceFile:         f.SourceFile,
+		SourceSHA256:       f.SourceSHA256,
+		Timestamp:          f.Timestamp,
+		FrameIndex:         f.FrameIndex,
+		RotationApplied:    hr.RotationApplied,
+		Lines:              []Line{},
+		LowConfidenceLines: []Line{},
+	}
+	var asserted []string
+	for _, hl := range hr.Lines {
+		text := strings.TrimSpace(hl.Text)
+		if text == "" {
+			continue
+		}
+		ln := Line{
+			Text:       text,
+			Confidence: round2(hl.Confidence),
+			BBox:       hl.BBox,
+			Category:   categorize(text),
+		}
+		if hl.Confidence >= minConf {
+			res.Lines = append(res.Lines, ln)
+			asserted = append(asserted, text)
+		} else {
+			res.LowConfidenceLines = append(res.LowConfidenceLines, ln)
+		}
+	}
+	res.FullText = strings.Join(asserted, "\n")
+	return res
+}
+
+// gatherFrames collects the frames to OCR + their provenance, from a becky-osint
+// manifest (preferred) or a frames dir. Returns the frames, a label for the
+// source_manifest field, and any fatal error.
+func gatherFrames(manifestPath, framesDir string, verbose bool) ([]FrameToOCR, string, error) {
+	if manifestPath != "" {
+		frames, err := framesFromManifest(manifestPath, verbose)
+		return frames, filepath.ToSlash(manifestPath), err
+	}
+	frames, err := framesFromDir(framesDir, verbose)
+	return frames, filepath.ToSlash(framesDir), err
+}
+
+// framesFromManifest reads a becky-osint manifest and returns one FrameToOCR per
+// export, carrying the manifest's source_file/source_sha256 + each export's
+// frame_path/timestamp/frame_index. Frames whose image is missing are skipped (a
+// stale manifest shouldn't abort the run).
+func framesFromManifest(path string, verbose bool) ([]FrameToOCR, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+	var m osintManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse manifest: %w", err)
+	}
+	base := filepath.Dir(path)
+	out := make([]FrameToOCR, 0, len(m.Exports))
+	for _, e := range m.Exports {
+		fp := resolveFramePath(base, e.FramePath)
+		if _, serr := os.Stat(fp); serr != nil {
+			beckyio.Logf(verbose, "  skip missing frame: %s", fp)
+			continue
+		}
+		sha := e.SHA256
+		if sha == "" {
+			sha = m.SourceSHA256
+		}
+		out = append(out, FrameToOCR{
+			FramePath:    fp,
+			SourceFile:   m.SourceFile,
+			SourceSHA256: sha,
+			Timestamp:    e.Timestamp,
+			FrameIndex:   e.FrameIndex,
+		})
+	}
+	return out, nil
+}
+
+// framesFromDir returns one FrameToOCR per image file in dir (non-recursive),
+// synthesizing minimal provenance (source_file = the frame path itself, frame_index
+// by sort order). This is the "any folder of frames" path from the spec.
+func framesFromDir(dir string, verbose bool) ([]FrameToOCR, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read frames dir: %w", err)
+	}
+	var names []string
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		if isImage(ent.Name()) {
+			names = append(names, ent.Name())
+		}
+	}
+	sort.Strings(names)
+	out := make([]FrameToOCR, 0, len(names))
+	for i, name := range names {
+		fp := filepath.Join(dir, name)
+		out = append(out, FrameToOCR{
+			FramePath:  fp,
+			SourceFile: filepath.ToSlash(fp),
+			FrameIndex: i,
+		})
+	}
+	beckyio.Logf(verbose, "  found %d image(s) in %s", len(out), dir)
+	return out, nil
+}
+
+// resolveFramePath joins a manifest-relative frame path against the manifest's dir
+// when it isn't already absolute/existing, so a manifest written with relative
+// paths still resolves regardless of the current working directory.
+func resolveFramePath(manifestDir, framePath string) string {
+	fp := filepath.FromSlash(framePath)
+	if filepath.IsAbs(fp) {
+		return fp
+	}
+	if _, err := os.Stat(fp); err == nil {
+		return fp
+	}
+	return filepath.Join(manifestDir, fp)
+}
+
+// osintManifest mirrors the subset of the becky-osint manifest this tool consumes.
+type osintManifest struct {
+	SourceFile   string        `json:"source_file"`
+	SourceSHA256 string        `json:"source_sha256"`
+	Exports      []osintExport `json:"exports"`
+}
+
+// osintExport mirrors one export record in the becky-osint manifest.
+type osintExport struct {
+	Timestamp  float64 `json:"timestamp"`
+	FrameIndex int     `json:"frame_index"`
+	FramePath  string  `json:"frame_path"`
+	SHA256     string  `json:"sha256"`
+}
+
+// ocrID is the deterministic primary key for an OCR line:
+// sha12(source_file)+":"+frame_index+":"+line_ordinal. Mirrors the existing
+// segment/identification key scheme so re-running becky-ocr is idempotent.
+func ocrID(sourceFile string, frameIndex, ordinal int) string {
+	return fmt.Sprintf("%s:%d:%d", sha12(sourceFile), frameIndex, ordinal)
+}
+
+// sha12 returns the first 12 hex chars of sha256(s), the short-hash convention the
+// other becky tables use for deterministic ids.
+func sha12(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// parseHelperJSON tolerates leading library banner noise (RapidOCR logs to stderr,
+// but be defensive) by scanning bottom-up for the first line that unmarshals into
+// the expected shape — the same approach internal/faceembed uses.
+func parseHelperJSON(s string) (HelperResult, bool) {
+	if r, ok := tryUnmarshal(strings.TrimSpace(s)); ok {
+		return r, true
+	}
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if r, ok := tryUnmarshal(line); ok {
+			return r, true
+		}
+	}
+	return HelperResult{}, false
+}
+
+func tryUnmarshal(s string) (HelperResult, bool) {
+	var r HelperResult
+	if json.Unmarshal([]byte(s), &r) == nil && (r.Skipped || r.Results != nil || r.Engine != "") {
+		return r, true
+	}
+	return HelperResult{}, false
+}
+
+// materialize writes an embedded script to a stable temp path and returns it,
+// mirroring internal/pyhelpers.Materialize (kept local so becky-ocr is
+// self-contained without editing the shared pyhelpers package).
+func materialize(name string, content []byte) (string, error) {
+	dir := filepath.Join(os.TempDir(), "becky-ocr-pyhelpers")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ocrPython returns the interpreter to run the helper. The OCR deps (rapidocr,
+// onnxruntime, cv2) live in the SAME --target site-packages dir as the face deps,
+// reached via the face interpreter, so reuse cfg.FacePython (anaconda base) and
+// fall back to cfg.Python.
+func ocrPython(cfg config.Config) string {
+	if cfg.FacePython != "" {
+		return cfg.FacePython
+	}
+	return cfg.Python
+}
+
+// childEnv prepends the dependency site-packages dir (cfg.FacePyLib) to PYTHONPATH,
+// where rapidocr/onnxruntime/cv2 are installed — the same dir face_embed.py uses.
+func childEnv(cfg config.Config) []string {
+	env := os.Environ()
+	if cfg.FacePyLib != "" {
+		env = append(env, "PYTHONPATH="+cfg.FacePyLib+string(os.PathListSeparator)+os.Getenv("PYTHONPATH"))
+	}
+	return env
+}
+
+// isImage reports whether name has a frame image extension becky-osint produces.
+func isImage(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext == ".jpg" || ext == ".jpeg" || ext == ".png"
+}
+
+// marshalIndent renders the output as indented JSON with a trailing newline,
+// matching beckyio.PrintJSON's on-stdout shape for --output file writes.
+func marshalIndent(o Output) ([]byte, error) {
+	b, err := json.MarshalIndent(o, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal output: %w", err)
+	}
+	return append(b, '\n'), nil
+}
+
+func round2(f float64) float64 { return float64(int(f*100+0.5)) / 100 }
+
+func tail(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 800 {
+		return s[len(s)-800:]
+	}
+	return s
+}
