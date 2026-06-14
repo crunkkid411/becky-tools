@@ -123,6 +123,16 @@ handoff", do the whole sequence automatically:
 Never make Jordan paste the long version. The only thing he should ever have to
 say is the short trigger.
 
+**One-click button (shipped 2026-06-14).** `get-becky-updates.ps1` at the repo
+root performs exactly this sequence, and a Desktop shortcut ("Get Becky Updates")
+runs it — so Jordan installs cloud work with a single double-click, zero typing.
+It auto-installs only a clean, finished, fast-forward update whose section 6 says
+**nothing** is left for the local agent; for anything else (build/test fails, not a
+fast-forward, work still needed, or unsure) it launches Claude with the trigger
+above instead of guessing. Honors a `BECKY_REPO` env override (used only for
+testing). The queued **becky-handoff** Go tool (§6) is the eventual
+cross-platform replacement for this script.
+
 ---
 
 ## 5. Doc map — which file, when
