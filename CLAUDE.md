@@ -119,6 +119,10 @@ Claude Code (filling in the branch name from the chat or the PR):
 **Specs (read the one for the tool you're building):**
 - `SPEC-BECKY-ASK.md`, `SPEC-BECKY-NEW-TOOL.md`, `SPEC-OCR.md`,
   `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`.
+- **New (proposed, not built):** `SPEC-DEEP-RESEARCH.md` (`becky-research`
+  deep-research harness), `SPEC-OPEN-PALANTIR.md` (`becky-palantir`, integrates
+  the OpenPlanter OSINT/entity-graph project), `SPEC-AGENT-HARNESS.md`
+  (`becky-harness`, drives a Pi agent over becky's tools, universal per request).
 - `BUILD-AGENT-BRIEFING.md` — briefing for a subagent building one tool.
 
 **Historical / inbox (context only — not current instructions):**
@@ -147,6 +151,27 @@ Claude Code (filling in the branch name from the chat or the PR):
 **Left for local agent:** nothing blocking — this branch is infra/cleanup only.
 Pull it, confirm `go test ./...` is green on Windows too, and merge when happy.
 
-**Next planned work (specs/scaffolding, not yet started):** three new tools —
-(1) iPhone-history research ingester + synthesizer, (2) becky-ask UX overhaul
-(clipboard/drag-drop/mouse), (3) an agent harness for repetitive workflows.
+**Three new tool specs drafted (design only — NOT built):**
+- `SPEC-DEEP-RESEARCH.md` → `becky-research`: plan → fan-out search → fetch+cache
+  → RRF rank/dedup → verify → cited synthesis. Deterministic Go orchestrator +
+  thin local-model helper stub; content-addressed source cache for reproducibility.
+- `SPEC-OPEN-PALANTIR.md` → `becky-palantir`: thin Go wrapper that prepares becky's
+  existing evidence outputs, drives the OpenPlanter project (`ShinMegamiBoson/
+  OpenPlanter`) to build a cross-evidence entity graph, and normalizes its output
+  into a becky graph schema. Pure-Go `cooccur-only` deterministic floor underneath;
+  default offline; web enrichment opt-in + logged.
+- `SPEC-AGENT-HARNESS.md` → `becky-harness`: deterministic Go orchestrator
+  (`cmd/harness/` + `internal/pirun/`) that drives a Pi agent (`earendil-works/pi`)
+  headless over a per-run, default-deny allowlist of becky tools. Universal per
+  request (declared tools/model/skill/goal). Faked-Pi unit tests on the cloud side.
+
+Each spec documents the cloud-vs-local build split and an explicit integration/
+helper stub contract, so the local agent only wires the model/binary boundary.
+Each tool is a NEW class for becky — agentic + online — that opts out of the
+offline invariant via an explicit, logged network step while keeping a
+deterministic OUTPUT format and degrade-never-crash behavior.
+
+**Open decisions for Jordan are listed at the end of each spec** (search backend,
+online-vs-cached default, OpenPlanter license/release pinning, Pi auth/local-model,
+which workflows to template first). No Go code written yet — specs are for review
+before scaffolding.
