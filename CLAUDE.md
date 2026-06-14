@@ -105,6 +105,24 @@ Claude Code (filling in the branch name from the chat or the PR):
 > what passed, what degraded, and anything that needs my input. Commit to the same
 > branch.
 
+### Minimal trigger — Jordan does NOT paste the long prompt
+
+Jordan is non-dev and copy-pasting the prompt above into the local TUI is broken
+and slow for him (observed 2026-06-14). So the local agent must accept a **tiny
+trigger** as equivalent to the full prompt. When Jordan says anything like **"grab
+the latest cloud branch"** / "pull the cloud agent's work" / "continue the
+handoff", do the whole sequence automatically:
+
+1. `git fetch origin`, then check out the **newest** `claude/*` branch.
+2. Read section 6 below (what's done / what's left).
+3. In `becky-go/`: `go build ./...` and `go test ./...`. (A `gofmt -l .` complaint
+   that is only CRLF line-endings on Windows is cosmetic — do not let it block.)
+4. If green and the branch is non-blocking, fast-forward merge into `master`,
+   push, and delete the merged branch (local + remote). Otherwise report plainly.
+
+Never make Jordan paste the long version. The only thing he should ever have to
+say is the short trigger.
+
 ---
 
 ## 5. Doc map — which file, when
@@ -147,6 +165,11 @@ Claude Code (filling in the branch name from the chat or the PR):
 **Left for local agent:** nothing blocking — this branch is infra/cleanup only.
 Pull it, confirm `go test ./...` is green on Windows too, and merge when happy.
 
-**Next planned work (specs/scaffolding, not yet started):** three new tools —
+**Next planned work (specs/scaffolding, not yet started):** four new tools —
 (1) iPhone-history research ingester + synthesizer, (2) becky-ask UX overhaul
-(clipboard/drag-drop/mouse), (3) an agent harness for repetitive workflows.
+(clipboard/drag-drop/mouse), (3) an agent harness for repetitive workflows,
+(4) **becky-handoff** — a CLI that finds the newest `claude/*` branch, prints
+section 6 (done/left) in plain language, runs `go build`/`go test`, and offers to
+merge — so the cloud→local handoff is one command instead of a pasted prompt.
+Requested by Jordan 2026-06-14 (pasting the prompt is broken for a non-dev). Spec
+it in the house style before any code; pairs with the "Minimal trigger" in §4.
