@@ -2,7 +2,9 @@
 // §7.2). If a cluster's center matches a known person above the matching threshold,
 // it is labeled is_known=true so the UNKNOWN set is purely the strangers (the real
 // "who" question). Reuses the exact KB layout becky-identify uses:
-//   <kb>/voice-prints/<Name>/*.wav   and   <kb>/face-prints/<Name>/*.jpg
+//
+//	<kb>/voice-prints/<Name>/*.wav   and   <kb>/face-prints/<Name>/*.jpg
+//
 // embedded with the same CAM++ / InsightFace runners, then averaged per name.
 //
 // This is candidate-not-conclusion at the boundary: a match here means "this

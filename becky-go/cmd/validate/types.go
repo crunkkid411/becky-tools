@@ -62,24 +62,24 @@ type identifyDoc struct {
 // tone_content_match flag, a calibrated confidence, and a rationale. These are
 // candidates for a human, never conclusions (reviewed is always false).
 type Observation struct {
-	Type             string   `json:"type"`               // cross_modal | visual | audio | ...
-	SegmentStart     float64  `json:"segment_start"`      // clip-absolute seconds
-	SegmentEnd       float64  `json:"segment_end"`        // clip-absolute seconds
-	Question         string   `json:"question"`           // the question this answers
-	Visual           string   `json:"visual"`             // what is visible
-	AudioTone        string   `json:"audio_tone"`         // the speaker's tone / prosody
-	Content          string   `json:"content"`            // what is said (the words)
-	Finding          string   `json:"finding"`            // the cross-modal finding
-	ToneContentMatch *bool    `json:"tone_content_match"` // headline flag (nil = undetermined)
-	Confidence       float64  `json:"confidence"`         // 0.0 - 1.0
-	Significance     string   `json:"significance"`       // low | medium | high
+	Type             string  `json:"type"`               // cross_modal | visual | audio | ...
+	SegmentStart     float64 `json:"segment_start"`      // clip-absolute seconds
+	SegmentEnd       float64 `json:"segment_end"`        // clip-absolute seconds
+	Question         string  `json:"question"`           // the question this answers
+	Visual           string  `json:"visual"`             // what is visible
+	AudioTone        string  `json:"audio_tone"`         // the speaker's tone / prosody
+	Content          string  `json:"content"`            // what is said (the words)
+	Finding          string  `json:"finding"`            // the cross-modal finding
+	ToneContentMatch *bool   `json:"tone_content_match"` // headline flag (nil = undetermined)
+	Confidence       float64 `json:"confidence"`         // 0.0 - 1.0
+	Significance     string  `json:"significance"`       // low | medium | high
 	// Frames lists the extracted frame image(s) that support this observation.
 	// It is REQUIRED for physical_contact / possible_contact so a human can open
 	// the exact frame and verify the contact; an unlinkable contact claim is
 	// downgraded (see gateContactFrames). Always emitted as [] (never null).
-	Frames       []string `json:"frames"`
-	Rationale    string   `json:"rationale"`  // WHY — never empty
-	Reviewed     bool     `json:"reviewed"`   // human-review flag (always false on emit)
+	Frames    []string `json:"frames"`
+	Rationale string   `json:"rationale"` // WHY — never empty
+	Reviewed  bool     `json:"reviewed"`  // human-review flag (always false on emit)
 }
 
 // Output is the becky-validate JSON contract emitted per clip.

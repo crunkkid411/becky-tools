@@ -15,16 +15,26 @@ func TestDefaultOutput(t *testing.T) {
 		want   string
 	}{
 		{
+			// defaultOutput preserves the Windows separator style deterministically
+			// on any host, so this asserts the literal '\' result (not a host-joined
+			// path) and stays green on both Windows and Linux/CI.
 			name:   "mp4 from windows source",
 			source: `X:\AI-2\becky-tools\test.mp4`,
 			ext:    ".mp4",
-			want:   filepath.Join(`X:\AI-2\becky-tools`, "test_edited.mp4"),
+			want:   `X:\AI-2\becky-tools\test_edited.mp4`,
 		},
 		{
 			name:   "kdenlive ext",
 			source: `X:\AI-2\becky-tools\clip.mov`,
 			ext:    ".kdenlive",
-			want:   filepath.Join(`X:\AI-2\becky-tools`, "clip_edited.kdenlive"),
+			want:   `X:\AI-2\becky-tools\clip_edited.kdenlive`,
+		},
+		{
+			// A posix source keeps posix separators.
+			name:   "posix source",
+			source: "/home/user/clip.mov",
+			ext:    ".mp4",
+			want:   "/home/user/clip_edited.mp4",
 		},
 	}
 	for _, tc := range tests {

@@ -1,0 +1,73 @@
+# CI safety net for becky-tools.
+#
+# What this does, in plain terms: every time code is pushed or a pull request is
+# opened, GitHub spins up a fresh Windows AND a fresh Linux machine, builds every
+# tool, and runs every unit test. If anything fails to compile or a test breaks,
+# the pull request shows a red X and tells you exactly which tool and which test —
+# so a break is caught the moment it happens, not a month later.
+#
+# It deliberately does NOT run the heavy ML parts (ASR, face/voice embeddings,
+# OCR, the Gemma describer): those need model weights, ffmpeg and a GPU that the
+# free CI machines don't have. Those are exercised on your Windows box. CI guards
+# the deterministic Go layer — the part that's cheap to check and easy to break.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: becky-go
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Go (version pinned to becky-go/go.mod)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: becky-go/go.mod
+          cache-dependency-path: becky-go/go.sum
+
+      - name: Build every tool
+        run: go build ./...
+
+      - name: Run every unit test
+        run: go test ./...
+
+      - name: Vet (catches suspicious code the compiler allows)
+        run: go vet ./...
+
+  formatting:
+    name: gofmt check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: becky-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: becky-go/go.mod
+          cache-dependency-path: becky-go/go.sum
+      # gofmt -l lists files that are not formatted. If the list is non-empty we
+      # print it and fail, so style stays consistent without anyone thinking about it.
+      - name: Check gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi

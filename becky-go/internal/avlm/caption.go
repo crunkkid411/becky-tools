@@ -1,13 +1,14 @@
 // caption.go — the TWO-STAGE audio-visual flow for forensic nuance extraction.
 //
 // Why two stages instead of one multimodal request:
-//   Gemma-4-E4B, given MANY frames in a single chat request, collapses to one
-//   averaged scene description and replicates it across timestamps — it does NOT
-//   attend to each frame, so subtle, partially-occluded physical contact is
-//   silently dropped (measured: zero contact recall on the test clip's documented
-//   0:06-0:23 contact sequence). Given ONE frame per request, its per-image
-//   grounding is far better and it recovers the contact signal (hip / lateral
-//   waist / upper thigh / hands-on-torso, plus look-down body language).
+//
+//	Gemma-4-E4B, given MANY frames in a single chat request, collapses to one
+//	averaged scene description and replicates it across timestamps — it does NOT
+//	attend to each frame, so subtle, partially-occluded physical contact is
+//	silently dropped (measured: zero contact recall on the test clip's documented
+//	0:06-0:23 contact sequence). Given ONE frame per request, its per-image
+//	grounding is far better and it recovers the contact signal (hip / lateral
+//	waist / upper thigh / hands-on-torso, plus look-down body language).
 //
 // AnalyzeFrameByFrame therefore:
 //  1. extracts frames (and optional audio) once,
@@ -28,10 +29,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/pathx"
 )
 
 // FrameCaption is one frame's clip-absolute timestamp + the model's neutral
@@ -215,7 +216,7 @@ func (r *Runner) captionFrames(ctx context.Context, baseURL string, frames []str
 		}
 		// The frame file name is given to the captioner so the same name can be
 		// cited by the synthesis and resolved to a real, openable image.
-		frameName := filepath.Base(f)
+		frameName := pathx.Base(f)
 		text := fmt.Sprintf("This frame is at clip timestamp [%.1fs] (frame file: %s).\n\n%s", t, frameName, o.CaptionPrompt)
 		parts := []contentPart{
 			{Type: "text", Text: text},
@@ -255,7 +256,7 @@ func buildSynthUser(prompt string, caps []FrameCaption, audioTone string) string
 	b.WriteString(strings.TrimSpace(prompt))
 	b.WriteString("\n\n=== PER-FRAME VISUAL DESCRIPTIONS (one per sampled frame) ===\n")
 	for _, c := range caps {
-		frameName := filepath.Base(c.Frame)
+		frameName := pathx.Base(c.Frame)
 		if frameName == "" || frameName == "." {
 			fmt.Fprintf(&b, "[%.1fs] %s\n", c.Timestamp, c.Text)
 			continue

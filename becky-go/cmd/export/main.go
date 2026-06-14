@@ -28,6 +28,7 @@ import (
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/pathx"
 )
 
 // timeline mirrors the becky-cut v1 timeline JSON: a source path plus chunks of
@@ -275,8 +276,20 @@ func parsePositional() string {
 
 // defaultOutput builds <source-stem>_edited<ext> next to the source video.
 func defaultOutput(source, ext string) string {
-	stem := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
-	return filepath.Join(filepath.Dir(source), stem+"_edited"+ext)
+	base := pathx.Base(source)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	dir := pathx.Dir(source)
+	if dir == "" {
+		return stem + "_edited" + ext
+	}
+	// Preserve the source's separator style so a Windows path stays a Windows
+	// path (becky-tools' home turf) regardless of the host the tool runs on —
+	// and so the output is deterministic across Windows and Linux/CI.
+	sep := "/"
+	if strings.ContainsRune(dir, '\\') && !strings.ContainsRune(dir, '/') {
+		sep = `\`
+	}
+	return dir + sep + stem + "_edited" + ext
 }
 
 func runStream(verbose bool, name string, args ...string) error {

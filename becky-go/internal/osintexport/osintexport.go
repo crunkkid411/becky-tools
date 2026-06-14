@@ -19,6 +19,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"becky-go/internal/pathx"
 )
 
 // ProvenanceNote is the exact, required note text for every sidecar. It states
@@ -128,7 +130,7 @@ func ExtractFrameRotated(ffmpeg, video string, timestampSec float64, outPath, fo
 // plumb. Falls back to a bare "ffprobe" (resolved on PATH) if the name doesn't
 // contain "ffmpeg"; DisplayRotation degrades to 0 if that too is unavailable.
 func deriveFFprobe(ffmpeg string) string {
-	base := filepath.Base(ffmpeg)
+	base := pathx.Base(ffmpeg)
 	if strings.Contains(strings.ToLower(base), "ffmpeg") {
 		probe := strings.Replace(base, "ffmpeg", "ffprobe", 1)
 		probe = strings.Replace(probe, "FFMPEG", "FFPROBE", 1)
