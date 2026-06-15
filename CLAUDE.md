@@ -156,7 +156,19 @@ cross-platform replacement for this script.
   `SPEC-RADAR.md` (`becky-radar`, reads Jordan's Chrome history — incl. synced
   iPhone visits — and surfaces flagged models/tools vs becky's deps),
   `SPEC-BECKY-CANVAS.md` (native lightweight creative GUI: becky-ask + video/DAW/
-  MIDI/drum modes on one canvas).
+  MIDI/drum modes on one canvas — Jordan's AI-friendly Cubase replacement).
+- **becky-canvas DAW/audio suite (proposed, not built — design for the GUI above):**
+  `SPEC-BECKY-DAW-ENGINE.md` (real-time audio + selective VST3/CLAP hosting; VST3 SDK
+  is now MIT-licensed so it's tax-free; default to the pro audio interface when
+  plugged in), `SPEC-BECKY-DAW-EDITOR.md` (piano roll + drum machine + mixer + SMF
+  reader/editable MIDI + RegenTrack "LEGO context"; Cubase parity), `SPEC-BECKY-MIX-JST.md`
+  (Joey Sturgis mix as a deterministic mix.json: breakdown kick→bass→guitar sidechain +
+  per-bus FX chains; per-bus VST prefs incl. "Odin II"), `SPEC-BECKY-HUM.md` (sing/hum →
+  key+tempo+MIDI with key-aware suggestions — the INPUT side of becky-compose),
+  `SPEC-BECKY-VOX.md` (multi-take vocal alignment, Melodyne/VocALign class: DTW timing
+  + formant-preserving pitch match + comp). **HARD REQUIREMENT across these: audio
+  editing is VISUAL-FIRST — waveform tracks + pitch lanes are the surface; Jordan
+  manually fixes by eye; becky LEARNS his preferences from his corrections.**
 - `BUILD-AGENT-BRIEFING.md` — briefing for a subagent building one tool.
 
 **Historical / inbox (context only — not current instructions):**
