@@ -174,7 +174,7 @@ load-bearing rules, in brief:
   `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`,
   `SPEC-BECKY-COMPOSE.md` (BUILT — `becky-compose`: deterministic genre→multi-track
   MIDI; genre DB in `internal/music/profiles/`).
-- **New (proposed, not built):** `SPEC-DEEP-RESEARCH.md` (`becky-research`
+- **BUILT 2026-06-15 (deterministic Go cores; online/model boundary stubbed):** `SPEC-DEEP-RESEARCH.md` (`becky-research`
   deep-research harness), `SPEC-OPEN-PALANTIR.md` (`becky-palantir`, integrates
   the OpenPlanter OSINT/entity-graph project), `SPEC-AGENT-HARNESS.md`
   (`becky-harness`, drives a Pi agent over becky's tools, universal per request),
@@ -186,7 +186,7 @@ load-bearing rules, in brief:
   iPhone visits — and surfaces flagged models/tools vs becky's deps),
   `SPEC-BECKY-CANVAS.md` (native lightweight creative GUI: becky-ask + video/DAW/
   MIDI/drum modes on one canvas — Jordan's AI-friendly Cubase replacement).
-- **becky-canvas DAW/audio suite (proposed, not built — design for the GUI above):**
+- **becky-canvas DAW/audio suite (BUILT 2026-06-15 — deterministic Go cores; native audio/GUI = Phase-2):**
   `SPEC-BECKY-DAW-ENGINE.md` (real-time audio + selective VST3/CLAP hosting; VST3 SDK
   is now MIT-licensed so it's tax-free; default to the pro audio interface when
   plugged in), `SPEC-BECKY-DAW-EDITOR.md` (piano roll + drum machine + mixer + SMF
@@ -198,7 +198,7 @@ load-bearing rules, in brief:
   + formant-preserving pitch match + comp). **HARD REQUIREMENT across these: audio
   editing is VISUAL-FIRST — waveform tracks + pitch lanes are the surface; Jordan
   manually fixes by eye; becky LEARNS his preferences from his corrections.**
-- `SPEC-BECKY-VISION-MODELS.md` (proposed): adopt Liquid **LFM2.5-VL** (NOT old LFM2)
+- `SPEC-BECKY-VISION-MODELS.md` (BUILT 2026-06-15 as `becky-vision`): adopt Liquid **LFM2.5-VL** (NOT old LFM2)
   GGUF VLMs as right-sized llama.cpp backends — 450M for frame triage, 1.6B-Extract
   for becky-ocr doc→JSON, 1.6B for becky-ask (Gemma-4 stays for AUDIO; LFM2-VL is
   image-only). + custom-training plan (Unsloth LoRA→GGUF on the 3070, incl. a
@@ -218,7 +218,41 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
-**Branch `claude/omnigent-and-collab-protocol` (cloud, 2026-06-15) — REVIEW REQUESTED, do NOT auto-merge.**
+**Branch `local/build-everything-2026-06-15` (local, 2026-06-15) — "build everything" pass, merged to master.**
+Jordan approved (a) auto-building any normal offline tool without asking, only
+gating the rule-breaking ones, and (b) building ALL the queued specs, via
+parallel subagents. 12 new tools/foundations were built — each a self-contained
+new cmd/ + internal/ package with table-driven tests; whole module
+`go build/vet/test ./...` green; network/model/native boundaries stubbed behind
+interfaces (the documented cloud→local wiring contract). Shipped in 3 waves:
+- **Wave 1 (offline, fully done):** `becky-radar` (Chrome/iPhone-history → freshness
+  cross-ref), `becky-handoff` (Go port of the Get-Becky-Updates button),
+  `becky-vision` (LFM2.5-VL GGUF wrapper via llama-mtmd-cli), + a pure-Go **SMF
+  reader** in `internal/music` (MIDI round-trips — the DAW foundation).
+- **Wave 2 (online/agent, Jordan-approved rule-breakers):** `becky-research`,
+  `becky-palantir`, `becky-harness`, `becky-omni`. Deterministic cores; the
+  network/Pi/Omnigent/OpenPlanter calls are stubbed for local wiring.
+- **Wave 3 (music/DAW/canvas cores):** `becky-mix` (JST mix.json), `becky-hum`
+  (K-S key + tempo + hum→MIDI), `becky-vox` (DTW vocal align), `becky-daw`
+  (editable arrangement on the SMF reader), `becky-canvas` (scene model),
+  `becky-daw-engine` (device-select rule + transport). **Visual-first + a
+  corrections-log preference-learning substrate are first-class.**
+
+*Left for local (real-hardware wiring, NOT cloud's job):* the explicit Phase-2
+**native step** — real-time cgo audio (miniaudio/WASAPI) for `becky-daw-engine`,
+the ImGui/cgo window for `becky-canvas`, and the audio→features DSP for
+`becky-hum`/`becky-vox`. **See `X:\AI-2\dawbase` — a separate MIT C++ DAW (same
+"95% deterministic, 5% taste" philosophy) that already has the real
+Krumhansl/FFT key+tempo DSP (`analysis.cpp`), miniaudio mic capture with pre-roll
+(`capture.cpp`), and a habit-learner (`habits.cpp`). These slot into exactly the
+stubs above — port `analysis.cpp`→Go for becky-hum (pure-Go, no cgo) and reuse
+`capture.cpp` as the native AudioBackend helper.** Also: run the new tools on real
+inputs, smoke-test `becky-vision` on the 1.6B model, and validate each model
+stub. The 12 tools each ship Open-Decisions for Jordan at the end of their SPEC.
+
+---
+
+**Branch `claude/omnigent-and-collab-protocol` (cloud, 2026-06-15) — MERGED to master (commit 9e1748c); local ratified the protocol (COLLAB-PROTOCOL inbox).**
 Contains two things; please review before merging (the button should launch local
 Claude here, not fast-forward, because this line says review is pending):
 - **`SPEC-OMNIGENT.md`** — `becky-omni`, the Omnigent meta-harness above Pi (Jordan
