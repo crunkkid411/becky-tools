@@ -112,43 +112,58 @@ Say  "   `"$subject`""
 # ----- 2. is it safe + finished to auto-install? --------------------------------
 Title "Step 2 of 3: Checking that it's finished and safe to install..."
 
-# working tree clean + local master matches GitHub (no half-done local changes)
+# Don't touch anything if there are half-done local changes, or if your copy of
+# master doesn't match GitHub - those need a careful eye, so hand to the assistant.
 if ((Gx status --porcelain)) { OpenAssistant "There are unsaved changes here, so I won't auto-install." }
-$localMaster  = Gx rev-parse master 2>$null
-$remoteMaster = Gx rev-parse origin/master 2>$null
-if ($localMaster -ne $remoteMaster) { OpenAssistant "Your project is out of step with GitHub, so I won't auto-install." }
+$baseMaster   = (Gx rev-parse master 2>$null)        # remembered so we can undo cleanly
+$remoteMaster = (Gx rev-parse origin/master 2>$null)
+if ($baseMaster -ne $remoteMaster) { OpenAssistant "Your project is out of step with GitHub, so I won't auto-install." }
 
-# clean fast-forward only (master must be an ancestor of the new branch)
-Gx merge-base --is-ancestor origin/master $target 2>$null
-if ($LASTEXITCODE -ne 0) { OpenAssistant "This update isn't a simple add-on, so it needs the assistant." }
-
-# the cloud agent marks "Left for local agent:" in CLAUDE.md section 6.
-# Only auto-install when it explicitly says nothing is left to do.
+# The cloud agent marks "Left for local agent:" in CLAUDE.md section 6. Only
+# auto-install when it explicitly says nothing is left for a human/assistant to do.
 $claudeMd = (Gx show "${target}:CLAUDE.md" 2>$null) -join "`n"
 $leftLine = ($claudeMd -split "`n" | Where-Object { $_ -match 'Left for local agent' } | Select-Object -First 1)
-if (-not $leftLine) { OpenAssistant "I can't tell if this update is finished, so the assistant should check it." }
+if (-not $leftLine)                    { OpenAssistant "I can't tell if this update is finished, so the assistant should check it." }
 if ($leftLine -notmatch '(?i)nothing') { OpenAssistant "This update still needs hands-on work, so I'll open the assistant." }
 
-# ----- 3. build + test, then install -------------------------------------------
-Title "Step 3 of 3: Testing it on your PC (this takes about a minute)..."
+# ----- 3. install (merge) -> test the merged result -> keep only if green -------
+Title "Step 3 of 3: Installing it and testing on your PC (about a minute)..."
+
+# Combine the new work into your copy. A plain add-on fast-forwards; work that sits
+# beside changes you already have makes a normal merge. EITHER is safe and automatic.
+# Only a real overlap (a conflict) needs a judgement call -> hand to the assistant.
+Gx checkout master --quiet | Out-Null
+if ($LASTEXITCODE -ne 0) { OpenAssistant "I couldn't switch to your main branch (a file may be open in another program), so the assistant should take over (nothing was changed)." }
+Gx merge --no-edit $target ; $merged = ($LASTEXITCODE -eq 0)
+if (-not $merged) {
+    Gx merge --abort 2>$null    # put your copy back EXACTLY as it was - nothing changed
+    OpenAssistant "This update overlaps work you already have, so it needs the assistant to combine them safely (nothing was changed)."
+}
+
+# Test EXACTLY what would be installed (the merged result). If anything fails, undo
+# the merge so your copy stays clean and in step with GitHub - we never push a dud.
+$buildOk = $false; $testOk = $false
 Push-Location (Join-Path $Repo 'becky-go')
 try {
     Say "   Building every tool..."
     & go build ./... ; $buildOk = ($LASTEXITCODE -eq 0)
-    if ($buildOk) { Say "   Running every test..."; & go test ./... ; $testOk = ($LASTEXITCODE -eq 0) } else { $testOk = $false }
+    if ($buildOk) { Say "   Running every test..."; & go test ./... ; $testOk = ($LASTEXITCODE -eq 0) }
 } finally { Pop-Location }
 
-if (-not $buildOk) { OpenAssistant "It didn't build cleanly on this PC, so the assistant should look." }
-if (-not $testOk)  { OpenAssistant "A test didn't pass, so the assistant should look before installing." }
+if (-not ($buildOk -and $testOk)) {
+    Gx reset --hard $baseMaster --quiet     # roll the merge back; nothing was pushed
+    if (-not $buildOk) { OpenAssistant "It didn't build cleanly on this PC, so the assistant should look (nothing was changed)." }
+    else               { OpenAssistant "A test didn't pass on this PC, so the assistant should look (nothing was changed)." }
+}
 
 Good "It builds and all tests pass on your PC."
-Say  "Installing the update..."
-Gx checkout master --quiet ;          $ok = ($LASTEXITCODE -eq 0)
-if ($ok) { Gx merge --ff-only $target --quiet ; $ok = ($LASTEXITCODE -eq 0) }
-if ($ok) { Gx push origin master --quiet ;      $ok = ($LASTEXITCODE -eq 0) }
-if (-not $ok) {
-    OpenAssistant "Something went wrong while installing, so the assistant should finish it safely."
+Say  "Saving it to GitHub..."
+Gx push origin master --quiet ; $pushed = ($LASTEXITCODE -eq 0)
+if (-not $pushed) {
+    Gx reset --hard $baseMaster --quiet     # undo local merge so you stay in step with GitHub
+    OpenAssistant "I couldn't save the update to GitHub, so the assistant should finish it safely (nothing was changed)."
 }
+
 Gx push origin --delete $short --quiet 2>$null          # tidy up the finished cloud branch (ok if already gone)
 Gx branch -D $short 2>$null | Out-Null                   # and any local copy (ignore if none)
 
