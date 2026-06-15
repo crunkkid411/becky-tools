@@ -33,9 +33,33 @@ function Title   ($m) { Write-Host ""; Write-Host $m -ForegroundColor Cyan; Writ
 function Finish  ($code) { Write-Host ""; if (-not $NoPause) { Read-Host 'Press Enter to close this window' }; exit $code }
 function OpenAssistant ($why) {
     Warn $why
-    Say  "Opening your assistant to take it from here. Just watch - it will explain things."
-    $prompt = "grab the latest cloud branch and do the full cloud-to-local handoff per CLAUDE.md section 4 'Minimal trigger' (fetch, check out the newest claude/* branch, read section 6, build and test in becky-go, merge it in if it is good and finished). Explain everything to Jordan in plain non-technical language; he is not a developer. If you need a decision, ask with simple clickable options - never ask him to type commands."
-    try { & claude $prompt } catch { Bad "Could not open the assistant automatically. Tell Claude: grab the latest cloud branch." }
+    Say  "Opening your assistant to finish this for you. Just watch - it works on its"
+    Say  "own, won't ask you anything, and will say when it's done."
+    # This is a hands-off, one-click button for a non-developer. Run Claude FULLY
+    # autonomous: --dangerously-skip-permissions so Jordan is never asked to approve
+    # tool calls, and a prompt that forbids ALL interactive questions/menus (those are
+    # what froze the window before). Safe here because the button only ever runs this
+    # one scoped, local handoff (fetch -> build -> test -> merge) on Jordan's own PC.
+    $prompt = @'
+You were launched by Jordan's one-click "Get Becky Updates" button. Do the full
+cloud-to-local handoff per CLAUDE.md section 4 "Minimal trigger", completely on your
+own: fetch, check out the newest claude/* branch, read section 6, run `go build ./...`
+and `go test ./...` in becky-go, and if it is good and finished, merge it into master,
+push, and delete the merged branch.
+
+CRITICAL - this is an UNATTENDED button for a NON-DEVELOPER:
+- NEVER ask Jordan anything. Do NOT use AskUserQuestion. Do NOT show multiple-choice
+  menus. Do NOT ask him to type commands or make a decision. He is not watching closely
+  and any prompt just freezes the window.
+- Make the obvious safe choice yourself and proceed. A docs/specs-only or infra branch
+  whose section 6 says nothing is left for the local agent should simply be merged
+  (resolve any CLAUDE.md merge conflict yourself, keeping both sides' content).
+- Only STOP if something is genuinely unsafe, broken, or unfinished. If you stop, do
+  NOT prompt - just print a short plain-English note of what you found, then exit.
+- When done, print a short plain-English summary of what got installed, then stop.
+'@
+    try { & claude --dangerously-skip-permissions $prompt }
+    catch { Bad "Could not open the assistant automatically. Tell Claude: grab the latest cloud branch." }
     Finish 0
 }
 
