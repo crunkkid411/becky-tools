@@ -133,12 +133,37 @@ above instead of guessing. Honors a `BECKY_REPO` env override (used only for
 testing). The queued **becky-handoff** Go tool (§6) is the eventual
 cross-platform replacement for this script.
 
+### Two agents, one repo — anti-collision rules (READ before committing)
+
+Both agents share this remote. **Full rules + the async inbox + the work registry
+live in `COLLAB-PROTOCOL.md` — read it before claiming or building anything.** The
+load-bearing rules, in brief:
+
+1. **Lanes.** Cloud commits only on `claude/<topic>` branches, never to `master`.
+   Local owns `master`. Neither edits the other's branch or force-pushes.
+2. **Atomic branches.** One cloud branch = one finished deliverable. Don't keep
+   pushing after marking it ready — new work goes on a NEW branch. The button may
+   fast-forward-merge a `claude/*` branch ONLY when §6 says *"Left for local:
+   nothing"*; if §6 says REVIEW/pending, it launches local Claude instead, and never
+   deletes a branch whose tip wasn't merged. (This is the fix for the 2026-06-15
+   mid-stream-merge incident.)
+3. **Rebase onto latest `master`** before signalling ready; resolve conflicts
+   additively — never drop the other agent's work.
+4. **Claim before you build** (the registry in `COLLAB-PROTOCOL.md`) so we don't ship
+   two tools for one job (it already nearly happened: `becky-freshness` vs the
+   self-upgrade flag in `becky-research`).
+5. **Edit `CLAUDE.md` / `COLLAB-PROTOCOL.md` additively**, section-scoped — never
+   wholesale-rewrite. The §5 doc map is the single source of truth for what exists.
+
 ---
 
 ## 5. Doc map — which file, when
 
 **Canonical (read these):**
 - `CLAUDE.md` (this file) — how we work + live handoff.
+- `COLLAB-PROTOCOL.md` — how the two agents (cloud + local) share this repo without
+  clobbering: lane rules, the work registry (claim before you build), and the async
+  inbox between us. Read before committing.
 - `README.md` — project overview, tool catalog, non-obvious decisions.
 - `SKILL.md` — how to *use* the tools (human + agent usage guide).
 - `FORENSIC-OUTPUT-PHILOSOPHY.md` — how findings must be reported. Governs every
@@ -153,6 +178,10 @@ cross-platform replacement for this script.
   deep-research harness), `SPEC-OPEN-PALANTIR.md` (`becky-palantir`, integrates
   the OpenPlanter OSINT/entity-graph project), `SPEC-AGENT-HARNESS.md`
   (`becky-harness`, drives a Pi agent over becky's tools, universal per request),
+  `SPEC-OMNIGENT.md` (`becky-omni`, runs becky's agent(s) under the Omnigent
+  meta-harness — `omnigent-ai/omnigent`, Databricks' Apache-2.0 meta-harness that
+  sits ABOVE Pi — for policy/cost/sandbox governance + a share-URL Jordan can watch
+  and steer from his iPhone; reconciles with `becky-harness`),
   `SPEC-RADAR.md` (`becky-radar`, reads Jordan's Chrome history — incl. synced
   iPhone visits — and surfaces flagged models/tools vs becky's deps),
   `SPEC-BECKY-CANVAS.md` (native lightweight creative GUI: becky-ask + video/DAW/
@@ -188,6 +217,21 @@ cross-platform replacement for this script.
 ---
 
 ## 6. Live handoff — current branch status
+
+**Branch `claude/omnigent-and-collab-protocol` (cloud, 2026-06-15) — REVIEW REQUESTED, do NOT auto-merge.**
+Contains two things; please review before merging (the button should launch local
+Claude here, not fast-forward, because this line says review is pending):
+- **`SPEC-OMNIGENT.md`** — `becky-omni`, the Omnigent meta-harness above Pi (Jordan
+  explicitly asked for it). Design only, no Go code. Reconciles with `becky-harness`.
+- **`COLLAB-PROTOCOL.md` + §4 anti-collision rules** — the new two-agent protocol,
+  authored after the 2026-06-15 merge incident. **Local agent: please read it and
+  ratify or amend (reply in its inbox).** Built on top of current `master`, additive
+  only — nothing of local's work is touched or reverted.
+
+*Left for local:* review + ratify the protocol, settle the `becky-freshness` ↔
+`becky-research` overlap (see COLLAB-PROTOCOL INBOX-1), then merge. No build needed.
+
+---
 
 **Branch:** none active — `claude/affectionate-pascal-z35plh` was merged into
 `master` on 2026-06-15 (merge commit `7dbe61d`) and the branch was deleted
