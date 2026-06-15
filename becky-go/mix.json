@@ -1,0 +1,436 @@
+{
+  "schemaVersion": 1,
+  "tool": "becky-mix",
+  "profile": "jst",
+  "deterministic": true,
+  "appliesTo": "project.json",
+  "appliesToHash": "sha256:3d95ccefc1f192d217d38c5e35550f5f5b39dd0324797d85f62792ad068884e8",
+  "buses": [
+    {
+      "bus": "bus.808",
+      "role": "bass",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "eq",
+          "id": "bus.808.eq",
+          "params": {
+            "hpfHz": 30,
+            "subDb": 1,
+            "subHz": 60
+          }
+        },
+        {
+          "type": "bandsplit",
+          "id": "bus.808.split",
+          "params": {
+            "crossoverHz": 150
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "bus.808.sidechainComp",
+          "params": {
+            "attackMs": 0.5,
+            "ratio": 6,
+            "reductionDb": 6,
+            "releaseMs": 80,
+            "sidechain": true,
+            "source": "kick"
+          }
+        },
+        {
+          "type": "saturation",
+          "id": "bus.808.sat",
+          "params": {
+            "driveDb": 3
+          }
+        },
+        {
+          "type": "limiter",
+          "id": "bus.808.limit",
+          "params": {
+            "ceilingDb": -0.3
+          }
+        }
+      ],
+      "jstEquiv": [
+        "Sub Destroyer",
+        "Bassforge",
+        "Finality"
+      ]
+    },
+    {
+      "bus": "bus.drums",
+      "role": "drums",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "eq",
+          "id": "drums.eq",
+          "params": {
+            "hpfHz": 30,
+            "presenceDb": 2,
+            "presenceHz": 4000
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "drums.glue",
+          "params": {
+            "attackMs": 20,
+            "ratio": 4,
+            "releaseMs": 10
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "drums.parallel",
+          "params": {
+            "attackMs": 1,
+            "blend": 0.4,
+            "ratio": 8,
+            "releaseMs": 50
+          }
+        },
+        {
+          "type": "saturation",
+          "id": "drums.sat",
+          "params": {
+            "driveDb": 2
+          }
+        },
+        {
+          "type": "limiter",
+          "id": "drums.limit",
+          "params": {
+            "ceilingDb": -0.3
+          }
+        }
+      ],
+      "jstEquiv": [
+        "DF-SMACK",
+        "Drumshotz",
+        "Gain Reduction",
+        "Finality"
+      ]
+    },
+    {
+      "bus": "bus.gtrLead",
+      "role": "guitar",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "eq",
+          "id": "gtrLead.eq",
+          "params": {
+            "hpfHz": 110,
+            "presenceDb": 3,
+            "presenceHz": 3500
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "gtrLead.comp",
+          "params": {
+            "attackMs": 5,
+            "ratio": 3,
+            "releaseMs": 120
+          }
+        },
+        {
+          "type": "saturation",
+          "id": "gtrLead.ir",
+          "params": {
+            "driveDb": 2,
+            "ir": "cab"
+          }
+        },
+        {
+          "type": "delay",
+          "id": "gtrLead.delay",
+          "params": {
+            "feedback": 0.25,
+            "mix": 0.15,
+            "timeMs": 250
+          }
+        },
+        {
+          "type": "reverb",
+          "id": "gtrLead.reverb",
+          "params": {
+            "mix": 0.12,
+            "type": "plate"
+          }
+        }
+      ],
+      "jstEquiv": [
+        "Toneforge",
+        "Conquer All IRs"
+      ]
+    },
+    {
+      "bus": "bus.gtrRhythm",
+      "role": "guitar",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "eq",
+          "id": "gtrRhythm.eq",
+          "params": {
+            "hpfHz": 90,
+            "presenceDb": 3,
+            "presenceHz": 3000,
+            "scoopDb": -3,
+            "scoopHz": 500
+          }
+        },
+        {
+          "type": "gate",
+          "id": "gtrRhythm.gate",
+          "params": {
+            "attackMs": 0.5,
+            "releaseMs": 80
+          }
+        },
+        {
+          "type": "bandsplit",
+          "id": "gtrRhythm.split",
+          "params": {
+            "crossoverHz": 120
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "gtrRhythm.scLow",
+          "params": {
+            "attackMs": 1,
+            "band": "low",
+            "ratio": 4,
+            "reductionDb": 3,
+            "releaseMs": 50,
+            "sidechain": true,
+            "source": "kick"
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "gtrRhythm.comp",
+          "params": {
+            "attackMs": 5,
+            "ratio": 3,
+            "releaseMs": 80
+          }
+        },
+        {
+          "type": "saturation",
+          "id": "gtrRhythm.ir",
+          "params": {
+            "driveDb": 2,
+            "ir": "cab"
+          }
+        }
+      ],
+      "jstEquiv": [
+        "Toneforge",
+        "Conquer All IRs"
+      ]
+    },
+    {
+      "bus": "bus.kick",
+      "role": "drums",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "gate",
+          "id": "kick.gate",
+          "params": {
+            "attackMs": 0.1,
+            "releaseMs": 60
+          }
+        },
+        {
+          "type": "trigger",
+          "id": "kick.trigger",
+          "params": {
+            "blend": 0.6
+          }
+        },
+        {
+          "type": "eq",
+          "id": "kick.eq",
+          "params": {
+            "clickDb": 3,
+            "clickHz": 3000,
+            "hpfHz": 40,
+            "mudDb": -3,
+            "mudHz": 300,
+            "subDb": 2,
+            "subHz": 70
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "kick.comp",
+          "params": {
+            "attackMs": 10,
+            "ratio": 4,
+            "releaseMs": 40
+          }
+        },
+        {
+          "type": "saturation",
+          "id": "kick.sat",
+          "params": {
+            "driveDb": 2
+          }
+        }
+      ],
+      "jstEquiv": [
+        "DF-SMACK",
+        "Drumshotz",
+        "Gain Reduction",
+        "Finality"
+      ]
+    },
+    {
+      "bus": "bus.master",
+      "role": "master",
+      "out": "out.main",
+      "fx": [
+        {
+          "type": "eq",
+          "id": "master.eq",
+          "params": {
+            "tiltDb": 0
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "master.glue",
+          "params": {
+            "attackMs": 30,
+            "ratio": 2,
+            "reductionDb": 2,
+            "releaseMs": 100
+          }
+        },
+        {
+          "type": "limiter",
+          "id": "master.limit",
+          "params": {
+            "ceilingDb": -0.3
+          }
+        }
+      ],
+      "jstEquiv": [
+        "Finality"
+      ]
+    },
+    {
+      "bus": "bus.snare",
+      "role": "drums",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "gate",
+          "id": "snare.gate",
+          "params": {
+            "attackMs": 0.2,
+            "releaseMs": 80
+          }
+        },
+        {
+          "type": "trigger",
+          "id": "snare.trigger",
+          "params": {
+            "blend": 0.5
+          }
+        },
+        {
+          "type": "eq",
+          "id": "snare.eq",
+          "params": {
+            "bodyDb": 2,
+            "bodyHz": 200,
+            "boxyDb": -3,
+            "boxyHz": 500,
+            "crackDb": 3,
+            "crackHz": 4500
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "snare.comp",
+          "params": {
+            "attackMs": 8,
+            "ratio": 4,
+            "releaseMs": 60
+          }
+        },
+        {
+          "type": "saturation",
+          "id": "snare.sat",
+          "params": {
+            "driveDb": 2
+          }
+        }
+      ],
+      "jstEquiv": [
+        "DF-SMACK",
+        "Drumshotz",
+        "Gain Reduction",
+        "Finality"
+      ]
+    },
+    {
+      "bus": "bus.synth",
+      "role": "synth",
+      "out": "bus.master",
+      "fx": [
+        {
+          "type": "eq",
+          "id": "synth.eq",
+          "params": {
+            "hpfHz": 80
+          }
+        },
+        {
+          "type": "compressor",
+          "id": "synth.scKick",
+          "params": {
+            "attackMs": 1,
+            "ratio": 3,
+            "reductionDb": 3,
+            "releaseMs": 120,
+            "sidechain": true,
+            "source": "kick"
+          }
+        },
+        {
+          "type": "reverb",
+          "id": "synth.reverb",
+          "params": {
+            "mix": 0.2,
+            "type": "hall"
+          }
+        }
+      ]
+    }
+  ],
+  "breakdownRouting": null,
+  "breakdownDetected": false,
+  "vstMap": [
+    {
+      "bus": "bus.gtrLead",
+      "vst": "The Odin II",
+      "fallbackToBuiltin": true
+    },
+    {
+      "bus": "bus.gtrRhythm",
+      "vst": "The Odin II",
+      "fallbackToBuiltin": true
+    }
+  ],
+  "notes": null
+}
