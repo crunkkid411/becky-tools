@@ -38,6 +38,13 @@ type Profile struct {
 	Progressions []Progression        `json:"progressions"`
 	Arrangement  []Section            `json:"arrangement"`
 	Tracks       map[string]TrackSpec `json:"tracks"`
+	// Album/era granularity (all optional): a profile can be a broad genre OR a
+	// specific band/album sound. Aliases let a producer ask loosely ("underoath
+	// safety", "tocs", "define the great line"). Artist/Album/Era are provenance.
+	Aliases []string `json:"aliases"`
+	Artist  string   `json:"artist"`
+	Album   string   `json:"album"`
+	Era     string   `json:"era"`
 }
 
 // Progression is a weighted Roman-numeral chord loop.
@@ -136,7 +143,7 @@ func LoadProfile(id string) (Profile, error) {
 	return p, nil
 }
 
-// KnownGenres lists the genre ids shipped in the embedded DB (sorted).
+// KnownGenres lists the profile ids shipped in the embedded DB (sorted).
 func KnownGenres() []string {
 	ents, _ := profilesFS.ReadDir("profiles")
 	out := make([]string, 0, len(ents))
@@ -145,4 +152,39 @@ func KnownGenres() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ResolveProfile finds the best profile for a free-text query: an exact id wins,
+// otherwise it scores every profile by how many query tokens appear in its id,
+// display name, artist, album, era, or aliases. This is how "underoath safety",
+// "tocs", or "define the great line" resolve to the right album-specific profile.
+func ResolveProfile(query string) (Profile, error) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if p, err := LoadProfile(q); err == nil {
+		return p, nil
+	}
+	qTokens := strings.Fields(strings.ReplaceAll(q, "-", " "))
+	var best Profile
+	bestScore := 0
+	for _, id := range KnownGenres() {
+		p, err := LoadProfile(id)
+		if err != nil {
+			continue
+		}
+		fields := append([]string{p.ID, p.DisplayName, p.Artist, p.Album, p.Era}, p.Aliases...)
+		hay := strings.ReplaceAll(strings.ToLower(strings.Join(fields, " ")), "-", " ")
+		score := 0
+		for _, t := range qTokens {
+			if t != "" && strings.Contains(hay, t) {
+				score++
+			}
+		}
+		if score > bestScore {
+			best, bestScore = p, score
+		}
+	}
+	if bestScore > 0 {
+		return best, nil
+	}
+	return Profile{}, fmt.Errorf("no profile matches %q. Known: %s", query, strings.Join(KnownGenres(), ", "))
 }

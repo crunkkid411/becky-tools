@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "metalcore",
+  "displayName": "Melodic Metalcore (2000s)",
+  "aliases": ["melodic metalcore", "2000s metalcore", "post-hardcore", "easycore", "warped tour"],
+  "era": "2000s",
+  "sources": ["https://en.wikipedia.org/wiki/Melodic_metalcore", "https://en.wikipedia.org/wiki/They%27re_Only_Chasing_Safety", "https://www.riffhard.com/how-to-write-metalcore-riffs/"],
+  "tempo": { "min": 120, "max": 160, "default": 145 },
+  "key": { "defaultRoot": "E", "scales": ["minor", "phrygian", "harmonic_minor"], "defaultScale": "minor" },
+  "swing": 0.5,
+  "humanize": { "timingJitter": 4, "velHumanize": 12 },
+  "progressions": [
+    { "name": "aeolianDrive",   "weight": 3, "roman": ["i", "bVI", "bVII", "i"] },
+    { "name": "phrygianMenace", "weight": 2, "roman": ["i", "bII", "bVII", "i"] },
+    { "name": "andalusianFall", "weight": 2, "roman": ["i", "bVII", "bVI", "V"] },
+    { "name": "liftToChorus",   "weight": 2, "roman": ["bVI", "bVII", "i", "iv"] }
+  ],
+  "arrangement": [
+    { "name": "intro",     "bars": 4,  "energy": 0.25, "tracks": ["chords", "melody", "sfx"] },
+    { "name": "verse",     "bars": 16, "energy": 0.55, "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "chorus",    "bars": 16, "energy": 0.85, "tracks": ["drums", "bass", "chords", "melody", "lead", "counter"] },
+    { "name": "breakdown", "bars": 8,  "energy": 0.7,  "tracks": ["drums", "bass", "chords", "sfx"] },
+    { "name": "outro",     "bars": 4,  "energy": 0.3,  "tracks": ["chords", "melody", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,1,1,1, 0,0,1,1, 1,1,1,1, 0,0,1,1], "vel": "hard" },
+        "snare": { "note": 38, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "accent" },
+        "hat":   { "note": 42, "grid": [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0], "vel": "normal" },
+        "crash": { "note": 49, "grid": [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0], "vel": "accent" }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 34, "channel": 1, "register": [28,48], "style": "chug", "octave": -1, "glide": false, "rhythm": "rootFollowsKick" },
+    "chords": { "program": 30, "channel": 2, "register": [40,64], "voicing": "power", "rhythm": "sidechainPumpQuarter", "vel": "hard", "extensions": ["5"] },
+    "melody": { "program": 29, "channel": 3, "register": [60,84], "scaleSource": "key", "contour": "archMotif", "motifBars": 2, "density": 0.5, "vel": "normal" },
+    "lead":   { "program": 29, "channel": 4, "register": [64,88], "contour": "harmonizedThirds", "density": 0.45, "vel": "hard", "activeFromEnergy": 0.8 },
+    "counter":{ "program": 81, "channel": 5, "register": [55,79], "role": "callResponse", "density": 0.3, "vel": "normal", "activeFromEnergy": 0.8 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild", "impactAtDrop", "downsweepAtOutro"] }
+  }
+}

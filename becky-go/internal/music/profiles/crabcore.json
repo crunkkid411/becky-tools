@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "crabcore",
+  "displayName": "Crabcore / Electronicore",
+  "aliases": ["electronicore", "attack attack", "synthcore", "abandon all ships"],
+  "era": "2000s",
+  "sources": ["https://en.wikipedia.org/wiki/Attack_Attack!_(album)", "https://en.wikipedia.org/wiki/Attack_Attack!_(American_band)", "https://knowyourmeme.com/memes/crabcore", "https://en.wikipedia.org/wiki/List_of_electronicore_bands"],
+  "tempo": { "min": 150, "max": 175, "default": 160 },
+  "key": { "defaultRoot": "C#", "scales": ["minor", "phrygian", "harmonic_minor"], "defaultScale": "minor" },
+  "swing": 0.5,
+  "humanize": { "timingJitter": 3, "velHumanize": 10 },
+  "progressions": [
+    { "name": "tranceLift",     "weight": 3, "roman": ["i", "bVI", "bVII", "i"] },
+    { "name": "euroAndalusian", "weight": 2, "roman": ["i", "bVII", "bVI", "V"] },
+    { "name": "phrygianDrop",   "weight": 2, "roman": ["i", "bII", "bVII", "i"] },
+    { "name": "choirHook",      "weight": 2, "roman": ["bVI", "bVII", "i", "i"] }
+  ],
+  "arrangement": [
+    { "name": "intro",     "bars": 4,  "energy": 0.3, "tracks": ["chords", "lead", "sfx"] },
+    { "name": "verse",     "bars": 16, "energy": 0.55,"tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "dancedrop", "bars": 16, "energy": 1.0, "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"] },
+    { "name": "breakdown", "bars": 8,  "energy": 0.7, "tracks": ["drums", "bass", "chords", "lead", "sfx"] },
+    { "name": "outro",     "bars": 4,  "energy": 0.3, "tracks": ["chords", "lead", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1], "vel": "hard" },
+        "snare": { "note": 38, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "accent" },
+        "hat":   { "note": 42, "grid": [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0], "vel": "normal" },
+        "ohat":  { "note": 46, "grid": [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0], "vel": "soft" },
+        "crash": { "note": 49, "grid": [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0], "vel": "accent" }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 34, "channel": 1, "register": [28,48], "style": "chug", "octave": -1, "glide": false, "rhythm": "rootFollowsKick" },
+    "chords": { "program": 81, "channel": 2, "register": [48,76], "voicing": "triad", "rhythm": "arpUpEighths", "vel": "normal", "extensions": ["7", "9"] },
+    "melody": { "program": 82, "channel": 3, "register": [60,84], "scaleSource": "key", "contour": "archMotif", "motifBars": 2, "density": 0.55, "vel": "normal" },
+    "lead":   { "program": 81, "channel": 4, "register": [64,88], "contour": "tranceArp", "density": 0.6, "vel": "hard", "activeFromEnergy": 0.7 },
+    "counter":{ "program": 80, "channel": 5, "register": [60,84], "role": "callResponse", "density": 0.35, "vel": "normal", "activeFromEnergy": 0.85 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild", "impactAtDrop", "downsweepAtOutro"] }
+  }
+}

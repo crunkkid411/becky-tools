@@ -22,7 +22,7 @@ import (
 )
 
 func main() {
-	genre := flag.String("genre", "", "genre id (e.g. crunkcore, digicore, hyperpop)")
+	genre := flag.String("genre", "", "genre id OR band/album (e.g. crunkcore, \"underoath safety\", tocs)")
 	key := flag.String("key", "", "key e.g. F#m, Am (default: genre default)")
 	bpm := flag.Int("bpm", 0, "tempo BPM (default: genre default)")
 	seed := flag.Int64("seed", 1, "deterministic seed (same seed => same song)")
@@ -40,12 +40,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	p, err := music.LoadProfile(*genre)
+	p, err := music.ResolveProfile(*genre)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	song := music.Generate(p, *key, *bpm, *seed)
+	if label := profileLabel(p); label != "" {
+		fmt.Printf("matched: %s\n", label)
+	}
 
 	dir := *out
 	if dir == "" {
@@ -83,4 +86,20 @@ func main() {
 		fmt.Printf("    %-8s ch%-2d -> %s.mid\n", nt.Name, nt.Channel, nt.Name)
 	}
 	fmt.Printf("  song.mid (all tracks) + project.json (808 isolated; kick sidechains music + 808)\n")
+}
+
+// profileLabel describes which profile resolved (album-specific when present).
+func profileLabel(p music.Profile) string {
+	name := p.DisplayName
+	if name == "" {
+		name = p.ID
+	}
+	switch {
+	case p.Artist != "" && p.Album != "":
+		return fmt.Sprintf("%s — %s \"%s\"", name, p.Artist, p.Album)
+	case p.Artist != "":
+		return fmt.Sprintf("%s — %s", name, p.Artist)
+	default:
+		return name
+	}
 }
