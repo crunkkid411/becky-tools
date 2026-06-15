@@ -62,6 +62,7 @@ func runAnalyze(argv []string) int {
 	keyHint := fs.String("key-hint", "", "skip key detection, e.g. F#m (still reported)")
 	genre := fs.String("genre", "", "genre for tempo-octave + chord context, e.g. crunkcore")
 	engine := fs.String("engine", "basic-pitch", "pitch engine label: basic-pitch | pyin")
+	device := fs.String("device", "auto", "device label for the pitch helper: auto | cpu | cuda")
 	quantize := fs.String("quantize", "off", "rhythmic quantization: 1/16, 1/8, ... or off")
 	apply := fs.Bool("apply-suggestions", false, "also write melody.corrected.mid with suggested pitches")
 	asJSON := fs.Bool("json", false, "print the result JSON to stdout")
@@ -80,7 +81,7 @@ func runAnalyze(argv []string) int {
 	opt.Engine = *engine
 	opt.QuantDiv = parseQuantize(*quantize)
 
-	feats, err := loadFeatures(*features, *wav)
+	feats, err := loadFeatures(*features, *wav, *engine, *device)
 	if err != nil {
 		// Degrade-never-crash: report plainly and exit 1 (no panic).
 		fmt.Fprintf(os.Stderr, "becky-hum: %v\n", err)
@@ -105,11 +106,12 @@ func runAnalyze(argv []string) int {
 	return 0
 }
 
-// loadFeatures reads pre-extracted features when --features is given. Without it,
-// the audio→features step is the LOCAL-AGENT stub: the cloud build returns a clean
-// degrade telling the user to supply --features (the real wiring shells ffmpeg + the
-// pitch pyhelper here). Never panics.
-func loadFeatures(featuresPath, wav string) (hum.Features, error) {
+// loadFeatures reads pre-extracted features when --features is given; otherwise it
+// runs the pure-Go DSP extractor over the WAV (offline: no Python, no model, no
+// ffmpeg). The DSP path is the deterministic FLOOR — it recovers a clear hummed
+// melody's key/tempo/notes. Precise f0 (scoops, vibrato, low SNR) stays the
+// model-helper boundary, reachable by passing --features <pitch.json>. Never panics.
+func loadFeatures(featuresPath, wav, engine, device string) (hum.Features, error) {
 	if featuresPath != "" {
 		b, err := os.ReadFile(featuresPath)
 		if err != nil {
@@ -121,13 +123,10 @@ func loadFeatures(featuresPath, wav string) (hum.Features, error) {
 		}
 		return f, nil
 	}
-	// Audio path stub: the local agent replaces this block with a real Extractor
-	// (ffmpeg 16 kHz mono -> pitch_basicpitch.py -> Features). On the cloud, with no
-	// model, degrade to a partial result rather than failing the run.
-	return hum.Features{
-		Skipped: true,
-		Reason:  "no pitch model on this machine — re-run with --features <pitch.json> (pitch-helper contract) or wire the local pitch pyhelper",
-	}, nil
+	// Audio path: decode + analyze the WAV with internal/dsp (ported from dawbase).
+	// A genuine I/O failure (missing file) is an error; an undecodable/silent take
+	// returns Skipped features so the run degrades cleanly rather than crashing.
+	return hum.DSPExtractor{}.Extract(wav, engine, device)
 }
 
 func writeArtifacts(dir string, res hum.Result, apply bool) error {

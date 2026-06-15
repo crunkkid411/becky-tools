@@ -225,6 +225,24 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `local/buildbat-and-dawbase-2026-06-15` (local, 2026-06-15) — standard-procedure fix + dawbase port, merged to master.**
+- `build-all-tools.bat` now **auto-discovers `cmd/*`** (was a stale hardcoded list that
+  silently skipped compose/freshness + the 13 new tools); CLAUDE.md §3 makes building the
+  `.exe`s the standard finish — `go test` green is not "done". All **42 tools** build.
+- **dawbase port (`X:\AI-2\dawbase`, MIT):** ported its `analysis.cpp` DSP (FFT + chroma +
+  Krumhansl key + onset/tempo) + a pure-Go WAV decoder into new **`internal/dsp`**, and
+  **de-stubbed `becky-hum`** — `becky-hum analyze --wav <file>` now gives key + tempo + MIDI
+  fully offline (verified on a C-E-G-C tone → C major conf 0.94, 4 notes, MIDI written; no
+  Python/model/cgo). Also ported dawbase's habit-learner into new **`becky-habits`**
+  (`cmd/habits` + `internal/habits`): repeated corrections → learned defaults (threshold 2) —
+  the learner half of becky's preference-learning loop.
+- *Still available from dawbase (Phase-2):* `capture.cpp` (miniaudio mic + pre-roll) → the
+  native cgo AudioBackend for `becky-daw-engine`; precise f0 (pYIN/basic-pitch) stays
+  `becky-hum`'s model boundary for melodic precision. A follow-up can wire
+  becky-hum/vox/daw/canvas corrections logs into `becky-habits`.
+
+---
+
 **Branch `local/build-everything-2026-06-15` (local, 2026-06-15) — "build everything" pass, merged to master.**
 Jordan approved (a) auto-building any normal offline tool without asking, only
 gating the rule-breaking ones, and (b) building ALL the queued specs, via

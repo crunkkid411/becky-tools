@@ -77,7 +77,9 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | becky-vision (`SPEC-BECKY-VISION-MODELS.md`) | local 2026-06-15 | BUILT (LFM2.5-VL wrapper) | `cmd/vision` + `internal/vision` | image→JSON via llama-mtmd-cli |
 | SMF reader | local 2026-06-15 | BUILT | `internal/music/smfread.go` | MIDI round-trip; DAW foundation |
 | becky-mix (`SPEC-BECKY-MIX-JST.md`) | local 2026-06-15 | BUILT | `cmd/mix` + `internal/mixplan` | JST mix.json over project.json |
-| becky-hum (`SPEC-BECKY-HUM.md`) | local 2026-06-15 | BUILT (core; audio→features stubbed) | `cmd/hum` + `internal/hum` | K-S key + tempo + hum→MIDI |
+| becky-hum (`SPEC-BECKY-HUM.md`) | local 2026-06-15 | BUILT — audio→features de-stubbed (dawbase DSP port) | `cmd/hum` + `internal/hum` + `internal/dsp` | `--wav` works offline; precise f0 = model boundary |
+| becky-habits | local 2026-06-15 | BUILT (dawbase HabitStore port) | `cmd/habits` + `internal/habits` | corrections → learned defaults (threshold 2) |
+| internal/dsp | local 2026-06-15 | BUILT (dawbase analysis.cpp port) | `internal/dsp` | pure-Go WAV decode + FFT + chroma + onset/tempo |
 | becky-vox (`SPEC-BECKY-VOX.md`) | local 2026-06-15 | BUILT (core; DSP stubbed) | `cmd/vox` + `internal/vox` | DTW multi-take align |
 | becky-daw (`SPEC-BECKY-DAW-EDITOR.md`) | local 2026-06-15 | BUILT (editable model) | `cmd/daw` + `internal/dawmodel` | piano-roll/drum-grid/mixer |
 | becky-canvas (`SPEC-BECKY-CANVAS.md`) | local 2026-06-15 | BUILT (scene model; GUI=Phase-2) | `cmd/canvas` + `internal/canvas` | native ImGui window deferred |
