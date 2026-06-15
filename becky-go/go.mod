@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	golang.org/x/term v0.44.0
+	modernc.org/sqlite v1.52.0
 )
 
 require (
@@ -38,5 +39,4 @@ require (
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.52.0 // indirect
 )
