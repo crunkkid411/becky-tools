@@ -1,3 +1,5 @@
+//go:build !gui
+
 // becky-canvas — the deterministic FOUNDATION for Jordan's AI-friendly Cubase
 // replacement: a native creative GUI (becky-ask + video/DAW/MIDI/drum on one
 // canvas, SPEC-BECKY-CANVAS.md). This binary is the HEADLESS scene-model layer the
