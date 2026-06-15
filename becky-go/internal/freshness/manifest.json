@@ -91,11 +91,11 @@
     },
     {
       "id": "lfm2-5-vl",
-      "name": "Liquid LFM2.5-VL (lightweight vision)",
-      "used_by": ["becky-ocr", "becky-validate", "becky-ask"],
-      "pinned": "integrating: LFM2.5-VL-450M-GGUF + 1.6B-Extract-GGUF (llama.cpp)",
+      "name": "Liquid LFM2.5-VL (vision; STANDARD = 1.6B)",
+      "used_by": ["becky-validate", "becky-ask", "becky-ocr"],
+      "pinned": "STANDARD: LFM2.5-VL-1.6B-Q8_0 GGUF (measured richer+consistent vs 450M); 450M = fast-triage only; doc-extract = 1.6B-Extract-GGUF",
       "upstream": {"type": "hf-model", "ref": "LiquidAI/LFM2.5-VL-1.6B"},
-      "note": "Lighter llama.cpp-native VLM for frame triage + document OCR-to-JSON (image-only; Gemma-4 stays for AUDIO). USE LFM2.5-VL, NOT the older LFM2. LFM Open License v1.0 (free commercial under $10M revenue). See SPEC-BECKY-VISION-MODELS.md."
+      "note": "Both downloaded + measured head-to-head on becky frames 2026-06-15: 1.6B is the standard vision model (450M flip-flopped a subject's hair colour, disqualifying for forensic ID). Image-only; Gemma-4 stays for AUDIO; exact OCR stays PaddleOCR. USE LFM2.5-VL, NOT old LFM2. LFM Open License (free <$10M). See SPEC-BECKY-VISION-MODELS.md."
     }
   ]
 }

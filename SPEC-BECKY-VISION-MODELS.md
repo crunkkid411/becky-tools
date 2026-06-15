@@ -1,6 +1,25 @@
 # SPEC — becky vision models — adopt Liquid AI LFM2-VL / LFM2.5-VL + a custom-training plan
 
-> ## STATUS — design only, NOT built
+> ## STATUS — measured 2026-06-15; data-backed decision made
+> **UPDATE: both LFM2.5-VL models were downloaded and run head-to-head on real becky
+> frames (RTX 3070, Q8_0, `llama-mtmd-cli -ngl 99 --temp 0`).** Measured findings:
+> on DESCRIBE, **1.6B is richer AND more consistent** than 450M — the **450M
+> flip-flopped a subject's hair colour** ("yellow" in one frame, "green" in another
+> of the SAME person); the 1.6B was consistent ("lime green") every frame and added
+> reliable identifying detail (makeup, lip piercing). On OCR both base VLMs are weak
+> (450M missed text entirely; 1.6B caught a single word). **DECISION (per Jordan, with
+> data): LFM2.5-VL-1.6B-Q8_0 is the STANDARD vision model** for description/
+> understanding (becky-validate, becky-ask). **450M is reserved for explicit
+> FAST-TRIAGE only, never the default** — its inconsistency is disqualifying for
+> forensic ID. Exact text stays on **PaddleOCR** (PP-OCRv5/v6); document→JSON uses the
+> purpose-built **1.6B-Extract** GGUF. **Gemma-4 E4B stays for AUDIO** (LFM2-VL is
+> image-only). **Self-determined first LoRA (becky decides what it needs):** a
+> `becky-forensic-vision` adapter on 1.6B targeting the measured gaps — frame-to-frame
+> CONSISTENT subject/identifying-detail description + extraction into becky's evidence
+> fields; the base model's observed inconsistency is itself the training signal.
+> Files at `models/lfm2.5-vl-{450m,1.6b}/` (gitignored). Below is the original design.
+>
+> ## Original status — design only, NOT built
 > No Go code, no Python helper, no model download exists for this yet. This spec
 > proposes (a) adding the **Liquid AI LFM2-VL / LFM2.5-VL** lightweight
 > vision-language models as *additional, task-specific* VLM backends alongside
