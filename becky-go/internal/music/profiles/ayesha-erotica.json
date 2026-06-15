@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "ayesha-erotica",
+  "displayName": "Ayesha Erotica",
+  "artist": "Ayesha Erotica",
+  "aliases": ["ayesha erotica", "ayesha", "vacation bible school", "literal legend", "yummy", "bubblegum bass", "hyperpop ayesha", "electroclash", "pc music"],
+  "era": "2010s-2020s",
+  "sources": ["https://en.wikipedia.org/wiki/Ayesha_Erotica", "https://tunebat.com/Info/Vacation-Bible-School-Ayesha-Erotica/4lNbt1Vijzc4FCmazqtwB9", "https://www.gemtracks.com/resources/bpm-and-key/view-song.php?song=literal-legend-2&artist=ayesha-erotica&year=2017&id=50nNyORqALhcOWAlccFGa3", "https://floptok.fandom.com/wiki/Ayesha_Erotica", "https://www.albumoftheyear.org/album/241557-ayesha-erotica-vacation-bible-school.php"],
+  "tempo": { "min": 140, "max": 160, "default": 150 },
+  "key": { "defaultRoot": "C#", "scales": ["minor", "phrygian", "harmonic_minor"], "defaultScale": "minor" },
+  "swing": 0.50,
+  "humanize": { "timingJitter": 0, "velHumanize": 5 },
+  "progressions": [
+    { "name": "andalusian",  "weight": 3, "roman": ["i", "bVII", "bVI", "V"] },
+    { "name": "minorPuff",   "weight": 2, "roman": ["i", "bIII", "iv", "iv"] },
+    { "name": "aeolianCad",  "weight": 2, "roman": ["bVI", "bVII", "i", "i"] },
+    { "name": "bratStab",    "weight": 1, "roman": ["i", "iv", "bVI", "bVII"] }
+  ],
+  "arrangement": [
+    { "name": "intro",  "bars": 4,  "energy": 0.2,  "tracks": ["chords", "sfx"] },
+    { "name": "verse",  "bars": 16, "energy": 0.45, "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "build",  "bars": 8,  "energy": 0.9,  "tracks": ["drums", "bass", "chords", "melody", "sfx"] },
+    { "name": "drop",   "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"], "chaotic": true },
+    { "name": "verse2", "bars": 16, "energy": 0.45, "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "drop2",  "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"], "chaotic": true },
+    { "name": "outro",  "bars": 8,  "energy": 0.3,  "tracks": ["chords", "melody", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0], "vel": "accent" },
+        "clap":  { "note": 39, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "hard" },
+        "hat":   { "note": 42, "grid": [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,1], "vel": "soft" }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 39, "channel": 1, "register": [28,48], "style": "808",
+              "octave": -2, "glide": false, "rhythm": "rootFollowsKick" },
+    "chords": { "program": 81, "channel": 2, "register": [52,76], "voicing": "supersaw",
+                "extensions": ["sus2", "add9"], "rhythm": "sidechainPumpQuarter", "vel": "hard" },
+    "melody": { "program": 80, "channel": 3, "register": [64,88], "scaleSource": "key",
+                "contour": "pitchedVocalHook", "motifBars": 2, "density": 0.6, "vel": "normal" },
+    "lead":   { "program": 81, "channel": 4, "register": [66,90], "contour": "supersawStab",
+                "density": 0.55, "vel": "hard", "activeFromEnergy": 0.9 },
+    "counter":{ "program": 80, "channel": 5, "register": [57,79], "role": "octaveEcho",
+                "density": 0.35, "vel": "soft", "activeFromEnergy": 0.9 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild", "impactAtDrop", "downsweepAtOutro"] }
+  }
+}

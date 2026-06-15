@@ -289,7 +289,7 @@ func genChords(tr *Track, spec TrackSpec, ab []activeBar) {
 	lo, hi := registerOr(spec.Register, 48, 72)
 	base := Vel(orVel(spec.Vel, "soft"))
 	for _, b := range ab {
-		notes := voiceInRegister(b.chord, lo, hi)
+		notes := voiceChord(b.chord, spec.Voicing, lo, hi)
 		if len(notes) == 0 {
 			continue
 		}
@@ -404,6 +404,21 @@ func voiceInRegister(chord []int, lo, hi int) []int {
 		out = append(out, Clamp(n, lo, hi))
 	}
 	return out
+}
+
+// voiceChord turns a chord into the notes to play for a given voicing. "power" is
+// the metalcore/post-hardcore root+5th+octave shape (no third) — the deterministic
+// guitar harmony foundation those genres are built on. Everything else voices the
+// full chord clamped into the register.
+func voiceChord(chord []int, voicing string, lo, hi int) []int {
+	if len(chord) == 0 {
+		return nil
+	}
+	if strings.Contains(strings.ToLower(voicing), "power") {
+		root := chord[0]
+		return []int{Clamp(root, lo, hi), Clamp(root+7, lo, hi), Clamp(root+12, lo, hi)}
+	}
+	return voiceInRegister(chord, lo, hi)
 }
 
 func nearestChordTone(note int, chord []int, lo, hi int) int {

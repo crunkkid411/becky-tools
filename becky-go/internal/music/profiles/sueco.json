@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "sueco",
+  "displayName": "Sueco",
+  "artist": "Sueco",
+  "aliases": ["sueco", "sueco the child", "primrose", "it was fun while it lasted", "paralyzed", "fast sueco", "emo rap pop punk", "trap pop punk"],
+  "era": "2020s",
+  "sources": ["https://en.wikipedia.org/wiki/Paralyzed_(Sueco_song)", "https://tunebat.com/Info/Paralyzed-Acoustic-Sueco/2XlkyRMLUbjE2DQh1ETBNt", "https://songbpm.com/@sueco", "https://www.onestowatch.com/en/blog/sueco-it-was-fun-while-it-lasted", "https://www.albumoftheyear.org/album/465611-sueco-it-was-fun-while-it-lasted.php"],
+  "tempo": { "min": 140, "max": 165, "default": 150 },
+  "key": { "defaultRoot": "C", "scales": ["minor", "phrygian", "harmonic_minor"], "defaultScale": "minor" },
+  "swing": 0.52,
+  "humanize": { "timingJitter": 6, "velHumanize": 10 },
+  "progressions": [
+    { "name": "menaceLoop",  "weight": 3, "roman": ["i", "bVI", "bVII", "i"] },
+    { "name": "andalusian",  "weight": 2, "roman": ["i", "bVII", "bVI", "V"] },
+    { "name": "emoMinorPop", "weight": 2, "roman": ["i", "bVI", "bIII", "bVII"] },
+    { "name": "ivCadence",   "weight": 1, "roman": ["i", "iv", "bVI", "V"] }
+  ],
+  "arrangement": [
+    { "name": "intro",    "bars": 4,  "energy": 0.25, "tracks": ["chords", "sfx"] },
+    { "name": "verse",    "bars": 16, "energy": 0.5,  "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "prechorus","bars": 8,  "energy": 0.75, "tracks": ["drums", "bass", "chords", "melody", "sfx"] },
+    { "name": "chorus",   "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"], "chaotic": true },
+    { "name": "verse2",   "bars": 16, "energy": 0.55, "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "chorus2",  "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"], "chaotic": true },
+    { "name": "outro",    "bars": 4,  "energy": 0.3,  "tracks": ["chords", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,0,0,0, 0,0,1,0, 0,0,1,0, 0,0,0,0], "vel": "accent" },
+        "snare": { "note": 38, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "accent" },
+        "hat":   { "note": 42, "grid": [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1], "vel": "soft",
+                   "rolls": [{ "cell": 14, "n": 3, "ramp": "up" }] },
+        "crash": { "note": 49, "grid": [1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0], "vel": "hard" }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 34, "channel": 1, "register": [28,52], "style": "808",
+              "octave": -1, "glide": true, "rhythm": "rootFollowsKick" },
+    "chords": { "program": 30, "channel": 2, "register": [40,64], "voicing": "powerchord",
+                "extensions": [], "rhythm": "arpUpEighths", "vel": "hard" },
+    "melody": { "program": 29, "channel": 3, "register": [60,84], "scaleSource": "key",
+                "contour": "vocalHook", "motifBars": 2, "density": 0.5, "vel": "normal" },
+    "lead":   { "program": 30, "channel": 4, "register": [64,88], "contour": "octaveLeadRiff",
+                "density": 0.45, "vel": "hard", "activeFromEnergy": 0.9 },
+    "counter":{ "program": 29, "channel": 5, "register": [55,79], "role": "callResponse",
+                "density": 0.3, "vel": "normal", "activeFromEnergy": 0.9 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild", "impactAtDrop", "downsweepAtOutro"] }
+  }
+}

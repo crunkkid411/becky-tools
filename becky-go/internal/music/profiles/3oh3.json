@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "3oh3",
+  "displayName": "3OH!3",
+  "artist": "3OH!3",
+  "aliases": ["3oh3", "3oh!3", "three oh three", "want", "streets of gold", "donttrustme", "dont trust me", "starstrukk", "crunkcore", "electro crunk", "electropop party"],
+  "era": "2000s-2010s",
+  "sources": ["https://en.wikipedia.org/wiki/Want_(3OH!3_album)", "https://tunebat.com/Info/DONTTRUSTME-3OH-3/5jzX4dWVQeBTtfBaXnMRt5", "https://songbpm.com/@3oh-3/starstrukk", "https://en.wikipedia.org/wiki/Streets_of_Gold", "https://rateyourmusic.com/release/album/3oh_3/streets-of-gold/"],
+  "tempo": { "min": 125, "max": 140, "default": 130 },
+  "key": { "defaultRoot": "F", "scales": ["minor", "phrygian"], "defaultScale": "minor" },
+  "swing": 0.53,
+  "humanize": { "timingJitter": 4, "velHumanize": 8 },
+  "progressions": [
+    { "name": "partyMinor",  "weight": 3, "roman": ["i", "bVI", "bVII", "i"] },
+    { "name": "andalusian",  "weight": 2, "roman": ["i", "bVII", "bVI", "V"] },
+    { "name": "hookLoop",    "weight": 2, "roman": ["i", "bVII", "bVI", "bVII"] },
+    { "name": "bratStab",    "weight": 1, "roman": ["i", "iv", "bVI", "bVII"] }
+  ],
+  "arrangement": [
+    { "name": "intro",  "bars": 4,  "energy": 0.2,  "tracks": ["chords", "sfx"] },
+    { "name": "verse",  "bars": 16, "energy": 0.5,  "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "build",  "bars": 8,  "energy": 0.85, "tracks": ["drums", "bass", "chords", "melody", "sfx"] },
+    { "name": "drop",   "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"] },
+    { "name": "verse2", "bars": 16, "energy": 0.5,  "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "drop2",  "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"] },
+    { "name": "outro",  "bars": 4,  "energy": 0.3,  "tracks": ["chords", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0], "vel": "accent" },
+        "clap":  { "note": 39, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "accent" },
+        "hat":   { "note": 42, "grid": [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,1], "vel": "soft" }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 38, "channel": 1, "register": [28,48], "style": "808",
+              "octave": -2, "glide": true, "rhythm": "rootFollowsKick" },
+    "chords": { "program": 81, "channel": 2, "register": [48,72], "voicing": "triad",
+                "extensions": ["7"], "rhythm": "sidechainPumpQuarter", "vel": "hard" },
+    "melody": { "program": 81, "channel": 3, "register": [60,84], "scaleSource": "key",
+                "contour": "talkRapHook", "motifBars": 2, "density": 0.45, "vel": "normal" },
+    "lead":   { "program": 82, "channel": 4, "register": [64,88], "contour": "octaveChant",
+                "density": 0.5, "vel": "hard", "activeFromEnergy": 0.85 },
+    "counter":{ "program": 80, "channel": 5, "register": [55,79], "role": "callResponse",
+                "density": 0.3, "vel": "normal", "activeFromEnergy": 0.85 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild", "impactAtDrop", "downsweepAtOutro"] }
+  }
+}
