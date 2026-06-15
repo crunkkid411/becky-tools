@@ -1,0 +1,93 @@
+{
+  "_comment": "becky-tools external dependency manifest — the single source of truth for every model/library/binary becky pins, where to watch upstream, and which tool uses it. becky-freshness reads this and reports what is newer upstream so improvements (like a new OCR release) are NEVER missed again. Keep PINNED current when a dep is upgraded; add a row when a tool takes a new dependency.",
+  "dependencies": [
+    {
+      "id": "parakeet-asr",
+      "name": "Parakeet-TDT-0.6B-v3 (sherpa-onnx)",
+      "used_by": ["becky-transcribe"],
+      "pinned": "v3 int8",
+      "upstream": {"type": "github-release", "ref": "k2-fsa/sherpa-onnx"},
+      "note": "ASR runtime; model is the NeMo Parakeet ONNX export. Watch sherpa-onnx releases + the NeMo Parakeet model line."
+    },
+    {
+      "id": "insightface-buffalo_l",
+      "name": "InsightFace buffalo_l face pack",
+      "used_by": ["becky-identify", "becky-enroll", "becky-cluster"],
+      "pinned": "buffalo_l",
+      "upstream": {"type": "github-release", "ref": "deepinsight/insightface"},
+      "note": "Face detection + ArcFace embeddings via onnxruntime."
+    },
+    {
+      "id": "pyannote-seg-3",
+      "name": "pyannote-segmentation-3.0 (diarization)",
+      "used_by": ["becky-diarize", "becky-identify"],
+      "pinned": "3.0",
+      "upstream": {"type": "hf-model", "ref": "pyannote/segmentation-3.0"},
+      "note": "Speaker segmentation ONNX for sherpa diarization."
+    },
+    {
+      "id": "campplus-spk",
+      "name": "3D-Speaker CAM++ speaker embedding",
+      "used_by": ["becky-diarize", "becky-identify"],
+      "pinned": "campplus_sv_en_voxceleb_16k",
+      "upstream": {"type": "github-release", "ref": "modelscope/3D-Speaker"},
+      "note": "Speaker embedding ONNX."
+    },
+    {
+      "id": "gemma-4-e4b",
+      "name": "Gemma-4 E4B-it audio-visual",
+      "used_by": ["becky-validate"],
+      "pinned": "E4B-it Q4_K_M + BF16 mmproj",
+      "upstream": {"type": "hf-model", "ref": "google/gemma-3n-E4B-it"},
+      "note": "Multimodal (vision+audio) via llama.cpp. BF16 mmproj is mandatory."
+    },
+    {
+      "id": "qwen3-embed-4b",
+      "name": "Qwen3-Embedding-4B",
+      "used_by": ["becky-embed", "becky-search"],
+      "pinned": "4B Q5_K_M",
+      "upstream": {"type": "hf-model", "ref": "Qwen/Qwen3-Embedding-4B"},
+      "note": "Text embeddings via resident llama-server."
+    },
+    {
+      "id": "paddleocr-pipeline",
+      "name": "PaddleOCR PP-OCRv6 (classic det+rec)",
+      "used_by": ["becky-ocr"],
+      "pinned": "auto PP-OCRv6 -> v5 -> v4 (via rapidocr)",
+      "upstream": {"type": "github-release", "ref": "PaddlePaddle/PaddleOCR"},
+      "note": "becky-ocr now requests PP-OCRv6 newest-first (the model Jordan flagged in iPhone Chrome, released ~2026-06-09), degrading to v5/v4. Activating v6 needs a rapidocr build that knows PPOCRV6 + the v6 ONNX weights (offline-cached on first fetch)."
+    },
+    {
+      "id": "rapidocr",
+      "name": "rapidocr (ONNX port of PP-OCR)",
+      "used_by": ["becky-ocr"],
+      "pinned": "3.8.1",
+      "upstream": {"type": "pypi", "ref": "rapidocr"},
+      "note": "The Python package becky-ocr runs PP-OCR through."
+    },
+    {
+      "id": "paddleocr-vl",
+      "name": "PaddleOCR-VL (0.9B document VLM)",
+      "used_by": ["becky-ocr"],
+      "pinned": "WIRED as --engine ppocr-vl (activate by installing the model)",
+      "upstream": {"type": "hf-model", "ref": "PaddlePaddle/PaddleOCR-VL"},
+      "note": "Document-parsing VLM (layout/table/formula), Apache-2.0, beats GPT-4o-class on doc parsing. Selective escalation for dense document frames. THIS is the improvement that was missed before becky-freshness existed."
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp (inference runtime)",
+      "used_by": ["becky-validate", "becky-embed", "becky-ask"],
+      "pinned": "C:\\llama.cpp build",
+      "upstream": {"type": "github-release", "ref": "ggml-org/llama.cpp"},
+      "note": "Local C++ inference for multimodal + embeddings + ask."
+    },
+    {
+      "id": "tesseract",
+      "name": "Tesseract OCR (fallback/cross-check)",
+      "used_by": ["becky-ocr"],
+      "pinned": "not wired (cross-check option only)",
+      "upstream": {"type": "github-release", "ref": "tesseract-ocr/tesseract"},
+      "note": "Zero-GPU CPU fallback for clean document scans; not the primary."
+    }
+  ]
+}

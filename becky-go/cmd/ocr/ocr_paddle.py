@@ -33,38 +33,57 @@ import json
 import sys
 
 
-def build_engine(prefer_v5):
-    """Construct a RapidOCR engine. Try PP-OCRv5 ONNX first when requested; on any
-    error (e.g. the v5 weights need a download and we're offline) fall back to the
-    bundled-offline PP-OCRv4. Returns (engine, engine_label)."""
+def _engine_for_version(version_enum, label):
+    """Build a RapidOCR engine pinned to one PP-OCR version (onnxruntime, mobile,
+    CH detector + EN recognizer). Raises if that version's weights can't be built
+    (e.g. offline and not cached) so the caller can fall back."""
+    from rapidocr import RapidOCR, EngineType, OCRVersion, LangRec, LangDet, ModelType  # noqa: F401
+
+    params = {
+        "Det.engine_type": EngineType.ONNXRUNTIME,
+        "Det.lang_type": LangDet.CH,   # v5/v6 detector is multilingual; detects Latin fine
+        "Det.model_type": ModelType.MOBILE,
+        "Det.ocr_version": version_enum,
+        "Rec.engine_type": EngineType.ONNXRUNTIME,
+        "Rec.lang_type": LangRec.EN,   # recognition is the language-specific half
+        "Rec.model_type": ModelType.MOBILE,
+        "Rec.ocr_version": version_enum,
+    }
+    return RapidOCR(params=params), label
+
+
+def build_engine(engine_pref):
+    """Pick the NEWEST PP-OCR version the installed rapidocr supports, so becky-ocr
+    rides upstream improvements automatically. engine_pref:
+      "ppocr" (default) -> try PP-OCRv6, then v5, then bundled v4
+      "ppocr-v6"/"ppocr-v5" -> start at that version, then degrade
+      "ppocr-v4" -> the bundled, fully-offline default only
+    Each step is best-effort: a version whose weights can't be fetched offline (or
+    that this rapidocr build doesn't know) is skipped, never fatal. Returns
+    (engine, engine_label)."""
     from rapidocr import RapidOCR
 
-    if prefer_v5:
+    chain = []
+    try:
+        from rapidocr import OCRVersion
+        want = (engine_pref or "ppocr").lower()
+        # Newest-first. hasattr guards a rapidocr too old to know a version enum.
+        if want in ("ppocr", "ppocr-v6") and hasattr(OCRVersion, "PPOCRV6"):
+            chain.append((OCRVersion.PPOCRV6, "ppocr-v6-onnx"))
+        if want in ("ppocr", "ppocr-v6", "ppocr-v5") and hasattr(OCRVersion, "PPOCRV5"):
+            chain.append((OCRVersion.PPOCRV5, "ppocr-v5-onnx"))
+    except Exception:  # noqa: BLE001 - rapidocr too old to select versions; use bundled
+        chain = []
+
+    for version_enum, label in chain:
         try:
-            from rapidocr import EngineType, OCRVersion, LangRec, LangDet, ModelType
-            # PP-OCRv5 model list: the v5 DETECTOR ships only as the multilingual
-            # "ch" model (it detects Latin text fine -- recognition is what's
-            # language-specific), paired with the English v5 RECOGNIZER. cls stays
-            # on the bundled v4 angle classifier. All onnxruntime, all mobile tier.
-            params = {
-                "Det.engine_type": EngineType.ONNXRUNTIME,
-                "Det.lang_type": LangDet.CH,
-                "Det.model_type": ModelType.MOBILE,
-                "Det.ocr_version": OCRVersion.PPOCRV5,
-                "Rec.engine_type": EngineType.ONNXRUNTIME,
-                "Rec.lang_type": LangRec.EN,
-                "Rec.model_type": ModelType.MOBILE,
-                "Rec.ocr_version": OCRVersion.PPOCRV5,
-            }
-            eng = RapidOCR(params=params)
-            return eng, "ppocr-v5-onnx"
-        except Exception as e:  # noqa: BLE001 - offline / weights missing -> fall back
-            print(f"ppocr-v5 unavailable ({type(e).__name__}: {e}); "
-                  f"falling back to bundled ppocr-v4", file=sys.stderr)
+            return _engine_for_version(version_enum, label)
+        except Exception as e:  # noqa: BLE001 - offline / weights missing -> next
+            print(f"{label} unavailable ({type(e).__name__}: {e}); trying next",
+                  file=sys.stderr)
 
     # Bundled, fully-offline default (PP-OCRv4 det+rec+cls ONNX shipped in the wheel).
-    eng = RapidOCR()
-    return eng, "ppocr-v4-onnx"
+    return RapidOCR(), "ppocr-v4-onnx"
 
 
 def read_image(path, cv2, np):
@@ -159,7 +178,8 @@ def ocr_image(engine, img, try_rotations, cv2):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("images", nargs="+", help="frame image paths to OCR")
-    ap.add_argument("--engine", default="ppocr", help="ppocr (PP-OCRv5->v4 ONNX) | ppocr-v4")
+    ap.add_argument("--engine", default="ppocr",
+                    help="ppocr (auto: PP-OCRv6->v5->v4 ONNX) | ppocr-v6 | ppocr-v5 | ppocr-v4")
     ap.add_argument("--try-rotations", action="store_true",
                     help="try 0/90/180/270 and keep the best (sideways-frame fallback)")
     args = ap.parse_args()
@@ -167,8 +187,7 @@ def main():
     import numpy as np
     import cv2
 
-    prefer_v5 = args.engine != "ppocr-v4"
-    engine, label = build_engine(prefer_v5)
+    engine, label = build_engine(args.engine)
 
     out = []
     for path in args.images:

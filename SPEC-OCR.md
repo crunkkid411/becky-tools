@@ -1,5 +1,14 @@
 # SPEC-OCR.md — Frame OCR for forensic video
 
+> **UPDATE 2026-06-15 — now requests PP-OCRv6.** `becky-ocr`'s helper
+> (`cmd/ocr/ocr_paddle.py`) now selects the newest PP-OCR version the installed
+> rapidocr supports, **newest-first PP-OCRv6 → v5 → bundled v4** (PP-OCRv6 released
+> on HuggingFace ~2026-06-09, ONNX exports available; it is the model Jordan flagged
+> in iPhone Chrome). Each step is best-effort and degrades safely. Activating v6 in
+> practice needs a rapidocr build that exposes `OCRVersion.PPOCRV6` plus the v6 ONNX
+> weights (cached on first fetch); until then it falls back to v5/v4. Tracked by
+> `becky-freshness` (`internal/freshness/manifest.json`) so it can't be missed again.
+
 > **BUILT 2026-06-08 — `becky-ocr` (cmd/ocr) ships.** The Phase-1 engine is
 > **PaddleOCR PP-OCRv5 via ONNX Runtime, through the `rapidocr` package** (RapidOCR
 > = the maintained, Apache-2.0 ONNX port of the PaddleOCR PP-OCR pipeline:

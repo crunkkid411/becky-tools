@@ -150,7 +150,11 @@ cross-platform replacement for this script.
 - **New (proposed, not built):** `SPEC-DEEP-RESEARCH.md` (`becky-research`
   deep-research harness), `SPEC-OPEN-PALANTIR.md` (`becky-palantir`, integrates
   the OpenPlanter OSINT/entity-graph project), `SPEC-AGENT-HARNESS.md`
-  (`becky-harness`, drives a Pi agent over becky's tools, universal per request).
+  (`becky-harness`, drives a Pi agent over becky's tools, universal per request),
+  `SPEC-RADAR.md` (`becky-radar`, reads Jordan's Chrome history — incl. synced
+  iPhone visits — and surfaces flagged models/tools vs becky's deps),
+  `SPEC-BECKY-CANVAS.md` (native lightweight creative GUI: becky-ask + video/DAW/
+  MIDI/drum modes on one canvas).
 - `BUILD-AGENT-BRIEFING.md` — briefing for a subagent building one tool.
 
 **Historical / inbox (context only — not current instructions):**
@@ -207,10 +211,25 @@ online-vs-cached default, OpenPlanter license/release pinning, Pi auth/local-mod
 which workflows to template first). No Go code written yet — specs are for review
 before scaffolding.
 
-**Still queued (planned, not yet specced):** **becky-handoff** — a CLI that finds
-the newest `claude/*` branch, prints section 6 (done/left) in plain language, runs
-`go build`/`go test`, and offers to merge, so the cloud→local handoff is one
-command instead of a pasted prompt (pairs with the "Minimal trigger" in §4 and is
-the cross-platform replacement for `get-becky-updates.ps1`); a **becky-ask UX
-overhaul** (clipboard/drag-drop/mouse); and an **iPhone-history research ingester +
-synthesizer**. Requested by Jordan 2026-06-14.
+**Shipped 2026-06-15 (on `master`, direct local-agent work):**
+- **`becky-freshness`** (`cmd/freshness` + `internal/freshness`) — the systemic fix
+  for "we missed an upstream model update": a manifest of every external model/tool
+  becky pins + a checker that reports what's newer upstream (HF/GitHub/PyPI). Run as
+  standard practice. Built + unit-tested + verified live (it flagged PP-OCRv6).
+- **`becky-ocr` → PP-OCRv6**: the helper now requests PP-OCRv6 newest-first, auto-
+  degrading v6→v5→v4 (the model Jordan flagged in iPhone Chrome). Activating v6 needs
+  a rapidocr build that knows `PPOCRV6` + the v6 ONNX weights; safe fallback otherwise.
+- **`becky-transcribe` GPU auto-fallback** + the autonomous "Get Becky Updates" button
+  fix (see earlier commits this day).
+
+**Diagnosis (the iPhone-OCR miss):** Jordan opened PP-OCRv6 in iPhone Chrome as the
+example for a tool that reads his browser history to surface updates. That tool was
+**never built** (only listed here as queued) — root cause of the miss. It is now
+specced as **`becky-radar`** (`SPEC-RADAR.md`): reads the local desktop Chrome
+History DB (which carries synced iPhone visits) and cross-references the freshness
+manifest. Not built yet.
+
+**Still queued (planned):** **becky-radar** (specced, build pending); **becky-canvas**
+(`SPEC-BECKY-CANVAS.md`, native creative GUI — specced, build pending); **becky-handoff**
+(cross-platform replacement for `get-becky-updates.ps1`); a **becky-ask UX overhaul**
+(clipboard/drag-drop/mouse/clickable). Requested by Jordan 2026-06-14/15.
