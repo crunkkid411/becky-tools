@@ -88,6 +88,14 @@
       "pinned": "not wired (cross-check option only)",
       "upstream": {"type": "github-release", "ref": "tesseract-ocr/tesseract"},
       "note": "Zero-GPU CPU fallback for clean document scans; not the primary."
+    },
+    {
+      "id": "lfm2-5-vl",
+      "name": "Liquid LFM2.5-VL (lightweight vision)",
+      "used_by": ["becky-ocr", "becky-validate", "becky-ask"],
+      "pinned": "integrating: LFM2.5-VL-450M-GGUF + 1.6B-Extract-GGUF (llama.cpp)",
+      "upstream": {"type": "hf-model", "ref": "LiquidAI/LFM2.5-VL-1.6B"},
+      "note": "Lighter llama.cpp-native VLM for frame triage + document OCR-to-JSON (image-only; Gemma-4 stays for AUDIO). USE LFM2.5-VL, NOT the older LFM2. LFM Open License v1.0 (free commercial under $10M revenue). See SPEC-BECKY-VISION-MODELS.md."
     }
   ]
 }

@@ -169,6 +169,11 @@ cross-platform replacement for this script.
   + formant-preserving pitch match + comp). **HARD REQUIREMENT across these: audio
   editing is VISUAL-FIRST — waveform tracks + pitch lanes are the surface; Jordan
   manually fixes by eye; becky LEARNS his preferences from his corrections.**
+- `SPEC-BECKY-VISION-MODELS.md` (proposed): adopt Liquid **LFM2.5-VL** (NOT old LFM2)
+  GGUF VLMs as right-sized llama.cpp backends — 450M for frame triage, 1.6B-Extract
+  for becky-ocr doc→JSON, 1.6B for becky-ask (Gemma-4 stays for AUDIO; LFM2-VL is
+  image-only). + custom-training plan (Unsloth LoRA→GGUF on the 3070, incl. a
+  "becky preference" model). Tracked in `internal/freshness/manifest.json`.
 - `BUILD-AGENT-BRIEFING.md` — briefing for a subagent building one tool.
 
 **Historical / inbox (context only — not current instructions):**
