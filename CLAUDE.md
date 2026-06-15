@@ -166,18 +166,21 @@ cross-platform replacement for this script.
 
 ## 6. Live handoff — current branch status
 
-**Branch:** `claude/affectionate-pascal-z35plh`
+**Branch:** none active — `claude/affectionate-pascal-z35plh` was merged into
+`master` on 2026-06-15 (merge commit `7dbe61d`) and the branch was deleted
+(local + remote). Its earlier infra/CI/pathx work had already shipped via PR #1.
 
-**Done by cloud agent:**
-- Added `.github/workflows/ci.yml` — build + test + vet + gofmt on Ubuntu + Windows.
-- Added `internal/pathx` (separator-agnostic Base/Dir) + tests.
-- Fixed 3 Windows-path unit tests that failed on Linux/CI (export `defaultOutput`,
-  osintexport `deriveFFprobe`, avlm frame-file labelling). Full suite now green on
-  Linux (`go test ./...` → exit 0).
-- Added this `CLAUDE.md` as the canonical front door + handoff protocol.
+**Done (now on `master`):**
+- `.github/workflows/ci.yml` — build + test + vet + gofmt on Ubuntu + Windows.
+- `internal/pathx` (separator-agnostic Base/Dir) + tests.
+- Windows-path unit-test fixes (export `defaultOutput`, osintexport
+  `deriveFFprobe`, avlm frame-file labelling). Suite green on Linux + Windows.
+- This `CLAUDE.md` as the canonical front door + handoff protocol.
+- The three tool specs below (design only — no Go code yet).
 
-**Left for local agent:** nothing blocking — this branch is infra/cleanup only.
-Pull it, confirm `go test ./...` is green on Windows too, and merge when happy.
+**Left for local agent:** nothing — merged after `go build`/`go test` passed green
+on Windows (go1.26.1). The three specs below await Jordan's go/no-go before any
+code is written (each opts out of the offline invariant — see decisions).
 
 **Three new tool specs drafted (design only — NOT built):**
 - `SPEC-DEEP-RESEARCH.md` → `becky-research`: plan → fan-out search → fetch+cache
