@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "digicore",
+  "displayName": "Digicore",
+  "sources": ["https://www.melodigging.com/genre/digicore", "https://en.wikipedia.org/wiki/Digicore", "https://www.youtube.com/watch?v=jgjc6IF9qKo"],
+  "tempo": { "min": 130, "max": 170, "default": 150 },
+  "key": { "defaultRoot": "F#", "scales": ["aeolian", "dorian"], "defaultScale": "aeolian" },
+  "swing": 0.52,
+  "humanize": { "timingJitter": 3, "velHumanize": 6 },
+  "progressions": [
+    { "name": "wistful",    "weight": 3, "roman": ["i", "bVI", "bIII", "bVII"] },
+    { "name": "relmajor",   "weight": 2, "roman": ["vi", "IV", "I", "V"] },
+    { "name": "descending", "weight": 1, "roman": ["i", "iv", "bVII", "bVI"] }
+  ],
+  "arrangement": [
+    { "name": "intro",  "bars": 4,  "energy": 0.25, "tracks": ["chords", "melody", "sfx"] },
+    { "name": "verse",  "bars": 16, "energy": 0.45, "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "build",  "bars": 8,  "energy": 0.8,  "tracks": ["drums", "bass", "chords", "melody", "sfx"] },
+    { "name": "drop",   "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"] },
+    { "name": "verse2", "bars": 12, "energy": 0.5,  "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "drop2",  "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"] },
+    { "name": "outro",  "bars": 6,  "energy": 0.3,  "tracks": ["chords", "melody", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,0,0,0, 0,0,0,1, 0,0,1,0, 0,0,0,0], "vel": "accent" },
+        "snare": { "note": 38, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "accent" },
+        "hat":   { "note": 42, "grid": [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1], "vel": "soft",
+                   "rolls": [{ "cell": 6, "n": 4, "ramp": "up" }, { "cell": 15, "n": 6, "ramp": "up" }] }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 39, "channel": 1, "register": [28,48], "style": "808glide",
+              "octave": -2, "glide": true, "rhythm": "rootWithGlideToNextRoot" },
+    "chords": { "program": 11, "channel": 2, "register": [50,74], "voicing": "extended",
+                "extensions": ["m9","maj9","m11"], "rhythm": "arpUpEighths", "vel": "soft" },
+    "melody": { "program": 11, "channel": 3, "register": [60,84], "scaleSource": "key",
+                "contour": "stepwiseHook", "motifBars": 2, "density": 0.55, "vel": "normal" },
+    "lead":   { "program": 81, "channel": 4, "register": [64,88], "contour": "detunedBell",
+                "density": 0.45, "vel": "normal", "activeFromEnergy": 0.8 },
+    "counter":{ "program": 11, "channel": 5, "register": [55,79], "role": "harmonyThird",
+                "density": 0.35, "vel": "soft", "activeFromEnergy": 0.8 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild","impactAtDrop"] }
+  }
+}

@@ -146,7 +146,9 @@ cross-platform replacement for this script.
 
 **Specs (read the one for the tool you're building):**
 - `SPEC-BECKY-ASK.md`, `SPEC-BECKY-NEW-TOOL.md`, `SPEC-OCR.md`,
-  `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`.
+  `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`,
+  `SPEC-BECKY-COMPOSE.md` (BUILT — `becky-compose`: deterministic genre→multi-track
+  MIDI; genre DB in `internal/music/profiles/`).
 - **New (proposed, not built):** `SPEC-DEEP-RESEARCH.md` (`becky-research`
   deep-research harness), `SPEC-OPEN-PALANTIR.md` (`becky-palantir`, integrates
   the OpenPlanter OSINT/entity-graph project), `SPEC-AGENT-HARNESS.md`
@@ -219,6 +221,12 @@ before scaffolding.
 - **`becky-ocr` → PP-OCRv6**: the helper now requests PP-OCRv6 newest-first, auto-
   degrading v6→v5→v4 (the model Jordan flagged in iPhone Chrome). Activating v6 needs
   a rapidocr build that knows `PPOCRV6` + the v6 ONNX weights; safe fallback otherwise.
+- **`becky-compose`** (`cmd/compose` + `internal/music`) — deterministic, genre-aware
+  multi-track MIDI generator. Genre profile DB (`internal/music/profiles/*.json`) so
+  becky "already knows" a genre; emits per-track .mid stems + song.mid + project.json
+  routing (loads into SPEC-BECKY-CANVAS's DAG). Pure-Go, offline, tested
+  (VLQ/theory/determinism/SMF-parse). Genres: crunkcore, digicore, hyperpop (+ metalcore,
+  crabcore landing). `SPEC-BECKY-COMPOSE.md`.
 - **`becky-transcribe` GPU auto-fallback** + the autonomous "Get Becky Updates" button
   fix (see earlier commits this day).
 

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "hyperpop",
+  "displayName": "Hyperpop",
+  "sources": ["https://en.wikipedia.org/wiki/Hyperpop", "https://www.jeffreypepperrodgers.com/blog/songwriting-lesson-chord-progressions-in-minor-keys", "https://www.woovebox.com/support/guides--tutorials/chords/popular-chords/i-bvii-bvi-v-andalusian-cadence"],
+  "tempo": { "min": 100, "max": 160, "default": 145 },
+  "key": { "defaultRoot": "A", "scales": ["aeolian"], "defaultScale": "aeolian" },
+  "swing": 0.50,
+  "humanize": { "timingJitter": 0, "velHumanize": 4 },
+  "progressions": [
+    { "name": "andalusian", "weight": 3, "roman": ["i", "bVII", "bVI", "V"] },
+    { "name": "aeolianCad", "weight": 2, "roman": ["bVI", "bVII", "i", "i"] },
+    { "name": "minorPuff",  "weight": 1, "roman": ["i", "bIII", "iv", "iv"] }
+  ],
+  "arrangement": [
+    { "name": "intro", "bars": 4,  "energy": 0.2,  "tracks": ["chords", "sfx"] },
+    { "name": "verse", "bars": 16, "energy": 0.45, "tracks": ["drums", "bass", "chords", "melody"] },
+    { "name": "build", "bars": 8,  "energy": 0.9,  "tracks": ["drums", "bass", "chords", "melody", "sfx"] },
+    { "name": "drop",  "bars": 16, "energy": 1.0,  "tracks": ["drums", "bass", "chords", "melody", "lead", "counter", "sfx"] },
+    { "name": "outro", "bars": 8,  "energy": 0.3,  "tracks": ["chords", "melody", "sfx"] }
+  ],
+  "tracks": {
+    "drums": {
+      "program": null, "channel": 9,
+      "patterns": {
+        "kick":  { "note": 36, "grid": [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0], "vel": "accent" },
+        "clap":  { "note": 39, "grid": [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], "vel": "hard" },
+        "hat":   { "note": 42, "grid": [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,1], "vel": "soft" }
+      },
+      "densityByEnergy": true
+    },
+    "bass": { "program": 39, "channel": 1, "register": [28,48], "style": "808",
+              "octave": -2, "glide": false, "rhythm": "rootFollowsKick" },
+    "chords": { "program": 81, "channel": 2, "register": [52,76], "voicing": "supersaw",
+                "extensions": ["sus2","add9"], "rhythm": "sidechainPumpQuarter", "vel": "soft" },
+    "melody": { "program": 80, "channel": 3, "register": [62,86], "contour": "vocalHook",
+                "motifBars": 2, "density": 0.5, "vel": "normal" },
+    "lead":   { "program": 81, "channel": 4, "register": [64,88], "contour": "supersawStab",
+                "density": 0.5, "vel": "hard", "activeFromEnergy": 0.9 },
+    "counter":{ "program": 80, "channel": 5, "register": [57,79], "role": "octaveEcho",
+                "density": 0.3, "vel": "soft", "activeFromEnergy": 0.9 },
+    "sfx":    { "program": 127, "channel": 6, "register": [60,84], "events": ["riserAtBuild","impactAtDrop"] }
+  }
+}
