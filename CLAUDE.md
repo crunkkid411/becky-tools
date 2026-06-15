@@ -122,7 +122,9 @@ Claude Code (filling in the branch name from the chat or the PR):
 - **New (proposed, not built):** `SPEC-DEEP-RESEARCH.md` (`becky-research`
   deep-research harness), `SPEC-OPEN-PALANTIR.md` (`becky-palantir`, integrates
   the OpenPlanter OSINT/entity-graph project), `SPEC-AGENT-HARNESS.md`
-  (`becky-harness`, drives a Pi agent over becky's tools, universal per request).
+  (`becky-harness`, drives a Pi agent over becky's tools, universal per request),
+  `SPEC-OMNIGENT.md` (`becky-omni`, runs becky's agents under the Omnigent
+  meta-harness with policy/sandbox governance + a watchable share session).
 - `BUILD-AGENT-BRIEFING.md` — briefing for a subagent building one tool.
 
 **Historical / inbox (context only — not current instructions):**
@@ -164,6 +166,14 @@ Pull it, confirm `go test ./...` is green on Windows too, and merge when happy.
   (`cmd/harness/` + `internal/pirun/`) that drives a Pi agent (`earendil-works/pi`)
   headless over a per-run, default-deny allowlist of becky tools. Universal per
   request (declared tools/model/skill/goal). Faked-Pi unit tests on the cloud side.
+- `SPEC-OMNIGENT.md` → `becky-omni`: runs becky's agent(s) under Omnigent
+  (`omnigent-ai/omnigent`, Databricks' Apache-2.0 meta-harness) for policy/cost
+  guardrails, an OS sandbox that ENFORCES the offline invariant + gates destructive
+  tools, and a share-URL session Jordan can watch/steer from his iPhone. Sits ABOVE
+  Pi, so it reconciles with `becky-harness`: harness becomes the agent-YAML/tool-
+  manifest generator, omni runs it under governance (the #1 open decision). NOTE:
+  Omnigent's OS sandbox (Omnibox) is Linux/macOS-native — the Windows story is the
+  top risk for the local agent to resolve.
 
 Each spec documents the cloud-vs-local build split and an explicit integration/
 helper stub contract, so the local agent only wires the model/binary boundary.
