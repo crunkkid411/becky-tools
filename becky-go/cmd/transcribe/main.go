@@ -1,7 +1,11 @@
 // becky-transcribe — Parakeet-TDT-0.6B-v3 speech-to-text via sherpa-onnx.
 //
 //	becky-transcribe <input> [--output f] [--format json|srt|txt|vtt]
-//	                 [--lang en] [--device cpu|cuda] [--num-threads N] [--verbose]
+//	                 [--lang en] [--device auto|cuda|cpu] [--num-threads N] [--verbose]
+//
+// --device defaults to "auto": run on CUDA when it works and fall back to CPU on
+// an out-of-memory (or any GPU) failure, re-running the clip so a transcript is
+// still produced. "cuda" forces GPU-only; "cpu" forces CPU-only.
 //
 // JSON goes to stdout (or --output); diagnostics go to stderr; exit 0 on success.
 package main
@@ -81,6 +85,12 @@ type helperResult struct {
 	Language string `json:"language"`
 	Text     string `json:"text"`
 	Words    []Word `json:"words"`
+	// Device is the provider that actually produced the transcript (cpu|cuda).
+	// FellBack is true when CUDA was tried first and we dropped to CPU (e.g. GPU
+	// out-of-memory); FallbackReason carries the GPU error in that case.
+	Device         string `json:"device"`
+	FellBack       bool   `json:"fell_back"`
+	FallbackReason string `json:"fallback_reason"`
 }
 
 // Segmentation thresholds: start a new caption segment when speech pauses or the
@@ -95,7 +105,7 @@ func main() {
 	format := flag.String("format", "json", "output format: json, srt, txt, vtt")
 	_ = flag.String("model", "parakeet-v3", "model name (informational)")
 	lang := flag.String("lang", "en", "language code")
-	device := flag.String("device", "", "device: cpu, cuda (default from config)")
+	device := flag.String("device", "", "device: auto, cuda, cpu (default auto: GPU with automatic CPU fallback on OOM)")
 	numThreads := flag.Int("num-threads", 4, "ONNX inference threads")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD speech-mask gate (keep ASR segments over silence)")
@@ -110,7 +120,12 @@ func main() {
 	}
 
 	cfg := config.Load()
-	dev := cfg.Device
+	// becky-transcribe defaults to "auto" — use CUDA when it works and fall back
+	// to CPU on an OOM/GPU failure (handled in transcribe_parakeet.py). This is
+	// transcribe-specific on purpose: the shared cfg.Device default stays "cpu" so
+	// the other sherpa/ST helpers (diarize, voice, embed) are unaffected. A
+	// --device flag still overrides (auto|cuda|cpu).
+	dev := "auto"
 	if *device != "" {
 		dev = *device
 	}
@@ -141,6 +156,11 @@ func main() {
 	}
 	if res.Skipped {
 		beckyio.Fatalf("transcription skipped: %s", res.Reason)
+	}
+	if res.FellBack {
+		beckyio.Logf(*verbose, "GPU run failed (%s) — fell back to CPU", res.FallbackReason)
+	} else if res.Device != "" {
+		beckyio.Logf(*verbose, "transcribed on %s", res.Device)
 	}
 
 	// Force non-nil slices so the "words"/"segments" fields marshal as [] (not
