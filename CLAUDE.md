@@ -63,6 +63,13 @@ REM Windows-only: produce the actual .exe binaries Jordan runs.
 cd becky-go && build-all-tools.bat
 ```
 
+**STANDARD PROCEDURE (not optional):** after building or modifying ANY tool, run
+`build-all-tools.bat` to compile the real `.exe`s — `go build`/`go test` passing is
+NOT "done"; the binary Jordan actually runs must build. The script auto-discovers
+every `cmd/*`, so new tools are picked up with no edit to it. On a non-Windows/cloud
+agent that can't run it, say so plainly and leave it as the local agent's completion
+step (it must still pass `go build ./...`).
+
 CI (`.github/workflows/ci.yml`) runs build + test + vet + gofmt on **both** Ubuntu
 and Windows for every push and PR. Green CI means the deterministic Go layer is
 sound. CI does **not** exercise the ML path (no model weights / GPU on CI) — that
