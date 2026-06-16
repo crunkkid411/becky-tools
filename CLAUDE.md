@@ -229,7 +229,7 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
-**Branch `local/canvas-engine-wiring-2026-06-15` (local, 2026-06-15) — 4 prioritized §6 items wired via a parallel-subagent wave. NOT yet merged.**
+**Branch `local/canvas-engine-wiring-2026-06-15` (local, 2026-06-15) — MERGED to master (fast-forward). 5 prioritized §6 items wired via two parallel-subagent waves.**
 
 At Jordan's instruction ("deploy a bunch of subagents to keep working"), four
 collision-free domains (disjoint file ownership, every OS/cgo/model boundary behind
