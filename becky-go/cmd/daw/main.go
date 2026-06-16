@@ -19,9 +19,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"becky-go/internal/dawmodel"
+	"becky-go/internal/habits"
 	"becky-go/internal/pathx"
 )
 
@@ -147,6 +149,7 @@ func cmdEdit(args []string) int {
 		return emitJSON(edited)
 	}
 	printEditReport(edited, o.op, o.out)
+	emitCorrectionLog(edited, o.in, o.out)
 	return exitOK
 }
 
@@ -206,4 +209,45 @@ func emitJSON(v any) int {
 		return exitErr
 	}
 	return exitOK
+}
+
+// emitCorrectionLog writes the arrangement's in-memory corrections to a JSONL
+// sidecar (daw.corrections.jsonl) alongside the output file — or alongside the
+// input when no output file was written (report-only mode). Best-effort: a
+// write failure prints a warning and does not affect the exit code.
+//
+// Scope/field mapping (habits contract):
+//
+//	scope = c.Clip  — which clip Jordan was editing (the instrument bucket)
+//	field = c.Kind  — which knob was adjusted (gain, quantize, velocity, …)
+//
+// This mirrors the examples in internal/habits/sources.go: scope="kick",
+// field="gain_db". The clip identifies what was edited; the kind names the knob.
+func emitCorrectionLog(arr *dawmodel.Arrangement, in, out string) {
+	if arr.CorrectionCount() == 0 {
+		return
+	}
+	logPath := correctionLogPath(in, out)
+	for _, c := range arr.Corrections {
+		if err := habits.AppendCorrectionLog(logPath, "daw", c.Clip, c.Kind, c.Auto, c.Fixed); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: correction log: %v\n", err)
+		}
+	}
+}
+
+// correctionLogPath returns the path for the daw.corrections.jsonl sidecar.
+// It sits in the directory of the output file when one was written, or in the
+// directory of the input file otherwise — always next to becky's work products.
+func correctionLogPath(in, out string) string {
+	dir := ""
+	if out != "" {
+		dir = pathx.Dir(out)
+	}
+	if dir == "" && in != "" {
+		dir = pathx.Dir(in)
+	}
+	if dir == "" {
+		return "daw.corrections.jsonl"
+	}
+	return filepath.Join(dir, "daw.corrections.jsonl")
 }

@@ -97,6 +97,25 @@ func runAlign(sub string, argv []string) int {
 		fmt.Fprintf(os.Stderr, "becky-vox: %v\n", err)
 		return 1
 	}
+	// TODO(becky-habits): emit AppendCorrectionLog here once Jordan's overrides are
+	// captured. The vox.Correction slice in res.Corrections is currently a
+	// *flag seed* only — Corrected is nil on every row until the canvas lets
+	// Jordan drag a warp tie-line or move a pitch blob by eye. When that UI gesture
+	// is wired (canvas sends the corrected shiftMs/moveCents back to cmd/vox or a
+	// sidecar editor), add:
+	//
+	//   logPath := <output-dir>/vox.corrections.jsonl
+	//   for _, c := range res.Corrections {
+	//       if c.Corrected == nil { continue }
+	//       habits.AppendCorrectionLog(logPath, "vox",
+	//           fmt.Sprintf("%s%d", c.Kind, c.Index), c.Kind,
+	//           fmt.Sprintf("%v", c.Auto), fmt.Sprintf("%v", *c.Corrected))
+	//   }
+	//
+	// scope = "<kind><index>" (e.g. "warp.shiftMs3", "note.moveCents1") so each
+	// syllable/note has its own bucket; field = c.Kind ("warp.shiftMs" or
+	// "note.moveCents"). The output dir is the directory of --json or --out, falling
+	// back to the directory of --guide.
 	if res.Degraded {
 		return 1
 	}

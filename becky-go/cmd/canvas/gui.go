@@ -109,6 +109,32 @@ type App struct {
 	// is registered on the HWND.  It is called on DestroyEvent to revoke the
 	// registration cleanly.  Nil until first Win32ViewEvent arrives.
 	disableDrop func()
+
+	// ── Select→Ask→Transform loop state (§6 item #2) ──────────────────────
+	//
+	// scene is the CURRENT deterministic canvas scene (the source of truth the
+	// overlay Apply/Reject path mutates immutably). It starts as an empty scene
+	// and is replaced on every approved proposal or project load.
+	scene canvas.Scene
+
+	// selection is what Jordan has currently selected on the canvas. The zero
+	// value (Kind=SelectNone) means "nothing selected" — the agent box falls
+	// through to the existing keyword tool-routing path in that case.
+	selection canvas.Selection
+
+	// transformer is the Propose implementation. It is wired to StubTransformer
+	// by default; swap it for a real model implementation when the model binary
+	// is present (the local GPU boundary, see internal/canvas/transform.go).
+	transformer canvas.Transformer
+
+	// overlay holds the Gio widget state for the "show me, don't do it" preview.
+	overlay overlayWidget
+
+	// overlayEnterPressed / overlayEscPressed are set by the Gio keyboard path
+	// (the command editor's Submit event) so handleOverlayInput can approve or
+	// reject without relying on button clicks.
+	overlayEnterPressed bool
+	overlayEscPressed   bool
 }
 
 func main() {
@@ -131,11 +157,13 @@ func newApp(w *app.Window) *App {
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 
 	a := &App{
-		th:         th,
-		window:     w,
-		icons:      loadIcons(),
-		activeMode: canvas.ModeAsk,
-		tools:      catalog(),
+		th:          th,
+		window:      w,
+		icons:       loadIcons(),
+		activeMode:  canvas.ModeAsk,
+		tools:       catalog(),
+		scene:       canvas.NewScene(canvas.ModeAsk),
+		transformer: canvas.StubTransformer{},
 	}
 	a.outputList.Axis = layout.Vertical
 	a.command.SingleLine = true
@@ -211,6 +239,10 @@ func (a *App) handleInput(gtx layout.Context) {
 		a.startBrowse(false)
 	}
 
+	// Overlay approve/reject (must run before agent-box submit so Enter while an
+	// overlay is open approves the proposal rather than re-submitting the box).
+	a.handleOverlayInput(gtx)
+
 	// Agent box submit / Run button.
 	runCmd := a.runBtn.Clicked(gtx)
 	for {
@@ -223,7 +255,14 @@ func (a *App) handleInput(gtx layout.Context) {
 		}
 	}
 	if runCmd {
-		a.runCommand(a.command.Text())
+		if a.overlay.hasPending() {
+			// Enter while overlay is open → approve the pending proposal.
+			a.overlayEnterPressed = true
+			a.handleOverlayInput(gtx)
+		} else {
+			// Normal path: propose (or route a tool keyword).
+			a.proposeForInstruction(a.command.Text())
+		}
 	}
 
 	// Output controls.
@@ -427,12 +466,14 @@ func (a *App) layoutFrame(gtx layout.Context) {
 	)
 }
 
-// layoutWorkColumn stacks the big canvas, then the agent box, then the small output.
+// layoutWorkColumn stacks the big canvas, then the "show me" overlay (zero
+// height when no proposal is pending), then the agent box, then the output.
 func (a *App) layoutWorkColumn(gtx layout.Context) layout.Dimensions {
 	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Flexed(1, a.layoutCanvas),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(a.layoutOverlay), // "show me, don't do it" — zero height when idle
 			layout.Rigid(a.layoutAgentBox),
 			layout.Rigid(a.layoutOutput),
 		)

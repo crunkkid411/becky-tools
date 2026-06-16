@@ -95,6 +95,21 @@ func runAnalyze(argv []string) int {
 		return 1
 	}
 
+	// TODO(becky-habits): emit AppendCorrectionLog here once Jordan's overrides are
+	// captured. The hum.Correction slice in res.Corrections is currently a
+	// *suggestion seed* only — Corrected is nil on every row until the canvas lets
+	// Jordan drag a note to its real pitch. When that UI gesture is wired (canvas
+	// sends a corrected MIDI value back to cmd/hum or a sidecar editor), add:
+	//
+	//   logPath := filepath.Join(dir, "hum.corrections.jsonl")
+	//   for _, c := range res.Corrections {
+	//       if c.Corrected == nil { continue }
+	//       habits.AppendCorrectionLog(logPath, "hum",
+	//           fmt.Sprintf("note%d", c.NoteIndex), c.Field,
+	//           fmt.Sprintf("%v", c.Auto), fmt.Sprintf("%v", *c.Corrected))
+	//   }
+	//
+	// scope = "note<i>" identifies which note index; field = c.Field ("note.midi" today).
 	if *asJSON {
 		printJSON(res)
 	} else {
