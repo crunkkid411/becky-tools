@@ -38,6 +38,15 @@ type report struct {
 }
 
 func main() {
+	// Real-audio seam: under `-tags audio` the native backend handles --list-real,
+	// --record, and --play (see main_audio.go). The default (no-tag) build's seam
+	// is a no-op (main_noaudio.go), so the pure-Go device-selection demo below is
+	// unchanged. Keeping main() identical across builds preserves CI-green default
+	// behavior (CLAUDE.md §3).
+	if handled, code := audioModeRun(os.Args[1:]); handled {
+		os.Exit(code)
+	}
+
 	asJSON := flag.Bool("json", false, "emit JSON instead of a plain-language report")
 	list := flag.Bool("list", false, "list all enumerated devices, not just the chosen pair")
 	noIface := flag.Bool("no-interface", false, "simulate the pro interface being unplugged (demo the fallback)")
