@@ -229,6 +229,47 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `local/canvas-runtime-2026-06-15` (local, 2026-06-15) — the REAL runtime behind the wired stubs. "Build it all" — done. MERGED to master (fast-forward).**
+
+At Jordan's instruction ("build it all, build it now") the remaining stubs were made
+real across two more subagent waves (3 = parallel engine work, 4 = the single GUI
+integration pass — one owner of `cmd/canvas`). Commits `6996ef9` (wave 3) + `9c42898`
+(wave 4). `go build/vet/test ./...` green; `-tags gui` + `-tags audio` (mingw CC) both
+compile; 43 tools build; **smoke-verified live** (a 4-on-the-floor kick rendered + played
+through the synth, exit 0). What's now real:
+- **Real AI brain (overlay):** `internal/canvas/model_transformer.go` — a `Transformer`
+  backed by a local llama.cpp text model (`BECKY_TRANSFORM_BIN`/`_MODEL`; `--temp 0 --seed 42`;
+  strict-JSON proposal). `PickTransformer()` returns it when the binary+weights resolve,
+  else the deterministic stub. The canvas overlay now calls `PickTransformer()`. **Left
+  for Jordan:** drop a text GGUF (default `X:/AI-2/becky-tools/models/gemma-3-4b-it/…q8_0.gguf`)
+  + have `llama-cli.exe` (same llama.cpp build as becky-vision). Silent-degrades to stub.
+- **Real audio synthesis:** `internal/audioengine/synth.go` — pure-Go polyphonic synth
+  (MIDI→Hz, 32-voice pool, A/S/R, ch9 percussion decay, tanh limiter), unit-tested.
+  `synth_audio.go` (`//go:build audio`) renders→WAV→`becky_play_wav`. `becky-daw-engine
+  --play-pattern-audio <project.json>` SOUNDS a pattern (verified).
+- **Canvas ▶/■ Play (audible):** `cmd/canvas/gui_play.go` — a transport row in drum+piano
+  modes; ▶ serialises the drum grid to a project.json (`arrangementFromDrum`, GM percussion
+  ch9) or plays a `.json` target directly, by exec'ing the sibling `becky-daw-engine
+  --play-pattern-audio`. Canvas stays a pure `-tags gui` build (no cgo); sound lives in the
+  audio-built engine exe (the becky compose-tools way).
+- **Drag-to-correct (learning loop closed visually):** toggling a drum cell logs a canvas
+  correction (`internal/canvas/gesture.go` `MapDrumToggle` → `habits.AppendCorrectionLog`,
+  best-effort) so becky learns Jordan's by-eye beat fixes.
+- **Explorer-aware import:** the Open button scopes the picker to
+  `winctx.ForegroundExplorerFolder()` (the folder he's already in), falling back to the
+  dialog. **Overlay keyboard:** Esc=reject / Enter=approve via the Gio v0.10 key API
+  (`key.FocusCmd` + `key.Filter`).
+
+**Left for local / next (the genuine hardware-only Phase-2):** sample-based drum voices
+(swap the sine in `synth.voice.tick()` for a kick/snare WAV), a live-streaming audio ring
+for interactive looping (today ▶ renders-then-plays one bar), and the emit-side for
+**hum/vox** corrections (daw + canvas emit now; hum/vox carry precise TODOs — they need a
+concrete corrected value, which the canvas drag-to-correct now provides a template for).
+Jordan verifies the GUI by running the window (▶ a beat, select→ask→✓/✗, drag a cell,
+import from an open folder).
+
+---
+
 **Branch `local/canvas-engine-wiring-2026-06-15` (local, 2026-06-15) — MERGED to master (fast-forward). 5 prioritized §6 items wired via two parallel-subagent waves.**
 
 At Jordan's instruction ("deploy a bunch of subagents to keep working"), four
