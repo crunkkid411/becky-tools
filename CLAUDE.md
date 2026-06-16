@@ -229,6 +229,30 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/pipeline-motion-report-2026-06-16` (cloud, 2026-06-16) — becky-pipeline: adds `motion` + `report` steps. READY FOR REVIEW.**
+
+Closes the full forensic chain: `becky-pipeline video.mp4 --steps transcribe,diarize,events,motion,identify,report` now runs end-to-end and emits a `report.json` + `report.md` case report as the final step.
+
+**What was changed** (all in `becky-go/cmd/pipeline/`):
+- **`steps.go`**: added `stepMotion`/`stepReport` constants; added both to `canonicalOrder` (motion after identify, report last), `knownSteps`, and `outputMarker`; extended `stepPaths` / `newStepPaths` with `motion`, `reportJSON`, `reportMD` paths.
+- **`run.go`**: added motion + report to `optionalBinary` (both degrade gracefully if the binary is absent); added `stepArgs` cases for both; added `reportStepArgs` helper (passes only sidecars that exist on disk so becky-report's own degrade path handles any that are missing); added `reportRunNote` (surfaces conclusion/review counts in the manifest note); wired the note into `runStep`.
+- **`steps_test.go`**: 8 new tests — parse motion+report, canonical ordering, no-dep planning for motion and report, full-chain plan, path non-empty checks.
+
+**Usage after merge:**
+```
+# Full end-to-end (needs becky-motion.exe + becky-report.exe in the same dir):
+becky-pipeline video.mp4 --steps transcribe,diarize,events,motion,identify,report --kb kb/
+
+# Just add report to an existing pipeline run (reads whatever sidecars exist):
+becky-pipeline video.mp4 --steps report --resume
+```
+
+**Degrade behaviour**: if `becky-motion.exe` or `becky-report.exe` is absent, those steps show as "skipped" in the manifest (not "failed") and the chain continues. becky-report shows DOCUMENTED/CANDIDATE counts in the manifest note column.
+
+**Left for local**: run `build-all-tools.bat` (auto-discovers; no script edit needed), then test with a real clip. Verify `pipeline-out/<stem>/report.json` and `report.md` appear.
+
+---
+
 **Branch `claude/ask-pitch-phase3-2026-06-16` (cloud, 2026-06-16) — becky-ask Phase 3: new-tool pitch → factory handoff. READY FOR REVIEW.**
 
 Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a structured pitch, shows it in plain English, and on "y" calls `becky-new-tool --intake-file` to kick off the factory pipeline. Builds + all tests pass (go build/vet/test/gofmt all green, 10 new pitch tests + render_test.go updated for Phase 3 behaviour).
