@@ -175,6 +175,10 @@ load-bearing rules, in brief:
 - `SKILL.md` — how to *use* the tools (human + agent usage guide).
 - `FORENSIC-OUTPUT-PHILOSOPHY.md` — how findings must be reported. Governs every
   human-facing output.
+- `CANVAS-INSPIRATION.md` — design-research brief for becky-canvas (Jordan's GUI):
+  starred-repo mining + reference apps (infinite-kanvas, ACE-Step-DAW, DAW-Copilot,
+  cate, jsoncrack, blocksuite, the "show me, don't do it" overlay). Read before any
+  becky-canvas GUI/agent-UX work — the research is done, don't redo it.
 
 **Specs (read the one for the tool you're building):**
 - `SPEC-BECKY-ASK.md`, `SPEC-BECKY-NEW-TOOL.md`, `SPEC-OCR.md`,
@@ -224,6 +228,61 @@ load-bearing rules, in brief:
 ---
 
 ## 6. Live handoff — current branch status
+
+**Branch `local/canvas-gui-and-audio-2026-06-15` (local, 2026-06-15) — MERGED to master. becky-canvas is now a REAL GUI window + a real-time audio engine.**
+
+`becky-canvas.exe` now OPENS as a native window (verified launching it). Toolkit =
+**Gio** (gioui.org, pure Go, Direct3D 11). **ImGui/giu was REJECTED** — it compiles but
+GLFW/OpenGL fails to create a window in non-interactive sessions; Gio's D3D11 works.
+GUI code is `cmd/canvas/gui*.go` behind `//go:build gui`; the headless scene-dumper is
+`cmd/canvas/main.go` (`//go:build !gui`). The audio engine is `internal/audioengine` +
+`cmd/daw-engine` behind `//go:build audio` (cgo + vendored `miniaudio.h`; real WASAPI
+enumeration verified, prefers the non-built-in interface; record-to-WAV + WAV playback).
+`build-all-tools.bat` now ships becky-canvas.exe as the GUI (`-tags gui`) and
+becky-daw-engine.exe with real audio (`-tags audio`, needs the mingw CC at
+`C:\msys64\mingw64\bin\gcc.exe`). Default `go build ./...` stays green (stub/headless).
+
+Current window (icon-first, branded from `hairjordan.yaml` — neon-green `#39FF14` on
+black, scene-kid diamond): a dock of icon buttons (record/draw/piano/drum/video/open);
+the central canvas renders a waveform / DAW scene / a **clickable 4×16 drum grid** /
+piano placeholder / pen-draw strokes; one quiet agent line (keyword-routing only); a
+small selectable output panel. FIXED: argv-on-launch carries a dropped file as the
+target (drag onto the .exe works); tools now write a sidecar **next to the source**
+(`--output dir(src)/base.tool.json`) + surface `Saved: <path>`.
+
+**Jordan's verdict = THE design north star (READ before touching the GUI):** wall-of-text
+is a creative's nightmare; **colors & shapes > text, every time**; don't show options
+unless asked; everything drag-and-drop; draw on the canvas to communicate; ONE small box
+to talk to the agent; the agent must be context-aware + fully integrated. Target
+interaction (from `CANVAS-INSPIRATION.md`): **select something → say what you want in
+plain words → AI changes it in place** (infinite-kanvas). He LOVES the **"show me, don't
+do it" overlay** (ThioJoe/Thio-Universal-Agent) and wants it **GLOBAL across becky** —
+the agent proposes/previews, the human stays in control.
+
+*Left for local / next agent (PRIORITIZED — research already done in `CANVAS-INSPIRATION.md`,
+do NOT redo it):*
+1. **In-window file drag-drop on Windows** — Gio v0.10 CANNOT receive OS file drops; needs
+   a small WinAPI `IDropTarget` shim (syscall/cgo). Jordan's #1 friction.
+2. **select→ask→transform agent loop** + the global **"show me, don't do it"** overlay
+   (propose/preview, human approves) using becky's local models (Gemma-4 / LFM2.5-VL) for
+   "draw on the canvas + ask about this".
+3. **Real drum machine + piano roll** that PLAY through the new audio engine (dawmodel +
+   audioengine).
+4. **Context-awareness of what's open** (e.g. current Explorer folder) for import — Jordan
+   won't use the "dumb" Browse dialog.
+5. Wire the corrections logs (hum/vox/daw/canvas) → `becky-habits` (preference learning).
+6. Smoke-test on real hardware: `becky-daw-engine --record/--play`, `becky-hum --wav`,
+   `becky-vision` on the 1.6B model.
+
+`CANVAS-INSPIRATION.md` (repo root) = the full starred-repo + reference design brief.
+Highlights: **infinite-kanvas** (select→describe→transform — the core loop), **ACE-Step-DAW**
++ **ariknel/DAW-Copilot** (one box → stems/MIDI, LEGO context), **cate** (infinite canvas +
+dockable panels + Cmd-K palette + saved layouts), **AykutSarac/jsoncrack** (JSON→node graph
+for workflow/VST-chain views), **toeverything/blocksuite** (same data, doc+canvas dual view),
+**ThioJoe/Thio-Universal-Agent** (the show-me overlay; use as reference/external tester —
+non-commercial license, don't vendor).
+
+---
 
 **Branch `local/buildbat-and-dawbase-2026-06-15` (local, 2026-06-15) — standard-procedure fix + dawbase port, merged to master.**
 - `build-all-tools.bat` now **auto-discovers `cmd/*`** (was a stale hardcoded list that
