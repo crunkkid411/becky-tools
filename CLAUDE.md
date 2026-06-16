@@ -229,6 +229,23 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/becky-scout-2026-06-16` (cloud, 2026-06-16) — becky-scout: YouTube playlist → becky improvement radar. READY FOR REVIEW.**
+
+Corroborates three independent signals (dep-match, capability keyword, optional assessor model) before calling a video "relevant", following the becky forensic discipline. Builds + all tests pass (`go build/vet/test/gofmt` all green; 10 package tests + 4 CLI tests = 14 total).
+
+- **`internal/scout/scout.go`** (new): `Build()`, `assessVideo()`, `Video`/`Playlist`/`Item`/`Report` types, `PlaylistSource` + `Assessor` interfaces; three-signal corroboration logic + stable deterministic ordering.
+- **`internal/scout/catalog.go`** (new): `Capability` type, `matchCapabilities()`, `DefaultCatalog()` — 13 becky capability domains (speech-to-text, speaker diarization, face recognition, OCR, embeddings, VLM, video understanding, local LLMs, agents, OSINT, music generation, audio analysis, DAW production).
+- **`internal/scout/interests.go`** (new): `Interest` type, `matchInterests()`, `DefaultInterests()` — 7 Jordan personal-interest categories (AI agents, local/open-source AI, music/audio production, video/images, documents/notes, productivity, AI know-how).
+- **`internal/scout/fake.go`** (new): `FakePlaylist` + `FakeAssessor` for CI (no network, no model).
+- **`internal/scout/scout_test.go`** (new): 10 table-driven tests: corroborated improve, single-signal candidate, off-topic skip, assessor corroborates, assessor-alone candidate, degrade on source error, deterministic order, transcript catalog match, useful lane, becky-match not duplicated as useful.
+- **`cmd/scout/main.go`** (new): CLI (--json, --catalog, --from-json); `unwiredSource{}` stub (cloud-side degrade; local-agent wiring contract in a comment); `fileSource{}` (offline --from-json; accepts bare array or {videos:[...]} object JSON).
+- **`cmd/scout/main_test.go`** (new): 4 tests: fileSource both formats, position preservation, missing file, unwiredSource degrade.
+- **`SPEC-SCOUT.md`** (new): spec with code layout, cloud↔local split, exact yt-dlp wiring contract for the local agent, open decisions for Jordan.
+
+Left for local: **two stubs to wire** — (1) `ytdlpSource` (replaces `unwiredSource{}` in `cmd/scout/main.go`; yt-dlp --flat-playlist -J + per-video VTT captions; wiring contract is in the comment block in `main.go` and in `SPEC-SCOUT.md`); (2) optional `llamaAssessor` (local model third signal; Qwen3-4B-Instruct Q4_K_M recommended; `SPEC-SCOUT.md` has the contract). The tool already works fully offline via `--from-json` with a pre-fetched playlist. `build-all-tools.bat` will pick up `becky-scout.exe` automatically.
+
+---
+
 **Branch `claude/ask-pitch-phase3-2026-06-16` (cloud, 2026-06-16) — becky-ask Phase 3: new-tool pitch → factory handoff. READY FOR REVIEW.**
 
 Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a structured pitch, shows it in plain English, and on "y" calls `becky-new-tool --intake-file` to kick off the factory pipeline. Builds + all tests pass (go build/vet/test/gofmt all green, 10 new pitch tests + render_test.go updated for Phase 3 behaviour).
