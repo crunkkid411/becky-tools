@@ -229,6 +229,41 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `local/canvas-engine-wiring-2026-06-15` (local, 2026-06-15) — 4 prioritized §6 items wired via a parallel-subagent wave. NOT yet merged.**
+
+At Jordan's instruction ("deploy a bunch of subagents to keep working"), four
+collision-free domains (disjoint file ownership, every OS/cgo/model boundary behind
+a build tag) were built in parallel and committed (`de0c465`). All pass
+`go build ./...` / `go vet ./...` / `go test ./...`; 43 tools build via
+`build-all-tools.bat` (+ gui/audio variants — both succeeded, mingw CC present):
+- **§6 #3 (drum/piano playback — scheduling layer):** `internal/audioengine/sequencer.go`
+  — `SequenceDrumGrid` / `SequenceNotes` expand a `dawmodel.DrumGrid`/`[]Note` into a
+  deterministically-ordered `[]ScheduledEvent` (tick→sample precomputed via `Transport`,
+  off-before-on tie-break). `becky-daw-engine --play-pattern <project.json>` dumps the
+  schedule as JSON offline. **Left:** the cgo synth/output that actually *sounds* the
+  schedule (Phase-2, behind `//go:build audio`).
+- **§6 #4 (Explorer context-awareness):** new `internal/winctx` + `becky-ctx` — reports the
+  open File Explorer folder(s) on Windows (Shell.Application COM via PowerShell; the parser
+  is OS-independent + tested; `!windows` stub for CI). **Verified live** (read Jordan's two
+  open Explorer windows). Wire into becky-canvas import so the Browse dialog is skipped.
+- **§6 #5 (corrections → becky-habits, ingest side):** canonical corrections-log **JSONL**
+  contract + `LoadCorrectionLog(s)` / `AppendCorrectionLog` in `internal/habits/sources.go`;
+  `becky-habits learn --logs <dir>` feeds the learner. **Verified live** (2 repeats → learned
+  default). **Left:** the one-line `habits.AppendCorrectionLog(...)` emit call in each of
+  hum/vox/daw/canvas (the documented follow-up — see the wave-2 emit task).
+- **§6 #1 (in-window OS file drag-drop — Jordan's #1 friction):** real `IDropTarget` COM
+  object registered on the Gio HWND (`app.Win32ViewEvent`) in `cmd/canvas/dragdrop_windows.go`;
+  `CoLockObjectExternal`-guarded; non-windows no-op stub; minimal hook in `gui.go`.
+  **Left for Jordan:** verify by dragging a real file onto the running window (COM
+  registration can't be unit-tested headlessly; degrades to a single log line if it fails).
+
+*Still open from the §6 list:* **#2 select→ask→transform + the global "show me, don't do
+it" overlay** (the design centerpiece — heavy `gui.go` work, kept for a focused wave so it
+doesn't collide with the drag-drop hook) and **drum/piano that PLAY through the engine in
+the canvas UI** (needs both the sequencer above and the Phase-2 cgo synth).
+
+---
+
 **Branch `local/canvas-gui-and-audio-2026-06-15` (local, 2026-06-15) — MERGED to master. becky-canvas is now a REAL GUI window + a real-time audio engine.**
 
 `becky-canvas.exe` now OPENS as a native window (verified launching it). Toolkit =

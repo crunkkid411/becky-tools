@@ -78,12 +78,13 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | SMF reader | local 2026-06-15 | BUILT | `internal/music/smfread.go` | MIDI round-trip; DAW foundation |
 | becky-mix (`SPEC-BECKY-MIX-JST.md`) | local 2026-06-15 | BUILT | `cmd/mix` + `internal/mixplan` | JST mix.json over project.json |
 | becky-hum (`SPEC-BECKY-HUM.md`) | local 2026-06-15 | BUILT — audio→features de-stubbed (dawbase DSP port) | `cmd/hum` + `internal/hum` + `internal/dsp` | `--wav` works offline; precise f0 = model boundary |
-| becky-habits | local 2026-06-15 | BUILT (dawbase HabitStore port) | `cmd/habits` + `internal/habits` | corrections → learned defaults (threshold 2) |
+| becky-habits | local 2026-06-15 | BUILT + corrections-log ingest wired | `cmd/habits` + `internal/habits` | corrections → learned defaults (threshold 2); `sources.go` JSONL contract + `learn --logs <dir>`; emit-side one-liners pending in hum/vox/daw/canvas |
+| becky-ctx / internal/winctx | local 2026-06-15 | BUILT (verified live) | `cmd/ctx` + `internal/winctx` | open File Explorer folder(s) on Windows (Shell.Application COM via PowerShell; `!windows` stub); gives becky-canvas import context |
 | internal/dsp | local 2026-06-15 | BUILT (dawbase analysis.cpp port) | `internal/dsp` | pure-Go WAV decode + FFT + chroma + onset/tempo |
 | becky-vox (`SPEC-BECKY-VOX.md`) | local 2026-06-15 | BUILT (core; DSP stubbed) | `cmd/vox` + `internal/vox` | DTW multi-take align |
 | becky-daw (`SPEC-BECKY-DAW-EDITOR.md`) | local 2026-06-15 | BUILT (editable model) | `cmd/daw` + `internal/dawmodel` | piano-roll/drum-grid/mixer |
-| becky-canvas (`SPEC-BECKY-CANVAS.md`) | local 2026-06-15 | BUILT (scene model; GUI=Phase-2) | `cmd/canvas` + `internal/canvas` | native ImGui window deferred |
-| becky-daw-engine (`SPEC-BECKY-DAW-ENGINE.md`) | local 2026-06-15 | BUILT (device/transport; cgo=Phase-2) | `cmd/daw-engine` + `internal/audioengine` | native bits available in X:\AI-2\dawbase |
+| becky-canvas (`SPEC-BECKY-CANVAS.md`) | local 2026-06-15 | BUILT (Gio GUI + Windows file drag-drop) | `cmd/canvas` + `internal/canvas` | `dragdrop_windows.go` = real IDropTarget on the Gio HWND; select→ask→transform overlay still open (§6 #2) |
+| becky-daw-engine (`SPEC-BECKY-DAW-ENGINE.md`) | local 2026-06-15 | BUILT (device/transport + sequencer; cgo synth=Phase-2) | `cmd/daw-engine` + `internal/audioengine` | `sequencer.go` (SequenceDrumGrid/Notes → []ScheduledEvent) + `--play-pattern`; native synth in X:\AI-2\dawbase |
 
 ---
 
