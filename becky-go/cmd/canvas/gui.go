@@ -36,6 +36,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/font/gofont"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/io/transfer"
 	"gioui.org/layout"
@@ -48,6 +49,7 @@ import (
 	"gioui.org/widget/material"
 
 	"becky-go/internal/canvas"
+	"becky-go/internal/winctx"
 )
 
 // App holds all GUI state. It lives on the UI goroutine; the only cross-goroutine state
@@ -110,6 +112,17 @@ type App struct {
 	// registration cleanly.  Nil until first Win32ViewEvent arrives.
 	disableDrop func()
 
+	// ── Play / Stop controls (drum + piano modes) ─────────────────────────────
+	// playBtn / stopBtn are the ▶ / ■ icon buttons shown in drum+piano modes.
+	playBtn widget.Clickable
+	stopBtn widget.Clickable
+	// playing is true while a becky-daw-engine --play-pattern-audio run is live.
+	playing bool
+
+	// explorerChip holds the folder name pre-filled from winctx on Open, shown as a
+	// small neon chip the user can confirm before the full file picker opens.
+	explorerChip string
+
 	// ── Select→Ask→Transform loop state (§6 item #2) ──────────────────────
 	//
 	// scene is the CURRENT deterministic canvas scene (the source of truth the
@@ -163,7 +176,7 @@ func newApp(w *app.Window) *App {
 		activeMode:  canvas.ModeAsk,
 		tools:       catalog(),
 		scene:       canvas.NewScene(canvas.ModeAsk),
-		transformer: canvas.StubTransformer{},
+		transformer: canvas.PickTransformer(), // real model when present, stub otherwise
 	}
 	a.outputList.Axis = layout.Vertical
 	a.command.SingleLine = true
@@ -236,8 +249,19 @@ func (a *App) handleInput(gtx layout.Context) {
 		a.activeMode = canvas.ModeVideo
 	}
 	if a.dockOpen.Clicked(gtx) {
-		a.startBrowse(false)
+		a.startExplorerAwareImport()
 	}
+
+	// Play / Stop buttons (drum + piano modes).
+	if a.playBtn.Clicked(gtx) {
+		a.startPlay()
+	}
+	if a.stopBtn.Clicked(gtx) {
+		a.stopPlay()
+	}
+
+	// Overlay keyboard: Esc = reject, handled here before the agent box consumes it.
+	a.handleOverlayKeys(gtx)
 
 	// Overlay approve/reject (must run before agent-box submit so Enter while an
 	// overlay is open approves the proposal rather than re-submitting the box).
@@ -256,9 +280,9 @@ func (a *App) handleInput(gtx layout.Context) {
 	}
 	if runCmd {
 		if a.overlay.hasPending() {
-			// Enter while overlay is open → approve the pending proposal.
-			a.overlayEnterPressed = true
-			a.handleOverlayInput(gtx)
+			// Run clicked while a proposal is open → approve it (Enter does the same
+			// via handleOverlayKeys; the keyboard path holds focus when pending).
+			a.applyProposal()
 		} else {
 			// Normal path: propose (or route a tool keyword).
 			a.proposeForInstruction(a.command.Text())
@@ -421,6 +445,124 @@ func (a *App) startBrowse(wantFolder bool) {
 	}()
 }
 
+// startExplorerAwareImport is the Explorer-aware version of the Open dock button.
+// It tries winctx.ForegroundExplorerFolder() first — if Jordan has an Explorer
+// window open, we pre-fill that folder so he can confirm it without a dialog.
+// If winctx returns empty or an error (non-Windows, no Explorer open, etc.) we
+// fall through to the standard Browse dialog. Degrade, never crash.
+func (a *App) startExplorerAwareImport() {
+	go func() {
+		folder, err := winctx.ForegroundExplorerFolder()
+		if err == nil && folder != "" {
+			// Store the chip for the UI to render, then ask the user to confirm.
+			a.mu.Lock()
+			a.explorerChip = folder
+			a.mu.Unlock()
+			a.window.Invalidate()
+			// Confirm: open a file picker scoped to that folder via PowerShell
+			// (reuse the existing file picker but start in the Explorer folder).
+			go func() {
+				path, perr := browseForPathIn(folder)
+				if perr != nil {
+					// Fall back to the unscoped picker silently.
+					path2, _ := browseForPath(false)
+					path = path2
+				}
+				a.mu.Lock()
+				a.explorerChip = "" // dismiss chip
+				a.mu.Unlock()
+				if path != "" {
+					a.setTarget(path)
+				}
+				a.window.Invalidate()
+			}()
+			return
+		}
+		// winctx not available or no Explorer window — use the standard picker.
+		a.startBrowse(false)
+	}()
+}
+
+// handleOverlayKeys gives the pending "show me" proposal keyboard control:
+//
+//	Esc   → reject (discard the proposal, scene unchanged)
+//	Enter → approve (apply the proposal)
+//
+// While a proposal is pending we claim a window-sized key area and focus it (the
+// agent editor was cleared on submit, so the live decision is approve/reject). When
+// no proposal is pending this is a no-op and focus returns to normal. Gio v0.10 key
+// API: register the tag with event.Op, request focus with key.FocusCmd, read with
+// gtx.Event(key.Filter{...}).
+func (a *App) handleOverlayKeys(gtx layout.Context) {
+	if !a.overlay.hasPending() {
+		return
+	}
+	tag := &a.overlayEscPressed
+	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, tag)
+	gtx.Execute(key.FocusCmd{Tag: tag})
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Focus: tag, Name: key.NameEscape},
+			key.Filter{Focus: tag, Name: key.NameReturn},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case key.NameEscape:
+			a.rejectProposal()
+			return
+		case key.NameReturn:
+			a.applyProposal()
+			return
+		}
+	}
+}
+
+// startPlay serialises the current drum/piano pattern to a temp project.json and
+// execs becky-daw-engine --play-pattern-audio <json> beside the canvas exe. All
+// failures degrade to a quiet neon line — never a crash, never a block on the UI.
+func (a *App) startPlay() {
+	a.mu.Lock()
+	if a.playing {
+		a.mu.Unlock()
+		return // already playing
+	}
+	a.playing = true
+	a.mu.Unlock()
+
+	a.appendLine("")
+	a.appendLine("▶ Play …")
+
+	go func() {
+		if err := execPlay(a.target, a.activeMode, &a.drum); err != nil {
+			a.appendLine(err.Error())
+		}
+		a.mu.Lock()
+		a.playing = false
+		a.mu.Unlock()
+		a.window.Invalidate()
+	}()
+}
+
+// stopPlay signals the play goroutine to stop. The current implementation lets
+// the daw-engine exe run to completion (it's short); a future phase can kill the
+// child process. The ■ button dismisses the playing indicator immediately so
+// Jordan sees feedback at once (degrade, never hang).
+func (a *App) stopPlay() {
+	a.mu.Lock()
+	a.playing = false
+	a.mu.Unlock()
+	a.appendLine("■ Stopped.")
+	a.window.Invalidate()
+}
+
 // refreshVisual rebuilds the drawable representation when the target changed. The decode
 // runs on a worker goroutine for non-trivial files; the result is stored under mu.
 func (a *App) refreshVisual() {
@@ -472,6 +614,7 @@ func (a *App) layoutWorkColumn(gtx layout.Context) layout.Dimensions {
 	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Flexed(1, a.layoutCanvas),
+			layout.Rigid(a.layoutTransport), // ▶ / ■ for drum + piano — zero height otherwise
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 			layout.Rigid(a.layoutOverlay), // "show me, don't do it" — zero height when idle
 			layout.Rigid(a.layoutAgentBox),
@@ -535,7 +678,10 @@ func (a *App) onCanvasPointer(pe pointer.Event, size image.Point) {
 	case a.activeMode == canvas.ModeDrum:
 		if pe.Kind == pointer.Press {
 			if lane, step, ok := drumCellAt(pe.Position, size); ok {
-				a.drum.cells[lane][step] = !a.drum.cells[lane][step]
+				was := a.drum.cells[lane][step]
+				now := !was
+				a.drum.cells[lane][step] = now
+				a.logDrumEdit(lane, step, was, now) // learn his by-eye beat fixes
 				a.window.Invalidate()
 			}
 		}

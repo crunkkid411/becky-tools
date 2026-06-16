@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -78,3 +79,36 @@ $d = New-Object System.Windows.Forms.FolderBrowserDialog
 $d.Description = 'becky-canvas - choose a folder'
 if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }
 `
+
+// browseForPathIn opens the native file picker with its initial directory pre-set to
+// folder (the active Explorer window's path), passing it safely via an env var so the
+// path is never injected into the script body. Falls back to the unscoped picker on
+// non-Windows or when folder is empty — degrade, never crash.
+func browseForPathIn(folder string) (string, error) {
+	if runtime.GOOS != "windows" || folder == "" {
+		return browseForPath(false)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), browseTimeout)
+	defer cancel()
+	// Pass the folder via env var (BECKY_BROWSE_DIR) to avoid path-injection in
+	// the PS script. The script reads $env:BECKY_BROWSE_DIR as the initial directory.
+	const script = `
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Title = 'becky-canvas - choose a file'
+$d.InitialDirectory = $env:BECKY_BROWSE_DIR
+$d.CheckFileExists = $true
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName }
+`
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-STA",
+		"-ExecutionPolicy", "Bypass", "-Command", script)
+	cmd.Env = append(os.Environ(), "BECKY_BROWSE_DIR="+folder)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", errPickerTimeout
+		}
+		return "", errPickerUnavailable
+	}
+	return strings.TrimSpace(string(out)), nil
+}
