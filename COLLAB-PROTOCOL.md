@@ -87,6 +87,7 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | becky-daw-engine (`SPEC-BECKY-DAW-ENGINE.md`) | local 2026-06-15 | BUILT (device/transport + sequencer + real synth; sample-voices=Phase-2) | `cmd/daw-engine` + `internal/audioengine` | `sequencer.go` + `synth.go` (poly synth) + `--play-pattern` (offline) / `--play-pattern-audio` (audible, verified); sample-based drum voices remain in X:\AI-2\dawbase |
 | becky-cluster (`SPEC-PERSON-CLUSTERING.md`) | local (unregistered until 2026-06-16) | BUILT (voice + face; 11 tests green) | `cmd/cluster` | agglomerative (voice) + Chinese Whispers (face); precision-leaning thresholds; KB cross-check; harvest/embed/db input modes; Left for local: calibrate thresholds on real corpus; face needs F1 rotation fix first |
 | becky-ask Phase 3 — pitch.go (`SPEC-BECKY-ASK.md` §7) | cloud 2026-06-16 | BUILT (deterministic pitch extraction + factory handoff; 10 new tests + render_test.go updated) | `cmd/ask/pitch.go` + `cmd/ask/router.go` | "I wish becky could…" → pitch shown → y calls becky-new-tool --intake-file; degrade-never-crash; Left for local: nothing — works offline; factory pipeline is already built |
+| becky-report | cloud 2026-06-16 | BUILT (deterministic core; 15 tests green) | `cmd/report` + `internal/report` | reads transcript/events/identify/motion sidecars → merged timeline + corroboration conclusions + markdown; implements ≥2-signal DOCUMENTED rule from FORENSIC-OUTPUT-PHILOSOPHY.md in code; auto-discovers sidecars from pipeline dir; Left for local: nothing |
 
 ---
 

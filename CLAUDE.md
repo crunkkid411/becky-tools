@@ -215,6 +215,11 @@ load-bearing rules, in brief:
   image-only). + custom-training plan (Unsloth LoRA→GGUF on the 3070, incl. a
   "becky preference" model). Tracked in `internal/freshness/manifest.json`.
 - `BUILD-AGENT-BRIEFING.md` — briefing for a subagent building one tool.
+- **`becky-report` (BUILT 2026-06-16, cloud):** `cmd/report` + `internal/report` — deterministic
+  forensic case reporter; reads pipeline sidecar JSONs → merged timeline + corroboration engine +
+  markdown report. No spec file needed (implements FORENSIC-OUTPUT-PHILOSOPHY.md §TOP rule in code).
+  15 tests green. Left for local: run `build-all-tools.bat` (auto-discovers cmd/report), then test
+  against a real pipeline output dir.
 
 **Historical / inbox (context only — not current instructions):**
 - `PROGRESS.md` — build-loop tracker/log.
@@ -239,6 +244,42 @@ Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a
 - **Also registered `becky-cluster`** in COLLAB-PROTOCOL registry — it was built but unregistered.
 
 Left for local: **nothing** — `becky-new-tool` is already on master; this branch wires the ask front-door to it. Jordan runs `becky-ask`, types "I wish becky could [X]", presses y → factory runs. `build-all-tools.bat` will pick up the updated `becky-ask.exe` automatically.
+
+---
+
+**Branch `claude/becky-report-2026-06-16` (cloud, 2026-06-16) — new `becky-report` tool. Ready to merge.**
+
+New tool: `becky-report` — the missing "final step" of the forensic pipeline. Reads the
+JSON sidecar outputs from becky-transcribe, becky-events, becky-identify, and becky-motion
+and emits a structured case report implementing the "corroborate, then CONCLUDE" rule from
+`FORENSIC-OUTPUT-PHILOSOPHY.md` in code.
+
+**What was built:**
+- `internal/report/` — pure-Go deterministic engine (types, loader, builder, markdown formatter)
+- `cmd/report/` — CLI with sidecar auto-discovery from a pipeline output dir or video path
+- 15 unit tests, all green (`go build/vet/test ./...` clean; `gofmt -l .` clean)
+
+**Corroboration rule (now in code):** `len(corroborated_by) ≥ 2` → tag = `DOCUMENTED` (state
+the name plainly); single signal + confidence ≥ 0.90 → also `DOCUMENTED`; everything else →
+`CANDIDATE` (flagged for human review). Mirrors the ≥2-signal invariant from
+`FORENSIC-OUTPUT-PHILOSOPHY.md` exactly.
+
+**What `becky-report` produces:**
+1. A structured JSON report — merged timeline, entity list with corroboration counts,
+   `conclusions[]` (DOCUMENTED), `review_required[]` (CANDIDATE/ANALYSIS), per-tool signals.
+2. A human-readable markdown report (suitable for Jordan to print/share for a case).
+
+**Usage after merge:**
+```
+# After running becky-pipeline, report the case:
+becky-report pipeline-out/clip-stem/        # auto-discovers transcript/events/identify/motion
+becky-report --identify i.json --events e.json --output report.json
+```
+
+**Left for local: nothing.** `build-all-tools.bat` auto-discovers `cmd/report` (no edit needed).
+Jordan verifies by running it against a real pipeline output dir from a case.
+
+---
 
 **Branch `local/canvas-fixes-model-samples-loop-2026-06-15` (local, 2026-06-15) — bugfix + real model/audio after Jordan's feedback. MERGED to master (fast-forward).**
 
