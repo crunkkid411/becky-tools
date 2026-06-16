@@ -229,6 +229,35 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/pipeline-motion-validate-2026-06-16` (cloud, 2026-06-16) — becky-validate `--motion` targeting + `validate` as a pipeline step. READY FOR REVIEW.**
+
+Closes the SPEC-VIDEO-ANALYSIS.md §3/§5 two-tier flow: becky-motion FINDS the burst → becky-validate DESCRIBES it at the right spot. All builds + tests pass (go build/vet/test/gofmt all green; 8 new pipeline tests + 8 new motion_window tests).
+
+**What was changed:**
+- **`cmd/validate/motion_window.go`** (new): `motionWindow(path)` reads motion.json, finds the burst with the highest `motion_score`, returns `(start, dur, fps=4.0, note)` with 1-second padding on each side. Degrades gracefully on any error (returns zeros + note, caller uses default window). `burstPad=1.0s`, `burstFPS=4.0` (as spec recommends).
+- **`cmd/validate/motion_window_test.go`** (new): 8 table-driven tests (empty path, no bursts, single burst with padding, clamp at 0, highest-score selection, missing file, bad JSON, constants sanity).
+- **`cmd/validate/backend.go`**: added `WindowStart float64` to `validateInput`; threaded it into `avlm.TwoStageOptions.WindowStart`, `avlm.Options.WindowStart`, and `clipSpeechPct` (was hardcoded `0`).
+- **`cmd/validate/main.go`**: added `--motion <path>` flag; computes `mStart/mDur/mFPS` via `motionWindow`; overrides `--window`/`--fps` when a burst is found; logs the targeting note; populates `in.WindowStart`; sets `MotionTargeted=true` in output; combines motion note with backend note via `joinNotes`.
+- **`cmd/validate/types.go`**: added `WindowStart float64` (always emitted for traceability) and `MotionTargeted bool` (omitempty) to `Output`.
+- **`cmd/pipeline/steps.go`**: added `stepValidate = "validate"` constant; added to `canonicalOrder` (last, after identify); added to `knownSteps`; added `motion string` and `validateJSON string` to `stepPaths` / `newStepPaths`; added `outputMarker` case.
+- **`cmd/pipeline/run.go`**: added `fileExists` helper; added `stepArgs` case for validate (passes `--motion/--transcript/--events/--identify` only when each file exists on disk); added validate to `optionalBinary` (graceful skip if binary absent — expected in GPU-less environments); added `validateRunNote` (surfaces observation count + motion-targeted flag + degrade note in the manifest).
+- **`cmd/pipeline/steps_test.go`**: 8 new tests — validate known, not-in-default, canonical order after identify, output marker, paths non-empty, standalone (no hard deps), already-done skip, full-chain last position.
+
+**Usage after merge:**
+```
+# Opt-in validate in the pipeline (needs becky-validate.exe + Gemma-4 model):
+becky-pipeline clip.mp4 --steps transcribe,diarize,events,motion,identify,validate
+
+# Motion-targeted standalone (after becky-motion has produced motion.json):
+becky-validate clip.mp4 --motion motion.json --transcript transcript.json --identify identify.json
+```
+
+**Left for local: nothing** — `validateInput.WindowStart` threads to the already-working `avlm.TwoStageOptions.WindowStart`; the Gemma-4 model + llama-server are already wired in `internal/avlm`. `build-all-tools.bat` auto-discovers `cmd/validate` (no edit needed). Jordan verifies by running the pipeline with `--steps ...,validate` on a real clip.
+
+**Merge note:** this branch adds `motion string` and `validateJSON string` to `stepPaths`. The `claude/pipeline-motion-report-2026-06-16` branch also adds `motion string` (same field name and value) — the local agent deduplicates trivially when merging both. All other changes are additive (new constants, new cases, new files).
+
+---
+
 **Branch `claude/ask-pitch-phase3-2026-06-16` (cloud, 2026-06-16) — becky-ask Phase 3: new-tool pitch → factory handoff. READY FOR REVIEW.**
 
 Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a structured pitch, shows it in plain English, and on "y" calls `becky-new-tool --intake-file` to kick off the factory pipeline. Builds + all tests pass (go build/vet/test/gofmt all green, 10 new pitch tests + render_test.go updated for Phase 3 behaviour).

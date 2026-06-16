@@ -52,12 +52,20 @@ func binName(step string) string {
 }
 
 // optionalBinary reports whether a step should degrade to a graceful skip (rather
-// than a failure) when its becky-*.exe is missing from --bin. Only the ocr step is
-// optional-by-binary: OCR is an additive enrichment that must never break the chain,
-// mirroring its in-tool model/deps degrade (note, exit 0). Every other step's
-// missing binary is a real setup error the operator should see.
+// than a failure) when its becky-*.exe is missing from --bin. OCR and validate are
+// optional-by-binary: both are additive enrichments that must never break the chain.
+// validate requires the Gemma-4 model + GPU; its binary being absent is expected in
+// a GPU-less environment (degrade to skip, not failure). Every other step's missing
+// binary is a real setup error the operator should see.
 func optionalBinary(step string) bool {
-	return step == stepOCR
+	return step == stepOCR || step == stepValidate
+}
+
+// fileExists reports whether path exists and is non-empty on disk. Used by
+// validate's stepArgs to pass optional context files only when they are available.
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Size() > 0
 }
 
 // stepArgs builds the positional+flag argv for a step (excluding the binary
@@ -96,6 +104,24 @@ func stepArgs(step, video, kb string, p stepPaths) (args []string, runnable bool
 			return nil, false, "no --kb provided"
 		}
 		return []string{video, "--kb", kb, "--output", p.identify}, true, ""
+	case stepValidate:
+		// validate is the LLM AV-description step.  It benefits from all prior
+		// sidecars and -- crucially -- from motion.json to target the analysis
+		// window at the highest-scored motion burst instead of blind 1-fps sampling
+		// (SPEC-VIDEO-ANALYSIS.md §5).  Every context file is optional: we pass it
+		// only when it exists so validate's own degrade path handles any gaps.
+		args := []string{video, "--output", p.validateJSON}
+		for _, pair := range [][]string{
+			{"--transcript", p.transcript},
+			{"--events", p.events},
+			{"--identify", p.identify},
+			{"--motion", p.motion},
+		} {
+			if fileExists(pair[1]) {
+				args = append(args, pair[0], pair[1])
+			}
+		}
+		return args, true, ""
 	default:
 		return nil, false, "unknown step"
 	}
@@ -184,6 +210,11 @@ func (r *toolRunner) runStep(ps plannedStep, video, kb string, p stepPaths, forc
 	if ps.Name == stepOCR {
 		sr.Note = ocrRunNote(p.ocrJSON)
 	}
+	// becky-validate exits 0 even when Gemma-4 is unavailable (graceful degrade).
+	// Surface the observation count + any motion-targeting note in the manifest.
+	if ps.Name == stepValidate {
+		sr.Note = validateRunNote(p.validateJSON)
+	}
 	beckyio.Logf(r.verbose, "  [ ok ] %s (%dms) -> %s", ps.Name, sr.DurationMS, marker)
 	return sr
 }
@@ -212,6 +243,33 @@ func ocrRunNote(ocrJSONPath string) string {
 	// Surface a degrade note (model/deps unavailable) so it's obvious in the manifest.
 	if degrade, ok := doc.Notes["ocr"]; ok && degrade != "" {
 		note += "; degraded: " + degrade
+	}
+	return note
+}
+
+// validateRunNote reads validate.json and returns a compact note for the manifest:
+// how many observations were produced, whether motion-targeting was used, and any
+// graceful-degradation note (e.g. "Gemma-4 unavailable"). Best-effort: an
+// unreadable/absent validate.json yields "" (the step still counts as ok).
+func validateRunNote(validateJSONPath string) string {
+	data, err := os.ReadFile(validateJSONPath)
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Observations   []json.RawMessage `json:"observations"`
+		MotionTargeted bool              `json:"motion_targeted"`
+		Note           string            `json:"note,omitempty"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return ""
+	}
+	note := fmt.Sprintf("%d observation(s)", len(doc.Observations))
+	if doc.MotionTargeted {
+		note += " (motion-targeted)"
+	}
+	if doc.Note != "" {
+		note += "; " + doc.Note
 	}
 	return note
 }

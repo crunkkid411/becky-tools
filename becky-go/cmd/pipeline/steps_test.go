@@ -252,3 +252,104 @@ func indexPlan(plan []plannedStep) map[string]plannedStep {
 	}
 	return m
 }
+
+// TestParseStepsValidateKnown confirms "validate" is a recognised step name.
+func TestParseStepsValidateKnown(t *testing.T) {
+	got, err := parseSteps("validate")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != stepValidate {
+		t.Fatalf("parseSteps(\"validate\") = %v, want [validate]", got)
+	}
+}
+
+// TestParseStepsValidateNotInDefault confirms validate is opt-in (not in the
+// default sweep), since it requires the Gemma-4 GPU model.
+func TestParseStepsValidateNotInDefault(t *testing.T) {
+	got, err := parseSteps("")
+	if err != nil {
+		t.Fatalf("parseSteps default: %v", err)
+	}
+	for _, s := range got {
+		if s == stepValidate {
+			t.Errorf("validate must NOT be in the default sweep (requires Gemma-4 GPU model); got %v", got)
+		}
+	}
+}
+
+// TestParseStepsValidateCanonicalOrder confirms validate comes after identify in
+// canonical order regardless of how the user lists it.
+func TestParseStepsValidateCanonicalOrder(t *testing.T) {
+	got, err := parseSteps("validate,identify")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != stepIdentify || got[1] != stepValidate {
+		t.Fatalf("canonical order: got %v, want [identify validate]", got)
+	}
+}
+
+// TestOutputMarkerValidate confirms validate's output marker is set.
+func TestOutputMarkerValidate(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	if p.validateJSON == "" {
+		t.Error("validateJSON path must not be empty")
+	}
+	if got := outputMarker(stepValidate, p); got != p.validateJSON {
+		t.Errorf("outputMarker(validate) = %q, want %q", got, p.validateJSON)
+	}
+}
+
+// TestStepPathsMotionAndValidate confirms both paths are derived from the video dir.
+func TestStepPathsMotionAndValidate(t *testing.T) {
+	p := newStepPaths("out/myvideo", "")
+	if p.motion == "" {
+		t.Error("motion path must not be empty")
+	}
+	if p.validateJSON == "" {
+		t.Error("validateJSON path must not be empty")
+	}
+}
+
+// TestPlanStepsValidateStandalone confirms validate can run standalone (no hard
+// deps) when all optional context files are absent from disk.
+func TestPlanStepsValidateStandalone(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	plan := planSteps([]string{stepValidate}, p, false, fakeStat(nil))
+	if len(plan) != 1 {
+		t.Fatalf("expected 1 planned step, got %d", len(plan))
+	}
+	if !plan[0].WillRun {
+		t.Errorf("validate should run standalone (no hard deps); skip=%q", plan[0].SkipReason)
+	}
+}
+
+// TestPlanStepsValidateAlreadyDone skips when validate.json exists and is non-empty.
+func TestPlanStepsValidateAlreadyDone(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	plan := planSteps([]string{stepValidate}, p, false, fakeStat(map[string]bool{p.validateJSON: true}))
+	if plan[0].WillRun {
+		t.Error("validate should skip when validate.json already exists")
+	}
+	if plan[0].SkipReason != "already-done" {
+		t.Errorf("skip reason = %q, want already-done", plan[0].SkipReason)
+	}
+}
+
+// TestPlanStepsFullChainWithValidate confirms validate runs last in a full chain.
+func TestPlanStepsFullChainWithValidate(t *testing.T) {
+	steps := []string{stepTranscribe, stepDiarize, stepEvents, stepOSINT, stepIdentify, stepValidate}
+	p := newStepPaths("out/test", "")
+	plan := planSteps(steps, p, false, fakeStat(nil))
+	byName := indexPlan(plan)
+	for _, s := range steps {
+		if !byName[s].WillRun {
+			t.Errorf("%s should run in a full fresh chain; skip=%q", s, byName[s].SkipReason)
+		}
+	}
+	// validate must be the last element in the plan.
+	if plan[len(plan)-1].Name != stepValidate {
+		t.Errorf("validate should be last in the plan; got last=%q", plan[len(plan)-1].Name)
+	}
+}

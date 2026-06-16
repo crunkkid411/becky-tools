@@ -30,16 +30,17 @@ import (
 
 // validateInput is everything a backend needs to validate one clip.
 type validateInput struct {
-	File       string
-	Transcript *transcript
-	Events     *eventsDoc
-	Identify   *identifyDoc
-	Questions  []string
-	WindowSec  float64
-	FPS        float64
-	Timeout    int
-	ServerURL  string // optional already-running multimodal llama-server to reuse
-	Verbose    bool
+	File        string
+	Transcript  *transcript
+	Events      *eventsDoc
+	Identify    *identifyDoc
+	Questions   []string
+	WindowStart float64 // seconds into the clip to start (0 = from the beginning)
+	WindowSec   float64
+	FPS         float64
+	Timeout     int
+	ServerURL   string // optional already-running multimodal llama-server to reuse
+	Verbose     bool
 }
 
 // validateResult is what a backend returns. Note is set when the backend
@@ -119,6 +120,7 @@ func (gemma4LocalBackend) Validate(ctx context.Context, cfg config.Config, in va
 		AudioPrompt:   audioUserPrompt,
 		SynthSystem:   synthSystemPrompt,
 		SynthPrompt:   synthPrompt,
+		WindowStart:   in.WindowStart,
 		WindowSec:     in.WindowSec,
 		FPS:           in.FPS,
 		FramesDir:     framesDir,
@@ -150,7 +152,7 @@ func (gemma4LocalBackend) Validate(ctx context.Context, cfg config.Config, in va
 	// Gate 2 (F5): if VAD shows ~no speech, suppress any asserted audio_tone so we
 	// never report "subdued / deliberate" on silence. Bounded to the same window
 	// the AV model saw; degrades to "leave tone alone" if VAD can't run.
-	sp := clipSpeechPct(ctx, cfg, in.File, 0, in.WindowSec, logf)
+	sp := clipSpeechPct(ctx, cfg, in.File, in.WindowStart, in.WindowSec, logf)
 	obs = suppressToneOnSilence(obs, sp)
 
 	logf("gemma4-local: %d observation(s) from %d frame caption(s)+%.1fs audio (speech=%.1f%%, %.2fs)",
@@ -211,6 +213,7 @@ func (fusionBackend) Validate(ctx context.Context, cfg config.Config, in validat
 		Clip:         in.File,
 		Prompt:       prompt,
 		SystemPrompt: systemPrompt,
+		WindowStart:  in.WindowStart,
 		WindowSec:    in.WindowSec,
 		FPS:          in.FPS,
 		MaxTokens:    768,

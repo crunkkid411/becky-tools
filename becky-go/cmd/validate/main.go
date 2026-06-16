@@ -10,14 +10,21 @@
 //	  --transcript <json>    becky-transcribe JSON (optional context)
 //	  --events <json>        becky-events JSON (optional context)
 //	  --identify <json>      becky-identify JSON (optional speaker/face names)
+//	  --motion <json>        becky-motion JSON; targets analysis at the highest-scored burst
 //	  --backend <type>       gemma4-local (default) | fusion | mock
 //	  --server-url <url>     reuse a running multimodal llama-server (default: spawn per call)
-//	  --window <sec>         AV window length, <= 60 (default 30)
-//	  --fps <float>          frame sample rate (default 1.0)
+//	  --window <sec>         AV window length, <= 60 (default 30; overridden by --motion)
+//	  --fps <float>          frame sample rate (default 1.0; overridden by --motion to 4.0)
 //	  --device <cpu|cuda>    informational; GPU offload (-ngl 99) is always used
 //	  --output <file>        write JSON here (default: stdout)
 //	  --timeout <sec>        per-clip inference timeout (default 240)
 //	  --verbose              progress to stderr
+//
+// When --motion is given, becky-validate reads the motion.json from becky-motion,
+// finds the burst with the highest motion_score, and aims its analysis window at
+// exactly that interval (padded with 1 s context) at 4 fps — implementing the
+// two-tier flow from SPEC-VIDEO-ANALYSIS.md §3: cheap motion detection FINDS the
+// burst, expensive AV description DESCRIBES it at the right spot.
 //
 // becky-validate is the SECOND sanctioned LLM-tool exception (after becky-review)
 // to the "no LLM between pipeline steps" rule. It runs ONCE per clip, ONLY on
@@ -52,10 +59,11 @@ func main() {
 	transcriptPath := flag.String("transcript", "", "path to becky-transcribe JSON (optional context)")
 	eventsPath := flag.String("events", "", "path to becky-events JSON (optional context)")
 	identifyPath := flag.String("identify", "", "path to becky-identify JSON (optional names)")
+	motionPath := flag.String("motion", "", "path to becky-motion JSON; targets analysis at the highest-scored burst window")
 	backendName := flag.String("backend", "gemma4-local", "backend: gemma4-local, fusion, mock")
 	serverURL := flag.String("server-url", "", "reuse a running multimodal llama-server (default: spawn one per call)")
-	window := flag.Float64("window", 30, "AV window length in seconds (<= 60)")
-	fps := flag.Float64("fps", 1.0, "frame sample rate for the video")
+	window := flag.Float64("window", 30, "AV window length in seconds (<= 60); overridden by --motion")
+	fps := flag.Float64("fps", 1.0, "frame sample rate; overridden by --motion to 4.0 for a short targeted burst")
 	device := flag.String("device", "", "cpu|cuda (informational; GPU offload always used)")
 	out := flag.String("output", "", "output file (default: stdout)")
 	timeoutSec := flag.Int("timeout", 240, "per-clip inference timeout in seconds")
@@ -93,6 +101,19 @@ func main() {
 		beckyio.Fatalf("%v", err)
 	}
 
+	// Motion targeting: when --motion is given, derive the analysis window from the
+	// highest-scored burst. motionWindow degrades gracefully (returns zeros + a note)
+	// on any error, so we never hard-fail on a missing/bad motion file.
+	mStart, mDur, mFPS, mNote := motionWindow(*motionPath)
+	motionTargeted := mDur > 0
+	if motionTargeted {
+		*window = mDur
+		*fps = mFPS
+		beckyio.Logf(*verbose, "%s", mNote)
+	} else if mNote != "" {
+		beckyio.Logf(*verbose, "%s", mNote)
+	}
+
 	qs := []string(questions)
 	if len(qs) == 0 {
 		qs = defaultQuestions
@@ -102,20 +123,21 @@ func main() {
 	cfg := config.Load()
 
 	in := validateInput{
-		File:       clip,
-		Transcript: tr,
-		Events:     ev,
-		Identify:   id,
-		Questions:  qs,
-		WindowSec:  *window,
-		FPS:        *fps,
-		Timeout:    *timeoutSec,
-		ServerURL:  *serverURL,
-		Verbose:    *verbose,
+		File:        clip,
+		Transcript:  tr,
+		Events:      ev,
+		Identify:    id,
+		Questions:   qs,
+		WindowStart: mStart,
+		WindowSec:   *window,
+		FPS:         *fps,
+		Timeout:     *timeoutSec,
+		ServerURL:   *serverURL,
+		Verbose:     *verbose,
 	}
 
-	beckyio.Logf(*verbose, "validating %s with %s backend (window=%.0fs fps=%.2f timeout=%ds)...",
-		clip, backend.Name(), *window, *fps, *timeoutSec)
+	beckyio.Logf(*verbose, "validating %s with %s backend (start=%.1fs window=%.0fs fps=%.2f timeout=%ds)...",
+		clip, backend.Name(), mStart, *window, *fps, *timeoutSec)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
 	defer cancel()
@@ -130,20 +152,25 @@ func main() {
 		res.Observations = []Observation{} // emit [] not null
 	}
 
+	// Combine backend note with any motion-targeting note so the output is self-documenting.
+	outputNote := joinNotes(res.Note, mNote)
+
 	report := Output{
 		File:              clip,
 		ValidatedAt:       time.Now().UTC().Format(time.RFC3339),
 		Backend:           backend.Name(),
 		Model:             firstNonEmpty(res.Model, gemmaModelName),
 		Disclaimer:        Disclaimer,
+		WindowStart:       mStart,
 		WindowSec:         clampWindowSec(*window),
 		FPS:               *fps,
+		MotionTargeted:    motionTargeted,
 		Observations:      res.Observations,
 		ToneVsContentFlag: anyMismatch(res.Observations),
-		Note:              res.Note,
+		Note:              outputNote,
 	}
 	beckyio.Logf(*verbose, "done: %d observation(s), tone_vs_content_flag=%v%s",
-		len(report.Observations), report.ToneVsContentFlag, noteSuffix(res.Note))
+		len(report.Observations), report.ToneVsContentFlag, noteSuffix(outputNote))
 
 	if err := emit(report, *out); err != nil {
 		beckyio.Fatalf("%v", err)
@@ -251,4 +278,18 @@ func noteSuffix(note string) string {
 		return ""
 	}
 	return " (note: " + note + ")"
+}
+
+// joinNotes combines two optional note strings; both may be empty.
+func joinNotes(a, b string) string {
+	switch {
+	case a == "" && b == "":
+		return ""
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + "; " + b
+	}
 }

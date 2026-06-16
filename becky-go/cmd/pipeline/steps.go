@@ -14,7 +14,7 @@ import (
 )
 
 // Known step names, in canonical chain order. The default --steps set is the
-// deterministic sweep; embed/identify are optional (server/KB dependent).
+// deterministic sweep; embed/identify/validate are optional (server/KB/model dependent).
 const (
 	stepTranscribe = "transcribe"
 	stepMetadata   = "metadata"
@@ -24,6 +24,7 @@ const (
 	stepOCR        = "ocr"
 	stepEmbed      = "embed"
 	stepIdentify   = "identify"
+	stepValidate   = "validate" // LLM AV description (Gemma-4); opt-in, needs GPU model
 )
 
 // canonicalOrder is the dependency-respecting order steps must run in:
@@ -32,6 +33,8 @@ const (
 // after transcribe so the sidecar artifacts (transcript + info/chat) are produced
 // together. ocr runs right after osint, OCR'ing the scene-change frames osint
 // exported and writing the recognized text into the forensic DB so it is searchable.
+// validate is LAST: it benefits from all other sidecars and uses the motion.json
+// burst window for targeted analysis (when available).
 var canonicalOrder = []string{
 	stepTranscribe,
 	stepMetadata,
@@ -41,6 +44,7 @@ var canonicalOrder = []string{
 	stepOCR,
 	stepEmbed,
 	stepIdentify,
+	stepValidate,
 }
 
 // defaultSteps is the deterministic sweep run when --steps is omitted. metadata
@@ -62,6 +66,7 @@ var knownSteps = map[string]bool{
 	stepOCR:        true,
 	stepEmbed:      true,
 	stepIdentify:   true,
+	stepValidate:   true,
 }
 
 // stepDeps maps a step to the steps that must have produced output before it can
@@ -122,6 +127,8 @@ type stepPaths struct {
 	embedJSON     string // embed.json (captured stdout summary)
 	embedDB       string // forensic.db (or overridden by --db)
 	identify      string // identify.json
+	motion        string // motion.json (becky-motion burst timeline; consumed by validate)
+	validateJSON  string // validate.json (becky-validate AV observations)
 }
 
 // newStepPaths derives all step output paths from the per-video output dir.
@@ -142,6 +149,8 @@ func newStepPaths(videoDir, dbOverride string) stepPaths {
 		embedJSON:     filepath.Join(videoDir, "embed.json"),
 		embedDB:       db,
 		identify:      filepath.Join(videoDir, "identify.json"),
+		motion:        filepath.Join(videoDir, "motion.json"),
+		validateJSON:  filepath.Join(videoDir, "validate.json"),
 	}
 }
 
@@ -166,6 +175,8 @@ func outputMarker(step string, p stepPaths) string {
 		return p.embedJSON
 	case stepIdentify:
 		return p.identify
+	case stepValidate:
+		return p.validateJSON
 	default:
 		return ""
 	}
