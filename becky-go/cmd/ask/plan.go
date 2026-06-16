@@ -72,7 +72,7 @@ func adaptCommand(example string, t Target) string {
 		return example
 	}
 	p := t.Primary()
-	q := fmt.Sprintf("%q", p)
+	q := `"` + p + `"`
 
 	s := example
 	if t.Kind == targetDir {
