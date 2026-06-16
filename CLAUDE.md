@@ -195,6 +195,9 @@ load-bearing rules, in brief:
   and steer from his iPhone; reconciles with `becky-harness`),
   `SPEC-RADAR.md` (`becky-radar`, reads Jordan's Chrome history — incl. synced
   iPhone visits — and surfaces flagged models/tools vs becky's deps),
+  `SPEC-SCOUT.md` (`becky-scout`, assesses a YouTube playlist video-by-video for
+  things that could improve/extend becky — sibling of becky-radar; corroborate-
+  then-conclude over the freshness manifest + a capability catalog),
   `SPEC-BECKY-CANVAS.md` (native lightweight creative GUI: becky-ask + video/DAW/
   MIDI/drum modes on one canvas — Jordan's AI-friendly Cubase replacement).
 - **becky-canvas DAW/audio suite (BUILT 2026-06-15 — deterministic Go cores; native audio/GUI = Phase-2):**
@@ -228,6 +231,42 @@ load-bearing rules, in brief:
 ---
 
 ## 6. Live handoff — current branch status
+
+**Branch `claude/youtube-playlist-assessment-hbx8a9` (cloud, 2026-06-16) — NEW TOOL `becky-scout`. Draft PR open; REVIEW before merge (left-for-local below).**
+
+Jordan asked for "a tool that takes a playlist of YouTube videos and assesses each
+video to see if it contains anything that can improve or extend becky-tools." Built
+in the house style as the sibling of `becky-radar` (radar reads Chrome history;
+scout reads a YouTube playlist). `go build/vet/test ./...` green, gofmt clean, CLI
+smoke-tested (degrade path + `--catalog`).
+- **`internal/scout` + `cmd/scout`:** for each video it builds a haystack from every
+  offline-readable field (title/channel/description/tags/captions) and gathers three
+  INDEPENDENT signals — (1) **dep-match** = names a model in the becky-freshness
+  manifest (→ *improve* an existing tool), (2) **capability** = matches the built-in
+  becky capability catalog (`catalog.go`; OCR/ASR/diarize/embed/VLM/agents/music…),
+  (3) **assessor** = optional local-model opinion. Corroborate-then-conclude:
+  `score≥2` → **relevant** (stated conclusion), `==1` → **candidate**, `0` →
+  **skipped** (counted, not enumerated — no flood of maybes). Classifies *improve*
+  (tracked dep) vs *extend* (becky domain, nothing tracked yet).
+- **Boundaries stubbed behind interfaces** (the cloud→local wiring contract, both in
+  `internal/scout/scout.go`): `PlaylistSource.Playlist(ref)` (the one online step) and
+  the optional `Assessor.Assess(...)`. Deterministic fakes (`fake.go`) run the whole
+  pipeline in CI with no net/model. `cmd/scout` currently injects `unwiredSource{}`,
+  so a live run honestly degrades with a plain-language note instead of crashing.
+- **Opts out of the offline invariant the same controlled way** as research/radar/
+  palantir: one explicit logged network step, deterministic OUTPUT, degrade-never-crash.
+
+**Left for local (the model/binary boundary — NOT cloud's job):**
+1. Wire `PlaylistSource` via **yt-dlp** (recipe in `SPEC-SCOUT.md` §5: `--flat-playlist -J`
+   for entries, then per-video `-J --write-auto-subs --sub-format vtt --skip-download`;
+   VTT→plain transcript) and replace `unwiredSource{}` in `cmd/scout/main.go`.
+2. (Optional) wire the 3rd-signal `Assessor` to a local llama.cpp text model
+   (Qwen3-4B, `--temp 0` for determinism).
+3. Run it on Jordan's real "watch later / becky" playlist; tune `catalog.go` keywords.
+4. `build-all-tools.bat` (auto-discovers `cmd/scout`). Open-decisions for Jordan at
+   the end of `SPEC-SCOUT.md` (which playlist; captions cost; wire model now or later).
+
+---
 
 **Branch `local/canvas-fixes-model-samples-loop-2026-06-15` (local, 2026-06-15) — bugfix + real model/audio after Jordan's feedback. MERGED to master (fast-forward).**
 
