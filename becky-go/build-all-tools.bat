@@ -36,5 +36,23 @@ if defined FAILED (
   exit /b 1
 )
 
-echo Done. Built !COUNT! tools. Binaries in %~dp0bin
+REM --- Special variants: the GUI window + the real-time audio backend ---
+REM becky-canvas ships as the real Gio GUI window (build tag: gui), not the headless
+REM scene-dumper. becky-daw-engine ships with the real miniaudio backend (build tag:
+REM audio, needs a C compiler). Both are best-effort: if a variant fails to build, the
+REM plain build from the loop above is kept and a WARN is printed (never blocks).
+echo Building becky-canvas.exe ^(GUI window, -tags gui^)...
+go build -tags gui -o bin\becky-canvas.exe .\cmd\canvas
+if errorlevel 1 echo WARN: GUI canvas build failed - headless becky-canvas.exe kept.
+
+set "BECKY_OLDCC=%CC%"
+if exist "C:\msys64\mingw64\bin\gcc.exe" set "CC=C:\msys64\mingw64\bin\gcc.exe"
+set "CGO_ENABLED=1"
+echo Building becky-daw-engine.exe ^(real audio, -tags audio^)...
+go build -tags audio -o bin\becky-daw-engine.exe .\cmd\daw-engine
+if errorlevel 1 echo WARN: audio daw-engine build failed - stub becky-daw-engine.exe kept.
+set "CC=%BECKY_OLDCC%"
+
+echo.
+echo Done. Built !COUNT! tools ^(+ GUI/audio variants^). Binaries in %~dp0bin
 dir /b bin

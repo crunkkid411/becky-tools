@@ -1,38 +1,43 @@
 //go:build gui
 
-// becky-canvas (GUI) — the real native window: Jordan's visual front door to the becky
+// becky-canvas (GUI) — Jordan's VISUAL, icon-first creative front door to the becky
 // tools. Built with the `gui` tag so the default `go build ./...` stays green (the
 // headless scene model in main.go is `//go:build !gui`).
 //
-// Toolkit: Gio (gioui.org) — pure Go, no cgo, Direct3D 11 on Windows. Chosen because
-// OpenGL/ImGui failed to create a window on this machine.
+// Toolkit: Gio (gioui.org) — pure Go, no cgo, Direct3D 11 on Windows.
 //
 //	go run -tags gui ./cmd/canvas
 //	go build -tags gui -o bin/becky-canvas.exe ./cmd/canvas
 //
-// What the window does (v1):
-//   - A clickable, grouped list of becky tools (name + plain description).
-//   - A Target row: a path text field + Browse… / Folder… buttons (native picker).
-//   - Clicking a tool runs its real becky-<tool>.exe on the target in a goroutine and
-//     streams stdout+stderr live into a scrollable, selectable output panel.
-//   - A command box: type a tool name / phrase, press Enter, it routes + runs.
-//   - A visual panel: draws a .wav waveform or a project.json DAW scene (op/paint/clip).
-//   - Mode tabs (ask/video/daw/midi/drum) that switch the active surface.
+// The window (redesigned 2026-06-15, "colours and shapes > text"):
+//   - A DOCK of big neon icon buttons (left): record, draw, piano, drum, video, open.
+//   - The CANVAS (centre): the star. Shows a dropped file's waveform, a project.json
+//     DAW scene, the clickable drum step grid, the piano roll, or pen strokes.
+//   - One unobtrusive AGENT box (bottom): type a tool/phrase, Enter routes + runs it.
+//   - A SMALL, collapsible, selectable OUTPUT area (hidden until there's output).
 //
-// degrade-never-crash (CLAUDE.md §2): every failure shows a friendly line; the window
-// never panics. The UI goroutine never blocks on a tool — runs happen off-thread and
-// post results back, waking the loop with w.Invalidate().
+// Drag-and-drop, BOTH ways:
+//   - argv on launch: dropping a file/folder onto becky-canvas.exe sets it as the target
+//     (like becky-ask.exe).
+//   - in-window OS file drop: dropping a file onto the window sets it as the target.
+//
+// degrade-never-crash (CLAUDE.md §2): every failure shows a friendly neon line; the
+// window never panics. Tool runs happen off-thread and post back with w.Invalidate().
 package main
 
 import (
 	"image"
 	"image/color"
+	"io"
 	"os"
 	"strings"
 	"sync"
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
+	"gioui.org/io/transfer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -50,29 +55,47 @@ import (
 type App struct {
 	th     *material.Theme
 	window *app.Window
+	icons  iconSet
 
-	// activeMode is the selected mode tab (ask/video/daw/midi/drum).
+	// activeMode is the canvas surface currently shown (ask/video/daw/midi/drum).
 	activeMode canvas.Mode
-	modeTabs   []widget.Clickable
 
-	// Tool list: one clickable per catalog entry, plus a scrollable list state.
-	tools    []toolItem
-	toolBtns []widget.Clickable
-	toolList widget.List
+	// Dock buttons (icon-first; no text list).
+	dockRecord widget.Clickable
+	dockDraw   widget.Clickable
+	dockPiano  widget.Clickable
+	dockDrum   widget.Clickable
+	dockVideo  widget.Clickable
+	dockOpen   widget.Clickable
 
-	// Target row.
-	target    widget.Editor
-	browseBtn widget.Clickable
-	folderBtn widget.Clickable
+	// Catalog kept for command routing (the agent box matches a phrase to a tool).
+	tools []toolItem
 
-	// Command row.
+	// Target file/folder the tools act on. Set by argv, file drop, or the open button.
+	target string
+
+	// Agent box (one unobtrusive single line at the bottom).
 	command widget.Editor
 	runBtn  widget.Clickable
 
-	// Output panel (read-only, selectable).
-	output     widget.Editor
-	outputList widget.List
-	clearBtn   widget.Clickable
+	// Output area (read-only, selectable) — small + collapsible, hidden until used.
+	output      widget.Editor
+	outputList  widget.List
+	clearBtn    widget.Clickable
+	expandBtn   widget.Clickable
+	outExpanded bool
+
+	// Drum mode state (the clickable step grid).
+	drum drumGrid
+
+	// Draw mode state (freehand pen strokes over the canvas).
+	drawMode  bool
+	drawing   bool
+	curStroke stroke
+	strokes   []stroke
+
+	// canvasTag is the event.Tag for the canvas pointer area (drum clicks / pen drags).
+	canvasTag bool
 
 	// Cross-goroutine state.
 	mu        sync.Mutex
@@ -87,7 +110,9 @@ func main() {
 	go func() {
 		w := new(app.Window)
 		w.Option(app.Title("becky-canvas"), app.Size(unit.Dp(1180), unit.Dp(760)))
-		if err := newApp(w).loop(); err != nil {
+		a := newApp(w)
+		a.adoptArgv(os.Args[1:]) // drag-onto-exe: argv paths become the target
+		if err := a.loop(); err != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -95,29 +120,39 @@ func main() {
 	app.Main()
 }
 
-// newApp builds the App with its theme, tool list, and widget state initialized.
+// newApp builds the App with its theme, icons, catalog, and widget state initialized.
 func newApp(w *app.Window) *App {
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 
-	tools := catalog()
 	a := &App{
 		th:         th,
 		window:     w,
+		icons:      loadIcons(),
 		activeMode: canvas.ModeAsk,
-		tools:      tools,
-		toolBtns:   make([]widget.Clickable, len(tools)),
-		modeTabs:   make([]widget.Clickable, len(canvas.Modes())),
+		tools:      catalog(),
 	}
-	a.toolList.Axis = layout.Vertical
 	a.outputList.Axis = layout.Vertical
-	a.target.SingleLine = true
-	a.target.Submit = true
 	a.command.SingleLine = true
 	a.command.Submit = true
 	a.output.ReadOnly = true // selectable + copyable, not editable
-	a.appendLine("becky-canvas ready. Pick a target (Browse…), then click a tool — its output appears here. You can select and copy any of this text.")
 	return a
+}
+
+// adoptArgv treats any existing file/folder path in argv as the target — the
+// "drag a file onto becky-canvas.exe" workflow, mirroring becky-ask.exe. The FIRST
+// existing path wins; non-existent args are ignored (degrade, never crash).
+func (a *App) adoptArgv(args []string) {
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		if _, err := os.Stat(arg); err == nil {
+			a.setTarget(arg)
+			return
+		}
+	}
 }
 
 // loop is the Gio event loop: handle the window's events, lay out a frame, repeat.
@@ -136,38 +171,31 @@ func (a *App) loop() error {
 	}
 }
 
-// handleInput processes clicks / submits before layout so the frame reflects them.
+// handleInput processes dock clicks, the agent box, and the output controls before
+// layout so the frame reflects them. (Canvas pointer events are handled during layout,
+// where the canvas area's local coordinate system is in scope.)
 func (a *App) handleInput(gtx layout.Context) {
-	// Mode tabs.
-	for i := range a.modeTabs {
-		if a.modeTabs[i].Clicked(gtx) {
-			a.activeMode = canvas.Modes()[i]
-		}
+	// Dock buttons.
+	if a.dockRecord.Clicked(gtx) {
+		a.startRecord()
 	}
-	// Tool clicks.
-	for i := range a.toolBtns {
-		if a.toolBtns[i].Clicked(gtx) {
-			a.startTool(a.tools[i])
-		}
+	if a.dockDraw.Clicked(gtx) {
+		a.drawMode = !a.drawMode
 	}
-	// Target field submit (Enter) just keeps the value; visual rebuilds below.
-	for {
-		ev, ok := a.target.Update(gtx)
-		if !ok {
-			break
-		}
-		if _, isSubmit := ev.(widget.SubmitEvent); isSubmit {
-			a.refreshVisual()
-		}
+	if a.dockPiano.Clicked(gtx) {
+		a.activeMode = canvas.ModeMIDI
 	}
-	// Browse buttons.
-	if a.browseBtn.Clicked(gtx) {
+	if a.dockDrum.Clicked(gtx) {
+		a.activeMode = canvas.ModeDrum
+	}
+	if a.dockVideo.Clicked(gtx) {
+		a.activeMode = canvas.ModeVideo
+	}
+	if a.dockOpen.Clicked(gtx) {
 		a.startBrowse(false)
 	}
-	if a.folderBtn.Clicked(gtx) {
-		a.startBrowse(true)
-	}
-	// Command submit / Run button.
+
+	// Agent box submit / Run button.
 	runCmd := a.runBtn.Clicked(gtx)
 	for {
 		ev, ok := a.command.Update(gtx)
@@ -181,15 +209,42 @@ func (a *App) handleInput(gtx layout.Context) {
 	if runCmd {
 		a.runCommand(a.command.Text())
 	}
-	// Clear output.
+
+	// Output controls.
 	if a.clearBtn.Clicked(gtx) {
 		a.mu.Lock()
 		a.logBuf.Reset()
 		a.mu.Unlock()
-		a.appendLine("(cleared)")
+		a.window.Invalidate()
 	}
-	// Keep the visual in sync with the target as it changes.
+	if a.expandBtn.Clicked(gtx) {
+		a.outExpanded = !a.outExpanded
+	}
+
+	// Keep the visual in sync with the target.
 	a.refreshVisual()
+}
+
+// --- target -----------------------------------------------------------------------
+
+// setTarget records a new target path and rebuilds the canvas visual for it. A drawable
+// file (.wav / project.json) switches the canvas back to a file surface so the drop is
+// visible; other modes are left as-is.
+func (a *App) setTarget(path string) {
+	path = strings.TrimSpace(path)
+	a.target = path
+	if path == "" {
+		return
+	}
+	lower := strings.ToLower(path)
+	if strings.HasSuffix(lower, ".wav") || strings.HasSuffix(lower, ".json") {
+		if a.activeMode == canvas.ModeDrum || a.activeMode == canvas.ModeMIDI {
+			a.activeMode = canvas.ModeAsk
+		}
+	}
+	a.appendLine("Target: " + path)
+	a.refreshVisual()
+	a.window.Invalidate()
 }
 
 // --- actions ---------------------------------------------------------------------
@@ -206,13 +261,36 @@ func (a *App) startTool(t toolItem) {
 	a.runLabel = t.Label
 	a.mu.Unlock()
 
-	target := strings.TrimSpace(a.target.Text())
+	a.outExpanded = true // show output when a tool runs
 	a.appendLine("")
 	a.appendLine("=== " + t.Label + " ===")
 
 	results := make(chan runResult, 64)
-	go runTool(t, target, results)
+	go runTool(t, a.target, results)
 	go a.drainResults(results)
+}
+
+// startRecord runs becky-daw-engine to record a short clip from the mic and sets the new
+// WAV as the target. It needs the audio build of becky-daw-engine; if that exe/feature is
+// absent the run degrades to a friendly neon line (handled by runRecord on a goroutine).
+func (a *App) startRecord() {
+	a.mu.Lock()
+	if a.running {
+		a.mu.Unlock()
+		a.appendLine("Still running " + a.runLabel + "… let it finish first.")
+		return
+	}
+	a.running = true
+	a.runLabel = "Record"
+	a.mu.Unlock()
+
+	a.outExpanded = true
+	a.appendLine("")
+	a.appendLine("=== Record ===")
+	out := recordOutPath()
+	results := make(chan runResult, 64)
+	go runRecord(out, recordSeconds, results)
+	go a.drainRecord(results, out)
 }
 
 // runCommand routes a typed phrase to a tool and runs it (v1 = action routing only).
@@ -223,8 +301,9 @@ func (a *App) runCommand(phrase string) {
 	}
 	t, ok := matchTool(phrase)
 	if !ok {
+		a.outExpanded = true
 		a.appendLine("")
-		a.appendLine("I couldn't match \"" + phrase + "\" to a tool. Try a tool name (e.g. transcribe, compose, research) or click one in the list.")
+		a.appendLine("I couldn't match \"" + phrase + "\" to a tool. Try a tool name (transcribe, compose, research) or use the icons on the left.")
 		a.command.SetText("")
 		return
 	}
@@ -250,28 +329,47 @@ func (a *App) drainResults(results <-chan runResult) {
 	a.window.Invalidate()
 }
 
-// startBrowse opens the native picker on a worker goroutine and writes the chosen path
-// into the Target field. The UI thread is never blocked by the modal dialog.
+// drainRecord is drainResults for a recording run: on success it adopts the new WAV as
+// the target so its waveform appears on the canvas immediately.
+func (a *App) drainRecord(results <-chan runResult, out string) {
+	for r := range results {
+		if r.Line != "" {
+			a.appendLine(r.Line)
+		}
+		if r.Done {
+			a.mu.Lock()
+			a.running = false
+			a.runLabel = ""
+			a.mu.Unlock()
+			if fileExists(out) {
+				a.setTarget(out)
+			}
+		}
+	}
+	a.window.Invalidate()
+}
+
+// startBrowse opens the native picker on a worker goroutine and sets the chosen path as
+// the target. The UI thread is never blocked by the modal dialog.
 func (a *App) startBrowse(wantFolder bool) {
 	go func() {
 		path, err := browseForPath(wantFolder)
 		if err != nil {
 			a.appendLine(err.Error())
+			a.window.Invalidate()
 			return
 		}
 		if path == "" {
 			return // cancelled
 		}
-		a.target.SetText(path)
-		a.refreshVisual()
-		a.window.Invalidate()
+		a.setTarget(path)
 	}()
 }
 
 // refreshVisual rebuilds the drawable representation when the target changed. The decode
 // runs on a worker goroutine for non-trivial files; the result is stored under mu.
 func (a *App) refreshVisual() {
-	target := strings.TrimSpace(a.target.Text())
+	target := strings.TrimSpace(a.target)
 	a.mu.Lock()
 	if target == a.lastVisOf {
 		a.mu.Unlock()
@@ -283,8 +381,7 @@ func (a *App) refreshVisual() {
 	go func() {
 		v := buildVisual(target)
 		a.mu.Lock()
-		// Only apply if the target hasn't changed again since we started.
-		if target == a.lastVisOf {
+		if target == a.lastVisOf { // only apply if the target hasn't changed again
 			a.vis = v
 		}
 		a.mu.Unlock()
@@ -292,8 +389,7 @@ func (a *App) refreshVisual() {
 	}()
 }
 
-// appendLine adds a line to the output buffer (thread-safe), pushes it into the
-// read-only editor on the next layout, and repaints.
+// appendLine adds a line to the output buffer (thread-safe) and repaints.
 func (a *App) appendLine(s string) {
 	a.mu.Lock()
 	a.logBuf.WriteString(s)
@@ -304,253 +400,204 @@ func (a *App) appendLine(s string) {
 
 // --- layout ----------------------------------------------------------------------
 
-// layoutFrame draws the whole window: a top bar with mode tabs, then a body split into
-// a left tool panel and a right work area (target row, visual panel, command + output).
+// layoutFrame draws the whole window: the dock (left) + the work column (canvas on top,
+// agent box + collapsible output beneath).
 func (a *App) layoutFrame(gtx layout.Context) {
 	paint.Fill(gtx.Ops, colWindowBg)
-	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(a.layoutTopBar),
-		layout.Flexed(1, a.layoutBody),
+	a.registerWindowDrop(gtx) // in-window OS file drop -> target
+	layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Rigid(a.layoutDock),
+		layout.Flexed(1, a.layoutWorkColumn),
 	)
 }
 
-// layoutTopBar draws the title + the mode tabs.
-func (a *App) layoutTopBar(gtx layout.Context) layout.Dimensions {
-	return widgetBg(gtx, colHeaderBg, func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					title := material.H6(a.th, "becky-canvas")
-					title.Color = colAccent
-					return layout.UniformInset(unit.Dp(4)).Layout(gtx, title.Layout)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-				layout.Flexed(1, a.layoutModeTabs),
-			)
-		})
-	})
-}
-
-// layoutModeTabs draws the ask/video/daw/midi/drum tabs, highlighting the active one.
-func (a *App) layoutModeTabs(gtx layout.Context) layout.Dimensions {
-	modes := canvas.Modes()
-	children := make([]layout.FlexChild, 0, len(modes))
-	for i := range modes {
-		i := i
-		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			active := a.activeMode == modes[i]
-			btn := material.Button(a.th, &a.modeTabs[i], strings.ToUpper(string(modes[i])))
-			btn.TextSize = unit.Sp(13)
-			if active {
-				btn.Background = colAccent
-				btn.Color = colWindowBg
-			} else {
-				btn.Background = colPanelBg
-				btn.Color = colTextDim
-			}
-			return layout.UniformInset(unit.Dp(3)).Layout(gtx, btn.Layout)
-		}))
-	}
-	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
-}
-
-// layoutBody splits into the left tool panel and the right work area.
-func (a *App) layoutBody(gtx layout.Context) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-		layout.Rigid(a.layoutToolPanel),
-		layout.Flexed(1, a.layoutWorkArea),
-	)
-}
-
-// toolPanelWidth is the fixed width of the left tool list column.
-const toolPanelWidth = 300
-
-// layoutToolPanel draws the grouped, scrollable, clickable tool list.
-func (a *App) layoutToolPanel(gtx layout.Context) layout.Dimensions {
-	gtx.Constraints.Min.X = gtx.Dp(unit.Dp(toolPanelWidth))
-	gtx.Constraints.Max.X = gtx.Constraints.Min.X
-	return widgetBg(gtx, colPanelBg, func(gtx layout.Context) layout.Dimensions {
-		rows := a.toolRows()
-		return layout.UniformInset(unit.Dp(6)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return material.List(a.th, &a.toolList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
-				return rows[i](gtx)
-			})
-		})
-	})
-}
-
-// toolRows flattens the grouped catalog into a list of row-drawing closures: a group
-// header followed by that group's tool buttons. Buttons keep their original catalog
-// index so clicks map back to the right tool.
-func (a *App) toolRows() []layout.Widget {
-	var rows []layout.Widget
-	for _, g := range groupOrder() {
-		g := g
-		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-			return a.layoutGroupHeader(gtx, g)
-		})
-		for ci, t := range a.tools {
-			if t.Group != g {
-				continue
-			}
-			ci, t := ci, t
-			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-				return a.layoutToolButton(gtx, ci, t)
-			})
-		}
-	}
-	return rows
-}
-
-// layoutGroupHeader draws a small section header above each tool group.
-func (a *App) layoutGroupHeader(gtx layout.Context, g string) layout.Dimensions {
-	return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(2), Left: unit.Dp(4)}.Layout(gtx,
-		func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(a.th, strings.ToUpper(g))
-			lbl.Color = colAccent
-			return lbl.Layout(gtx)
-		})
-}
-
-// layoutToolButton draws one clickable tool card: label on top, description beneath.
-func (a *App) layoutToolButton(gtx layout.Context, idx int, t toolItem) layout.Dimensions {
-	return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return material.Clickable(gtx, &a.toolBtns[idx], func(gtx layout.Context) layout.Dimensions {
-			bg := colPanelBg
-			if a.toolBtns[idx].Hovered() {
-				bg = colHeaderBg
-			}
-			return widgetBg(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-				return layout.UniformInset(unit.Dp(7)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							name := material.Body1(a.th, t.Label)
-							name.Color = colText
-							return name.Layout(gtx)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							desc := material.Caption(a.th, t.Desc)
-							desc.Color = colTextDim
-							return desc.Layout(gtx)
-						}),
-					)
-				})
-			})
-		})
-	})
-}
-
-// layoutWorkArea stacks the target row, the visual panel, the command row, and the
-// output panel down the right side.
-func (a *App) layoutWorkArea(gtx layout.Context) layout.Dimensions {
+// layoutWorkColumn stacks the big canvas, then the agent box, then the small output.
+func (a *App) layoutWorkColumn(gtx layout.Context) layout.Dimensions {
 	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(a.layoutTargetRow),
+			layout.Flexed(1, a.layoutCanvas),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-			layout.Flexed(0.42, a.layoutVisualPanel),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-			layout.Rigid(a.layoutCommandRow),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-			layout.Flexed(0.58, a.layoutOutputPanel),
+			layout.Rigid(a.layoutAgentBox),
+			layout.Rigid(a.layoutOutput),
 		)
 	})
 }
 
-// layoutTargetRow draws "Target:" + the path field + Browse… / Folder… buttons.
-func (a *App) layoutTargetRow(gtx layout.Context) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(a.th, "Target ")
-			lbl.Color = colTextDim
-			return lbl.Layout(gtx)
-		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return fieldBox(gtx, func(gtx layout.Context) layout.Dimensions {
-				ed := material.Editor(a.th, &a.target, "Paste a file or folder path…")
-				ed.Color = colText
-				ed.HintColor = colTextDim
-				return ed.Layout(gtx)
-			})
-		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-		layout.Rigid(a.smallButton(&a.browseBtn, "Browse…")),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-		layout.Rigid(a.smallButton(&a.folderBtn, "Folder…")),
-	)
-}
-
-// layoutVisualPanel frames the waveform / scene drawing area with a border.
-func (a *App) layoutVisualPanel(gtx layout.Context) layout.Dimensions {
-	a.mu.Lock()
-	// layoutVisual reads a.vis; copy under lock isn't needed since drawing reads fields
-	// that are only swapped wholesale, but we keep the lock window tiny here.
-	a.mu.Unlock()
-	return borderBox(gtx, func(gtx layout.Context) layout.Dimensions {
-		return a.layoutVisual(gtx, a.th)
+// layoutCanvas frames the visual surface with a mode-coloured border and captures pointer
+// input over it (drum clicks / pen drags).
+func (a *App) layoutCanvas(gtx layout.Context) layout.Dimensions {
+	accent := modeAccent(a.activeMode)
+	return borderBox(gtx, accent, func(gtx layout.Context) layout.Dimensions {
+		dims := a.layoutVisual(gtx, a.th)
+		a.captureCanvasPointer(gtx, dims.Size)
+		return dims
 	})
 }
 
-// layoutCommandRow draws the command input + Run button + Clear button.
-func (a *App) layoutCommandRow(gtx layout.Context) layout.Dimensions {
+// captureCanvasPointer registers the canvas area as a pointer target and routes events:
+// in DRAW mode, press/drag/release build a pen stroke; in DRUM mode, a press toggles the
+// clicked step cell. Coordinates are canvas-local (the area is pushed at the origin).
+func (a *App) captureCanvasPointer(gtx layout.Context, size image.Point) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	tag := &a.canvasTag
+	area := clip.Rect{Max: size}.Push(gtx.Ops)
+	event.Op(gtx.Ops, tag)
+	area.Pop()
+
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: tag,
+			Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		a.onCanvasPointer(pe, size)
+	}
+}
+
+// onCanvasPointer handles one pointer event over the canvas for the active interaction.
+func (a *App) onCanvasPointer(pe pointer.Event, size image.Point) {
+	switch {
+	case a.drawMode:
+		switch pe.Kind {
+		case pointer.Press:
+			a.beginStroke(pe.Position)
+		case pointer.Drag:
+			a.extendStroke(pe.Position)
+		case pointer.Release, pointer.Cancel:
+			a.endStroke()
+		}
+		a.window.Invalidate()
+	case a.activeMode == canvas.ModeDrum:
+		if pe.Kind == pointer.Press {
+			if lane, step, ok := drumCellAt(pe.Position, size); ok {
+				a.drum.cells[lane][step] = !a.drum.cells[lane][step]
+				a.window.Invalidate()
+			}
+		}
+	}
+}
+
+// layoutAgentBox draws the single, unobtrusive agent input line + a small run icon. It is
+// deliberately quiet — one line, dim hint, out of the way (per the spec).
+func (a *App) layoutAgentBox(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return fieldBox(gtx, func(gtx layout.Context) layout.Dimensions {
-				ed := material.Editor(a.th, &a.command, "Type a tool name or phrase, then Enter (e.g. transcribe, compose, research)…")
+				ed := material.Editor(a.th, &a.command, "ask becky… (e.g. transcribe, compose, research)")
 				ed.Color = colText
 				ed.HintColor = colTextDim
+				ed.TextSize = unit.Sp(13)
 				return ed.Layout(gtx)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-		layout.Rigid(a.smallButton(&a.runBtn, "Run")),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-		layout.Rigid(a.smallButton(&a.clearBtn, "Clear")),
+		layout.Rigid(a.iconBtn(&a.runBtn, a.icons.run, colNeonGreen)),
 	)
 }
 
-// layoutOutputPanel draws the scrollable, selectable, read-only output editor. It syncs
-// the editor's text from the shared buffer each frame so streamed lines appear live.
-func (a *App) layoutOutputPanel(gtx layout.Context) layout.Dimensions {
+// layoutOutput draws the SMALL, collapsible, selectable output area. It is hidden when
+// empty; when there's output a thin header bar with an expand/clear control sits above a
+// short (or expanded) selectable log. It never dominates the window.
+func (a *App) layoutOutput(gtx layout.Context) layout.Dimensions {
 	a.mu.Lock()
 	logText := a.logBuf.String()
 	a.mu.Unlock()
+	if strings.TrimSpace(logText) == "" {
+		return layout.Dimensions{} // nothing yet -> take no space
+	}
 	if a.output.Text() != logText {
 		a.output.SetText(logText)
 	}
-	return borderBox(gtx, func(gtx layout.Context) layout.Dimensions {
-		return widgetBg(gtx, colCanvasBg, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return material.List(a.th, &a.outputList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-					ed := material.Editor(a.th, &a.output, "")
-					ed.Color = colText
-					ed.TextSize = unit.Sp(13)
-					return ed.Layout(gtx)
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(a.layoutOutputHeader),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			// Short by default; taller when expanded. Capped so it never eats the canvas.
+			h := gtx.Dp(unit.Dp(72))
+			if a.outExpanded {
+				h = gtx.Dp(unit.Dp(220))
+			}
+			gtx.Constraints.Min.Y = h
+			gtx.Constraints.Max.Y = h
+			return borderBox(gtx, colGridLine, func(gtx layout.Context) layout.Dimensions {
+				return widgetBg(gtx, colCanvasBg, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return material.List(a.th, &a.outputList).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+							ed := material.Editor(a.th, &a.output, "")
+							ed.Color = colText
+							ed.TextSize = unit.Sp(12)
+							return ed.Layout(gtx)
+						})
+					})
 				})
 			})
-		})
-	})
+		}),
+	)
+}
+
+// layoutOutputHeader draws the thin output bar: a dim "output" label + expand/collapse
+// and clear icon buttons. The only chrome the output gets.
+func (a *App) layoutOutputHeader(gtx layout.Context) layout.Dimensions {
+	chevron := a.icons.expand
+	if !a.outExpanded {
+		chevron = a.icons.collapse
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(a.th, "output")
+			lbl.Color = colTextDim
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(a.iconBtn(&a.expandBtn, chevron, colTextDim)),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+		layout.Rigid(a.iconBtn(&a.clearBtn, a.icons.clear, colTextDim)),
+	)
 }
 
 // --- small layout helpers --------------------------------------------------------
 
-// smallButton returns a widget that draws a compact accent button.
-func (a *App) smallButton(btn *widget.Clickable, label string) layout.Widget {
+// smallIconSize is the side length of the inline (non-dock) icon buttons.
+const smallIconSize = 30
+
+// iconBtn returns a widget drawing a compact square icon button (used by the agent run
+// control and the output header). Hover brightens the icon; a nil icon falls back to a
+// neon square so it's still clickable.
+func (a *App) iconBtn(btn *widget.Clickable, ic *widget.Icon, col color.NRGBA) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
-		b := material.Button(a.th, btn, label)
-		b.TextSize = unit.Sp(13)
-		b.Background = colAccentDim
-		b.Color = colText
-		if btn.Hovered() {
-			b.Background = colAccent
-			b.Color = colWindowBg
-		}
-		return b.Layout(gtx)
+		side := gtx.Dp(unit.Dp(smallIconSize))
+		gtx.Constraints = layout.Exact(image.Pt(side, side))
+		return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			c := col
+			bg := colCanvasBg
+			if btn.Hovered() {
+				c = colNeonGreen
+				bg = colHeaderBg
+			}
+			fillRRect(gtx.Ops, image.Rect(0, 0, side, side), 6, bg)
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				isz := gtx.Dp(unit.Dp(18))
+				gtx.Constraints = layout.Exact(image.Pt(isz, isz))
+				if ic != nil {
+					return ic.Layout(gtx, c)
+				}
+				fillRRect(gtx.Ops, image.Rect(0, 0, isz, isz), 3, c)
+				return layout.Dimensions{Size: image.Pt(isz, isz)}
+			})
+		})
 	}
 }
 
-// widgetBg fills the widget's area with a background colour, then draws w on top. It
-// records the child first to learn its size, paints the background behind it, then
-// replays the child — the standard Gio "background under a widget" idiom.
+// widgetBg fills the widget's area with a background colour, then draws w on top (the
+// standard Gio "background under a widget" idiom).
 func widgetBg(gtx layout.Context, bg color.NRGBA, w layout.Widget) layout.Dimensions {
 	macro := op.Record(gtx.Ops)
 	dims := w(gtx)
@@ -564,44 +611,73 @@ func widgetBg(gtx layout.Context, bg color.NRGBA, w layout.Widget) layout.Dimens
 	return dims
 }
 
-// fieldBox wraps a text editor in a padded, panel-coloured box so it reads as an input.
+// fieldBox wraps a text editor in a padded, canvas-coloured box so it reads as an input.
 func fieldBox(gtx layout.Context, w layout.Widget) layout.Dimensions {
 	return widgetBg(gtx, colCanvasBg, func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(6)).Layout(gtx, w)
+		return layout.UniformInset(unit.Dp(8)).Layout(gtx, w)
 	})
 }
 
-// borderBox draws a thin border around w (a 1px frame in the grid colour). It uses the
-// widgetBg idiom: record the child, draw a frame the child's size, replay the child.
-func borderBox(gtx layout.Context, w layout.Widget) layout.Dimensions {
+// borderBox draws a coloured 1px frame around w (used to give the canvas a mode-coloured
+// edge and the output a dark frame).
+func borderBox(gtx layout.Context, edge color.NRGBA, w layout.Widget) layout.Dimensions {
 	macro := op.Record(gtx.Ops)
 	dims := w(gtx)
 	call := macro.Stop()
-
-	// Frame: fill the full rect with the border colour, then the child paints over the
-	// interior. (The child's own background covers all but the 1px edge it doesn't fill;
-	// panels here paint their own backgrounds, so the border shows as a hairline edge.)
-	frame(gtx.Ops, dims.Size.X, dims.Size.Y, colGridLine)
+	strokeRect(gtx.Ops, image.Rect(0, 0, dims.Size.X, dims.Size.Y), edge)
 	call.Add(gtx.Ops)
 	return dims
 }
 
-// frame draws a 1px rectangle outline of the given size in colour c.
-func frame(ops *op.Ops, w, h int, c color.NRGBA) {
-	edges := []clip.Rect{
-		{Min: imgPt(0, 0), Max: imgPt(w, 1)},   // top
-		{Min: imgPt(0, h-1), Max: imgPt(w, h)}, // bottom
-		{Min: imgPt(0, 0), Max: imgPt(1, h)},   // left
-		{Min: imgPt(w-1, 0), Max: imgPt(w, h)}, // right
-	}
-	for _, e := range edges {
-		func() {
-			defer e.Push(ops).Pop()
-			paint.ColorOp{Color: c}.Add(ops)
-			paint.PaintOp{}.Add(ops)
-		}()
+// --- in-window file drop ---------------------------------------------------------
+
+// registerWindowDrop registers the whole window as a transfer target and adopts the first
+// dropped/pasted path as the target.
+//
+// IMPORTANT (verified against Gio v0.10.0): Gio does NOT deliver OS *file* drops on
+// Windows — there is no WM_DROPFILES / IDropTarget path in its Windows backend, and on
+// every platform the only transfer.DataEvent it emits is type "application/text". So this
+// handler best-effort accepts a TEXT transfer (e.g. a dropped/pasted path string) and, if
+// it resolves to a real file/folder, sets it as the target. On Windows the RELIABLE
+// drag-and-drop is the argv path (drop a file onto becky-canvas.exe — see adoptArgv),
+// plus the Open button. This handler never blocks and never crashes if nothing arrives.
+func (a *App) registerWindowDrop(gtx layout.Context) {
+	tag := a.window // a stable per-window tag
+	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, tag)
+
+	for {
+		ev, ok := gtx.Event(transfer.TargetFilter{Target: tag, Type: "application/text"})
+		if !ok {
+			break
+		}
+		de, ok := ev.(transfer.DataEvent)
+		if !ok {
+			continue
+		}
+		rc := de.Open()
+		data, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if path := firstDroppedPath(string(data)); path != "" {
+			a.setTarget(path)
+		}
 	}
 }
 
-// imgPt is a short constructor for an image.Point (keeps frame() readable).
-func imgPt(x, y int) image.Point { return image.Pt(x, y) }
+// firstDroppedPath extracts the first usable filesystem path from dropped transfer data.
+// Drops may arrive as one path, a newline-separated list, or file:// URIs; we take the
+// first existing path. Returns "" when nothing usable is found.
+func firstDroppedPath(data string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(data, "\r\n", "\n"), "\n") {
+		p := strings.TrimSpace(line)
+		p = strings.TrimPrefix(p, "file://")
+		p = strings.TrimPrefix(p, "file:")
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}

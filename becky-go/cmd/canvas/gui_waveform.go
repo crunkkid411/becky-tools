@@ -1,13 +1,15 @@
 //go:build gui
 
-// gui_waveform.go — the VISUAL-FIRST surface (CLAUDE.md HARD REQUIREMENT). It turns the
-// current target into a picture drawn with Gio op/paint/clip:
-//   - a .wav target -> decoded via internal/dsp and drawn as a waveform (min/max peaks);
-//   - a becky-compose project.json -> loaded via internal/canvas and drawn as DAW track
-//     lanes with clip blocks on a timeline;
-//   - anything else -> a friendly "drop an audio file or a project.json here" panel.
+// gui_waveform.go — the VISUAL-FIRST canvas surface (CLAUDE.md HARD REQUIREMENT). The
+// big central surface shows ONE of:
+//   - the drum step grid (drum mode) — clickable squares;
+//   - a piano-roll placeholder lane (midi mode);
+//   - a .wav waveform (target is a .wav, decoded via internal/dsp);
+//   - a becky-compose project.json scene (DAW track lanes + clips);
+//   - else a friendly "drop a file" hint.
 //
-// All decode/parse failures degrade to that friendly panel — never a panic.
+// Draw-mode pen strokes are painted ON TOP of whatever's shown, so Jordan can mark up a
+// waveform or a beat. All decode/parse failures degrade to the hint — never a panic.
 package main
 
 import (
@@ -37,9 +39,8 @@ const (
 	visualScene                   // a becky-compose project.json DAW scene
 )
 
-// visual is the decoded/parsed target ready to draw, computed off the UI thread when
-// the target changes. It holds the cheap-to-draw representation only (peaks / scene),
-// not the raw audio, so each frame is fast.
+// visual is the decoded/parsed target ready to draw, computed off the UI thread when the
+// target changes. It holds the cheap-to-draw representation only (peaks / scene).
 type visual struct {
 	kind  visualKind
 	peaks []canvas.Peak // waveform overview (visualWave)
@@ -49,17 +50,15 @@ type visual struct {
 }
 
 // wavePeakCount is the fixed number of min/max peak pairs we reduce any WAV to for the
-// overview. Drawing a fixed count keeps the waveform fast regardless of file length and
-// deterministic for the same input.
+// overview — fast regardless of length, deterministic for the same input.
 const wavePeakCount = 1600
 
-// buildVisual inspects target and produces a drawable representation. It is pure-ish
-// (filesystem read only) and safe to call from a worker goroutine. Every failure path
-// returns a visualNone with a plain-language note — degrade, never crash.
+// buildVisual inspects target and produces a drawable representation. Filesystem read
+// only — safe from a worker goroutine. Every failure returns a visualNone + a plain note.
 func buildVisual(target string) visual {
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return visual{kind: visualNone, note: "Paste a path above, or click a tool. Drop in a .wav to see its waveform, or a project.json to see the song lanes."}
+		return visual{kind: visualNone, note: "Drop a .wav for its waveform, a project.json for song lanes, or pick a mode on the left."}
 	}
 	lower := strings.ToLower(target)
 	switch {
@@ -68,7 +67,7 @@ func buildVisual(target string) visual {
 	case strings.HasSuffix(lower, ".json"):
 		return sceneVisual(target)
 	default:
-		return visual{kind: visualNone, note: "Nothing to draw for " + pathx.Base(target) + " yet. This area shows a waveform for .wav files and song lanes for a project.json."}
+		return visual{kind: visualNone, note: "Loaded " + pathx.Base(target) + ". Pick a tool below, or a mode on the left."}
 	}
 }
 
@@ -94,15 +93,13 @@ func waveVisual(target string) visual {
 func sceneVisual(target string) visual {
 	scene, err := canvas.Load(target)
 	if err != nil {
-		// Load still returns a usable (empty) scene on failure — show it with a note.
 		return visual{kind: visualScene, scene: &scene, note: "Opened an empty song view (" + err.Error() + ")"}
 	}
 	return visual{kind: visualScene, scene: &scene, note: scene.Title}
 }
 
 // peaksFromSamples reduces mono samples to n min/max peak pairs (the standard waveform
-// overview primitive). Fewer samples than buckets => one sample per bucket; zero
-// samples => a flat line. Deterministic for the same input.
+// overview primitive). Deterministic for the same input.
 func peaksFromSamples(samples []float64, n int) []canvas.Peak {
 	if n <= 0 {
 		return nil
@@ -138,14 +135,35 @@ func peaksFromSamples(samples []float64, n int) []canvas.Peak {
 	return out
 }
 
-// layoutVisual draws the current visual into the given area. It always fills a dark
-// canvas background first so the panel reads as a distinct surface, then draws the
-// waveform / lanes / hint on top.
+// layoutVisual draws the current canvas surface. It fills the dark canvas background,
+// then draws the surface for the active mode (drum grid / piano roll / waveform / scene
+// / hint), and finally overlays any pen strokes from draw mode.
 func (a *App) layoutVisual(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	size := gtx.Constraints.Max
-	// Background surface.
 	fillRect(gtx.Ops, image.Rect(0, 0, size.X, size.Y), colCanvasBg)
 
+	switch a.activeMode {
+	case canvas.ModeDrum:
+		a.drawDrumGrid(gtx)
+		a.drawCanvasCaption(gtx, th, "drum machine  •  click the squares")
+	case canvas.ModeMIDI:
+		a.drawPianoRoll(gtx)
+		a.drawCanvasCaption(gtx, th, "piano roll")
+	default:
+		a.drawTargetSurface(gtx, th)
+	}
+
+	// Pen strokes ride on top of everything in draw mode.
+	a.drawStrokes(gtx)
+	if a.drawMode {
+		a.drawCanvasCaption(gtx, th, "draw  •  press and drag to mark up the canvas")
+	}
+	return layout.Dimensions{Size: size}
+}
+
+// drawTargetSurface draws the waveform / scene / hint for the current target (used in
+// ask/video/daw modes — the surfaces that come from a loaded file).
+func (a *App) drawTargetSurface(gtx layout.Context, th *material.Theme) {
 	switch a.vis.kind {
 	case visualWave:
 		drawWaveform(gtx, a.vis.peaks)
@@ -156,7 +174,6 @@ func (a *App) layoutVisual(gtx layout.Context, th *material.Theme) layout.Dimens
 	default:
 		a.drawCanvasHint(gtx, th, a.vis.note)
 	}
-	return layout.Dimensions{Size: size}
 }
 
 // captionForWave / captionForScene build the small status line drawn over the canvas.
@@ -181,10 +198,9 @@ func drawWaveform(gtx layout.Context, peaks []canvas.Peak) {
 		return
 	}
 	mid := float32(size.Y) / 2
-	half := float32(size.Y)/2 - 8 // leave a small margin
+	half := float32(size.Y)/2 - 8
 
-	// Centre line.
-	fillRect(gtx.Ops, image.Rect(0, int(mid), size.X, int(mid)+1), colGridLine)
+	fillRect(gtx.Ops, image.Rect(0, int(mid), size.X, int(mid)+1), colGridLine) // centre line
 
 	w := float32(size.X) / float32(len(peaks))
 	var path clip.Path
@@ -194,7 +210,7 @@ func drawWaveform(gtx layout.Context, peaks []canvas.Peak) {
 		top := mid - clampUnit(p.Max)*half
 		bot := mid + clampUnit(p.Min)*half
 		if bot-top < 1 {
-			bot = top + 1 // always at least a hairline so silence is visible
+			bot = top + 1
 		}
 		barW := maxF(w-0.5, 0.5)
 		path.MoveTo(f32.Pt(x, top))
@@ -206,37 +222,31 @@ func drawWaveform(gtx layout.Context, peaks []canvas.Peak) {
 	paint.FillShape(gtx.Ops, colWave, clip.Outline{Path: path.End()}.Op())
 }
 
-// drawScene paints DAW track lanes with clip blocks on a simple timeline. Each track is
-// a horizontal lane; clips are rounded blocks positioned by the scene's viewport zoom.
+// drawScene paints DAW track lanes with clip blocks on a simple timeline. Each track is a
+// horizontal lane; clips are neon-edged blocks positioned by the scene's viewport zoom.
 func drawScene(gtx layout.Context, scene *canvas.Scene) {
 	size := gtx.Constraints.Max
-	if scene == nil || size.X <= 0 || size.Y <= 0 {
-		return
-	}
-	if len(scene.Tracks) == 0 {
+	if scene == nil || size.X <= 0 || size.Y <= 0 || len(scene.Tracks) == 0 {
 		return
 	}
 	laneH := size.Y / len(scene.Tracks)
 	if laneH < 14 {
 		laneH = 14
 	}
-	headerW := 132 // lane header strip width on the left
+	headerW := 132
 
 	for i, tr := range scene.Tracks {
 		y0 := i * laneH
 		if y0 >= size.Y {
 			break
 		}
-		// Alternating lane background for readability.
 		laneCol := colLaneA
 		if i%2 == 1 {
 			laneCol = colLaneB
 		}
 		fillRect(gtx.Ops, image.Rect(0, y0, size.X, y0+laneH-1), laneCol)
-		// Header strip.
 		fillRect(gtx.Ops, image.Rect(0, y0, headerW, y0+laneH-1), colLaneHeader)
 
-		// Clip blocks.
 		for _, c := range tr.Clips {
 			x0 := headerW + int(scene.Viewport.TickToPixel(c.Start))
 			x1 := headerW + int(scene.Viewport.TickToPixel(c.End()))
@@ -255,7 +265,37 @@ func drawScene(gtx layout.Context, scene *canvas.Scene) {
 			rr := image.Rect(x0, y0+4, x1, y0+laneH-5)
 			if rr.Max.Y > rr.Min.Y {
 				fillRRect(gtx.Ops, rr, 4, colClip)
+				strokeRect(gtx.Ops, rr, colClipEdge)
 			}
+		}
+	}
+}
+
+// drawPianoRoll draws a placeholder piano-roll surface: alternating key rows (white/black
+// key bands) with faint bar lines. The real note grid is a later phase; this gives MIDI
+// mode a recognisable, branded surface now (shapes, not text).
+func (a *App) drawPianoRoll(gtx layout.Context) {
+	size := gtx.Constraints.Max
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	const rows = 24 // two octaves of visible key rows
+	rowH := size.Y / rows
+	if rowH < 4 {
+		rowH = 4
+	}
+	black := map[int]bool{1: true, 3: true, 6: true, 8: true, 10: true} // black-key semitones
+	for r := 0; r < rows; r++ {
+		y0 := r * rowH
+		col := colLaneB
+		if black[r%12] {
+			col = colLaneA
+		}
+		fillRect(gtx.Ops, image.Rect(0, y0, size.X, y0+rowH-1), col)
+	}
+	if step := size.X / 8; step > 0 {
+		for x := 0; x < size.X; x += step {
+			fillRect(gtx.Ops, image.Rect(x, 0, x+1, size.Y), colGridLine)
 		}
 	}
 }
@@ -276,8 +316,25 @@ func fillRRect(ops *op.Ops, r image.Rectangle, radius int, c color.NRGBA) {
 	paint.PaintOp{}.Add(ops)
 }
 
-// clampUnit clamps a sample magnitude to [0, 1] (we draw from the centre line out, so
-// only the magnitude matters) so a stray spike can't draw off-panel.
+// strokeRect draws a 1px rectangle outline in colour c (four hairline edges). Gives a
+// shape a crisp neon border without a fill.
+func strokeRect(ops *op.Ops, r image.Rectangle, c color.NRGBA) {
+	edges := []image.Rectangle{
+		{Min: r.Min, Max: image.Pt(r.Max.X, r.Min.Y+1)},
+		{Min: image.Pt(r.Min.X, r.Max.Y-1), Max: r.Max},
+		{Min: r.Min, Max: image.Pt(r.Min.X+1, r.Max.Y)},
+		{Min: image.Pt(r.Max.X-1, r.Min.Y), Max: r.Max},
+	}
+	for _, e := range edges {
+		func() {
+			defer clip.Rect(e).Push(ops).Pop()
+			paint.ColorOp{Color: c}.Add(ops)
+			paint.PaintOp{}.Add(ops)
+		}()
+	}
+}
+
+// clampUnit clamps a sample magnitude to [0, 1] (we draw from the centre line out).
 func clampUnit(v float32) float32 {
 	if v < 0 {
 		v = -v
