@@ -229,6 +229,19 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/motion-pipeline-step` (cloud, 2026-06-16) — becky-ask Phase 4: deterministic workflow planner. READY FOR REVIEW.**
+
+Implements SPEC-BECKY-ASK.md §3.3 (b) — "Assembling a workflow." When Jordan types a request that matches 2+ catalog capabilities (e.g. "how do I transcribe and identify people?"), `becky-ask` now shows a **numbered, ordered step plan** with real copy-pasteable commands and the user's target paths already filled in — instead of an unordered bulleted list of tools.
+
+- **`cmd/ask/plan.go`** (new): `stepOrderMap` (canonical tool execution order: enroll-wiki → index → transcribe → diarize → … → search → export); `stepPos(verb) int`; `adaptCommand(example, t Target) string` (replaces `"<video>"`, `"<folder>"`, `"<corpus-dir>"`, etc. with the actual dropped target; leaves user-value placeholders `<query>`, `<claim>`, `<name>` intact); `buildWorkflowPlan(hits, t) []planStep` (sorts + adapts); `workflowReply(hits, t) string` (numbered plan renderer with target-aware intro + placeholder hint).
+- **`cmd/ask/router.go`** (updated): `questionReply` gains a `Target` parameter; when `matchCapabilities` returns ≥2 hits, routes to `workflowReply` instead of `capabilityReply`. Single-hit questions keep the existing catalog answer.
+- **`cmd/ask/plan_test.go`** (new): 18 table-driven tests covering `adaptCommand` (video/folder/no-target/user-value-safe), `stepPos` ordering (enroll-wiki before find, transcribe before identify), `buildWorkflowPlan` (ordering, path filling), `workflowReply` (numbered steps, placeholder hint, target in intro), and `route()` end-to-end (2+ matches → plan; 1 match → catalog answer).
+- All 51 packages: `go build/vet/test ./...` green; `gofmt -l .` clean.
+
+Left for local: **nothing** — purely deterministic Go, no models/ffmpeg. `build-all-tools.bat` picks up the updated `becky-ask.exe` automatically. Phase 5 (opt-in EXECUTION of the full plan — running all steps in sequence — requires a multi-command runner loop in the TUI) is future work.
+
+---
+
 **Branch `claude/ask-pitch-phase3-2026-06-16` (cloud, 2026-06-16) — becky-ask Phase 3: new-tool pitch → factory handoff. READY FOR REVIEW.**
 
 Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a structured pitch, shows it in plain English, and on "y" calls `becky-new-tool --intake-file` to kick off the factory pipeline. Builds + all tests pass (go build/vet/test/gofmt all green, 10 new pitch tests + render_test.go updated for Phase 3 behaviour).

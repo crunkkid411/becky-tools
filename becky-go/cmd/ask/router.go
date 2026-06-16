@@ -52,7 +52,7 @@ func route(ctx context.Context, cli *llamaClient, question string, t Target) rou
 	case decideNewTool:
 		return buildNewToolRouted(q)
 	default: // decideQuestion
-		return routed{Reply: questionReply(q, d)}
+		return routed{Reply: questionReply(q, d, t)}
 	}
 }
 
@@ -91,11 +91,16 @@ func clarifyReply(d decision, question string, t Target) string {
 	return b.String()
 }
 
-// questionReply answers a discussion turn. It prefers the offline catalog match
-// (so "can becky transcribe?" still names the tool + example), else an honest
-// router reply. No tool call, ever.
-func questionReply(question string, d decision) string {
+// questionReply answers a discussion turn. When 2+ capabilities match the
+// question, it shows a numbered workflow plan (buildWorkflowPlan) rather than an
+// unordered capability list — the plan conveys the correct execution ORDER and
+// has the user's target paths already filled in. Single-tool matches fall through
+// to the existing capability answer. No tool call, ever.
+func questionReply(question string, d decision, t Target) string {
 	if hits := matchCapabilities(question); len(hits) > 0 {
+		if len(hits) >= 2 {
+			return workflowReply(hits, t)
+		}
 		return capabilityReply(question, hits)
 	}
 	return placeholderReply(question)
