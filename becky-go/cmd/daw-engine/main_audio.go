@@ -18,6 +18,7 @@ package main
 // (e.g. devices enumerated but no usable pair, or a missing file).
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -26,13 +27,19 @@ import (
 	"strings"
 
 	"becky-go/internal/audioengine"
+	"becky-go/internal/dawmodel"
 )
 
 // audioFlagNames are the real-audio subcommand flags this seam owns. We only
 // activate when one of these is present, so a default-flag invocation (--json,
 // --list, --no-interface) falls straight through to the pure-Go demo with no
 // noisy usage output.
-var audioFlagNames = []string{"-list-real", "--list-real", "-record", "--record", "-play", "--play"}
+var audioFlagNames = []string{
+	"-list-real", "--list-real",
+	"-record", "--record",
+	"-play", "--play",
+	"-play-pattern-audio", "--play-pattern-audio",
+}
 
 // hasAudioFlag reports whether args contain a real-audio subcommand flag (also
 // matching the `--play=foo` / `-play=foo` forms).
@@ -60,8 +67,9 @@ func audioModeRun(args []string) (handled bool, exitCode int) {
 	listReal := fs.Bool("list-real", false, "enumerate REAL audio devices via miniaudio and show the chosen pair")
 	record := fs.Bool("record", false, "record from the mic: --record <seconds> <out.wav>")
 	play := fs.String("play", "", "play a WAV file through the chosen output device")
+	playPatternAudio := fs.String("play-pattern-audio", "", "render and play a project.json pattern through the synth")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, "usage: becky-daw-engine [--list-real | --record <seconds> <out.wav> | --play <file.wav>]")
+		fmt.Fprintln(os.Stderr, "usage: becky-daw-engine [--list-real | --record <seconds> <out.wav> | --play <file.wav> | --play-pattern-audio <project.json>]")
 		return true, 2
 	}
 
@@ -72,6 +80,8 @@ func audioModeRun(args []string) (handled bool, exitCode int) {
 		return true, runPlay(*play)
 	case *listReal:
 		return true, runListReal()
+	case *playPatternAudio != "":
+		return true, runPlayPatternAudio(*playPatternAudio)
 	default:
 		return false, 0
 	}
@@ -170,4 +180,48 @@ func sideName(d *audioengine.Device) string {
 		return "(default device)"
 	}
 	return d.DisplayName()
+}
+
+// runPlayPatternAudio reads a project.json, sequences all MIDI notes, renders
+// the pattern with the pure-Go polyphonic synth, and plays it through the
+// chosen output device. This is the audible entry point for
+// `becky-daw-engine --play-pattern-audio <project.json>`.
+//
+// Exit codes: 0 ok; 1 internal error; 2 degrade (no MIDI notes / bad file).
+func runPlayPatternAudio(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern-audio: cannot read file:", err)
+		return 1
+	}
+	var arr dawmodel.Arrangement
+	if err := json.Unmarshal(data, &arr); err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern-audio: cannot parse JSON:", err)
+		return 1
+	}
+
+	// Enumerate real devices so we can pass the pro-interface output to the synth.
+	_, sel, _, enumErr := chooseDevices()
+	if enumErr != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern-audio: device enumeration failed (will use OS default):", enumErr)
+		sel.Output = nil
+	}
+
+	bpm := arr.BPM
+	if bpm <= 0 {
+		bpm = 120
+	}
+	fmt.Printf("Playing pattern from %s | BPM %d | output: %s\n",
+		path, bpm, sideName(sel.Output))
+	fmt.Println("Rendering audio ... (this may take a moment for long patterns)")
+
+	if err := audioengine.PlayPatternAudio(&arr, sel.Output, 48000); err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern-audio:", err)
+		if strings.Contains(err.Error(), "no MIDI notes") {
+			return 2 // degrade: empty pattern
+		}
+		return 1
+	}
+	fmt.Println("Done.")
+	return 0
 }
