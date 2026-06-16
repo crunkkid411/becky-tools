@@ -83,7 +83,7 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | internal/dsp | local 2026-06-15 | BUILT (dawbase analysis.cpp port) | `internal/dsp` | pure-Go WAV decode + FFT + chroma + onset/tempo |
 | becky-vox (`SPEC-BECKY-VOX.md`) | local 2026-06-15 | BUILT (core; DSP stubbed) | `cmd/vox` + `internal/vox` | DTW multi-take align |
 | becky-daw (`SPEC-BECKY-DAW-EDITOR.md`) | local 2026-06-15 | BUILT (editable model) | `cmd/daw` + `internal/dawmodel` | piano-roll/drum-grid/mixer |
-| becky-canvas (`SPEC-BECKY-CANVAS.md`) | local 2026-06-15 | BUILT (Gio GUI + Windows file drag-drop) | `cmd/canvas` + `internal/canvas` | `dragdrop_windows.go` = real IDropTarget on the Gio HWND; select→ask→transform overlay still open (§6 #2) |
+| becky-canvas (`SPEC-BECKY-CANVAS.md`) | local 2026-06-15 | BUILT (Gio GUI + drag-drop + select→ask→transform overlay) | `cmd/canvas` + `internal/canvas` | `dragdrop_windows.go` = real IDropTarget on the Gio HWND; `transform.go` + `gui_overlay.go` = the global "show me, don't do it" preview (StubTransformer; real Gemma-4/LFM2.5-VL = local boundary) |
 | becky-daw-engine (`SPEC-BECKY-DAW-ENGINE.md`) | local 2026-06-15 | BUILT (device/transport + sequencer; cgo synth=Phase-2) | `cmd/daw-engine` + `internal/audioengine` | `sequencer.go` (SequenceDrumGrid/Notes → []ScheduledEvent) + `--play-pattern`; native synth in X:\AI-2\dawbase |
 
 ---

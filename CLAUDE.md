@@ -257,10 +257,24 @@ a build tag) were built in parallel and committed (`de0c465`). All pass
   **Left for Jordan:** verify by dragging a real file onto the running window (COM
   registration can't be unit-tested headlessly; degrades to a single log line if it fails).
 
-*Still open from the §6 list:* **#2 select→ask→transform + the global "show me, don't do
-it" overlay** (the design centerpiece — heavy `gui.go` work, kept for a focused wave so it
-doesn't collide with the drag-drop hook) and **drum/piano that PLAY through the engine in
-the canvas UI** (needs both the sequencer above and the Phase-2 cgo synth).
+**§6 #2 (select→ask→transform + the global "show me, don't do it" overlay — the design
+centerpiece) — BUILT in a wave-2 subagent pass (commit `7654b65`).** `internal/canvas/transform.go`:
+`Selection` + a `Transformer` interface + a deterministic `StubTransformer` + `Propose`/`Apply`/`RejectScene`
+— immutable, and **approval is EXPLICIT** (nothing mutates until the human clicks ✓).
+`cmd/canvas/gui_overlay.go` renders the GLOBAL preview overlay (colour-accented before→after,
+✓ Apply / ✗ Reject), reusable by any mode; the agent box routes a *selected* instruction to a
+proposal and falls through to keyword tool-routing when nothing is selected. Approved proposals
+log a canvas correction (`habits.AppendCorrectionLog`, best-effort). **Left for local:** the real
+`Transformer` backed by Gemma-4 / LFM2.5-VL (the local GPU boundary — implement `Propose` via
+`llama-mtmd-cli`); an Esc-to-reject key filter (✓/✗ buttons work today); richer in-place
+`ScenePatch` diff-rendering once the model returns structural patches. **Jordan verifies by
+running the window** (select → type → see overlay → ✓/✗).
+
+*Still open from the §6 list:* **drum/piano that PLAY through the engine in the canvas UI** (the
+`internal/audioengine` sequencer is done; this needs the canvas to call it + the Phase-2 cgo
+synth that actually sounds it), and the **emit side of preference-learning for hum/vox/canvas**
+beyond daw (daw emits real corrections now; hum/vox carry precise TODO markers — they need the
+canvas drag-to-correct gesture to feed a concrete corrected value back).
 
 ---
 
