@@ -229,6 +229,30 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `local/canvas-fixes-model-samples-loop-2026-06-15` (local, 2026-06-15) — bugfix + real model/audio after Jordan's feedback. MERGED to master (fast-forward).**
+
+Jordan reported: becky-canvas crashed on open; the model "didn't work"; wanted his own
+drum samples + continuous looping. All addressed (commit `810bba7`), build + tests green:
+- **Launch-crash FIXED:** the wave-1 in-window IDropTarget (`dragdrop_windows.go`) set up
+  OLE on a Go goroutine that migrates OS threads → `CoLockObjectExternal` faulted
+  `0xC0000005` on launch. That registration is DISABLED; the window always opens now
+  (drag-onto-exe + Open button still work; a real in-window drop needs a C-side target on
+  Gio's window thread — noted in the file).
+- **Real model WORKS:** defaults were a nonexistent Gemma path. Now `llama-completion.exe`
+  (recent llama.cpp split one-shot completion out of the chat-TUI `llama-cli`) + a
+  **becky-owned** `X:/AI-2/becky-tools/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf`. Verified
+  live (clean strict JSON). Propose runs OFF the UI thread ("becky is thinking…").
+- **Real drum samples:** `internal/audioengine/drumkit.go` loads a becky-owned kit
+  (`X:/AI-2/becky-tools/samples/kit/{kick,snare,hat,clap}.wav`, BVKER) via `internal/dsp`;
+  ch9 notes trigger the samples (sine fallback if absent). `BECKY_DRUM_KIT` overrides.
+- **Continuous looping:** `becky-daw-engine --play-pattern-audio --loops N` tiles one 4/4
+  bar seamlessly; canvas ▶ passes `--loops 16` and ■ Stop kills the process mid-loop
+  (verified: 4-bar kick loop with the real sample, exit 0).
+
+Splice is correctly saving to `X:\Splice` (his X: SSD); his sample library is `X:\music-2\SAMPLES`.
+
+---
+
 **Branch `local/canvas-runtime-2026-06-15` (local, 2026-06-15) — the REAL runtime behind the wired stubs. "Build it all" — done. MERGED to master (fast-forward).**
 
 At Jordan's instruction ("build it all, build it now") the remaining stubs were made
