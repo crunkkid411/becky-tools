@@ -4,12 +4,15 @@
 // that becomes the default"). It is a Go port of dawbase's MIT HabitStore.
 //
 //	becky-habits observe <corrections.json> [--store <path>] [--json]
+//	becky-habits learn --logs <dir>           [--store <path>] [--json]
 //	becky-habits show [--store <path>] [--json]
 //
-// `observe` ingests a corrections log and updates the store. `show` reports, in
-// plain language, what becky has LEARNED (corroborated >= the threshold) and what
-// is still a CANDIDATE (seen once). Conservative by design: a one-off fix never
-// becomes a default — corroborate, then conclude (CLAUDE.md §2).
+// `observe` ingests one corrections file and updates the store. `learn` walks a
+// directory of JSONL corrections logs (written by hum/vox/daw/canvas) and ingests
+// all of them in one pass. `show` reports, in plain language, what becky has
+// LEARNED (corroborated >= the threshold) and what is still a CANDIDATE (seen
+// once). Conservative by design: a one-off fix never becomes a default —
+// corroborate, then conclude (CLAUDE.md §2).
 //
 // Deterministic + offline + degrade-never-crash. The store is a tiny, human-
 // readable habits.json (default under the per-user config dir; override with
@@ -43,6 +46,8 @@ func run(args []string) int {
 	switch args[0] {
 	case "observe":
 		return runObserve(args[1:])
+	case "learn":
+		return runLearn(args[1:])
 	case "show":
 		return runShow(args[1:])
 	case "-h", "--help", "help":
@@ -111,6 +116,62 @@ func emitObserve(store *habits.Store, path string, total, learnable int, asJSON 
 	return exitOK
 }
 
+// runLearn walks a directory of JSONL corrections logs (written by the tools
+// hum/vox/daw/canvas) and ingests all of them into the habit store in one pass.
+// It is the multi-file counterpart to runObserve (which takes a single file).
+//
+// Usage: becky-habits learn --logs <dir> [--store <path>] [--json]
+func runLearn(args []string) int {
+	fs := newFlags("learn")
+	logsDir := fs.String("logs", "", "directory containing *.jsonl corrections logs")
+	storePath := fs.String("store", habits.DefaultStorePath(), "path to habits.json")
+	asJSON := fs.Bool("json", false, "emit a JSON summary instead of plain text")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *logsDir == "" {
+		fmt.Fprintln(os.Stderr, "learn requires --logs <dir>")
+		return exitUsage
+	}
+
+	records, err := habits.LoadCorrectionLogs(*logsDir)
+	if err != nil {
+		// degrade: partial load is still useful; report but continue
+		fmt.Fprintf(os.Stderr, "warning: some correction logs could not be read: %v\n", err)
+	}
+
+	store, err := habits.Load(*storePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "can't load the habit store:", err)
+		return exitErr
+	}
+
+	learnable := store.ObserveAll(records)
+	if err := store.Save(*storePath); err != nil {
+		fmt.Fprintln(os.Stderr, "can't save the habit store:", err)
+		return exitErr
+	}
+	return emitLearn(store, *storePath, *logsDir, len(records), learnable, *asJSON)
+}
+
+// emitLearn prints the post-learn summary (plain or JSON).
+func emitLearn(store *habits.Store, storePath, logsDir string, total, learnable int, asJSON bool) int {
+	if asJSON {
+		rep := store.BuildReport()
+		rep.Note = fmt.Sprintf("loaded %d record(s) from %s, %d learnable, into %s",
+			total, logsDir, learnable, storePath)
+		return encode(rep)
+	}
+	skipped := total - learnable
+	fmt.Printf("loaded %d correction(s) from %s into %s\n", total, logsDir, storePath)
+	if skipped > 0 {
+		fmt.Printf("  (%d skipped — missing scope/field/fixed, nothing to learn)\n", skipped)
+	}
+	fmt.Println()
+	fmt.Print(store.Describe())
+	return exitOK
+}
+
 // runShow reports what becky has learned without ingesting anything.
 func runShow(args []string) int {
 	positional, flags := splitArgs(args)
@@ -152,7 +213,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "becky-habits — learn Jordan's repeated corrections into defaults")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  becky-habits observe <corrections.json> [--store <path>] [--json]")
-	fmt.Fprintln(os.Stderr, "  becky-habits show [--store <path>] [--json]")
+	fmt.Fprintln(os.Stderr, "  becky-habits learn   --logs <dir>        [--store <path>] [--json]")
+	fmt.Fprintln(os.Stderr, "  becky-habits show                        [--store <path>] [--json]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "observe  ingest one corrections file (JSON array or {\"corrections\":[...]})")
+	fmt.Fprintln(os.Stderr, "learn    walk a directory of *.jsonl logs from hum/vox/daw/canvas tools")
+	fmt.Fprintln(os.Stderr, "show     report what becky has learned (no ingest)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "A correction recurring >= 2 times becomes a learned default.")
 	fmt.Fprintln(os.Stderr, "Exit codes: 0 ok, 1 error, 2 usage.")

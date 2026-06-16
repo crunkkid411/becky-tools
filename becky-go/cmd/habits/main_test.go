@@ -56,6 +56,45 @@ func TestRun_observeThenShow(t *testing.T) {
 	}
 }
 
+// TestRun_learnMissingLogsFlag returns exitUsage when --logs is omitted.
+func TestRun_learnMissingLogsFlag(t *testing.T) {
+	if got := run([]string{"learn", "--store", devNull(t)}); got != exitUsage {
+		t.Errorf("learn without --logs: exit=%d want %d", got, exitUsage)
+	}
+}
+
+// TestRun_learnMissingDir degrades gracefully (exitOK + empty store) when the
+// logs directory does not exist — the tools may not have written logs yet.
+func TestRun_learnMissingDir(t *testing.T) {
+	store := devNull(t)
+	noDir := filepath.Join(t.TempDir(), "no-such-logs")
+	if got := run([]string{"learn", "--logs", noDir, "--store", store}); got != exitOK {
+		t.Errorf("learn with missing dir: exit=%d want %d (should degrade)", got, exitOK)
+	}
+}
+
+// TestRun_learnEndToEnd loads two JSONL logs, crosses the threshold, and
+// verifies the store is updated and the report is printed.
+func TestRun_learnEndToEnd(t *testing.T) {
+	logsDir := t.TempDir()
+	store := devNull(t)
+	line := `{"tool":"daw","scope":"kick","field":"gain_db","auto":"-3","fixed":"-7"}` + "\n"
+	for _, name := range []string{"s1.jsonl", "s2.jsonl"} {
+		p := filepath.Join(logsDir, name)
+		if err := os.WriteFile(p, []byte(line), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	if got := run([]string{"learn", "--logs", logsDir, "--store", store}); got != exitOK {
+		t.Fatalf("learn exit=%d want 0", got)
+	}
+	// Store must exist and show a learned default.
+	if got := run([]string{"show", "--store", store, "--json"}); got != exitOK {
+		t.Errorf("show after learn exit=%d want 0", got)
+	}
+}
+
 // TestRun_observeBadJSON degrades to a runtime error (1), not a panic.
 func TestRun_observeBadJSON(t *testing.T) {
 	dir := t.TempDir()

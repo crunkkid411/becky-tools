@@ -104,6 +104,11 @@ type App struct {
 	runLabel  string          // friendly name of the running tool
 	vis       visual          // current drawable representation of the target
 	lastVisOf string          // the target string vis was built for (avoid rework)
+
+	// disableDrop is set by handleGioEvent (dragdrop_windows.go) once IDropTarget
+	// is registered on the HWND.  It is called on DestroyEvent to revoke the
+	// registration cleanly.  Nil until first Win32ViewEvent arrives.
+	disableDrop func()
 }
 
 func main() {
@@ -159,14 +164,25 @@ func (a *App) adoptArgv(args []string) {
 func (a *App) loop() error {
 	var ops op.Ops
 	for {
-		switch e := a.window.Event().(type) {
+		e := a.window.Event()
+		// handleGioEvent is platform-split (dragdrop_windows.go / dragdrop_other.go).
+		// On Windows it intercepts the first Win32ViewEvent to register IDropTarget;
+		// on other platforms it is a no-op.  Called before the type-switch so the
+		// ViewEvent is seen even though it is not handled in the switch below.
+		handleGioEvent(a, e)
+		switch ev := e.(type) {
 		case app.DestroyEvent:
-			return e.Err
+			// Revoke IDropTarget registration before the window is gone (Windows only;
+			// on other platforms disableDrop is nil and the call is skipped).
+			if a.disableDrop != nil {
+				a.disableDrop()
+			}
+			return ev.Err
 		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
+			gtx := app.NewContext(&ops, ev)
 			a.handleInput(gtx)
 			a.layoutFrame(gtx)
-			e.Frame(gtx.Ops)
+			ev.Frame(gtx.Ops)
 		}
 	}
 }

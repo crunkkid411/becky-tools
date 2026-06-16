@@ -28,6 +28,7 @@ import (
 	"os"
 
 	"becky-go/internal/audioengine"
+	"becky-go/internal/dawmodel"
 )
 
 // report is the JSON shape emitted by --json: the chosen selection plus the full
@@ -50,7 +51,13 @@ func main() {
 	asJSON := flag.Bool("json", false, "emit JSON instead of a plain-language report")
 	list := flag.Bool("list", false, "list all enumerated devices, not just the chosen pair")
 	noIface := flag.Bool("no-interface", false, "simulate the pro interface being unplugged (demo the fallback)")
+	playPattern := flag.String("play-pattern", "", "read a project.json and print the computed event schedule as JSON (offline, no audio)")
 	flag.Parse()
+
+	// --play-pattern: pure-Go offline schedule dump — no audio device needed.
+	if *playPattern != "" {
+		os.Exit(playPatternRun(*playPattern))
+	}
 
 	// Headless foundation: enumerate via the deterministic stub. The native
 	// Phase-2 AudioBackend.Enumerate replaces this with real WASAPI devices.
@@ -124,4 +131,76 @@ func ifaceTag(d audioengine.Device) string {
 		return " [pro interface]"
 	}
 	return " [built-in]"
+}
+
+// scheduleReport is the JSON shape emitted by --play-pattern: the transport
+// parameters used and the full flat event list so callers can inspect the
+// computed schedule without any audio hardware.
+type scheduleReport struct {
+	BPM    int                          `json:"bpm"`
+	PPQ    int                          `json:"ppq"`
+	Events []audioengine.ScheduledEvent `json:"events"`
+}
+
+// playPatternRun reads a project.json (dawmodel.Arrangement), sequences every
+// MIDI clip across all tracks using the arrangement's own BPM/PPQ, and prints
+// the merged, sorted schedule as JSON. It is fully offline — no audio device,
+// no cgo. Exit codes: 0 ok; 1 error; 2 degrade (no MIDI notes found).
+func playPatternRun(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern: cannot read file:", err)
+		return 1
+	}
+	var arr dawmodel.Arrangement
+	if err := json.Unmarshal(data, &arr); err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern: cannot parse JSON:", err)
+		return 1
+	}
+
+	bpm := arr.BPM
+	if bpm <= 0 {
+		bpm = 120
+	}
+	ppq := arr.PPQ
+	if ppq <= 0 {
+		ppq = audioengine.PPQDefault
+	}
+	// Use a standard 48 kHz sample rate for the offline schedule dump.
+	const offlineSR = 48000
+	tr, err := audioengine.NewTransport(float64(bpm), ppq, offlineSR)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern: bad transport params:", err)
+		return 1
+	}
+
+	// Collect all notes from all MIDI clips across all tracks.
+	var allNotes []dawmodel.Note
+	for _, track := range arr.Tracks {
+		if track.Kind != dawmodel.KindMIDI {
+			continue
+		}
+		for _, clip := range track.Clips {
+			allNotes = append(allNotes, clip.Notes...)
+		}
+	}
+
+	evs, err := audioengine.SequenceNotes(allNotes, tr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern: sequencing error:", err)
+		return 1
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(scheduleReport{BPM: bpm, PPQ: ppq, Events: evs}); err != nil {
+		fmt.Fprintln(os.Stderr, "play-pattern: encode error:", err)
+		return 1
+	}
+
+	if len(evs) == 0 {
+		fmt.Fprintln(os.Stderr, "play-pattern: no MIDI notes found in project (degrade)")
+		return 2
+	}
+	return 0
 }
