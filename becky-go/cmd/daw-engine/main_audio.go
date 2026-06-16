@@ -68,6 +68,7 @@ func audioModeRun(args []string) (handled bool, exitCode int) {
 	record := fs.Bool("record", false, "record from the mic: --record <seconds> <out.wav>")
 	play := fs.String("play", "", "play a WAV file through the chosen output device")
 	playPatternAudio := fs.String("play-pattern-audio", "", "render and play a project.json pattern through the synth")
+	loops := fs.Int("loops", 1, "with --play-pattern-audio: tile the 4/4 bar N times for a seamless loop (default 1)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, "usage: becky-daw-engine [--list-real | --record <seconds> <out.wav> | --play <file.wav> | --play-pattern-audio <project.json>]")
 		return true, 2
@@ -81,7 +82,7 @@ func audioModeRun(args []string) (handled bool, exitCode int) {
 	case *listReal:
 		return true, runListReal()
 	case *playPatternAudio != "":
-		return true, runPlayPatternAudio(*playPatternAudio)
+		return true, runPlayPatternAudio(*playPatternAudio, *loops)
 	default:
 		return false, 0
 	}
@@ -188,7 +189,7 @@ func sideName(d *audioengine.Device) string {
 // `becky-daw-engine --play-pattern-audio <project.json>`.
 //
 // Exit codes: 0 ok; 1 internal error; 2 degrade (no MIDI notes / bad file).
-func runPlayPatternAudio(path string) int {
+func runPlayPatternAudio(path string, loops int) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "play-pattern-audio: cannot read file:", err)
@@ -215,7 +216,7 @@ func runPlayPatternAudio(path string) int {
 		path, bpm, sideName(sel.Output))
 	fmt.Println("Rendering audio ... (this may take a moment for long patterns)")
 
-	if err := audioengine.PlayPatternAudio(&arr, sel.Output, 48000); err != nil {
+	if err := audioengine.PlayPatternAudio(&arr, sel.Output, 48000, loops); err != nil {
 		fmt.Fprintln(os.Stderr, "play-pattern-audio:", err)
 		if strings.Contains(err.Error(), "no MIDI notes") {
 			return 2 // degrade: empty pattern

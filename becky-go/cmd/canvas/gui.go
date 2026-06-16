@@ -118,6 +118,9 @@ type App struct {
 	stopBtn widget.Clickable
 	// playing is true while a becky-daw-engine --play-pattern-audio run is live.
 	playing bool
+	// playProc is the live becky-daw-engine process (guarded by mu) so ■ Stop can
+	// kill it immediately mid-loop. Nil when nothing is playing.
+	playProc *os.Process
 
 	// explorerChip holds the folder name pre-filled from winctx on Open, shown as a
 	// small neon chip the user can confirm before the full file picker opens.
@@ -148,6 +151,12 @@ type App struct {
 	// reject without relying on button clicks.
 	overlayEnterPressed bool
 	overlayEscPressed   bool
+
+	// incomingProposal is set by the async transform goroutine (the real local
+	// model takes ~10-30s to load on first use, so Propose runs OFF the UI thread).
+	// It is guarded by mu and drained into the overlay on the next frame by the UI
+	// goroutine — overlay.pending itself is only ever touched on the UI thread.
+	incomingProposal *canvas.Proposal
 }
 
 func main() {
@@ -232,6 +241,15 @@ func (a *App) loop() error {
 // layout so the frame reflects them. (Canvas pointer events are handled during layout,
 // where the canvas area's local coordinate system is in scope.)
 func (a *App) handleInput(gtx layout.Context) {
+	// Drain an async model proposal (computed off-thread) into the overlay. Only the
+	// UI goroutine touches overlay.pending, so this hand-off stays race-free.
+	a.mu.Lock()
+	if a.incomingProposal != nil {
+		a.overlay.show(a.incomingProposal)
+		a.incomingProposal = nil
+	}
+	a.mu.Unlock()
+
 	// Dock buttons.
 	if a.dockRecord.Clicked(gtx) {
 		a.startRecord()
@@ -541,7 +559,7 @@ func (a *App) startPlay() {
 	a.appendLine("▶ Play …")
 
 	go func() {
-		if err := execPlay(a.target, a.activeMode, &a.drum); err != nil {
+		if err := a.execPlay(a.target, a.activeMode, &a.drum); err != nil {
 			a.appendLine(err.Error())
 		}
 		a.mu.Lock()
@@ -551,14 +569,18 @@ func (a *App) startPlay() {
 	}()
 }
 
-// stopPlay signals the play goroutine to stop. The current implementation lets
-// the daw-engine exe run to completion (it's short); a future phase can kill the
-// child process. The ■ button dismisses the playing indicator immediately so
-// Jordan sees feedback at once (degrade, never hang).
+// stopPlay kills the live becky-daw-engine process so the loop stops immediately,
+// and clears the playing indicator. execPlay treats a killed process as a clean stop
+// (not an error). Safe to call when nothing is playing.
 func (a *App) stopPlay() {
 	a.mu.Lock()
+	proc := a.playProc
+	a.playProc = nil
 	a.playing = false
 	a.mu.Unlock()
+	if proc != nil {
+		_ = proc.Kill()
+	}
 	a.appendLine("■ Stopped.")
 	a.window.Invalidate()
 }

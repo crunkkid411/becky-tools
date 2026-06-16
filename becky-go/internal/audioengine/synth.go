@@ -240,39 +240,10 @@ func (p *polyphony) tick() float32 {
 // Returns nil for invalid inputs; returns a zeroed buffer for an empty event
 // list (silence). Both are degrade paths, not panics.
 func RenderSchedule(events []ScheduledEvent, sampleRate int, numSamples int64) []float32 {
-	if numSamples <= 0 || sampleRate <= 0 {
-		return nil
-	}
-	buf := make([]float32, numSamples)
-	if len(events) == 0 {
-		return buf // silence
-	}
-
-	poly := newPolyphony(sampleRate)
-	ei := 0 // index into events; we walk it forward monotonically
-	for s := int64(0); s < numSamples; s++ {
-		// Fire all events whose SampleOffset has been reached.
-		for ei < len(events) && events[ei].SampleOffset <= s {
-			ev := events[ei]
-			ei++
-			if ev.On {
-				poly.noteOn(ev)
-			} else {
-				poly.noteOff(ev)
-			}
-		}
-		// Mix all active voices; tanh soft-limit, then clamp to [-0.999, 0.999]
-		// so float32 rounding never reaches exactly ±1.0.
-		raw := poly.tick()
-		limited := math.Tanh(float64(raw))
-		if limited > 0.999 {
-			limited = 0.999
-		} else if limited < -0.999 {
-			limited = -0.999
-		}
-		buf[s] = float32(limited)
-	}
-	return buf
+	// Sine-only render = the kit-aware render with no kit. The shared loop lives in
+	// drumkit.go (RenderScheduleWithKit) so sample-based drums and the sine synth
+	// stay in one code path.
+	return RenderScheduleWithKit(events, sampleRate, numSamples, nil)
 }
 
 // DurationSamples returns the number of samples needed to hold the full render

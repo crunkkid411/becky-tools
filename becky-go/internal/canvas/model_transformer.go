@@ -45,13 +45,17 @@ const (
 	// EnvTransformModel is the env var that overrides the GGUF model path.
 	EnvTransformModel = "BECKY_TRANSFORM_MODEL"
 
-	// DefaultTransformBin is the llama.cpp text CLI on Jordan's PC.
-	// The text-only binary (llama-cli.exe) is distinct from llama-mtmd-cli used by vision.
-	DefaultTransformBin = `C:/llama.cpp/build/bin/llama-cli.exe`
+	// DefaultTransformBin is the llama.cpp ONE-SHOT completion binary on Jordan's PC.
+	// IMPORTANT: in recent llama.cpp builds (verified b9551, 2026-06-15) `llama-cli`
+	// became an interactive chat TUI with NO one-shot mode ("--no-conversation is not
+	// supported by llama-cli; please use llama-completion instead"). `llama-completion`
+	// is the one-shot text-completion tool we need. Distinct from llama-mtmd-cli (vision).
+	DefaultTransformBin = `C:/llama.cpp/build/bin/llama-completion.exe`
 
-	// DefaultTransformModel is a Gemma-3-4B-IT Q8_0 GGUF for instruction following.
-	// A smaller GGUF (e.g. Gemma-3-1B-IT) also works; 4B is the quality floor.
-	DefaultTransformModel = `X:/AI-2/becky-tools/models/gemma-3-4b-it/gemma-3-4b-it-q8_0.gguf`
+	// DefaultTransformModel is a becky-owned copy of Qwen3-4B-Instruct-2507 (Q4_K_M) —
+	// a strong instruction-following GGUF already on Jordan's PC. Verified live: it
+	// returns clean strict-JSON proposals (e.g. C4 + "up 2 semitones" → D4, delta 2).
+	DefaultTransformModel = `X:/AI-2/becky-tools/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf`
 )
 
 // ─── modelRunner interface (test seam) ────────────────────────────────────────

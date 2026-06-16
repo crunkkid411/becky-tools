@@ -31,7 +31,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 	"syscall"
 	"unsafe"
 
@@ -39,31 +38,29 @@ import (
 	"gioui.org/io/event"
 )
 
-// handleGioEvent is called from loop() for every Gio event.  On Windows it
-// intercepts the first valid app.Win32ViewEvent and registers IDropTarget on
-// the HWND.  All other events are ignored here (handled elsewhere in loop()).
+// handleGioEvent is called from loop() for every Gio event. It WOULD register an
+// IDropTarget on the window's HWND for in-window OS file drops — but that path is
+// DISABLED because it crashed the window on launch (0xC0000005 access violation in
+// CoLockObjectExternal, see enableFileDrop).
+//
+// Root cause: OLE drag-drop must be set up (RegisterDragDrop + CoLockObjectExternal)
+// on the exact OS thread that owns the HWND and pumps its messages, inside that
+// thread's STA apartment. loop() runs on a Go goroutine that the scheduler migrates
+// across OS threads, so OleInitialize/RegisterDragDrop ran in the wrong/unsynchronised
+// apartment and OLE dereferenced our object on a thread that never initialised it.
+// A correct fix needs a C-side drop target installed on Gio's own window thread.
+//
+// Until then, in-window drop degrades to the RELIABLE paths (CLAUDE.md §2 degrade-
+// never-crash): drop a file onto becky-canvas.exe (argv → adoptArgv), use the Open
+// button, or paste a path. The window must ALWAYS open — that is the priority.
 func handleGioEvent(a *App, e event.Event) {
 	ve, ok := e.(app.Win32ViewEvent)
 	if !ok || !ve.Valid() {
 		return
 	}
-	// Only register once (Win32ViewEvent may be resent on resize/reparent).
-	if a.disableDrop != nil {
-		return
+	if a.disableDrop == nil {
+		a.disableDrop = func() {} // mark attempted; do NOT register (crash-prone — see above)
 	}
-	disable, err := enableFileDrop(ve.HWND, func(paths []string) {
-		if len(paths) > 0 {
-			a.setTarget(paths[0])
-		}
-		a.window.Invalidate()
-	})
-	if err != nil {
-		// Degrade gracefully: log once, window still works via argv + Open button.
-		log.Printf("becky-canvas: drag-drop setup skipped: %v", err)
-		a.disableDrop = func() {} // mark as attempted so we don't retry
-		return
-	}
-	a.disableDrop = disable
 }
 
 // ─── constants ────────────────────────────────────────────────────────────────

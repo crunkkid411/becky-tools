@@ -27,9 +27,9 @@ import (
 	"becky-go/internal/dawmodel"
 )
 
-// PlayScheduleAudio renders a []ScheduledEvent to audio and plays it through the
-// chosen output device (nil → OS default). Blocks until playback completes.
-// sampleRate ≤ 0 falls back to 48000. Returns a typed error on any failure.
+// PlayScheduleAudio renders a []ScheduledEvent to audio (sine synth, no drum kit)
+// and plays it through the chosen output device (nil → OS default). Blocks until
+// playback completes. sampleRate ≤ 0 falls back to 48000.
 func PlayScheduleAudio(events []ScheduledEvent, output *Device, sampleRate int) error {
 	if sampleRate <= 0 {
 		sampleRate = 48000
@@ -37,8 +37,6 @@ func PlayScheduleAudio(events []ScheduledEvent, output *Device, sampleRate int) 
 	if len(events) == 0 {
 		return fmt.Errorf("synth: no events to play (empty schedule)")
 	}
-
-	// 1. Render to float32 buffer — pure Go, no cgo.
 	numSamples := DurationSamples(events, sampleRate)
 	if numSamples <= 0 {
 		return fmt.Errorf("synth: DurationSamples returned 0")
@@ -47,14 +45,22 @@ func PlayScheduleAudio(events []ScheduledEvent, output *Device, sampleRate int) 
 	if buf == nil {
 		return fmt.Errorf("synth: RenderSchedule returned nil")
 	}
+	return playBuffer(buf, output, sampleRate)
+}
 
-	// 2. Encode to a temporary IEEE-float32 WAV.
+// playBuffer encodes a rendered float32 buffer to a temporary IEEE-float32 WAV and
+// plays it through becky_play_wav (pure-C audio callback — Go never runs on the
+// audio thread). The temp WAV is removed after playback (degrade-never-crash).
+func playBuffer(buf []float32, output *Device, sampleRate int) error {
+	if len(buf) == 0 {
+		return fmt.Errorf("synth: empty render buffer")
+	}
 	tmp, err := os.CreateTemp("", "becky-synth-*.wav")
 	if err != nil {
 		return fmt.Errorf("synth: cannot create temp WAV: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }() // best-effort cleanup
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	if err := writeFloat32WAV(tmp, buf, sampleRate, 1); err != nil {
 		_ = tmp.Close()
@@ -64,10 +70,8 @@ func PlayScheduleAudio(events []ScheduledEvent, output *Device, sampleRate int) 
 		return fmt.Errorf("synth: WAV file close failed: %w", err)
 	}
 
-	// 3. Play via becky_play_wav — pure-C audio callback, Go never on audio thread.
 	backend := NewMiniaudioBackend(sampleRate, 1)
-	// Enumerate to populate idIndex so idIndexFor(output) resolves correctly.
-	// On enumeration failure we fall back to the OS default device (output=nil).
+	// Enumerate to populate idIndex; on failure fall back to the OS default device.
 	if _, enumErr := backend.Enumerate(); enumErr != nil {
 		output = nil
 	}
@@ -77,15 +81,20 @@ func PlayScheduleAudio(events []ScheduledEvent, output *Device, sampleRate int) 
 	return nil
 }
 
-// PlayPatternAudio sequences a dawmodel.Arrangement into a merged event list,
-// renders, and plays it. This is the entry point for
-// `becky-daw-engine --play-pattern-audio`.
-func PlayPatternAudio(arr *dawmodel.Arrangement, output *Device, sampleRate int) error {
+// PlayPatternAudio sequences a dawmodel.Arrangement, renders it with Jordan's drum
+// kit (real one-shot samples for channel-9 notes; sine fallback when the kit is
+// absent), and plays it. loops ≥ 2 renders exactly ONE 4/4 bar and tiles it `loops`
+// times for a seamless continuous loop; loops ≤ 1 plays the pattern once with a
+// release tail. Entry point for `becky-daw-engine --play-pattern-audio [--loops N]`.
+func PlayPatternAudio(arr *dawmodel.Arrangement, output *Device, sampleRate, loops int) error {
 	if arr == nil {
 		return fmt.Errorf("synth: nil arrangement")
 	}
 	if sampleRate <= 0 {
 		sampleRate = 48000
+	}
+	if loops < 1 {
+		loops = 1
 	}
 	bpm := arr.BPM
 	if bpm <= 0 {
@@ -119,7 +128,24 @@ func PlayPatternAudio(arr *dawmodel.Arrangement, output *Device, sampleRate int)
 		return fmt.Errorf("synth: no MIDI notes found in arrangement (degrade)")
 	}
 
-	return PlayScheduleAudio(evs, output, sampleRate)
+	kit := LoadDefaultDrumKit(sampleRate) // real drum samples when present; nil → sine
+
+	var buf []float32
+	if loops <= 1 {
+		buf = RenderScheduleWithKit(evs, sampleRate, DurationSamples(evs, sampleRate), kit)
+	} else {
+		// Seamless loop: render exactly one 4/4 bar, then tile it `loops` times.
+		loopLen := tr.TickToSample(float64(4 * ppq))
+		if loopLen <= 0 {
+			loopLen = DurationSamples(evs, sampleRate)
+		}
+		bar := RenderScheduleWithKit(evs, sampleRate, loopLen, kit)
+		buf = make([]float32, 0, int(loopLen)*loops)
+		for i := 0; i < loops; i++ {
+			buf = append(buf, bar...)
+		}
+	}
+	return playBuffer(buf, output, sampleRate)
 }
 
 // writeFloat32WAV writes a mono IEEE-float32 WAV (WAVE_FORMAT_IEEE_FLOAT = 0x0003)

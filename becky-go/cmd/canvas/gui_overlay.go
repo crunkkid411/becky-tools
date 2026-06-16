@@ -166,16 +166,25 @@ func (a *App) proposeForInstruction(instruction string) {
 		a.runCommand(instruction)
 		return
 	}
-	p, err := a.transformer.Propose(a.scene, a.selection, instruction)
-	if err != nil {
-		a.outExpanded = true
-		a.appendLine("becky: " + err.Error())
-		a.command.SetText("")
-		return
-	}
+	// The real local model loads on first use (~10-30s) — run Propose OFF the UI
+	// thread so the window never freezes. Snapshot the inputs; the result is posted
+	// back via a.incomingProposal and drained into the overlay on the next frame.
 	a.command.SetText("")
-	a.overlay.show(p)
-	a.window.Invalidate()
+	a.outExpanded = true
+	a.appendLine("becky is thinking…")
+	scene, sel, tr := a.scene, a.selection, a.transformer
+	go func() {
+		p, err := tr.Propose(scene, sel, instruction)
+		if err != nil {
+			a.appendLine("becky: " + err.Error())
+			a.window.Invalidate()
+			return
+		}
+		a.mu.Lock()
+		a.incomingProposal = p
+		a.mu.Unlock()
+		a.window.Invalidate()
+	}()
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────

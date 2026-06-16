@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -24,6 +25,10 @@ import (
 	"becky-go/internal/dawmodel"
 	"becky-go/internal/habits"
 )
+
+// playLoops is how many times ▶ tiles the bar for a continuous groove (~32s at
+// 120 BPM). ■ Stop kills the process mid-loop, so this is just the upper bound.
+const playLoops = 16
 
 // drumLaneNote maps a drum lane index to its General-MIDI percussion note so the
 // synth voices each lane as the right drum. Order matches gui_drum.go's lanes and
@@ -115,10 +120,12 @@ func resolvePlayJSON(target string, d *drumGrid) (path, toClean string, err erro
 }
 
 // execPlay resolves a playable project.json (the target, or the drum grid serialised
-// to a temp file) and plays it audibly through the sibling becky-daw-engine. Blocking;
-// call it from a goroutine. Degrade-never-crash: every failure is a returned error the
-// caller surfaces as a quiet neon line.
-func execPlay(target string, _ canvas.Mode, d *drumGrid) error {
+// to a temp file) and plays it audibly + looped through the sibling becky-daw-engine.
+// Blocking; call it from a goroutine. The live process handle is stored on the App so
+// ■ Stop can kill it immediately — a killed process is treated as a clean stop, not an
+// error. Degrade-never-crash: every other failure is a returned error the caller
+// surfaces as a quiet neon line.
+func (a *App) execPlay(target string, _ canvas.Mode, d *drumGrid) error {
 	jsonPath, toClean, err := resolvePlayJSON(target, d)
 	if err != nil {
 		return err
@@ -136,9 +143,28 @@ func execPlay(target string, _ canvas.Mode, d *drumGrid) error {
 		return fmt.Errorf("audio engine not found next to becky-canvas — build with build-all-tools.bat")
 	}
 
-	out, runErr := exec.Command(exePath, "--play-pattern-audio", jsonPath).CombinedOutput()
+	cmd := exec.Command(exePath, "--play-pattern-audio", jsonPath, "--loops", strconv.Itoa(playLoops))
+	var outBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("couldn't start the audio engine: %w", err)
+	}
+	a.mu.Lock()
+	a.playProc = cmd.Process
+	a.mu.Unlock()
+
+	runErr := cmd.Wait()
+
+	a.mu.Lock()
+	killed := a.playProc == nil // Stop cleared it → user-initiated, not a failure
+	a.playProc = nil
+	a.mu.Unlock()
+	if killed {
+		return nil
+	}
 	if runErr != nil {
-		msg := firstLine(strings.TrimSpace(string(out)))
+		msg := firstLine(strings.TrimSpace(outBuf.String()))
 		if msg == "" {
 			msg = runErr.Error()
 		}
