@@ -112,11 +112,12 @@ type DepMatch struct {
 // plain-language conclusion.
 type Item struct {
 	Video
-	Score      int        `json:"score"`       // count of INDEPENDENT signals that agreed
+	Score      int        `json:"score"`       // count of INDEPENDENT becky signals that agreed
 	Signals    []string   `json:"signals"`     // which fired: dep-match | capability | assessor
 	Kind       string     `json:"kind"`        // improve (existing tool) | extend (new)
 	BeckyTools []string   `json:"becky_tools"` // becky tools implicated
 	DepMatches []DepMatch `json:"dep_matches,omitempty"`
+	Interests  []string   `json:"interests,omitempty"` // Jordan's personal-usefulness categories that matched
 	Ideas      []string   `json:"ideas,omitempty"`
 	Verdict    string     `json:"verdict"`
 }
@@ -127,8 +128,9 @@ type Report struct {
 	Playlist   string `json:"playlist"` // the resolved playlist title/URL
 	PlaylistID string `json:"playlist_id,omitempty"`
 	Assessed   int    `json:"assessed"`   // videos considered
-	Relevant   []Item `json:"relevant"`   // ≥2 agreeing signals → CONCLUDED
-	Candidates []Item `json:"candidates"` // exactly 1 signal → review
+	Relevant   []Item `json:"relevant"`   // ≥2 agreeing becky signals → CONCLUDED
+	Candidates []Item `json:"candidates"` // exactly 1 becky signal → review
+	Useful     []Item `json:"useful"`     // not a becky match, but personally useful to Jordan
 	Skipped    int    `json:"skipped"`    // off-topic videos (counted, not listed)
 	Model      string `json:"model"`      // which assessor produced the opinion signal
 	Degraded   bool   `json:"degraded"`
@@ -142,10 +144,14 @@ type Report struct {
 //
 // assessor may be nil (deterministic floor only). deps is the freshness manifest
 // (the set of models/tools becky already tracks). catalog is becky's capability
-// map; pass nil to use the built-in DefaultCatalog.
-func Build(src PlaylistSource, ref string, deps []freshness.Dependency, catalog []Capability, assessor Assessor) Report {
+// map; interests is Jordan's personal-usefulness map; pass nil for either to use
+// the built-in DefaultCatalog / DefaultInterests.
+func Build(src PlaylistSource, ref string, deps []freshness.Dependency, catalog []Capability, interests []Interest, assessor Assessor) Report {
 	if catalog == nil {
 		catalog = DefaultCatalog()
+	}
+	if interests == nil {
+		interests = DefaultInterests()
 	}
 	model := "deterministic floor (no model wired)"
 	if assessor != nil {
@@ -156,6 +162,7 @@ func Build(src PlaylistSource, ref string, deps []freshness.Dependency, catalog 
 		Playlist:   ref,
 		Relevant:   []Item{},
 		Candidates: []Item{},
+		Useful:     []Item{},
 		Model:      model,
 	}
 
@@ -173,18 +180,23 @@ func Build(src PlaylistSource, ref string, deps []freshness.Dependency, catalog 
 
 	for _, v := range pl.Videos {
 		rep.Assessed++
-		item := assessVideo(v, deps, catalog, assessor)
+		item := assessVideo(v, deps, catalog, interests, assessor)
 		switch {
 		case item.Score >= 2:
 			rep.Relevant = append(rep.Relevant, item)
 		case item.Score == 1:
 			rep.Candidates = append(rep.Candidates, item)
+		case len(item.Interests) > 0:
+			// No becky match, but it lands in one of Jordan's interest areas →
+			// surface it as "useful to you" (the lower-stakes personal lane).
+			rep.Useful = append(rep.Useful, item)
 		default:
 			rep.Skipped++
 		}
 	}
 	sortItems(rep.Relevant)
 	sortItems(rep.Candidates)
+	sortUseful(rep.Useful)
 	return rep
 }
 
@@ -194,7 +206,7 @@ func Build(src PlaylistSource, ref string, deps []freshness.Dependency, catalog 
 //  1. dep-match  — names a model/library in becky's freshness manifest (improve).
 //  2. capability — sits in a becky capability domain by keyword (relates to a tool).
 //  3. assessor   — an optional local model independently calls it relevant.
-func assessVideo(v Video, deps []freshness.Dependency, catalog []Capability, assessor Assessor) Item {
+func assessVideo(v Video, deps []freshness.Dependency, catalog []Capability, interests []Interest, assessor Assessor) Item {
 	hay := haystack(v)
 
 	depMatches := matchDeps(hay, deps)
@@ -242,6 +254,17 @@ func assessVideo(v Video, deps []freshness.Dependency, catalog []Capability, ass
 		}
 	}
 
+	// Personal-usefulness lane (independent of the becky signals above): which of
+	// Jordan's interest areas does the video touch? Recorded on every item, but
+	// only the bucketing in Build routes a NON-becky item here into "useful".
+	for _, in := range matchInterests(hay, interests) {
+		it.Interests = appendUnique(it.Interests, in.Category)
+		if it.Score == 0 {
+			// For a non-becky item, the interest note is the "why it's useful".
+			it.Ideas = appendUnique(it.Ideas, in.Note)
+		}
+	}
+
 	sort.Strings(it.BeckyTools)
 	it.Verdict = verdict(it)
 	return it
@@ -250,6 +273,9 @@ func assessVideo(v Video, deps []freshness.Dependency, catalog []Capability, ass
 // verdict states the conclusion in plain language, scaled to corroboration.
 func verdict(it Item) string {
 	switch {
+	case it.Score == 0 && len(it.Interests) > 0:
+		return "USEFUL TO YOU — not a becky-tool match, but it lands in: " +
+			strings.Join(it.Interests, ", ") + "."
 	case it.Score == 0:
 		return "off-topic for becky"
 	case it.Score == 1 && it.Kind == "improve":
@@ -338,6 +364,21 @@ func sortItems(items []Item) {
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Score != items[j].Score {
 			return items[i].Score > items[j].Score
+		}
+		if items[i].Position != items[j].Position {
+			return items[i].Position < items[j].Position
+		}
+		return items[i].ID < items[j].ID
+	})
+}
+
+// sortUseful orders the personal lane: most interest areas first (a video that
+// hits several of Jordan's interests is the strongest suggestion), then earliest
+// playlist position, then video id.
+func sortUseful(items []Item) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if len(items[i].Interests) != len(items[j].Interests) {
+			return len(items[i].Interests) > len(items[j].Interests)
 		}
 		if items[i].Position != items[j].Position {
 			return items[i].Position < items[j].Position

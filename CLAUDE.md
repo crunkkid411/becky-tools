@@ -255,6 +255,16 @@ smoke-tested (degrade path + `--catalog`).
   so a live run honestly degrades with a plain-language note instead of crashing.
 - **Opts out of the offline invariant the same controlled way** as research/radar/
   palantir: one explicit logged network step, deterministic OUTPUT, degrade-never-crash.
+- **"Useful to you" lane + `--from-json` (added 2026-06-16 after Jordan's reply):**
+  Jordan named his target playlist ("ai useful") and said to surface things useful to
+  HIM even if they aren't becky tools. Added `internal/scout/interests.go` (a personal
+  interests catalog — agents/local-AI/music/video/docs/automation/how-to) and a
+  third `useful` bucket (non-becky video with ≥1 interest hit → a suggestion, not a
+  forensic conclusion; becky lane keeps ≥2-signal rigor). Added `--from-json <file>`
+  (offline pre-fetched playlist; array or `{videos:[...]}`) — the cloud agent
+  scraped his real playlist via `ytInitialData` (no yt-dlp) and ran it: **15 becky
+  candidates, 28 useful-to-you, 57 off-topic** of 100 (titles only — captions will
+  corroborate more). `--catalog` now prints both maps.
 
 **Left for local (the model/binary boundary — NOT cloud's job):**
 1. Wire `PlaylistSource` via **yt-dlp** (recipe in `SPEC-SCOUT.md` §5: `--flat-playlist -J`

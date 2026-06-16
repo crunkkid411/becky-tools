@@ -30,7 +30,7 @@ func testDeps() []freshness.Dependency {
 
 func buildOne(v Video, assessor Assessor) Report {
 	src := FakePlaylist{PL: Playlist{ID: "PL1", Title: "Watch later", Videos: []Video{v}}}
-	return Build(src, "PL1", testDeps(), nil, assessor)
+	return Build(src, "PL1", testDeps(), nil, nil, assessor)
 }
 
 // A dep-match (PaddleOCR) AND a capability hit (ocr) → two independent signals →
@@ -119,7 +119,7 @@ func TestAssessorAloneIsCandidate(t *testing.T) {
 // A bad playlist source degrades to an empty, noted report — never a crash.
 func TestDegradeOnSourceError(t *testing.T) {
 	src := FakePlaylist{Err: errors.New("yt-dlp not found")}
-	rep := Build(src, "PLx", testDeps(), nil, nil)
+	rep := Build(src, "PLx", testDeps(), nil, nil, nil)
 	if !rep.Degraded || rep.Note == "" {
 		t.Fatalf("want degraded with note, got %+v", rep)
 	}
@@ -136,7 +136,7 @@ func TestDeterministicOrder(t *testing.T) {
 		{ID: "c", Title: "InsightFace face recognition arcface embeddings", Position: 1}, // 2 signals
 	}
 	src := FakePlaylist{PL: Playlist{ID: "PL", Videos: vids}}
-	rep := Build(src, "PL", testDeps(), nil, nil)
+	rep := Build(src, "PL", testDeps(), nil, nil, nil)
 	if len(rep.Relevant) != 2 {
 		t.Fatalf("want 2 relevant, got %d", len(rep.Relevant))
 	}
@@ -160,6 +160,37 @@ func TestCatalogMatchesTranscript(t *testing.T) {
 	}
 	if !contains(rep.Candidates[0].BeckyTools, "becky-diarize") {
 		t.Errorf("tools=%v want becky-diarize", rep.Candidates[0].BeckyTools)
+	}
+}
+
+// A video with no becky signal but a personal-interest hit lands in the "useful
+// to you" lane (not skipped) — the lower-stakes lens Jordan asked for.
+func TestUsefulLane(t *testing.T) {
+	v := Video{ID: "u", Title: "No-code automation workflow to save time", Position: 1}
+	rep := buildOne(v, nil)
+	if len(rep.Useful) != 1 {
+		t.Fatalf("want 1 useful, got useful=%d skipped=%d rel=%d cand=%d", len(rep.Useful), rep.Skipped, len(rep.Relevant), len(rep.Candidates))
+	}
+	it := rep.Useful[0]
+	if it.Score != 0 {
+		t.Errorf("useful item should have becky score 0, got %d", it.Score)
+	}
+	if !contains(it.Interests, "productivity & automation") {
+		t.Errorf("interests=%v want productivity & automation", it.Interests)
+	}
+}
+
+// A becky match takes precedence over the useful lane: a video that is BOTH a
+// becky candidate and personally useful is surfaced as the becky candidate (its
+// interests are still recorded for context), not duplicated into "useful".
+func TestBeckyMatchNotDuplicatedAsUseful(t *testing.T) {
+	v := Video{ID: "p", Title: "Local LLM with llama.cpp and GGUF quantization tutorial", Position: 1}
+	rep := buildOne(v, nil)
+	if len(rep.Useful) != 0 {
+		t.Errorf("becky-matched video should not appear in useful, got %d", len(rep.Useful))
+	}
+	if len(rep.Candidates)+len(rep.Relevant) != 1 {
+		t.Fatalf("want the video in a becky lane, got cand=%d rel=%d", len(rep.Candidates), len(rep.Relevant))
 	}
 }
 

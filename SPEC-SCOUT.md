@@ -41,28 +41,54 @@ applies it with three **independent** signals per video:
 Buckets:
 - **relevant** (`score ≥ 2`) — corroborated → stated conclusion (improve/extend).
 - **candidate** (`score == 1`) — review.
-- **skipped** (`score == 0`) — off-topic; **counted, not enumerated** (no flood).
+- **useful** (no becky signal, but a personal-interest hit) — see below.
+- **skipped** (`score == 0`, no interest) — off-topic; **counted, not enumerated**.
 
 `improve` = matches a tracked dependency (upgrade an existing tool); `extend` =
 becky-domain but nothing tracked yet (a new tool/model to build).
+
+### 2a. The "useful to you" lane (Jordan, 2026-06-16)
+
+Jordan: *"even if something doesn't exactly qualify as a becky-tool it could still
+be useful to me."* So scout asks a **second, lower-stakes question** per video,
+independent of the becky lens: does it land in one of Jordan's interest areas
+(`internal/scout/interests.go` — AI agents/assistants, local & open-source AI, AI
+for music/audio, AI for video/images, document/notes/knowledge tools,
+productivity/automation, AI how-to)? A non-becky video with ≥1 interest hit is
+surfaced as **useful** — a *suggestion*, not a forensic conclusion (the becky lane
+keeps its ≥2-signal rigor). Items are labelled by interest area and ranked by how
+many areas they touch, so a curated "ai useful" playlist becomes an organized,
+deduped, becky-cross-referenced shortlist rather than a wall of links.
 
 ## 3. What it does (pipeline)
 
 ```
 becky-scout <playlist-url-or-id> [--json] [--catalog]
+becky-scout --from-json <file> [--json]      # assess a pre-fetched playlist offline
 
 1. RESOLVE the playlist → [{id,url,title,channel,description,tags,transcript,position}]
-   (PlaylistSource: the one online step, via yt-dlp — wired by the local agent).
+   (PlaylistSource: the one online step, via yt-dlp — wired by the local agent;
+    OR --from-json reads a pre-fetched dump with no network — the offline path).
 2. For each video, BUILD a lower-cased haystack from every offline-readable field.
 3. SIGNAL 1 — cross-reference the becky-freshness manifest (tracked model named?).
 4. SIGNAL 2 — match becky's capability catalog (in a becky domain?).
 5. SIGNAL 3 — (optional) ask the local-model Assessor for an independent verdict.
-6. CORROBORATE → relevant / candidate / skipped; classify improve vs extend.
+6. CORROBORATE → relevant / candidate; ALSO check Jordan's interests → useful;
+   classify improve vs extend; the rest are skipped (counted).
 7. RENDER a deterministic, stably-sorted report (plain-language or --json).
 ```
 
-`--catalog` prints becky's capability map (what scout treats as "a becky area")
-so Jordan can see — and the local agent can tune — exactly what it looks for.
+`--catalog` prints becky's capability map AND Jordan's interest map (what scout
+treats as "a becky area" / "useful to you") so he can see — and the local agent
+can tune — exactly what it looks for.
+
+`--from-json <file>` assesses a pre-fetched playlist offline. The file is a JSON
+array of videos (or a `{videos:[...]}` object) — the shape a yt-dlp dump or a
+simple `ytInitialData` scrape produces. This is the manual escape hatch (like
+becky-radar's `urls-file`) and is how the tool was demoed on Jordan's real
+"ai useful" playlist from the cloud (titles only, no yt-dlp): **15 becky
+candidates, 28 useful-to-you, 57 off-topic** of 100 videos. (Titles alone don't
+reach the ≥2 becky bar; descriptions+captions via yt-dlp will corroborate more.)
 
 ## 4. Output contract (synthetic values)
 
@@ -140,8 +166,10 @@ All three cross-reference the same manifest. Run scout as standard practice on t
 new-tool / upgrade pipeline (`SPEC-BECKY-NEW-TOOL.md`).
 
 ## 7. Open decisions for Jordan
-1. **The playlist:** which playlist URL is the "becky, look at this" queue? (Or
-   should scout accept several and dedupe across them?)
+1. **The playlist — ANSWERED (2026-06-16):** Jordan's "ai useful" playlist,
+   `https://youtube.com/playlist?list=PLLnp7PR3IvheB68zHrkkKu2ih1uNdV8pT`. He also
+   set the scope: surface things **useful to him personally**, not only becky-tool
+   matches → the "useful to you" lane (§2a) + the personal interests catalog.
 2. **Captions cost:** fetching auto-captions per video is the slow part. Default
    to titles+descriptions only and fetch captions on `--deep`, or always fetch?
 3. **Model assessor:** wire the optional 3rd signal now (Qwen3-4B already used by

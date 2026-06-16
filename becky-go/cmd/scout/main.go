@@ -32,7 +32,8 @@ import (
 
 func main() {
 	asJSON := flag.Bool("json", false, "emit JSON instead of a plain-language report")
-	showCatalog := flag.Bool("catalog", false, "print becky's capability catalog (what scout looks for) and exit")
+	showCatalog := flag.Bool("catalog", false, "print becky's capability catalog + Jordan's interests (what scout looks for) and exit")
+	fromJSON := flag.String("from-json", "", "assess a pre-fetched playlist JSON file (offline; no yt-dlp needed)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -41,27 +42,35 @@ func main() {
 		return
 	}
 
-	args := flag.Args()
-	if len(args) != 1 {
-		usage()
-		os.Exit(2)
-	}
-	ref := args[0]
-
 	deps, err := freshness.LoadManifest()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "manifest error:", err)
 		os.Exit(1)
 	}
 
-	// Cloud build ships the deterministic floor: the real yt-dlp PlaylistSource
-	// and the optional local-model Assessor are wired by the local agent
-	// (scout.PlaylistSource / scout.Assessor contracts in internal/scout). Until
-	// then scout has no playlist to read and honestly reports the degrade.
+	// Pick the playlist source. --from-json reads a pre-fetched playlist file
+	// (the offline escape hatch: a JSON array of videos, or a {videos:[...]}
+	// object — exactly what a yt-dlp dump or a scraper produces), so the
+	// deterministic assessment runs with no network. Otherwise the cloud build
+	// has no fetcher wired and honestly degrades; the local agent replaces
+	// unwiredSource with a real yt-dlp-backed source.
 	var src scout.PlaylistSource = unwiredSource{}
+	ref := ""
+	if *fromJSON != "" {
+		src = fileSource{path: *fromJSON}
+		ref = *fromJSON
+	} else {
+		args := flag.Args()
+		if len(args) != 1 {
+			usage()
+			os.Exit(2)
+		}
+		ref = args[0]
+	}
+
 	var assessor scout.Assessor // nil → deterministic floor only
 
-	rep := scout.Build(src, ref, deps, nil, assessor)
+	rep := scout.Build(src, ref, deps, nil, nil, assessor)
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -82,12 +91,51 @@ type unwiredSource struct{}
 
 func (unwiredSource) Playlist(ref string) (scout.Playlist, error) {
 	return scout.Playlist{}, fmt.Errorf("yt-dlp playlist fetch is not wired in this build " +
-		"(cloud build ships the deterministic assessment core only; the local agent wires yt-dlp)")
+		"(cloud build ships the deterministic assessment core only; the local agent wires yt-dlp). " +
+		"Tip: pass --from-json <file> to assess a pre-fetched playlist offline")
+}
+
+// fileSource reads a pre-fetched playlist from a local JSON file. It accepts
+// either a {"id","title","url","videos":[...]} object or a bare array of videos
+// (the shape a yt-dlp dump or a simple scraper emits). No network.
+type fileSource struct{ path string }
+
+func (f fileSource) Playlist(ref string) (scout.Playlist, error) {
+	b, err := os.ReadFile(f.path)
+	if err != nil {
+		return scout.Playlist{}, fmt.Errorf("read %s: %w", f.path, err)
+	}
+	trimmed := strings.TrimSpace(string(b))
+	if strings.HasPrefix(trimmed, "[") {
+		var vids []scout.Video
+		if err := json.Unmarshal(b, &vids); err != nil {
+			return scout.Playlist{}, fmt.Errorf("parse video array %s: %w", f.path, err)
+		}
+		return scout.Playlist{URL: f.path, Videos: fillPositions(vids)}, nil
+	}
+	var pl scout.Playlist
+	if err := json.Unmarshal(b, &pl); err != nil {
+		return scout.Playlist{}, fmt.Errorf("parse playlist %s: %w", f.path, err)
+	}
+	pl.Videos = fillPositions(pl.Videos)
+	return pl, nil
+}
+
+// fillPositions assigns 1-based positions to any video missing one, preserving
+// file order — so a scraper that didn't number entries still sorts stably.
+func fillPositions(vids []scout.Video) []scout.Video {
+	for i := range vids {
+		if vids[i].Position == 0 {
+			vids[i].Position = i + 1
+		}
+	}
+	return vids
 }
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: becky-scout <playlist-url-or-id> [--json] [--catalog]")
-	fmt.Fprintln(os.Stderr, "  assess a YouTube playlist for things that could improve or extend becky-tools")
+	fmt.Fprintln(os.Stderr, "       becky-scout --from-json <file> [--json]   (assess a pre-fetched playlist offline)")
+	fmt.Fprintln(os.Stderr, "  assess a YouTube playlist for things that could improve/extend becky — or just be useful to you")
 }
 
 // printReport writes a plain-language report for a non-developer.
@@ -106,6 +154,7 @@ func printReport(rep scout.Report) {
 
 	printRelevant(rep.Relevant)
 	printCandidates(rep.Candidates)
+	printUseful(rep.Useful)
 	printSummary(rep)
 }
 
@@ -135,6 +184,28 @@ func printCandidates(items []scout.Item) {
 	}
 }
 
+func printUseful(items []scout.Item) {
+	fmt.Println("USEFUL TO YOU (not a becky tool, but in your interest areas)")
+	fmt.Println(strings.Repeat("-", 70))
+	if len(items) == 0 {
+		fmt.Println("  (nothing extra flagged for you)")
+		fmt.Println()
+		return
+	}
+	for _, it := range items {
+		title := it.Title
+		if title == "" {
+			title = it.URL
+		}
+		fmt.Printf("- %s\n", title)
+		if it.URL != "" {
+			fmt.Printf("    url      : %s\n", it.URL)
+		}
+		fmt.Printf("    areas    : %s\n", strings.Join(it.Interests, ", "))
+		fmt.Println()
+	}
+}
+
 func printItem(it scout.Item) {
 	title := it.Title
 	if title == "" {
@@ -159,15 +230,17 @@ func printItem(it scout.Item) {
 
 func printSummary(rep scout.Report) {
 	fmt.Println(strings.Repeat("-", 70))
-	fmt.Printf("%d relevant, %d candidate(s), %d off-topic (skipped).\n",
-		len(rep.Relevant), len(rep.Candidates), rep.Skipped)
+	fmt.Printf("%d relevant, %d candidate(s), %d useful-to-you, %d off-topic (skipped).\n",
+		len(rep.Relevant), len(rep.Candidates), len(rep.Useful), rep.Skipped)
 	switch {
 	case len(rep.Relevant) > 0:
 		fmt.Println("Tell Claude which to act on (e.g. \"build a tool for the first relevant one\").")
 	case len(rep.Candidates) > 0:
 		fmt.Println("Nothing corroborated, but some candidates are worth a look above.")
+	case len(rep.Useful) > 0:
+		fmt.Println("Nothing maps to becky, but some videos look personally useful above.")
 	default:
-		fmt.Println("Nothing in this playlist maps to becky.")
+		fmt.Println("Nothing in this playlist maps to becky or your interests.")
 	}
 }
 
@@ -180,5 +253,13 @@ func printCatalog() {
 		fmt.Printf("- %s  (%s)\n", c.Domain, strings.Join(c.Tools, ", "))
 		fmt.Printf("    keywords: %s\n", strings.Join(c.Keywords, ", "))
 		fmt.Printf("    note    : %s\n\n", c.Note)
+	}
+	fmt.Println()
+	fmt.Println("personal interests — what counts as \"useful to you\" (even if not a becky tool)")
+	fmt.Println(strings.Repeat("=", 70))
+	for _, in := range scout.DefaultInterests() {
+		fmt.Printf("- %s\n", in.Category)
+		fmt.Printf("    keywords: %s\n", strings.Join(in.Keywords, ", "))
+		fmt.Printf("    note    : %s\n\n", in.Note)
 	}
 }
