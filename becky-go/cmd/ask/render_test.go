@@ -77,14 +77,18 @@ func TestRunCommand_EmptyIsError(t *testing.T) {
 }
 
 func TestRoute_NewToolIdeaRendersPitch(t *testing.T) {
-	// End-to-end: an idea with a target routes to the pitch, stages no command.
+	// End-to-end: a novel idea routes to the factory pitch and stages becky-new-tool.
+	// Phase 3 behaviour: Pending holds the factory command; reply shows the summary.
 	tgt := resolveTarget([]string{makeFile(t, t.TempDir(), "clip.mp4")})
 	r := route(context.Background(), nil, "I wish becky could teleport this clip somewhere", tgt)
-	if len(r.Pending) != 0 {
-		t.Errorf("an idea must stage no command, got %v", r.Pending)
+	if len(r.Pending) == 0 {
+		t.Fatalf("an idea should stage the factory command; reply:\n%s", r.Reply)
 	}
-	if !strings.Contains(r.Reply, "NEW capability") {
-		t.Errorf("idea reply should be the pitch; got:\n%s", r.Reply)
+	if r.Pending[0] != "becky-new-tool" {
+		t.Errorf("pending[0] = %q, want becky-new-tool", r.Pending[0])
+	}
+	if !strings.Contains(r.Reply, "factory") {
+		t.Errorf("pitch reply should mention the factory; got:\n%s", r.Reply)
 	}
 }
 

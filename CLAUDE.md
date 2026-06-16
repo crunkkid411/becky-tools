@@ -229,6 +229,17 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/ask-pitch-phase3-2026-06-16` (cloud, 2026-06-16) — becky-ask Phase 3: new-tool pitch → factory handoff. READY FOR REVIEW.**
+
+Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a structured pitch, shows it in plain English, and on "y" calls `becky-new-tool --intake-file` to kick off the factory pipeline. Builds + all tests pass (go build/vet/test/gofmt all green, 10 new pitch tests + render_test.go updated for Phase 3 behaviour).
+
+- **`cmd/ask/pitch.go`** (new): `PitchRecord` (mirrors `cmd/new-tool/state.go` `Intake`), deterministic `extractPitchDeterministic` (ideaStripRe strips framing; 3-word slug; input/output kind heuristics; standard offline constraints + DoD), `savePitchFile` (OS temp file), `pitchReply` (styled chat block), `pitchCommand`, `buildNewToolRouted` (catalog-hit shortcircuit → pitch → pending factory command; degrade-never-crash fallback on file write error).
+- **`cmd/ask/router.go`** (updated): `decideNewTool` case now calls `buildNewToolRouted(q)` instead of the old stub reply. The existing `newToolReply` function is kept for catalog-match fallback and legacy test coverage.
+- **`cmd/ask/pitch_test.go`** (new): 10 table-driven tests covering slug derivation, sentence-casing, input/output kind guessing, full `extractPitchDeterministic`, `savePitchFile` round-trip JSON, `pitchCommand` argv, and `buildNewToolRouted` catalog-hit vs new-idea branches.
+- **Also registered `becky-cluster`** in COLLAB-PROTOCOL registry — it was built but unregistered.
+
+Left for local: **nothing** — `becky-new-tool` is already on master; this branch wires the ask front-door to it. Jordan runs `becky-ask`, types "I wish becky could [X]", presses y → factory runs. `build-all-tools.bat` will pick up the updated `becky-ask.exe` automatically.
+
 **Branch `local/canvas-fixes-model-samples-loop-2026-06-15` (local, 2026-06-15) — bugfix + real model/audio after Jordan's feedback. MERGED to master (fast-forward).**
 
 Jordan reported: becky-canvas crashed on open; the model "didn't work"; wanted his own

@@ -50,7 +50,7 @@ func route(ctx context.Context, cli *llamaClient, question string, t Target) rou
 	case decideClarify:
 		return routed{Reply: clarifyReply(d, q, t)}
 	case decideNewTool:
-		return routed{Reply: newToolReply(d, q)}
+		return buildNewToolRouted(q)
 	default: // decideQuestion
 		return routed{Reply: questionReply(q, d)}
 	}

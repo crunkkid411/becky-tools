@@ -85,6 +85,8 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | becky-daw (`SPEC-BECKY-DAW-EDITOR.md`) | local 2026-06-15 | BUILT (editable model) | `cmd/daw` + `internal/dawmodel` | piano-roll/drum-grid/mixer |
 | becky-canvas (`SPEC-BECKY-CANVAS.md`) | local 2026-06-15 | BUILT (full runtime: GUI + drag-drop + overlay + real model + ▶ play + drag-fix + Explorer import) | `cmd/canvas` + `internal/canvas` | `model_transformer.go` (`PickTransformer` → real llama.cpp model or stub); `gui_play.go` ▶/■ execs `becky-daw-engine --play-pattern-audio`; `gesture.go` drum-edit → habits; Esc/Enter overlay keys; winctx-scoped Open |
 | becky-daw-engine (`SPEC-BECKY-DAW-ENGINE.md`) | local 2026-06-15 | BUILT (device/transport + sequencer + real synth; sample-voices=Phase-2) | `cmd/daw-engine` + `internal/audioengine` | `sequencer.go` + `synth.go` (poly synth) + `--play-pattern` (offline) / `--play-pattern-audio` (audible, verified); sample-based drum voices remain in X:\AI-2\dawbase |
+| becky-cluster (`SPEC-PERSON-CLUSTERING.md`) | local (unregistered until 2026-06-16) | BUILT (voice + face; 11 tests green) | `cmd/cluster` | agglomerative (voice) + Chinese Whispers (face); precision-leaning thresholds; KB cross-check; harvest/embed/db input modes; Left for local: calibrate thresholds on real corpus; face needs F1 rotation fix first |
+| becky-ask Phase 3 — pitch.go (`SPEC-BECKY-ASK.md` §7) | cloud 2026-06-16 | BUILT (deterministic pitch extraction + factory handoff; 10 new tests + render_test.go updated) | `cmd/ask/pitch.go` + `cmd/ask/router.go` | "I wish becky could…" → pitch shown → y calls becky-new-tool --intake-file; degrade-never-crash; Left for local: nothing — works offline; factory pipeline is already built |
 
 ---
 
