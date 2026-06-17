@@ -266,15 +266,24 @@ smoke-tested (degrade path + `--catalog`).
   candidates, 28 useful-to-you, 57 off-topic** of 100 (titles only — captions will
   corroborate more). `--catalog` now prints both maps.
 
-**Left for local (the model/binary boundary — NOT cloud's job):**
-1. Wire `PlaylistSource` via **yt-dlp** (recipe in `SPEC-SCOUT.md` §5: `--flat-playlist -J`
-   for entries, then per-video `-J --write-auto-subs --sub-format vtt --skip-download`;
-   VTT→plain transcript) and replace `unwiredSource{}` in `cmd/scout/main.go`.
-2. (Optional) wire the 3rd-signal `Assessor` to a local llama.cpp text model
-   (Qwen3-4B, `--temp 0` for determinism).
-3. Run it on Jordan's real "watch later / becky" playlist; tune `catalog.go` keywords.
-4. `build-all-tools.bat` (auto-discovers `cmd/scout`). Open-decisions for Jordan at
-   the end of `SPEC-SCOUT.md` (which playlist; captions cost; wire model now or later).
+- **Real yt-dlp source WIRED + verified live (added 2026-06-16).** `cmd/scout/ytdlp.go`
+  is the real `PlaylistSource`: default `--flat-playlist -J` (fast, all titles) and
+  `--deep` (per-video description/tags/channel). Verified live from the cloud — flat
+  mode returned all 100 of Jordan's videos; `--deep` works but YouTube bot-blocks a
+  datacenter IP (62/100), which is why `scout-watch.ps1` passes
+  `--cookies-from-browser chrome` (clean on Jordan's home PC). `BECKY_YTDLP`/`BECKY_YTDLP_ARGS`
+  override the binary/args. Flags now work before OR after the playlist arg.
+- **Regular "what's new" runs:** `--new-only --state <file>` reports only newly-added
+  videos; `scout-watch.ps1` (repo root) double-clicks to run now or `-Register`s a
+  weekly Windows scheduled task → `scout-latest.txt`.
+
+**Left for local (small — the heavy code is done):**
+1. `pip install yt-dlp`, then `build-all-tools.bat` (auto-discovers `cmd/scout`).
+2. Run `scout-watch.ps1` (or `becky-scout <playlist> --deep`) once to confirm the
+   live `--deep` digest on a home connection; optionally `-Register` the weekly task,
+   or fold scout into the "Get Becky Updates" button digest alongside freshness/radar.
+3. (Optional) wire the 3rd-signal `Assessor` to a local llama.cpp text model
+   (Qwen3-4B, `--temp 0`); tune `catalog.go`/`interests.go` from real results.
 
 ---
 

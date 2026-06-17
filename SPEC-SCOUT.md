@@ -133,19 +133,19 @@ It never changes anything; it surfaces, ranks, and concludes.
 
 ## 5. Build split (cloud ↔ local)
 
-| Cloud / web agent (DONE)                                   | Local agent (Jordan's PC — to wire)                 |
-|------------------------------------------------------------|-----------------------------------------------------|
-| This spec; the capability catalog; corroboration rules     | Real `PlaylistSource` via **yt-dlp** (see recipe)   |
-| Go orchestrator (`cmd/scout/`), JSON + plain-text contract | Run against a real playlist; tune catalog keywords  |
-| `internal/scout` core + the two boundary interfaces        | Optional `Assessor` via a local llama.cpp text model|
-| Deterministic fakes + unit tests (corroboration/sort/degrade) | (Qwen3/Gemma, `--temp 0`) for the 3rd signal     |
-| Freshness-manifest cross-reference (reuses `internal/freshness`) | Confirm captions parse cleanly to plain transcript |
+| Cloud / web agent (DONE)                                       | Local agent (Jordan's PC — remaining)               |
+|----------------------------------------------------------------|-----------------------------------------------------|
+| This spec; the capability catalog + interests; corroboration   | `pip install yt-dlp`; run `build-all-tools.bat`     |
+| Go orchestrator (`cmd/scout/`), JSON + plain-text contract     | Run live on the real playlist (`--deep`)            |
+| `internal/scout` core + boundary interfaces + fakes + tests    | (Optional) wire `Assessor` to a local llama.cpp model|
+| **Real `ytdlpSource`** (`cmd/scout/ytdlp.go`) — flat + `--deep`, tested live | Schedule `scout-watch.ps1` (or click it)  |
+| `--from-json`, `--new-only`/`--state`, `scout-watch.ps1`       | Tune `catalog.go`/`interests.go` keywords on results |
 
-**`PlaylistSource` contract** (`internal/scout/scout.go`): `Playlist(ref) → {id,
-title, url, videos:[{id,url,title,channel,description,tags,transcript,position}]}`.
-yt-dlp recipe: `yt-dlp --flat-playlist -J <ref>` for entries, then per video
-`yt-dlp -J --write-auto-subs --sub-format vtt --skip-download <url>` for
-description/tags/channel + auto-captions (VTT → plain text).
+The yt-dlp `PlaylistSource` is **built and verified live** from the cloud (flat
+mode returned all 100 videos of Jordan's playlist; `--deep` per-video enrichment
+works but is rate-limited from a datacenter IP — on Jordan's home PC, with
+`--cookies-from-browser chrome`, it runs clean). The only genuinely local steps
+are installing yt-dlp, building the `.exe`, and the optional model assessor.
 
 **`Assessor` contract** (optional): `Assess(video, catalog) → {relevant, becky_tools,
 ideas, kind, why, confidence}`. With no Assessor wired, scout runs the
@@ -162,16 +162,27 @@ fetch), a deterministic OUTPUT, and degrade-never-crash everywhere else.
 - `becky-scout` (this) — "what's in the videos Jordan saved that becky should act on?"
 
 All three cross-reference the same manifest. Run scout as standard practice on the
-"watch later / becky" playlist; relevant findings drop straight into the
-new-tool / upgrade pipeline (`SPEC-BECKY-NEW-TOOL.md`).
+"ai useful" playlist; relevant findings drop straight into the new-tool / upgrade
+pipeline (`SPEC-BECKY-NEW-TOOL.md`).
+
+**Running it regularly (the "watch for new entries" ask).** `--new-only --state
+<file>` remembers which videos were already assessed and reports only newly-added
+ones, so a repeat run is a short "what's new" digest, not a re-read of all 100.
+`scout-watch.ps1` (repo root) wraps this for Jordan: double-click it to check now,
+or run it once with `-Register` to have Windows Task Scheduler run it weekly and
+save the new-finds digest to `scout-latest.txt`. (It can also be folded into the
+existing "Get Becky Updates" button so the playlist digest rides along with the
+freshness/radar digest — one button, nothing new for Jordan to remember.)
 
 ## 7. Open decisions for Jordan
 1. **The playlist — ANSWERED (2026-06-16):** Jordan's "ai useful" playlist,
    `https://youtube.com/playlist?list=PLLnp7PR3IvheB68zHrkkKu2ih1uNdV8pT`. He also
    set the scope: surface things **useful to him personally**, not only becky-tool
    matches → the "useful to you" lane (§2a) + the personal interests catalog.
-2. **Captions cost:** fetching auto-captions per video is the slow part. Default
-   to titles+descriptions only and fetch captions on `--deep`, or always fetch?
+2. **Captions cost — ANSWERED:** default is one fast `--flat-playlist -J` call
+   (titles); `--deep` adds per-video descriptions/tags (one request each). Full
+   caption (VTT) download is a further opt-in left for later — descriptions+tags
+   already corroborate most findings. (`scout-watch.ps1` uses `--deep`.)
 3. **Model assessor:** wire the optional 3rd signal now (Qwen3-4B already used by
    the canvas), or ship the deterministic floor first and add the model later?
 4. **Catalog tuning:** the built-in keyword catalog is conservative. Any becky
