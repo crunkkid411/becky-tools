@@ -229,6 +229,24 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/drum-machine-ai-g2sz9x` (cloud, 2026-06-17) — "kill the click-engineer": plain-English studio wiring + AI drum machine + preference learning. READY FOR REVIEW.**
+
+Jordan's ask (in his words): Maschine 2 is great but *dumb* — 40 clicks for a 2-second task takes him out of flow; he wants a fast background model + context-awareness to turn an 8-hour session into 1. Decision: don't rebuild Maschine and don't puppet it — own the tools so the AI has structured access, and automate the **deterministic** grunt-work (routing/setup is text+math, not audio/visual). Three collision-free deliverables built by parallel subagents; whole module green (`go build`/`vet`/`test`/`gofmt` all clean — 54 packages, 0 failures). Smoke-tested live on a real `becky-compose` crunkcore project.
+
+- **`becky-wire`** (`cmd/wire` + `internal/studio`, NEW): plain-English → routing/mix edits on the EXISTING `music.Project` graph. Handles "sidechain the bass to the kick", "duck the synths under the vocal", "route the lead guitar to the guitar bus", "put my usual chain on the drum bus" / "set up the drum bus", "use Odin II on the lead", "gain stage the kick to -7". `Intent`/`Action` types + immutable `Apply` (appends `ProjEdge`/`ProjFX`, sorted/idempotent, deep-copy). `--dry-run` previews ("show me, don't do it"). Each edit logged via existing `habits.AppendCorrectionLog` so becky learns habitual setups. 20 tests. **Verified live** (sidechain + usual-chain produced correct edges).
+- **`becky-drum`** (`cmd/drum` + `internal/drumcmd`, NEW): plain-English → drum-pattern transform on `dawmodel.DrumGrid`. Handles half-time/double-time, "humanize the snare" (seeded, reproducible), "add a fill/hi-hat roll into beat 4", swing (reuses existing quantize/swing math), "give me 3 variations", busier/strip-back density, "tighten to the grid". Immutable, deterministic (`--seed`, default 42), before/after preview, `--dry-run`. 30+ tests. **Verified live** after I fixed a finder bug (below).
+- **Preference learning extended** (`internal/habits` + `cmd/habits`): learner now learns recurring **structured** setups (FX chains, sidechain routes — canonicalized JSON, same corroborate-then-conclude threshold), not just scalars. New `Usual(scope)` / `UsualField` "my usual X" recall API + `becky-habits usual <scope>` subcommand. Fully back-compat (scalar path + on-disk shape unchanged; all old tests pass). 47 tests.
+- **Integration fix I made during smoke-testing:** `becky-drum`'s `findDrumClip` was picking an empty `program -1` placeholder track over the real channel-9 GM-percussion clip (yielding "nothing to change" on real multi-track projects). Rewrote it to prioritize channel-9 non-empty → program -1 non-empty → any non-empty → first clip, with a regression test.
+
+Left for local (the genuine GPU/Windows boundary — each is a one-call stub with a documented contract + reference `exec.Command` in the source comment):
+1. Wire the **fast background model** exec for `becky-wire` (`internal/studio/model_parser.go` `runModel`) and `becky-drum` (`internal/drumcmd/model.go` `execRunModel`) — small instruct GGUF (Smol/LFM2-Instruct class), `--temp 0 --seed 42`. Env: `BECKY_WIRE_BIN`/`_MODEL`, `BECKY_DRUM_BIN`/`_MODEL`. Both SILENTLY DEGRADE to the deterministic keyword parser today, so they work now with the model off.
+2. Optionally have `becky-daw`/`becky-mix`/`becky-canvas` emit **structured** corrections (serialized FX-chain / sidechain blob as the `fixed` value) through `AppendCorrectionLog`, so `becky-habits usual bus.drums` returns Jordan's real setups.
+3. `build-all-tools.bat` auto-discovers `cmd/wire` + `cmd/drum` — no edit needed; it produces `becky-wire.exe` + `becky-drum.exe`.
+
+Note: `becky-drum` operates on becky's **DAW arrangement** JSON (inline notes, e.g. `becky-daw load --json`), NOT compose's multi-`.mid` `project.json` (which is a routing manifest). A future nicety: teach `becky-drum` to resolve a compose project's referenced `.mid` files.
+
+---
+
 **Branch `claude/ask-pitch-phase3-2026-06-16` (cloud, 2026-06-16) — becky-ask Phase 3: new-tool pitch → factory handoff. READY FOR REVIEW.**
 
 Completes the loop: Jordan says "I wish becky could do X" → becky-ask builds a structured pitch, shows it in plain English, and on "y" calls `becky-new-tool --intake-file` to kick off the factory pipeline. Builds + all tests pass (go build/vet/test/gofmt all green, 10 new pitch tests + render_test.go updated for Phase 3 behaviour).

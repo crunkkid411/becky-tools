@@ -54,14 +54,22 @@ type CorrectionRecord struct {
 // the currently-winning value and Evidence its count, but Default is only the
 // LEARNED default when Learned is true (Evidence >= MinEvidence). Sources records
 // the distinct context provenance (e.g. tool names) that fed this habit.
+//
+// Structured marks a habit whose values are JSON blobs (an FX chain, a sidechain
+// route) rather than plain scalars. It is set from the WINNING default's form on
+// every recompute, so it always reflects the value that is (or would be) applied.
+// It is omitempty so a scalar habit's on-disk shape is byte-for-byte unchanged
+// from before this field existed (back-compat with existing habits.json files and
+// the determinism tests).
 type Habit struct {
-	Scope    string         `json:"scope"`
-	Field    string         `json:"field"`
-	Counts   map[string]int `json:"counts"`
-	Default  string         `json:"default"`
-	Evidence int            `json:"evidence"`
-	Learned  bool           `json:"learned"`
-	Sources  []string       `json:"sources,omitempty"`
+	Scope      string         `json:"scope"`
+	Field      string         `json:"field"`
+	Counts     map[string]int `json:"counts"`
+	Default    string         `json:"default"`
+	Evidence   int            `json:"evidence"`
+	Learned    bool           `json:"learned"`
+	Structured bool           `json:"structured,omitempty"`
+	Sources    []string       `json:"sources,omitempty"`
 }
 
 // Store is the deterministic habit store keyed on "{scope}\x1f{field}". It is an
@@ -102,7 +110,11 @@ func (s *Store) Observe(r CorrectionRecord) bool {
 	if h.Counts == nil {
 		h.Counts = map[string]int{}
 	}
-	h.Counts[r.Fixed]++
+	// Canonicalise STRUCTURED values (JSON blobs) before counting so two equal
+	// preferences written with different key order corroborate each other rather
+	// than splitting the count. Scalars pass through unchanged, so the scalar
+	// learning path is identical to before.
+	h.Counts[canonicalValue(r.Fixed)]++
 	h.Sources = mergeSource(h.Sources, r.Context["tool"])
 	recompute(&h)
 	s.Habits[k] = h
@@ -134,6 +146,10 @@ func recompute(h *Habit) {
 	}
 	h.Default, h.Evidence = best, bestN
 	h.Learned = bestN >= MinEvidence
+	// Reflect the winning value's form so reports and ApplyStructured/Usual can
+	// tell a structured preference from a scalar one. Counts are already canonical
+	// (Observe canonicalises before tallying), so this is a cheap shape check.
+	h.Structured = IsStructured(best)
 }
 
 // Apply returns the learned default for {scope, field} when one exists, else the

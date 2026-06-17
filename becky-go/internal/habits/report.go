@@ -49,12 +49,21 @@ func (s *Store) Describe() string {
 	b.WriteString("becky-habits — what becky has learned from your corrections\n")
 	b.WriteString(strings.Repeat("=", 60) + "\n\n")
 
+	scalars, structured := s.ScalarLearned(), s.StructuredLearned()
+
 	b.WriteString(fmt.Sprintf("LEARNED defaults (corroborated >= %d times):\n", MinEvidence))
 	if len(learned) == 0 {
 		b.WriteString("  (none yet — keep correcting and a repeated fix becomes a default)\n")
 	}
-	for _, h := range learned {
+	for _, h := range scalars {
 		b.WriteString("  - " + describeLearned(h) + "\n")
+	}
+
+	if len(structured) > 0 {
+		b.WriteString("\nLEARNED setups (your usual structured preferences):\n")
+		for _, h := range structured {
+			b.WriteString("  - " + describeStructured(h) + "\n")
+		}
 	}
 
 	b.WriteString("\nstill a CANDIDATE (seen once — not a default yet):\n")
@@ -70,6 +79,17 @@ func (s *Store) Describe() string {
 // describeLearned phrases one corroborated default as a conclusion.
 func describeLearned(h Habit) string {
 	s := fmt.Sprintf("%s %s → defaults to %q (seen %dx)", h.Scope, h.Field, h.Default, h.Evidence)
+	if len(h.Sources) > 0 {
+		s += " from " + strings.Join(h.Sources, ", ")
+	}
+	return s
+}
+
+// describeStructured phrases one corroborated STRUCTURED preference (a JSON blob
+// like an FX chain or a sidechain route) as a conclusion, keeping the blob on one
+// line so the plain-language report stays scannable.
+func describeStructured(h Habit) string {
+	s := fmt.Sprintf("%s %s → your usual setup: %s (seen %dx)", h.Scope, h.Field, h.Default, h.Evidence)
 	if len(h.Sources) > 0 {
 		s += " from " + strings.Join(h.Sources, ", ")
 	}

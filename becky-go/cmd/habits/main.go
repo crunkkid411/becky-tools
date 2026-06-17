@@ -50,6 +50,8 @@ func run(args []string) int {
 		return runLearn(args[1:])
 	case "show":
 		return runShow(args[1:])
+	case "usual":
+		return runUsual(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return exitOK
@@ -197,6 +199,76 @@ func runShow(args []string) int {
 	return exitOK
 }
 
+// runUsual answers "what's my usual <scope>?" — it prints the LEARNED structured
+// preferences (FX chains, sidechain routes, …) recorded under a scope so another
+// tool (or Jordan) can recall "set up my usual drum bus". With no scope it lists
+// every learned structured setup across all scopes.
+//
+// Usage: becky-habits usual [<scope>] [--store <path>] [--json]
+func runUsual(args []string) int {
+	positional, flags := splitArgs(args)
+	fs := newFlags("usual")
+	storePath := fs.String("store", habits.DefaultStorePath(), "path to habits.json")
+	asJSON := fs.Bool("json", false, "emit a JSON list instead of plain text")
+	if err := fs.Parse(flags); err != nil {
+		return exitUsage
+	}
+	positional = append(positional, fs.Args()...)
+	if len(positional) > 1 {
+		fmt.Fprintln(os.Stderr, "usual takes at most one <scope> argument")
+		return exitUsage
+	}
+
+	store, err := habits.Load(*storePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "can't load the habit store:", err)
+		return exitErr
+	}
+
+	var prefs []habits.UsualPreference
+	if len(positional) == 1 {
+		prefs = store.Usual(positional[0])
+	} else {
+		// No scope: collect the learned structured habits across every scope.
+		for _, h := range store.StructuredLearned() {
+			prefs = append(prefs, habits.UsualPreference{
+				Scope: h.Scope, Field: h.Field, Value: h.Default,
+				Evidence: h.Evidence, Sources: h.Sources,
+			})
+		}
+	}
+
+	if *asJSON {
+		return encode(prefs)
+	}
+	return emitUsual(prefs, positional)
+}
+
+// emitUsual prints the plain-language "your usual X" view.
+func emitUsual(prefs []habits.UsualPreference, positional []string) int {
+	if len(prefs) == 0 {
+		if len(positional) == 1 {
+			fmt.Printf("becky hasn't learned a usual setup for %q yet — keep correcting and a repeated structured fix becomes your default.\n", positional[0])
+		} else {
+			fmt.Println("becky hasn't learned any usual structured setups yet — keep correcting and a repeated structured fix becomes your default.")
+		}
+		return exitOK
+	}
+	if len(positional) == 1 {
+		fmt.Printf("your usual %s:\n", positional[0])
+	} else {
+		fmt.Println("your usual setups:")
+	}
+	for _, p := range prefs {
+		line := fmt.Sprintf("  - %s %s → %s (seen %dx)", p.Scope, p.Field, p.Value, p.Evidence)
+		if len(p.Sources) > 0 {
+			line += " from " + fmt.Sprint(p.Sources)
+		}
+		fmt.Println(line)
+	}
+	return exitOK
+}
+
 // encode writes v as indented JSON to stdout, degrading to an error exit on a
 // marshal failure rather than panicking.
 func encode(v any) int {
@@ -215,11 +287,14 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  becky-habits observe <corrections.json> [--store <path>] [--json]")
 	fmt.Fprintln(os.Stderr, "  becky-habits learn   --logs <dir>        [--store <path>] [--json]")
 	fmt.Fprintln(os.Stderr, "  becky-habits show                        [--store <path>] [--json]")
+	fmt.Fprintln(os.Stderr, "  becky-habits usual   [<scope>]           [--store <path>] [--json]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "observe  ingest one corrections file (JSON array or {\"corrections\":[...]})")
 	fmt.Fprintln(os.Stderr, "learn    walk a directory of *.jsonl logs from hum/vox/daw/canvas tools")
-	fmt.Fprintln(os.Stderr, "show     report what becky has learned (no ingest)")
+	fmt.Fprintln(os.Stderr, "show     report what becky has learned — scalar defaults AND structured setups")
+	fmt.Fprintln(os.Stderr, "usual    recall your usual structured setup(s) (e.g. `usual bus.drums`)")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "A correction recurring >= 2 times becomes a learned default.")
+	fmt.Fprintln(os.Stderr, "A correction recurring >= 2 times becomes a learned default. A structured")
+	fmt.Fprintln(os.Stderr, "fix (a JSON blob like an FX chain or sidechain route) is learned the same way.")
 	fmt.Fprintln(os.Stderr, "Exit codes: 0 ok, 1 error, 2 usage.")
 }
