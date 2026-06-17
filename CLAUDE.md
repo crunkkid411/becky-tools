@@ -195,6 +195,9 @@ load-bearing rules, in brief:
   and steer from his iPhone; reconciles with `becky-harness`),
   `SPEC-RADAR.md` (`becky-radar`, reads Jordan's Chrome history — incl. synced
   iPhone visits — and surfaces flagged models/tools vs becky's deps),
+  `SPEC-SCOUT.md` (`becky-scout`, assesses a YouTube playlist video-by-video for
+  things that could improve/extend becky — sibling of becky-radar; corroborate-
+  then-conclude over the freshness manifest + a capability catalog),
   `SPEC-BECKY-CANVAS.md` (native lightweight creative GUI: becky-ask + video/DAW/
   MIDI/drum modes on one canvas — Jordan's AI-friendly Cubase replacement).
 - **becky-canvas DAW/audio suite (BUILT 2026-06-15 — deterministic Go cores; native audio/GUI = Phase-2):**
@@ -320,6 +323,58 @@ becky-report --identify i.json --events e.json --output report.json
 
 **Left for local: nothing.** `build-all-tools.bat` auto-discovers `cmd/report` (no edit needed).
 Jordan verifies by running it against a real pipeline output dir from a case.
+**Branch `claude/youtube-playlist-assessment-hbx8a9` (cloud, 2026-06-16) — NEW TOOL `becky-scout`. Draft PR open; REVIEW before merge (left-for-local below).**
+
+Jordan asked for "a tool that takes a playlist of YouTube videos and assesses each
+video to see if it contains anything that can improve or extend becky-tools." Built
+in the house style as the sibling of `becky-radar` (radar reads Chrome history;
+scout reads a YouTube playlist). `go build/vet/test ./...` green, gofmt clean, CLI
+smoke-tested (degrade path + `--catalog`).
+- **`internal/scout` + `cmd/scout`:** for each video it builds a haystack from every
+  offline-readable field (title/channel/description/tags/captions) and gathers three
+  INDEPENDENT signals — (1) **dep-match** = names a model in the becky-freshness
+  manifest (→ *improve* an existing tool), (2) **capability** = matches the built-in
+  becky capability catalog (`catalog.go`; OCR/ASR/diarize/embed/VLM/agents/music…),
+  (3) **assessor** = optional local-model opinion. Corroborate-then-conclude:
+  `score≥2` → **relevant** (stated conclusion), `==1` → **candidate**, `0` →
+  **skipped** (counted, not enumerated — no flood of maybes). Classifies *improve*
+  (tracked dep) vs *extend* (becky domain, nothing tracked yet).
+- **Boundaries stubbed behind interfaces** (the cloud→local wiring contract, both in
+  `internal/scout/scout.go`): `PlaylistSource.Playlist(ref)` (the one online step) and
+  the optional `Assessor.Assess(...)`. Deterministic fakes (`fake.go`) run the whole
+  pipeline in CI with no net/model. `cmd/scout` currently injects `unwiredSource{}`,
+  so a live run honestly degrades with a plain-language note instead of crashing.
+- **Opts out of the offline invariant the same controlled way** as research/radar/
+  palantir: one explicit logged network step, deterministic OUTPUT, degrade-never-crash.
+- **"Useful to you" lane + `--from-json` (added 2026-06-16 after Jordan's reply):**
+  Jordan named his target playlist ("ai useful") and said to surface things useful to
+  HIM even if they aren't becky tools. Added `internal/scout/interests.go` (a personal
+  interests catalog — agents/local-AI/music/video/docs/automation/how-to) and a
+  third `useful` bucket (non-becky video with ≥1 interest hit → a suggestion, not a
+  forensic conclusion; becky lane keeps ≥2-signal rigor). Added `--from-json <file>`
+  (offline pre-fetched playlist; array or `{videos:[...]}`) — the cloud agent
+  scraped his real playlist via `ytInitialData` (no yt-dlp) and ran it: **15 becky
+  candidates, 28 useful-to-you, 57 off-topic** of 100 (titles only — captions will
+  corroborate more). `--catalog` now prints both maps.
+
+- **Real yt-dlp source WIRED + verified live (added 2026-06-16).** `cmd/scout/ytdlp.go`
+  is the real `PlaylistSource`: default `--flat-playlist -J` (fast, all titles) and
+  `--deep` (per-video description/tags/channel). Verified live from the cloud — flat
+  mode returned all 100 of Jordan's videos; `--deep` works but YouTube bot-blocks a
+  datacenter IP (62/100), which is why `scout-watch.ps1` passes
+  `--cookies-from-browser chrome` (clean on Jordan's home PC). `BECKY_YTDLP`/`BECKY_YTDLP_ARGS`
+  override the binary/args. Flags now work before OR after the playlist arg.
+- **Regular "what's new" runs:** `--new-only --state <file>` reports only newly-added
+  videos; `scout-watch.ps1` (repo root) double-clicks to run now or `-Register`s a
+  weekly Windows scheduled task → `scout-latest.txt`.
+
+**Left for local (small — the heavy code is done):**
+1. `pip install yt-dlp`, then `build-all-tools.bat` (auto-discovers `cmd/scout`).
+2. Run `scout-watch.ps1` (or `becky-scout <playlist> --deep`) once to confirm the
+   live `--deep` digest on a home connection; optionally `-Register` the weekly task,
+   or fold scout into the "Get Becky Updates" button digest alongside freshness/radar.
+3. (Optional) wire the 3rd-signal `Assessor` to a local llama.cpp text model
+   (Qwen3-4B, `--temp 0`); tune `catalog.go`/`interests.go` from real results.
 
 ---
 
