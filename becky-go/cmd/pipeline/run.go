@@ -52,12 +52,12 @@ func binName(step string) string {
 }
 
 // optionalBinary reports whether a step should degrade to a graceful skip (rather
-// than a failure) when its becky-*.exe is missing from --bin. Only the ocr step is
-// optional-by-binary: OCR is an additive enrichment that must never break the chain,
-// mirroring its in-tool model/deps degrade (note, exit 0). Every other step's
-// missing binary is a real setup error the operator should see.
+// than a failure) when its becky-*.exe is missing from --bin. ocr, motion, and
+// report are optional-by-binary: they are additive enrichments that must never break
+// the chain — mirroring each tool's own degrade-never-crash behaviour. Every other
+// step's missing binary is a real setup error the operator should see.
 func optionalBinary(step string) bool {
-	return step == stepOCR
+	return step == stepOCR || step == stepMotion || step == stepReport
 }
 
 // stepArgs builds the positional+flag argv for a step (excluding the binary
@@ -96,9 +96,37 @@ func stepArgs(step, video, kb string, p stepPaths) (args []string, runnable bool
 			return nil, false, "no --kb provided"
 		}
 		return []string{video, "--kb", kb, "--output", p.identify}, true, ""
+	case stepMotion:
+		// motion reads the video at true source fps (needs ffmpeg on PATH) and emits
+		// a burst timeline. No dependency on other steps — runs on the raw video.
+		return []string{video, "--output", p.motion}, true, ""
+	case stepReport:
+		// report reads whatever sidecars are available (graceful when some are missing)
+		// and emits a structured case report. Pass only files that already exist so
+		// becky-report's own degrade path handles any that are absent.
+		return reportStepArgs(p), true, ""
 	default:
 		return nil, false, "unknown step"
 	}
+}
+
+// reportStepArgs builds the becky-report argv, passing only sidecars that are
+// present on disk. becky-report handles missing inputs via its Degraded flag and
+// exits non-zero only when ALL sidecars are absent — so the pipeline treats that
+// as a failed (partial) step, not a panic.
+func reportStepArgs(p stepPaths) []string {
+	var args []string
+	for _, pair := range [][2]string{
+		{"--transcript", p.transcript},
+		{"--events", p.events},
+		{"--identify", p.identify},
+		{"--motion", p.motion},
+	} {
+		if fi, err := os.Stat(pair[1]); err == nil && fi.Size() > 0 {
+			args = append(args, pair[0], pair[1])
+		}
+	}
+	return append(args, "--output", p.reportJSON, "--md-output", p.reportMD)
 }
 
 // runStep executes one planned step and returns its StepResult. A planned skip
@@ -184,6 +212,11 @@ func (r *toolRunner) runStep(ps plannedStep, video, kb string, p stepPaths, forc
 	if ps.Name == stepOCR {
 		sr.Note = ocrRunNote(p.ocrJSON)
 	}
+	// becky-report surfaces the conclusion count so the manifest shows the case summary
+	// without requiring Jordan to open report.json.
+	if ps.Name == stepReport {
+		sr.Note = reportRunNote(p.reportJSON)
+	}
 	beckyio.Logf(r.verbose, "  [ ok ] %s (%dms) -> %s", ps.Name, sr.DurationMS, marker)
 	return sr
 }
@@ -214,6 +247,35 @@ func ocrRunNote(ocrJSONPath string) string {
 		note += "; degraded: " + degrade
 	}
 	return note
+}
+
+// reportRunNote reads becky-report's report.json and returns a compact human note
+// for the manifest: how many conclusions and review items were found, and whether
+// the report is degraded (e.g. all sidecars missing). Best-effort: an unreadable
+// or absent report.json yields "" — the step still counts as ok.
+func reportRunNote(reportJSONPath string) string {
+	data, err := os.ReadFile(reportJSONPath)
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Conclusions []json.RawMessage `json:"conclusions"`
+		ReviewItems []json.RawMessage `json:"review_required"`
+		Degraded    bool              `json:"degraded"`
+		Notes       []string          `json:"notes,omitempty"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return ""
+	}
+	if doc.Degraded {
+		note := "report degraded (no forensic data found)"
+		if len(doc.Notes) > 0 {
+			note += ": " + doc.Notes[0]
+		}
+		return note
+	}
+	return fmt.Sprintf("%d DOCUMENTED conclusion(s), %d review item(s) → report.json + report.md",
+		len(doc.Conclusions), len(doc.ReviewItems))
 }
 
 // runMetadata is the in-process metadata step: parse the .info.json +

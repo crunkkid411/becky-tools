@@ -204,6 +204,8 @@ func TestOutputMarkers(t *testing.T) {
 		stepOCR:        p.ocrJSON,
 		stepEmbed:      p.embedJSON,
 		stepIdentify:   p.identify,
+		stepMotion:     p.motion,
+		stepReport:     p.reportJSON,
 	}
 	for step, want := range cases {
 		if got := outputMarker(step, p); got != want {
@@ -251,4 +253,101 @@ func indexPlan(plan []plannedStep) map[string]plannedStep {
 		m[ps.Name] = ps
 	}
 	return m
+}
+
+func TestParseStepsMotionAndReport(t *testing.T) {
+	got, err := parseSteps("motion,report")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// motion before report in canonical order.
+	if len(got) != 2 || got[0] != stepMotion || got[1] != stepReport {
+		t.Fatalf("got %v, want [motion report]", got)
+	}
+}
+
+func TestParseStepsReportBeforeMotionInInputGetsReordered(t *testing.T) {
+	// User passes report,motion (wrong order) — canonical order should fix it.
+	got, err := parseSteps("report,motion")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != stepMotion || got[1] != stepReport {
+		t.Fatalf("got %v, want [motion report]", got)
+	}
+}
+
+func TestCanonicalOrderEndsWithMotionThenReport(t *testing.T) {
+	n := len(canonicalOrder)
+	if n < 2 {
+		t.Fatal("canonicalOrder has fewer than 2 entries")
+	}
+	if canonicalOrder[n-2] != stepMotion {
+		t.Errorf("second-to-last step = %q, want %q", canonicalOrder[n-2], stepMotion)
+	}
+	if canonicalOrder[n-1] != stepReport {
+		t.Errorf("last step = %q, want %q", canonicalOrder[n-1], stepReport)
+	}
+}
+
+func TestPlanStepsMotionHasNoDeps(t *testing.T) {
+	// motion can run with nothing else on disk — it reads the video directly.
+	steps := []string{stepMotion}
+	p := newStepPaths("out/test", "")
+	plan := planSteps(steps, p, false, fakeStat(nil))
+
+	if len(plan) != 1 {
+		t.Fatalf("expected 1 planned step, got %d", len(plan))
+	}
+	if !plan[0].WillRun {
+		t.Errorf("motion should always run (no deps); skip=%q", plan[0].SkipReason)
+	}
+}
+
+func TestPlanStepsReportHasNoDeps(t *testing.T) {
+	// report can run with nothing else on disk — it degrades gracefully when sidecars
+	// are absent (Degraded=true in its output). No hard planner dependency.
+	steps := []string{stepReport}
+	p := newStepPaths("out/test", "")
+	plan := planSteps(steps, p, false, fakeStat(nil))
+
+	if len(plan) != 1 {
+		t.Fatalf("expected 1 planned step, got %d", len(plan))
+	}
+	if !plan[0].WillRun {
+		t.Errorf("report should always run (no hard deps); skip=%q", plan[0].SkipReason)
+	}
+}
+
+func TestPlanStepsFullChainWithMotionAndReport(t *testing.T) {
+	// The complete end-to-end chain, nothing on disk — everything should run.
+	steps := []string{
+		stepTranscribe, stepDiarize, stepEvents, stepOSINT, stepOCR,
+		stepIdentify, stepMotion, stepReport,
+	}
+	p := newStepPaths("out/test", "")
+	plan := planSteps(steps, p, false, fakeStat(nil))
+
+	byName := indexPlan(plan)
+	for _, s := range steps {
+		if s == stepIdentify {
+			continue // identify gracefully skips without --kb; not a planner concern
+		}
+		if !byName[s].WillRun {
+			t.Errorf("%s should run in a full fresh chain; skip=%q", s, byName[s].SkipReason)
+		}
+	}
+}
+
+func TestNewStepPathsMotionAndReportPaths(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	if p.motion == "" {
+		t.Error("motion path should not be empty")
+	}
+	if p.reportJSON == "" {
+		t.Error("reportJSON path should not be empty")
+	}
+	if p.reportMD == "" {
+		t.Error("reportMD path should not be empty")
+	}
 }
