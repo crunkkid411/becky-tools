@@ -84,13 +84,17 @@ type Observation struct {
 
 // Output is the becky-validate JSON contract emitted per clip.
 type Output struct {
-	File              string        `json:"file"`
-	ValidatedAt       string        `json:"validated_at"` // RFC3339 UTC
-	Backend           string        `json:"backend"`
-	Model             string        `json:"model"`
-	Disclaimer        string        `json:"disclaimer"` // load-bearing: candidate, not conclusion
-	WindowSec         float64       `json:"window_sec"`
-	FPS               float64       `json:"fps"`
+	File        string  `json:"file"`
+	ValidatedAt string  `json:"validated_at"` // RFC3339 UTC
+	Backend     string  `json:"backend"`
+	Model       string  `json:"model"`
+	Disclaimer  string  `json:"disclaimer"`   // load-bearing: candidate, not conclusion
+	WindowStart float64 `json:"window_start"` // seconds into clip where analysis began (0 = beginning)
+	WindowSec   float64 `json:"window_sec"`
+	FPS         float64 `json:"fps"`
+	// MotionTargeted is set when --motion targeted this window at a detected burst.
+	// Omitted (false) when running with the default whole-clip window.
+	MotionTargeted    bool          `json:"motion_targeted,omitempty"`
 	Observations      []Observation `json:"observations"`
 	ToneVsContentFlag bool          `json:"tone_vs_content_flag"` // true if any observation flags a mismatch
 	// Note carries a graceful-degradation marker (model missing/failed, NaN

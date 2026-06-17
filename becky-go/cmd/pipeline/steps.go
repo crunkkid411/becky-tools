@@ -14,7 +14,8 @@ import (
 )
 
 // Known step names, in canonical chain order. The default --steps set is the
-// deterministic sweep; embed/identify/motion/report are optional (server/KB/binary dependent).
+// deterministic sweep; embed/identify/motion/report/validate are optional
+// (server/KB/binary/model dependent).
 const (
 	stepTranscribe = "transcribe"
 	stepMetadata   = "metadata"
@@ -24,8 +25,9 @@ const (
 	stepOCR        = "ocr"
 	stepEmbed      = "embed"
 	stepIdentify   = "identify"
-	stepMotion     = "motion" // dense frame-diff burst detection (needs ffmpeg on PATH)
-	stepReport     = "report" // forensic case report from all available sidecars
+	stepMotion     = "motion"   // dense frame-diff burst detection (needs ffmpeg on PATH)
+	stepValidate   = "validate" // LLM AV description (Gemma-4); opt-in, needs GPU model
+	stepReport     = "report"   // forensic case report from all available sidecars
 )
 
 // canonicalOrder is the dependency-respecting order steps must run in:
@@ -35,7 +37,9 @@ const (
 // together. ocr runs right after osint, OCR'ing the scene-change frames osint
 // exported and writing the recognized text into the forensic DB so it is searchable.
 // motion reads the video directly (no dep) and runs after the main chain.
-// report is last: it reads whatever sidecars are available and builds the case report.
+// validate benefits from all other sidecars and uses the motion.json burst window
+// for targeted analysis (when available). report is last: it reads whatever sidecars
+// are available (including validate's) and builds the case report.
 var canonicalOrder = []string{
 	stepTranscribe,
 	stepMetadata,
@@ -46,6 +50,7 @@ var canonicalOrder = []string{
 	stepEmbed,
 	stepIdentify,
 	stepMotion,
+	stepValidate,
 	stepReport,
 }
 
@@ -69,6 +74,7 @@ var knownSteps = map[string]bool{
 	stepEmbed:      true,
 	stepIdentify:   true,
 	stepMotion:     true,
+	stepValidate:   true,
 	stepReport:     true,
 }
 
@@ -130,7 +136,8 @@ type stepPaths struct {
 	embedJSON     string // embed.json (captured stdout summary)
 	embedDB       string // forensic.db (or overridden by --db)
 	identify      string // identify.json
-	motion        string // motion.json (becky-motion burst timeline)
+	motion        string // motion.json (becky-motion burst timeline; consumed by validate + report)
+	validateJSON  string // validate.json (becky-validate AV observations)
 	reportJSON    string // report.json (becky-report case report)
 	reportMD      string // report.md (becky-report human-readable markdown)
 }
@@ -154,6 +161,7 @@ func newStepPaths(videoDir, dbOverride string) stepPaths {
 		embedDB:       db,
 		identify:      filepath.Join(videoDir, "identify.json"),
 		motion:        filepath.Join(videoDir, "motion.json"),
+		validateJSON:  filepath.Join(videoDir, "validate.json"),
 		reportJSON:    filepath.Join(videoDir, "report.json"),
 		reportMD:      filepath.Join(videoDir, "report.md"),
 	}
@@ -182,6 +190,8 @@ func outputMarker(step string, p stepPaths) string {
 		return p.identify
 	case stepMotion:
 		return p.motion
+	case stepValidate:
+		return p.validateJSON
 	case stepReport:
 		return p.reportJSON
 	default:

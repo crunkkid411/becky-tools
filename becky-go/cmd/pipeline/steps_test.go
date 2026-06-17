@@ -277,16 +277,29 @@ func TestParseStepsReportBeforeMotionInInputGetsReordered(t *testing.T) {
 	}
 }
 
-func TestCanonicalOrderEndsWithMotionThenReport(t *testing.T) {
+// TestCanonicalOrderEndsWithReport pins the unified tail order after merging the
+// motion/report and validate steps: ... -> motion -> validate -> report. report is
+// the final aggregator (it reads every other sidecar, including validate's), so it
+// is always last.
+func TestCanonicalOrderEndsWithReport(t *testing.T) {
 	n := len(canonicalOrder)
-	if n < 2 {
-		t.Fatal("canonicalOrder has fewer than 2 entries")
-	}
-	if canonicalOrder[n-2] != stepMotion {
-		t.Errorf("second-to-last step = %q, want %q", canonicalOrder[n-2], stepMotion)
+	if n < 3 {
+		t.Fatal("canonicalOrder has fewer than 3 entries")
 	}
 	if canonicalOrder[n-1] != stepReport {
 		t.Errorf("last step = %q, want %q", canonicalOrder[n-1], stepReport)
+	}
+	pos := func(step string) int {
+		for i, s := range canonicalOrder {
+			if s == step {
+				return i
+			}
+		}
+		return -1
+	}
+	if !(pos(stepMotion) < pos(stepValidate) && pos(stepValidate) < pos(stepReport)) {
+		t.Errorf("want motion < validate < report; got motion=%d validate=%d report=%d",
+			pos(stepMotion), pos(stepValidate), pos(stepReport))
 	}
 }
 
@@ -323,7 +336,7 @@ func TestPlanStepsFullChainWithMotionAndReport(t *testing.T) {
 	// The complete end-to-end chain, nothing on disk — everything should run.
 	steps := []string{
 		stepTranscribe, stepDiarize, stepEvents, stepOSINT, stepOCR,
-		stepIdentify, stepMotion, stepReport,
+		stepIdentify, stepMotion, stepValidate, stepReport,
 	}
 	p := newStepPaths("out/test", "")
 	plan := planSteps(steps, p, false, fakeStat(nil))
@@ -349,5 +362,107 @@ func TestNewStepPathsMotionAndReportPaths(t *testing.T) {
 	}
 	if p.reportMD == "" {
 		t.Error("reportMD path should not be empty")
+	}
+}
+
+// TestParseStepsValidateKnown confirms "validate" is a recognised step name.
+func TestParseStepsValidateKnown(t *testing.T) {
+	got, err := parseSteps("validate")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != stepValidate {
+		t.Fatalf("parseSteps(\"validate\") = %v, want [validate]", got)
+	}
+}
+
+// TestParseStepsValidateNotInDefault confirms validate is opt-in (not in the
+// default sweep), since it requires the Gemma-4 GPU model.
+func TestParseStepsValidateNotInDefault(t *testing.T) {
+	got, err := parseSteps("")
+	if err != nil {
+		t.Fatalf("parseSteps default: %v", err)
+	}
+	for _, s := range got {
+		if s == stepValidate {
+			t.Errorf("validate must NOT be in the default sweep (requires Gemma-4 GPU model); got %v", got)
+		}
+	}
+}
+
+// TestParseStepsValidateCanonicalOrder confirms validate comes after identify in
+// canonical order regardless of how the user lists it.
+func TestParseStepsValidateCanonicalOrder(t *testing.T) {
+	got, err := parseSteps("validate,identify")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != stepIdentify || got[1] != stepValidate {
+		t.Fatalf("canonical order: got %v, want [identify validate]", got)
+	}
+}
+
+// TestOutputMarkerValidate confirms validate's output marker is set.
+func TestOutputMarkerValidate(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	if p.validateJSON == "" {
+		t.Error("validateJSON path must not be empty")
+	}
+	if got := outputMarker(stepValidate, p); got != p.validateJSON {
+		t.Errorf("outputMarker(validate) = %q, want %q", got, p.validateJSON)
+	}
+}
+
+// TestStepPathsMotionAndValidate confirms both paths are derived from the video dir.
+func TestStepPathsMotionAndValidate(t *testing.T) {
+	p := newStepPaths("out/myvideo", "")
+	if p.motion == "" {
+		t.Error("motion path must not be empty")
+	}
+	if p.validateJSON == "" {
+		t.Error("validateJSON path must not be empty")
+	}
+}
+
+// TestPlanStepsValidateStandalone confirms validate can run standalone (no hard
+// deps) when all optional context files are absent from disk.
+func TestPlanStepsValidateStandalone(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	plan := planSteps([]string{stepValidate}, p, false, fakeStat(nil))
+	if len(plan) != 1 {
+		t.Fatalf("expected 1 planned step, got %d", len(plan))
+	}
+	if !plan[0].WillRun {
+		t.Errorf("validate should run standalone (no hard deps); skip=%q", plan[0].SkipReason)
+	}
+}
+
+// TestPlanStepsValidateAlreadyDone skips when validate.json exists and is non-empty.
+func TestPlanStepsValidateAlreadyDone(t *testing.T) {
+	p := newStepPaths("out/test", "")
+	plan := planSteps([]string{stepValidate}, p, false, fakeStat(map[string]bool{p.validateJSON: true}))
+	if plan[0].WillRun {
+		t.Error("validate should skip when validate.json already exists")
+	}
+	if plan[0].SkipReason != "already-done" {
+		t.Errorf("skip reason = %q, want already-done", plan[0].SkipReason)
+	}
+}
+
+// TestPlanStepsFullChainWithValidate confirms validate runs last in a chain that has
+// no report step (report would otherwise be the final aggregator).
+func TestPlanStepsFullChainWithValidate(t *testing.T) {
+	steps := []string{stepTranscribe, stepDiarize, stepEvents, stepOSINT, stepIdentify, stepValidate}
+	p := newStepPaths("out/test", "")
+	plan := planSteps(steps, p, false, fakeStat(nil))
+	byName := indexPlan(plan)
+	for _, s := range steps {
+		if !byName[s].WillRun {
+			t.Errorf("%s should run in a full fresh chain; skip=%q", s, byName[s].SkipReason)
+		}
+	}
+	// validate must be the last element in the plan (no report step in this chain).
+	if plan[len(plan)-1].Name != stepValidate {
+		t.Errorf("validate should be last in the plan; got last=%q", plan[len(plan)-1].Name)
 	}
 }

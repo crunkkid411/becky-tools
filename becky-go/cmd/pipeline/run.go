@@ -52,12 +52,21 @@ func binName(step string) string {
 }
 
 // optionalBinary reports whether a step should degrade to a graceful skip (rather
-// than a failure) when its becky-*.exe is missing from --bin. ocr, motion, and
-// report are optional-by-binary: they are additive enrichments that must never break
-// the chain — mirroring each tool's own degrade-never-crash behaviour. Every other
-// step's missing binary is a real setup error the operator should see.
+// than a failure) when its becky-*.exe is missing from --bin. ocr, motion, report,
+// and validate are optional-by-binary: additive enrichments that must never break the
+// chain — mirroring each tool's own degrade-never-crash behaviour. validate also needs
+// the Gemma-4 model + GPU, so its binary being absent is expected in a GPU-less
+// environment. Every other step's missing binary is a real setup error the operator
+// should see.
 func optionalBinary(step string) bool {
-	return step == stepOCR || step == stepMotion || step == stepReport
+	return step == stepOCR || step == stepMotion || step == stepReport || step == stepValidate
+}
+
+// fileExists reports whether path exists and is non-empty on disk. Used by
+// validate's stepArgs to pass optional context files only when they are available.
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Size() > 0
 }
 
 // stepArgs builds the positional+flag argv for a step (excluding the binary
@@ -100,6 +109,24 @@ func stepArgs(step, video, kb string, p stepPaths) (args []string, runnable bool
 		// motion reads the video at true source fps (needs ffmpeg on PATH) and emits
 		// a burst timeline. No dependency on other steps — runs on the raw video.
 		return []string{video, "--output", p.motion}, true, ""
+	case stepValidate:
+		// validate is the LLM AV-description step.  It benefits from all prior
+		// sidecars and -- crucially -- from motion.json to target the analysis
+		// window at the highest-scored motion burst instead of blind 1-fps sampling
+		// (SPEC-VIDEO-ANALYSIS.md §5).  Every context file is optional: we pass it
+		// only when it exists so validate's own degrade path handles any gaps.
+		args := []string{video, "--output", p.validateJSON}
+		for _, pair := range [][]string{
+			{"--transcript", p.transcript},
+			{"--events", p.events},
+			{"--identify", p.identify},
+			{"--motion", p.motion},
+		} {
+			if fileExists(pair[1]) {
+				args = append(args, pair[0], pair[1])
+			}
+		}
+		return args, true, ""
 	case stepReport:
 		// report reads whatever sidecars are available (graceful when some are missing)
 		// and emits a structured case report. Pass only files that already exist so
@@ -217,6 +244,11 @@ func (r *toolRunner) runStep(ps plannedStep, video, kb string, p stepPaths, forc
 	if ps.Name == stepReport {
 		sr.Note = reportRunNote(p.reportJSON)
 	}
+	// becky-validate exits 0 even when Gemma-4 is unavailable (graceful degrade).
+	// Surface the observation count + any motion-targeting note in the manifest.
+	if ps.Name == stepValidate {
+		sr.Note = validateRunNote(p.validateJSON)
+	}
 	beckyio.Logf(r.verbose, "  [ ok ] %s (%dms) -> %s", ps.Name, sr.DurationMS, marker)
 	return sr
 }
@@ -276,6 +308,33 @@ func reportRunNote(reportJSONPath string) string {
 	}
 	return fmt.Sprintf("%d DOCUMENTED conclusion(s), %d review item(s) → report.json + report.md",
 		len(doc.Conclusions), len(doc.ReviewItems))
+}
+
+// validateRunNote reads validate.json and returns a compact note for the manifest:
+// how many observations were produced, whether motion-targeting was used, and any
+// graceful-degradation note (e.g. "Gemma-4 unavailable"). Best-effort: an
+// unreadable/absent validate.json yields "" (the step still counts as ok).
+func validateRunNote(validateJSONPath string) string {
+	data, err := os.ReadFile(validateJSONPath)
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Observations   []json.RawMessage `json:"observations"`
+		MotionTargeted bool              `json:"motion_targeted"`
+		Note           string            `json:"note,omitempty"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return ""
+	}
+	note := fmt.Sprintf("%d observation(s)", len(doc.Observations))
+	if doc.MotionTargeted {
+		note += " (motion-targeted)"
+	}
+	if doc.Note != "" {
+		note += "; " + doc.Note
+	}
+	return note
 }
 
 // runMetadata is the in-process metadata step: parse the .info.json +
