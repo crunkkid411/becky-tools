@@ -13,6 +13,8 @@ becky-go/ctx
 becky-go/cut
 becky-go/daw
 becky-go/daw-engine
+becky-go/drum
+becky-go/drummachine
 becky-go/debt-scan
 becky-go/deslop
 becky-go/diarize
@@ -37,10 +39,13 @@ becky-go/osint
 becky-go/palantir
 becky-go/pipeline
 becky-go/radar
+becky-go/ref
 becky-go/report
 becky-go/research
 becky-go/review
 becky-go/search
+becky-go/stems
+becky-go/wire
 becky-go/transcribe
 becky-go/vad
 becky-go/validate
