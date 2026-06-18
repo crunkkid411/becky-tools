@@ -252,6 +252,22 @@ contract, function signatures, constraints, and Definition of Done are in
 
 ---
 
+**Branch `claude/drum-machine-ai-g2sz9x` (cloud, 2026-06-18) — THE REAL GUI-FIRST, AI-CONTROLLED 16-PAD DRUM MACHINE (Maschine 2 class). READY FOR REVIEW — needs the one-click build on Jordan's PC to confirm it opens + sounds.**
+
+Jordan's words: "we do NOT have a 16-channel, AI-first drum machine like Maschine 2 — nothing even resembling it. GUI first, but AI controls the GUI unless I manually click. Build it. One double-click build (my local agent is buggy)." So we built the actual instrument, in becky-tools (to reuse the proven Gio window + audio engine that already open/play on his PC), via parallel subagents. The cloud box now has the Gio Linux libs installed, so BOTH `go build ./...` and `go build -tags gui ./cmd/drummachine` were compile-verified here (13 MB binary). Whole module green (build/vet/test/gofmt).
+
+- **`internal/drummachine`** (NEW, spine): immutable 16-pad model — Pad (sample/level/pan/pitch/decay/choke/mute/solo/GM note), Kit (16 pads, DefaultKit GM-mapped), Pattern (16/32/64 steps + swing), Bank, Scene, Song. Choke resolution (open/closed hat). `Pattern.ToDrumGrid`/`PatternFromDrumGrid` bridge so the existing `drumcmd` transforms apply. Deterministic machine.json. 31 tests.
+- **`internal/audioengine` + `cmd/daw-engine`** (NEW files only): `LoadMachineKit` (16 per-pad WAVs, missing→sine fallback), pure-Go deterministic `SequenceMachinePattern`/`RenderMachine` (per-pad level/pan/pitch/decay, mute/solo, swing, choke), `//go:build audio` `PlayMachineLoop` (seamless looping) + `PlayPadOneShot` (click audition); `becky-daw-engine --play-machine/--play-pad/--schedule`. 14 tests; audio-tagged build links here.
+- **`internal/machinectl`** (NEW): plain-English → Machine edits (the AI-controls-the-GUI translator). Beat edits delegate to `drumcmd` via the bridge; also kit load, pad sample/level/pan/pitch/decay/choke/mute/solo, tempo, swing, transport, new/dup pattern, add scene, genre starters (trap/boom-bap/house/four-on-floor). Deterministic parser + fast-bg-model stub (`PickParser`, silent-degrade). 66 tests.
+- **`cmd/drummachine`** (NEW, THE WINDOW, `-tags gui`): Gio app mirroring `cmd/canvas` — 4×4 pad grid (click+audition+light up), per-pad 16-step sequencer, transport (▶/■ + tempo/swing), Open/Save, neon theme. Sound via exec of sibling `becky-daw-engine` (window stays pure -tags gui, no cgo). **The AI box** = the centerpiece: type English → `machinectl.Parse`+`Apply` swaps in a new machine → re-render, so pads/steps/tempo change before his eyes. Headless `//go:build !gui` `main.go` (`--do "<instruction>"`) keeps `go build ./...` green + is unit-tested (10 tests).
+- **`Build Becky Drum.bat` + `build-becky-drum.ps1`** (repo root): the one-double-click build Jordan chose. Builds the window (-tags gui) + sound engine (-tags audio, mingw CC), drops a "Becky Drum Machine" Desktop shortcut, opens it. Plain-English; degrades clearly if Go/C-compiler missing; honors BECKY_REPO. No local-agent dependency.
+
+Left for local / Jordan: **double-click `Build Becky Drum.bat` once** — that's the moment of truth (cloud can't run audio/GUI). The window opens + pads/steps/AI all work even if the audio engine doesn't build; only actual SOUND needs the -tags audio engine (mingw at `C:\msys64\mingw64\bin\gcc.exe`). Optional: wire the fast bg model exec stubs (`internal/machinectl/model.go` `execRunModel`; env `BECKY_MACHINE_BIN`/`_MODEL`) — the AI box already works offline on the deterministic parser. `build-all-tools.bat` auto-discovers `cmd/drummachine`.
+
+Note: I did NOT do the assigned SPEC-HANDOFF-HARDENING task above — Jordan explicitly redirected this branch to the drum machine. That spec is still open for a future cloud session.
+
+---
+
 **Branch `local/integrate-cloud-2026-06-17` (local, 2026-06-17) — drained the WHOLE cloud backlog + fixed the update button. MERGED to master.**
 
 Jordan double-clicked "Get Becky Updates" and it left him stuck for an hour. Root
