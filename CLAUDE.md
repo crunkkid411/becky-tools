@@ -11,7 +11,36 @@ Jordan is **not a developer** and prefers agents to do everything end to end.
 Keep changes small, single-purpose, and obvious. Explain what broke in plain
 language, never assume terminal fluency.
 
----
+You operate like a senior collaborator, not a chatbot. Follow these rules at all times:
+1. ACT, DON'T OVERPLAN. When you have enough information to act, act. Don't
+re-derive settled facts, re-litigate a decided question, or narrate options
+you won't pursue. If you're weighing a choice, give a recommendation, not
+an exhaustive survey.
+2. LEAD WITH THE OUTCOME. Your first sentence answers "what happened" or
+"what I found" - the bottom line the reader actually wants. Detail and
+reasoning come after. Readable matters more than short.
+3. GROUND EVERY CLAIM. Before reporting something is done or true, check it
+against the actual evidence in front of you. Only claim what you can point
+to; if it isn't verified, say so. If it failed, say so. If you skipped a
+step, say that.
+4. STOP ONLY AT REAL BOUNDARIES. Pause for me only when the work genuinely
+requires it: a destructive or irreversible action, a real change of scope,
+or input only I can give. Otherwise, proceed. Don't end on a promise -
+do the thing.
+5. ASSESS, DON'T ACT UNINVITED. When I'm describing a problem, asking a
+question, or thinking out loud rather than requesting a change, the
+deliverable is your assessment. Report findings and stop. Don't apply a
+fix until I ask.
+6. MATCH EFFORT TO THE TASK. Spend deep reasoning on hard, ambiguous, or
+high-stakes work; move fast on routine work. Don't add complexity,
+caveats, or future-proofing the task didn't ask for. Do the simplest
+thing that works well.
+7. USE THE REASON, NOT JUST THE REQUEST. Connect the work to the intent
+behind it. If the "why" is missing and it matters, ask one sharp question
+before starting.
+8. KEEP LESSONS + CHECK YOUR OWN WORK. Apply corrections I've given you in
+this conversation. Before handing over a result, verify it against what
+I actually asked for.
 
 ## 1. What becky-tools is (30-second version)
 
@@ -249,6 +278,49 @@ self-heal a poisoned/half-merged tree, (3) detect two branches editing one tool.
 contract, function signatures, constraints, and Definition of Done are in
 **`SPEC-HANDOFF-HARDENING.md`**. It's a normal offline/deterministic tool — build it on a
 `claude/handoff-hardening-*` branch, all tests green, and mark §6 ready for local.
+
+---
+
+**Branch `local/becky-clip-2026-06-18` (local, 2026-06-18) — `becky-clip`: the forensic, transcript-based, AI-first video COMPILATION editor. MVP BUILT + screenshot-verified. Full spec: `SPEC-BECKY-CLIP.md`.**
+
+Jordan's biggest unsolved bottleneck: 500GB of footage + recurring "compile every time X happened"
+asks (the Penguin-cat-bounty / threats-to-the-host-family examples). Replaces the manual
+drag-3-videos-and-scrub-the-srt grind. Built this session via parallel subagents (4 research →
+1 spec → 3 engine → 1 GUI), each evidence-backed (`becky-clip-work/research/`). Whole `becky-go`
+module builds; all 9 new packages test green; vet+gofmt clean; `build-all-tools.bat` ships the
+gui `becky-clip.exe`.
+
+- **Engine (Go, deterministic, done):** `internal/edl` (multi-source clip-list/EDL + CMX3600 EDL
+  + re-based SRT), `internal/reel`+`cmd/reel` (ONE-pass ffmpeg render: frame-accurate multi-source
+  assemble + forensic lower-third with **running ORIGINAL-file timecode** + filename/date/person/
+  location, frame→PNG, proxy; **h264_nvenc→libx264 fallback**), `internal/quotes`+`cmd/quotes`
+  (AI quote-finder: criteria LLM-selection / `--exact` / `--select-from-json` → verbatim-timestamped
+  `_QUOTES.srt` + sha256 source guard), `internal/footage` (read-only case-folder index +
+  `<video>.beckymeta.json` sidecars), `internal/llmlocal` (shared llama-server transport),
+  `internal/assistant` (the "Underlord": cost-tiered router deterministic→local→`claude` CLI/API,
+  11-verb propose-then-apply action schema, 500GB retrieval funnel — the model NEVER ingests the folder).
+- **GUI (done):** `cmd/clip` = `becky-clip.exe`, a **WebView2** window (`github.com/jchv/go-webview2`,
+  pure-Go/no-cgo, gated `//go:build gui && windows`; a headless stub keeps `go build ./...` green).
+  Search → click a result (preview seeks/plays via `<video>`) → double-click (clip → timeline) →
+  forensic lower-third → export a real compilation MP4. Underlord chat panel. Screenshot-verified
+  live: `becky-clip-work/shot-loop.png`.
+
+**KEY DECISIONS (evidence in `becky-clip-work/research/`):** (1) Frontend = **WebView2, NOT
+C++/Qt** — no Qt toolchain on the PC (would've eaten the day); engine is frontend-agnostic so a
+Gio/mpv shell can be added later. (2) Render = **raw ffmpeg, re-encode** — `-c copy` slips to the
+nearest keyframe (Jordan was RIGHT about the frame issue; proven on camera). **melt rejected** (its
+`#timecode#` shows timeline pos, not the original-file timecode a detective needs); lossless-cut not
+integrated (GPL Electron). (3) AI = cheap-first; **`claude` CLI uses Jordan's Max plan** for the hard
+tier only.
+
+**Run it:** double-click **`Build Becky Clip.bat`** (builds the gui exe + a Desktop "Becky Clip" icon
++ opens it). Needs ffmpeg on PATH for export (it is). `build-all-tools.bat` also builds it (gui variant).
+
+**Left for local/Jordan (P1, not blocking):** native folder-picker (today: a path prompt /
+drag-onto-exe); load a local GGUF to light up AI Tier-1/2 (works offline at Tier-0 now; `claude`
+Tier-2 verified but unexercised in the GUI); timeline ripple/trim polish; feed `becky-quotes
+--select-from-json` from the Underlord frontier tier for full AI quote discovery; clean
+`becky-clip-work/{cut-tests,*-smoke}` scratch. Branch NOT yet merged to master — review + try it first.
 
 ---
 
