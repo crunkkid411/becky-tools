@@ -70,9 +70,9 @@ func cmdRender(argv []string) {
 	out := fs.String("output", "", "output MP4 (default: <reel-name>_reel.mp4)")
 	codec := fs.String("codec", "", "video codec (default config h264_nvenc; falls back to libx264)")
 	bitrate := fs.String("bitrate", "", "video bitrate (e.g. 12M); default is codec CQ/CRF quality")
-	fpsFlag := fs.Float64("fps", 0, "output frame rate (default 30)")
-	width := fs.Int("width", 0, "output width (default 1280)")
-	height := fs.Int("height", 0, "output height (default 720)")
+	fpsFlag := fs.Float64("fps", 0, "output frame rate (0 = match the first clip)")
+	width := fs.Int("width", 0, "output width (0 = match the first clip)")
+	height := fs.Int("height", 0, "output height (0 = match the first clip)")
 	verbose := fs.Bool("verbose", false, "show ffmpeg progress on stderr")
 	reelPath := positional(fs, argv)
 	if reelPath == "" {

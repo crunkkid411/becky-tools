@@ -7,6 +7,7 @@ package main
 // ffmpeg, no production data. These run under `go test ./cmd/clip/...` everywhere.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -274,6 +275,94 @@ func TestSaveLoadReelRoundTrip(t *testing.T) {
 	// next add must be c2 (nextID synced from the loaded c1).
 	if app2.nextID != 1 {
 		t.Errorf("nextID want 1 after load, got %d", app2.nextID)
+	}
+}
+
+// TestPickFolderPickedIndexes verifies the native-picker wiring: when the dialog
+// returns a real folder, PickFolder indexes it (the existing open flow) and
+// reports Picked=true with the FolderView — fed through the pickFolderFn seam so
+// no real dialog pops.
+func TestPickFolderPickedIndexes(t *testing.T) {
+	dir := fixtureFolder(t)
+	app := NewApp()
+	app.workDir = t.TempDir()
+
+	orig := pickFolderFn
+	defer func() { pickFolderFn = orig }()
+	pickFolderFn = func() (string, error) { return dir, nil }
+
+	res, err := app.PickFolder()
+	if err != nil {
+		t.Fatalf("PickFolder: %v", err)
+	}
+	if !res.Picked {
+		t.Fatal("expected Picked=true when the dialog returns a folder")
+	}
+	if len(res.Folder.Videos) != 2 {
+		t.Fatalf("picked folder not indexed: want 2 videos, got %d", len(res.Folder.Videos))
+	}
+	// The folder is now the open media scope (the index/open flow ran).
+	if app.folder == "" {
+		t.Error("PickFolder should set the open folder so media serving is scoped")
+	}
+}
+
+// TestPickFolderCancelledIsNoOp verifies a cancelled dialog (empty path) is a
+// no-op: Picked=false, no error, the open folder unchanged.
+func TestPickFolderCancelledIsNoOp(t *testing.T) {
+	app := NewApp()
+	app.workDir = t.TempDir()
+
+	orig := pickFolderFn
+	defer func() { pickFolderFn = orig }()
+	pickFolderFn = func() (string, error) { return "", nil }
+
+	res, err := app.PickFolder()
+	if err != nil {
+		t.Fatalf("cancelled pick should not error: %v", err)
+	}
+	if res.Picked {
+		t.Error("cancelled dialog should report Picked=false")
+	}
+	if app.folder != "" {
+		t.Error("cancelled pick must not change the open folder")
+	}
+}
+
+// TestPickFolderErrorSurfaces verifies a dialog/exec failure surfaces as an error
+// (so the UI can fall back to a path prompt) rather than being swallowed.
+func TestPickFolderErrorSurfaces(t *testing.T) {
+	app := NewApp()
+	app.workDir = t.TempDir()
+
+	orig := pickFolderFn
+	defer func() { pickFolderFn = orig }()
+	pickFolderFn = func() (string, error) { return "", fmt.Errorf("no powershell") }
+
+	if _, err := app.PickFolder(); err == nil {
+		t.Error("a picker exec failure should surface as an error")
+	}
+}
+
+// TestCallPickFolderVerb checks the bridge dispatches pick_folder to PickFolder
+// and returns the {ok,data} envelope (default-deny table includes the new verb).
+func TestCallPickFolderVerb(t *testing.T) {
+	dir := fixtureFolder(t)
+	app := NewApp()
+	app.workDir = t.TempDir()
+
+	orig := pickFolderFn
+	defer func() { pickFolderFn = orig }()
+	pickFolderFn = func() (string, error) { return dir, nil }
+
+	r := callEnv(t, app, "pick_folder", `{}`)
+	if !r.OK {
+		t.Fatalf("pick_folder verb failed: %s", r.Error)
+	}
+	var res PickFolderResult
+	remarshal(t, r.Data, &res)
+	if !res.Picked || len(res.Folder.Videos) != 2 {
+		t.Fatalf("pick_folder result wrong: %+v", res)
 	}
 }
 

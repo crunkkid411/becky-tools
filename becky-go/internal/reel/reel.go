@@ -24,16 +24,20 @@ import (
 	"becky-go/internal/mediainfo"
 )
 
-// Options configures a render. Zero values fall back to deterministic defaults
-// (config codec, 1280x720, 30fps, Consolas font). The caller (cmd/reel)
-// populates Output/Codec/Bitrate from flags.
+// Options configures a render. Zero values fall back to deterministic defaults:
+// codec from config; and — crucially — the output dimensions + fps AUTO-MATCH the
+// FIRST clip's source (probed via ffprobe), so the compilation keeps the footage's
+// native resolution instead of being forced to a fixed size. Only if the first
+// clip can't be probed (no ffprobe) do we fall back to 1280x720/30. The caller
+// (cmd/reel) populates Output/Codec/Bitrate from flags; Width/Height/FPS are the
+// power-user overrides (--width/--height/--fps) that win over the auto-match.
 type Options struct {
 	Output  string  // output MP4 path; "" -> "<reel-name>_reel.mp4" in cwd
 	Codec   string  // "" -> config.Codec (h264_nvenc); falls back to libx264 on failure
 	Bitrate string  // e.g. "12M"; "" -> codec-appropriate CQ/CRF quality
-	FPS     float64 // output fps; <=0 -> 30
-	Width   int     // output width;  <=0 -> 1280
-	Height  int     // output height; <=0 -> 720
+	FPS     float64 // output fps;    <=0 -> match the first clip (else 30)
+	Width   int     // output width;  <=0 -> match the first clip (else 1280)
+	Height  int     // output height; <=0 -> match the first clip (else 720)
 	Verbose bool
 }
 
@@ -124,7 +128,19 @@ func Render(r edl.Reel, opts Options) (Result, error) {
 	return res, nil
 }
 
-// resolveOptions fills every zero option with its deterministic default.
+// firstClipProbe is the seam over "read the first clip's pixel dimensions + fps".
+// It defaults to an ffprobe-backed probe (probeFirstClip) but is overridable in
+// tests so the auto-match logic is exercised without ffmpeg. ok=false means the
+// source couldn't be probed (no ffprobe / unreadable) and the caller uses the
+// 1280x720/30 fallback. Production never reassigns it.
+var firstClipProbe = probeFirstClip
+
+// resolveOptions fills every zero option with its deterministic default. When the
+// caller left Width/Height/FPS unset, the output AUTO-MATCHES the FIRST clip's
+// source resolution + fps (probed via firstClipProbe) — this is what makes "the
+// project/export dimensions just match the first clip imported" true. Explicit
+// --width/--height/--fps still win. If the first clip can't be probed, the
+// classic 1280x720/30 fallback applies so a render still succeeds.
 func resolveOptions(r edl.Reel, opts Options, cfg config.Config) resolvedOpts {
 	ro := resolvedOpts{
 		Output:   opts.Output,
@@ -141,6 +157,23 @@ func resolveOptions(r edl.Reel, opts Options, cfg config.Config) resolvedOpts {
 	if ro.Codec == "" {
 		ro.Codec = "h264_nvenc"
 	}
+
+	// Auto-match the first clip when any of width/height/fps is unset. Probe once.
+	if (ro.Width <= 0 || ro.Height <= 0 || ro.OutFPS <= 0) && len(r.Clips) > 0 {
+		if w, h, fps, ok := firstClipProbe(cfg.FFprobe, r.Clips[0].Source); ok {
+			if ro.Width <= 0 && w > 0 {
+				ro.Width = w
+			}
+			if ro.Height <= 0 && h > 0 {
+				ro.Height = h
+			}
+			if ro.OutFPS <= 0 && fps > 0 {
+				ro.OutFPS = fps
+			}
+		}
+	}
+
+	// Fallbacks if the probe was unavailable or returned nothing usable.
 	if ro.OutFPS <= 0 {
 		ro.OutFPS = defaultOutFPS
 	}
@@ -155,6 +188,21 @@ func resolveOptions(r edl.Reel, opts Options, cfg config.Config) resolvedOpts {
 	}
 	ro.Output = mustAbs(ro.Output)
 	return ro
+}
+
+// probeFirstClip reads a source video's pixel width/height + frame rate via
+// ffprobe (internal/mediainfo). ok=false when ffprobe is unavailable or the
+// source has no usable video stream, so the caller falls back to the fixed
+// default. Read-only: it only inspects the source, never writes it.
+func probeFirstClip(ffprobe, source string) (w, h int, fps float64, ok bool) {
+	if ffprobe == "" || !available(ffprobe) {
+		return 0, 0, 0, false
+	}
+	info, err := mediainfo.Probe(ffprobe, source)
+	if err != nil || info.Width <= 0 || info.Height <= 0 {
+		return 0, 0, 0, false
+	}
+	return info.Width, info.Height, info.FPS, true
 }
 
 // shouldFallbackToLibx264 reports whether a failed render with the given codec

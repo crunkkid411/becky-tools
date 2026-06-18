@@ -37,6 +37,84 @@ func twoClipReel() edl.Reel {
 	}
 }
 
+// fakeFirstClipProbe overrides the probe seam for a test and restores it after.
+func fakeFirstClipProbe(t *testing.T, w, h int, fps float64, ok bool) {
+	t.Helper()
+	orig := firstClipProbe
+	t.Cleanup(func() { firstClipProbe = orig })
+	firstClipProbe = func(_ /*ffprobe*/, _ /*source*/ string) (int, int, float64, bool) {
+		return w, h, fps, ok
+	}
+}
+
+// TestResolveOptions_AutoMatchesFirstClip is the core of change #3: with no
+// explicit Width/Height/FPS, the output dimensions + fps come from the FIRST
+// clip's probe, NOT the old fixed 1280x720/30.
+func TestResolveOptions_AutoMatchesFirstClip(t *testing.T) {
+	fakeFirstClipProbe(t, 1920, 1080, 25, true)
+	r := twoClipReel() // clip 0 is the first clip
+	ro := resolveOptions(r, Options{}, config.Config{Codec: "h264_nvenc", FFprobe: "ffprobe"})
+
+	if ro.Width != 1920 || ro.Height != 1080 {
+		t.Fatalf("output should match first clip 1920x1080, got %dx%d", ro.Width, ro.Height)
+	}
+	if ro.OutFPS != 25 {
+		t.Fatalf("output fps should match first clip (25), got %v", ro.OutFPS)
+	}
+
+	// The filter graph normalizes every clip to the first clip's size + fps.
+	graph, _ := buildFilterComplex(r, ro)
+	for _, want := range []string{"scale=1920:1080", "fps=25"} {
+		if !strings.Contains(graph, want) {
+			t.Fatalf("filter graph should normalize to first clip; missing %q in:\n%s", want, graph)
+		}
+	}
+	// The per-clip ORIGINAL-timecode rate stays the SOURCE's own fps (clip 0 @30),
+	// independent of the matched output fps — it's the verification anchor.
+	if !strings.Contains(graph, "timecode_rate=30") {
+		t.Fatalf("clip0 original-timecode rate must stay the source fps (30):\n%s", graph)
+	}
+}
+
+// TestResolveOptions_ExplicitOverridesWin confirms --width/--height/--fps still
+// beat the auto-match (the power-user escape hatch).
+func TestResolveOptions_ExplicitOverridesWin(t *testing.T) {
+	fakeFirstClipProbe(t, 1920, 1080, 25, true)
+	r := twoClipReel()
+	ro := resolveOptions(r, Options{Width: 640, Height: 360, FPS: 60},
+		config.Config{Codec: "h264_nvenc", FFprobe: "ffprobe"})
+	if ro.Width != 640 || ro.Height != 360 || ro.OutFPS != 60 {
+		t.Fatalf("explicit overrides should win, got %dx%d @%v", ro.Width, ro.Height, ro.OutFPS)
+	}
+}
+
+// TestResolveOptions_FallbackWhenUnprobable confirms that when the first clip
+// can't be probed (no ffprobe), the classic 1280x720/30 fallback applies so a
+// render still succeeds.
+func TestResolveOptions_FallbackWhenUnprobable(t *testing.T) {
+	fakeFirstClipProbe(t, 0, 0, 0, false)
+	r := twoClipReel()
+	ro := resolveOptions(r, Options{}, config.Config{Codec: "h264_nvenc"})
+	if ro.Width != defaultWidth || ro.Height != defaultHeight || ro.OutFPS != defaultOutFPS {
+		t.Fatalf("unprobable first clip should fall back to %dx%d@%v, got %dx%d@%v",
+			defaultWidth, defaultHeight, defaultOutFPS, ro.Width, ro.Height, ro.OutFPS)
+	}
+}
+
+// TestResolveOptions_PartialOverrideMatchesRest confirms a single override (just
+// fps) still lets width/height auto-match the first clip.
+func TestResolveOptions_PartialOverrideMatchesRest(t *testing.T) {
+	fakeFirstClipProbe(t, 1440, 1080, 30, true)
+	r := twoClipReel()
+	ro := resolveOptions(r, Options{FPS: 24}, config.Config{Codec: "h264_nvenc", FFprobe: "ffprobe"})
+	if ro.Width != 1440 || ro.Height != 1080 {
+		t.Fatalf("width/height should still auto-match first clip, got %dx%d", ro.Width, ro.Height)
+	}
+	if ro.OutFPS != 24 {
+		t.Fatalf("explicit fps override should win, got %v", ro.OutFPS)
+	}
+}
+
 func TestBuildRenderArgs_InputSeekAndDuration(t *testing.T) {
 	r := twoClipReel()
 	args, err := buildRenderArgs(r, resolveOptionsForTest(r))

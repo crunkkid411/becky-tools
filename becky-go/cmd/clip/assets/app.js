@@ -1,7 +1,7 @@
 /* becky-clip frontend — drives the page via the single window.beckyCall bridge
    (SPEC-BECKY-CLIP §9). The core loop: open folder → search/read cues → click a
    result to seek+play that exact moment → double-click to append a clip → toggle
-   the forensic lower-third → export. The right panel is the Underlord assistant
+   the forensic lower-third → export. The right panel is the becky assistant
    (propose-then-apply: it shows a proposal, nothing mutates until ✓).
 
    Everything heavy is in the Go backend; this file only renders + wires events.
@@ -80,13 +80,21 @@
   async function openFolder(path) {
     try {
       const fv = await call("open_folder", { folder: path });
-      state.folder = fv.root;
-      state.videos = fv.videos || [];
-      renderVideoPicker();
-      results.innerHTML = `<div class="empty-hint"><div class="big">🔎</div>
-        <p>${state.videos.length} video(s) indexed.<br>Search, or pick a video to read its transcript.</p></div>`;
-      toast(`opened ${state.videos.length} video(s)`);
+      applyFolderView(fv);
     } catch (e) { toast(e.message, true); }
+  }
+
+  // applyFolderView renders an indexed case folder (shared by the path-based
+  // open and the native picker): update state, draw the video chips, prompt the
+  // user to search or pick a video.
+  function applyFolderView(fv) {
+    if (!fv) return;
+    state.folder = fv.root;
+    state.videos = fv.videos || [];
+    renderVideoPicker();
+    results.innerHTML = `<div class="empty-hint"><div class="big">🔎</div>
+      <p>${state.videos.length} video(s) indexed.<br>Search, or pick a video to read its transcript.</p></div>`;
+    toast(`opened ${state.videos.length} video(s)`);
   }
 
   function renderVideoPicker() {
@@ -332,7 +340,7 @@
     catch (e) { toast(e.message, true); }
   }
 
-  // ---------- Underlord ----------
+  // ---------- becky ----------
   async function ask(utterance) {
     const u = (utterance || $("ask").value).trim();
     if (!u) return;
@@ -439,7 +447,15 @@
 
   // ---------- wire up ----------
   function wire() {
+    // Open folder = the native OS folder dialog (Windows FolderBrowserDialog via
+    // the backend). If the picker isn't available (non-Windows / exec error) we
+    // fall back to a typed path so the button is never dead.
     $("btn-open").onclick = async () => {
+      try {
+        const r = await call("pick_folder", {});
+        if (r && r.picked) { applyFolderView(r.folder); return; }
+        if (r && r.picked === false) return; // user cancelled the dialog
+      } catch (e) { /* picker unavailable — fall through to a path prompt */ }
       const p = prompt("Case folder path:", state.folder || "");
       if (p) openFolder(p.trim());
     };
@@ -485,7 +501,7 @@
       // add the first two results to the timeline
       const rs = document.querySelectorAll(".result");
       for (let i = 0; i < Math.min(2, rs.length); i++) { rs[i].dispatchEvent(new Event("dblclick")); await sleep(150); }
-      // seed an Underlord exchange so the right panel shows the chat UX
+      // seed a becky exchange so the right panel shows the chat UX
       clearIntro();
       addUserMessage("compile every time he offered money for the cat");
       // optionally run a real export so the screenshot shows the done state

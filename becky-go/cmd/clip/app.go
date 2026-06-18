@@ -2,7 +2,7 @@
 // (SPEC-BECKY-CLIP.md). This file owns the cross-platform App: the in-memory
 // edl.Reel (the timeline state), the read-only case-folder index, folder-scoped
 // path security, and the engine wiring (footage search, transcript loading, reel
-// render/export, the Underlord assistant). It carries NO build tag, so it
+// render/export, the becky assistant). It carries NO build tag, so it
 // compiles on every OS and is unit-testable without a window.
 //
 // The WebView2 window (window_gui.go, //go:build gui && windows) is a thin shell
@@ -62,7 +62,7 @@ type App struct {
 	// nextID is the monotonic counter for stable clip IDs ("c1", "c2", …).
 	nextID int
 
-	// router is the Underlord assistant (cost-tiered). Built lazily on first use
+	// router is the becky assistant (cost-tiered). Built lazily on first use
 	// so a session with no chat never spawns a model. nil until built.
 	router *assistant.Router
 
@@ -149,6 +149,43 @@ func (a *App) OpenFolder(folder string) (FolderView, error) {
 	a.mu.Unlock()
 
 	return a.folderView(), nil
+}
+
+// PickFolderResult is the reply for the pick_folder verb: whether the user
+// actually chose a folder (Picked) and, if so, the indexed FolderView. A
+// cancelled dialog returns Picked=false with an empty Folder — a no-op, never an
+// error — so the UI simply does nothing.
+type PickFolderResult struct {
+	Picked bool       `json:"picked"`
+	Folder FolderView `json:"folder"`
+}
+
+// pickFolderFn is the seam over the OS folder dialog: it defaults to the
+// platform pickFolder (Windows FolderBrowserDialog / non-Windows no-op) but can
+// be overridden in tests so PickFolder's wiring is exercised without popping a
+// real dialog. Production never reassigns it.
+var pickFolderFn = pickFolder
+
+// PickFolder opens the native OS "choose folder" dialog (Windows: a real
+// FolderBrowserDialog; other OSes: a no-op stub) and, if the user picks one,
+// indexes it via OpenFolder — exactly the existing folder-index flow, just fed by
+// a real picker instead of a typed path. An empty return (cancelled) is reported
+// as Picked=false, not an error. A dialog/exec failure surfaces as an error so
+// the UI can fall back to a path prompt.
+func (a *App) PickFolder() (PickFolderResult, error) {
+	dir, err := pickFolderFn()
+	if err != nil {
+		return PickFolderResult{}, fmt.Errorf("folder picker failed: %w", err)
+	}
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return PickFolderResult{Picked: false}, nil // user cancelled — no-op
+	}
+	fv, err := a.OpenFolder(dir)
+	if err != nil {
+		return PickFolderResult{}, err
+	}
+	return PickFolderResult{Picked: true, Folder: fv}, nil
 }
 
 // FolderView is the LEFT-panel payload: the open root + each video with whether
@@ -662,7 +699,7 @@ func (a *App) resolveSource(source string) (footage.Video, bool) {
 	return footage.Video{}, false
 }
 
-// ---- assistant (Underlord) ------------------------------------------------
+// ---- assistant (becky) ----------------------------------------------------
 
 // ensureRouter builds (once) the cost-tiered assistant router with the
 // production backends from config. The local model GGUF is BECKY_CLIP_MODEL (a
@@ -683,7 +720,7 @@ func (a *App) ensureRouter() *assistant.Router {
 		"claude-haiku-4-5", // mid model alias
 		corrLog,
 		func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, "[underlord] "+format+"\n", args...)
+			fmt.Fprintf(os.Stderr, "[becky] "+format+"\n", args...)
 		},
 	)
 	return a.router
@@ -696,7 +733,7 @@ func (a *App) SetOnline(on bool) {
 	a.mu.Unlock()
 }
 
-// Ask runs one Underlord turn. It assembles the per-turn Context (the compact
+// Ask runs one becky turn. It assembles the per-turn Context (the compact
 // timeline view + the folder index + the online/budget gates), calls the router,
 // and returns the Proposal for the UI to render with ✓/✗. Nothing mutates here —
 // approval flows through ApplyProposal.

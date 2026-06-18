@@ -47,6 +47,9 @@ func (a *App) Call(verb string, argsJSON string) string {
 func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	switch verb {
 	// ---- folder + transcript + search (read) ----
+	case "pick_folder":
+		// Native OS folder dialog → index the chosen folder (no-op if cancelled).
+		return a.PickFolder()
 	case "open_folder":
 		return a.OpenFolder(argString(args, "folder"))
 	case "transcript":
@@ -107,7 +110,7 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		}
 		return map[string]any{"path": path, "url": a.frameURL(path)}, nil
 
-	// ---- Underlord assistant ----
+	// ---- becky assistant ----
 	case "set_online":
 		a.SetOnline(argBool(args, "on"))
 		return map[string]any{"online": argBool(args, "on")}, nil
@@ -146,7 +149,7 @@ func (a *App) mediaURLReply(source string) (any, error) {
 	return map[string]any{"url": a.mediaURL(playable), "note": note}, nil
 }
 
-// askReply runs an Underlord turn with a per-turn deadline and returns the
+// askReply runs a becky turn with a per-turn deadline and returns the
 // Proposal. A backend hang can't wedge the UI — the context bounds it.
 func (a *App) askReply(utterance string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

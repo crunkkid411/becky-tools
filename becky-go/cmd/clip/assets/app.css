@@ -203,7 +203,7 @@ button { font-family: inherit; }
 .clip .c-x { position: absolute; bottom: 2px; right: 4px; color: var(--dim); cursor: pointer; font-size: 13px; line-height: 1; }
 .clip .c-x:hover { color: var(--crimson); }
 
-/* ---------- RIGHT (Underlord) ---------- */
+/* ---------- RIGHT (becky) ---------- */
 .right-head {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 12px; border-bottom: 1px solid var(--line);
