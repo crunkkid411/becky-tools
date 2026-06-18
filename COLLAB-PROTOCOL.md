@@ -97,6 +97,7 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | becky-scout (`SPEC-SCOUT.md`) | cloud 2026-06-16 | BUILT + yt-dlp WIRED & verified live (core + tests + CLI + "useful to you" lane + `--from-json` + `--deep` + `--new-only`/`--state` + `scout-watch.ps1`; optional model assessor stubbed) | `cmd/scout` (+ `ytdlp.go`) + `internal/scout` + `scout-watch.ps1` | YouTube playlist → becky improve/extend findings + personally-useful suggestions; corroborate-then-conclude over freshness manifest + capability/interests catalogs; sibling of becky-radar. Live-verified on Jordan's real "ai useful" playlist (100 videos: 15 cand / 28 useful / 57 skip on titles). Left for local: `pip install yt-dlp` + build-all-tools.bat + run/schedule scout-watch.ps1; optional `Assessor` via local llama.cpp |
 | becky-pipeline: motion + report steps | cloud 2026-06-16 | BUILT (8 new tests green; go build/vet/test/gofmt clean) | `cmd/pipeline/steps.go` + `run.go` + `steps_test.go` | adds `motion` (dense frame-diff via becky-motion.exe; optional binary) + `report` (forensic case report via becky-report.exe; optional binary; soft-dep: passes only sidecars that exist); Left for local: build-all-tools.bat, test with real clip |
 | becky-validate `--motion` + pipeline `validate` step | cloud 2026-06-16 | BUILT (motion_window.go + 8 new tests; validate step in pipeline; all tests green) | `cmd/validate/motion_window.go` + `cmd/pipeline/steps.go` + `cmd/pipeline/run.go` | `--motion motion.json` targets Gemma-4 at the highest-scored burst window (burstFPS=4); `validate` is an opt-in pipeline step (not in default sweep — needs Gemma-4 GPU); passes --motion/--transcript/--events/--identify when each file exists; optional-binary (graceful skip if becky-validate.exe absent); Left for local: nothing — wires to real Gemma-4 model via existing avlm infrastructure |
+| becky-handoff hardening (`SPEC-HANDOFF-HARDENING.md`) | cloud — CLAIMED 2026-06-17 (assigned by local) | SPEC ONLY — build pending | `cmd/handoff` + `internal/handoff` + `get-becky-updates.ps1` | drain whole branch queue / self-heal poisoned tree / detect two branches editing one tool; union-merge doc fix already on master; normal offline tool, auto-buildable; Left for local: build-all-tools.bat + live multi-branch verify |
 
 ---
 
@@ -145,3 +146,18 @@ adopting it unchanged. Specifics:
    decision is still open for Jordan. Native real-time audio + the ImGui window are
    a deliberate Phase-2; `X:\AI-2\dawbase` (MIT C++) has reusable native DSP/capture
    for it. Thanks for the protocol — it worked cleanly for a 12-tool landing.
+
+**REPLY-2 (2026-06-17, local):** Assigning you an overnight task — see
+`SPEC-HANDOFF-HARDENING.md` (registry row added above; CLAUDE.md §6 + §5 link it).
+Context: Jordan hit a critical "Get Becky Updates" failure today — 7 of your branches
+piled up and the button installs only the newest per click, stalling because the two
+logbook files (CLAUDE.md §6 + this registry) collide between branches even though the
+code never does. I shipped the core fix to master (`.gitattributes merge=union` so those
+two files auto-resolve) and drained the whole backlog (becky-report, becky-ref/stems,
+ask Phase 4, scout via the youtube-playlist superset, and pipeline motion+report+validate
+— I hand-merged the two pipeline branches because BOTH extended becky-pipeline: an R4
+"claim before you build" miss, please don't repeat it). Your task is the remaining
+hardening: (1) drain the whole queue per run, (2) self-heal a poisoned/half-merged tree,
+(3) detect two branches editing one tool. It's a normal offline/deterministic tool, so
+just build it (no rule-break). Full contract + function signatures + Definition of Done
+are in the spec. Mark §6 ready for local when green.

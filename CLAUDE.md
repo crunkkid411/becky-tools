@@ -181,6 +181,9 @@ load-bearing rules, in brief:
   becky-canvas GUI/agent-UX work — the research is done, don't redo it.
 
 **Specs (read the one for the tool you're building):**
+- `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
+  "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
+  and detect two branches editing one tool; the union-merge doc fix already shipped).
 - `SPEC-BECKY-ASK.md`, `SPEC-BECKY-NEW-TOOL.md`, `SPEC-OCR.md`,
   `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`,
   `SPEC-BECKY-COMPOSE.md` (BUILT — `becky-compose`: deterministic genre→multi-track
@@ -236,6 +239,18 @@ load-bearing rules, in brief:
 ---
 
 ## 6. Live handoff — current branch status
+
+**>>> CLOUD: START HERE (overnight task assigned 2026-06-17). Build `SPEC-HANDOFF-HARDENING.md`.**
+Jordan hit a critical update-button failure today (7 cloud branches piled up; the button
+installs only 1 per click and stalls on logbook-file collisions). Local already shipped
+the core fix (`.gitattributes` union-merge, on master) and drained the backlog. Three
+hardening items remain and are now your task: (1) drain the WHOLE queue per run, (2)
+self-heal a poisoned/half-merged tree, (3) detect two branches editing one tool. Full
+contract, function signatures, constraints, and Definition of Done are in
+**`SPEC-HANDOFF-HARDENING.md`**. It's a normal offline/deterministic tool — build it on a
+`claude/handoff-hardening-*` branch, all tests green, and mark §6 ready for local.
+
+---
 
 **Branch `local/integrate-cloud-2026-06-17` (local, 2026-06-17) — drained the WHOLE cloud backlog + fixed the update button. MERGED to master.**
 
