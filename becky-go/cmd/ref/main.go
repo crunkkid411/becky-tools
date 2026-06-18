@@ -21,12 +21,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"becky-go/internal/dsp"
 	"becky-go/internal/habits"
+	"becky-go/internal/music"
 	"becky-go/internal/pathx"
 	"becky-go/internal/refmatch"
+	"becky-go/internal/stemscan"
 )
 
 // newFlagSet builds a ContinueOnError flag set so a parse failure returns exit 2
@@ -45,6 +49,10 @@ func main() {
 		os.Exit(runProfile(os.Args[2:]))
 	case "match":
 		os.Exit(runMatch(os.Args[2:]))
+	case "apply":
+		os.Exit(runApply(os.Args[2:]))
+	case "library":
+		os.Exit(runLibrary(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
@@ -60,6 +68,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  becky-ref profile --wav reference.wav [--out ref.profile.json] [--k-weight]")
 	fmt.Fprintln(os.Stderr, "  becky-ref match --reference ref.wav --mine mine.wav [--out plan.json] [--json] [--k-weight]")
 	fmt.Fprintln(os.Stderr, "  becky-ref match --profile ref.profile.json --mine mine.wav [--out plan.json] [--json]")
+	fmt.Fprintln(os.Stderr, "  becky-ref match --library house.json --mine mine.wav [--out plan.json] [--json] [--remember <role>]")
+	fmt.Fprintln(os.Stderr, "  becky-ref apply --plan plan.json --project project.json --bus bus.drums [--output out.json] [--dry-run]")
+	fmt.Fprintln(os.Stderr, "  becky-ref library build --dir <folder> [--out house.json] [--recursive]")
 }
 
 // --- profile subcommand: extract a reusable target Profile from a reference WAV ---
@@ -112,11 +123,12 @@ func runMatch(argv []string) int {
 	fs := newFlagSet("match")
 	reference := fs.String("reference", "", "reference WAV (the stem that sounds right)")
 	profile := fs.String("profile", "", "saved reference profile JSON (alternative to --reference)")
+	library := fs.String("library", "", "house-sound library JSON (alternative to --reference/--profile); auto-selects the target for YOUR stem's role")
 	mine := fs.String("mine", "", "YOUR WAV — the stem to match to the reference")
 	out := fs.String("out", "", "output JSON path (default: <mine-base>.matchplan.json next to source)")
 	kw := fs.Bool("k-weight", false, "apply becky's K-weight loudness approximation when decoding WAVs")
 	asJSON := fs.Bool("json", false, "print the full MatchPlan JSON to stdout")
-	remember := fs.String("remember", "", "log this reference as your go-to sound under this name (e.g. 'drums'); after a few uses, `becky-habits usual sound:<name>` recalls it")
+	remember := fs.String("remember", "", "log this reference as your go-to sound under this name (e.g. 'drums'); after a few uses, `becky-habits usual sound:<name>` recalls it. With --library, recorded role-aware under sound:<role>")
 	if err := fs.Parse(argv); err != nil {
 		return 2
 	}
@@ -124,15 +136,20 @@ func runMatch(argv []string) int {
 		fmt.Fprintln(os.Stderr, "becky-ref match: need --mine")
 		return 2
 	}
-	if (*reference == "") == (*profile == "") {
-		fmt.Fprintln(os.Stderr, "becky-ref match: give exactly one target — either --reference <wav> or --profile <json>")
-		return 2
+	// Exactly ONE target source: --reference XOR --profile XOR --library.
+	targets := 0
+	if *reference != "" {
+		targets++
 	}
-
-	refProf, err := loadTarget(*reference, *profile, *kw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
-		return 1
+	if *profile != "" {
+		targets++
+	}
+	if *library != "" {
+		targets++
+	}
+	if targets != 1 {
+		fmt.Fprintln(os.Stderr, "becky-ref match: give exactly one target — --reference <wav>, --profile <json>, or --library <house.json>")
+		return 2
 	}
 
 	mineAudio, err := decode(*mine)
@@ -142,6 +159,35 @@ func runMatch(argv []string) int {
 	}
 	mineProf := refmatch.Analyze(mineAudio, refmatch.Options{KWeight: *kw})
 	mineProf.Source = pathx.Base(*mine)
+
+	// Resolve the target. --library is role-aware: classify YOUR stem and auto-pick that
+	// role's house sound. The remembered scope and the printed line differ by source.
+	var refProf refmatch.Profile
+	var matchedRole string
+	if *library != "" {
+		r, _, _ := stemscan.ClassifyRole(mineAudio.Samples, mineAudio.SampleRate, pathx.Base(*mine), mineProf.CrestDB)
+		role := string(r)
+		matchedRole = role
+		lib, lerr := loadLibrary(*library)
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr, "becky-ref: %v\n", lerr)
+			return 1
+		}
+		tp, ok := lib.TargetForRole(role)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "becky-ref: your stem looks like %q, but the house library has no %q target. It has: %s. Add one with `becky-ref library build`.\n",
+				role, role, strings.Join(lib.RoleNames(), ", "))
+			return 1
+		}
+		refProf = tp
+		fmt.Printf("matching your %s to your house %s sound\n", role, role)
+	} else {
+		refProf, err = loadTarget(*reference, *profile, *kw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
+			return 1
+		}
+	}
 
 	plan := refmatch.Match(refProf, mineProf)
 
@@ -160,13 +206,25 @@ func runMatch(argv []string) int {
 	// reference. The fuzzy spectral target itself is saved explicitly via
 	// `becky-ref profile --out`; here we only learn the reach-for habit. Never affects
 	// exit code (degrade-never-crash).
-	if name := strings.TrimSpace(*remember); name != "" && refProf.Source != "" {
-		logPath := siblingFile(dst, "ref.corrections.jsonl")
+	if name := strings.TrimSpace(*remember); name != "" {
+		// Role-aware scope when matching against a library: record under the auto-
+		// selected role (sound:kick) so `becky-habits usual sound:kick` recalls the
+		// go-to. For an explicit --reference/--profile, scope under the given name.
 		scope := "sound:" + name
-		// Structured value (a JSON blob) so becky-habits surfaces it via `usual`.
-		fixed, _ := json.Marshal(map[string]string{"reference": refProf.Source})
-		if err := habits.AppendCorrectionLog(logPath, "ref", scope, "reference", "", string(fixed)); err == nil {
-			fmt.Printf("  remembered: matching %q to %s (learns after a few uses → `becky-habits usual %s`)\n", name, refProf.Source, scope)
+		refDesc := refProf.Source
+		if matchedRole != "" {
+			scope = "sound:" + matchedRole
+			if refDesc == "" {
+				refDesc = "house " + matchedRole
+			}
+		}
+		if refDesc != "" {
+			logPath := siblingFile(dst, "ref.corrections.jsonl")
+			// Structured value (a JSON blob) so becky-habits surfaces it via `usual`.
+			fixed, _ := json.Marshal(map[string]string{"reference": refDesc})
+			if err := habits.AppendCorrectionLog(logPath, "ref", scope, "reference", "", string(fixed)); err == nil {
+				fmt.Printf("  remembered: matching %q to %s (learns after a few uses → `becky-habits usual %s`)\n", name, refDesc, scope)
+			}
 		}
 	}
 
@@ -205,6 +263,269 @@ func loadTarget(refWAV, profileJSON string, kw bool) (refmatch.Profile, error) {
 	p := refmatch.Analyze(a, refmatch.Options{KWeight: kw})
 	p.Source = pathx.Base(refWAV)
 	return p, nil
+}
+
+// --- apply subcommand: write a saved match plan onto a routing-graph bus ---
+
+func runApply(argv []string) int {
+	fs := newFlagSet("apply")
+	planPath := fs.String("plan", "", "saved MatchPlan JSON (from `becky-ref match --out`)")
+	projPath := fs.String("project", "", "music.Project routing JSON to edit (e.g. becky-compose's project.json)")
+	bus := fs.String("bus", "", "the bus to apply the moves to (e.g. bus.drums)")
+	out := fs.String("output", "", "output JSON path (default: <project-base>.refapplied.json next to source)")
+	dryRun := fs.Bool("dry-run", false, "show what WOULD change in plain English; write nothing")
+	if err := fs.Parse(argv); err != nil {
+		return 2
+	}
+	if *planPath == "" || *projPath == "" || *bus == "" {
+		fmt.Fprintln(os.Stderr, "becky-ref apply: need --plan, --project and --bus")
+		return 2
+	}
+
+	plan, err := loadPlan(*planPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
+		return 1
+	}
+	proj, err := loadProject(*projPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
+		return 1
+	}
+
+	if *dryRun {
+		fmt.Println("becky-ref apply (dry run — nothing written)")
+		fmt.Printf("  Would %s\n", lowerFirst(refmatch.DryRunSummary(*bus, plan)))
+		if plan.Note != "" {
+			fmt.Printf("  (%s)\n", plan.Note)
+		}
+		return 0
+	}
+
+	res := refmatch.ApplyPlan(proj, *bus, plan)
+
+	dst := *out
+	if dst == "" {
+		dst = sidecar(*projPath, ".refapplied.json")
+	}
+	if err := writeJSON(dst, res.Project); err != nil {
+		fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
+		return 1
+	}
+
+	// Best-effort preference learning: log the applied move so becky learns the setups
+	// Jordan habitually reaches for. Never affects exit code (degrade-never-crash).
+	logPath := siblingFile(dst, "ref.corrections.jsonl")
+	scope := "bus:" + refmatch.ShortBusID(*bus)
+	fixed, _ := json.Marshal(map[string]any{"eq": eqFXType(res.EQNode), "gain": gainFXType(res.GainNode)})
+	_ = habits.AppendCorrectionLog(logPath, "ref", scope, "match", "", string(fixed))
+
+	fmt.Println("becky-ref apply")
+	if res.NoMoves {
+		fmt.Printf("  %s\n", res.Summary)
+	} else {
+		fmt.Printf("  %s\n", res.Summary)
+		if res.EQNode != nil {
+			fmt.Printf("  EQ node : %s (%s)\n", res.EQNode.ID, res.EQNode.Type)
+		}
+		if res.GainNode != nil {
+			fmt.Printf("  gain node: %s (%s)\n", res.GainNode.ID, res.GainNode.Type)
+		}
+	}
+	if res.Note != "" {
+		fmt.Printf("  (%s)\n", res.Note)
+	}
+	fmt.Printf("  saved: %s\n", dst)
+	return 0
+}
+
+func eqFXType(n *music.ProjFX) string {
+	if n == nil {
+		return ""
+	}
+	return n.Type
+}
+
+func gainFXType(n *music.ProjFX) string {
+	if n == nil {
+		return ""
+	}
+	return n.Type
+}
+
+// loadPlan reads a saved MatchPlan JSON.
+func loadPlan(path string) (refmatch.MatchPlan, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return refmatch.MatchPlan{}, fmt.Errorf("read plan %s: %w", path, err)
+	}
+	var p refmatch.MatchPlan
+	if err := json.Unmarshal(b, &p); err != nil {
+		return refmatch.MatchPlan{}, fmt.Errorf("parse plan %s: %w (is it a `becky-ref match --out` file?)", path, err)
+	}
+	return p, nil
+}
+
+// loadProject reads a music.Project routing JSON.
+func loadProject(path string) (music.Project, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return music.Project{}, fmt.Errorf("read project %s: %w", path, err)
+	}
+	var p music.Project
+	if err := json.Unmarshal(b, &p); err != nil {
+		return music.Project{}, fmt.Errorf("parse project %s: %w (is it a becky routing project.json?)", path, err)
+	}
+	return p, nil
+}
+
+// --- library subcommand: build a per-role house-sound target from a folder of stems ---
+
+func runLibrary(argv []string) int {
+	if len(argv) < 1 || argv[0] != "build" {
+		fmt.Fprintln(os.Stderr, "usage: becky-ref library build --dir <folder> [--out house.json] [--recursive]")
+		return 2
+	}
+	fs := newFlagSet("library build")
+	dir := fs.String("dir", "", "folder of good-sounding reference WAV stems")
+	out := fs.String("out", "", "output JSON path (default: <dir>/house.json)")
+	recursive := fs.Bool("recursive", false, "also scan subfolders")
+	kw := fs.Bool("k-weight", false, "apply becky's K-weight loudness approximation when profiling")
+	asJSON := fs.Bool("json", false, "print the full HouseSound JSON to stdout")
+	if err := fs.Parse(argv[1:]); err != nil {
+		return 2
+	}
+	if *dir == "" {
+		fmt.Fprintln(os.Stderr, "becky-ref library build: need --dir")
+		return 2
+	}
+
+	stems, err := readStems(*dir, *recursive)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
+		return 1
+	}
+	if len(stems) == 0 {
+		fmt.Fprintf(os.Stderr, "becky-ref: no .wav stems found in %s\n", *dir)
+		return 1
+	}
+
+	lib := refmatch.BuildLibrary(*dir, stems, refmatch.Options{KWeight: *kw})
+
+	dst := *out
+	if dst == "" {
+		dst = filepath.Join(*dir, "house.json")
+	}
+	if err := writeJSON(dst, lib); err != nil {
+		fmt.Fprintf(os.Stderr, "becky-ref: %v\n", err)
+		return 1
+	}
+
+	if *asJSON {
+		printJSON(lib)
+	} else {
+		printLibrary(lib, dst)
+	}
+	return 0
+}
+
+// readStems walks dir (optionally recursively) and reads every .wav file into a
+// StemInput. A file that can't be read is carried with Err set so BuildLibrary reports
+// it skipped-with-reason (degrade-never-crash) rather than aborting the whole scan.
+func readStems(dir string, recursive bool) ([]refmatch.StemInput, error) {
+	var paths []string
+	if recursive {
+		err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil // skip unreadable entries, keep walking
+			}
+			if !d.IsDir() && isWAV(p) {
+				paths = append(paths, p)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("scan %s: %w", dir, err)
+		}
+	} else {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("read folder %s: %w", dir, err)
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if isWAV(p) {
+				paths = append(paths, p)
+			}
+		}
+	}
+	sort.Strings(paths) // determinism (BuildLibrary re-sorts by name too)
+
+	out := make([]refmatch.StemInput, 0, len(paths))
+	for _, p := range paths {
+		si := refmatch.StemInput{Name: pathx.Base(p), Path: p}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			si.Err = err
+		} else {
+			si.Data = b
+		}
+		out = append(out, si)
+	}
+	return out, nil
+}
+
+func isWAV(p string) bool {
+	return strings.EqualFold(filepath.Ext(p), ".wav")
+}
+
+// loadLibrary reads a saved HouseSound JSON.
+func loadLibrary(path string) (refmatch.HouseSound, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return refmatch.HouseSound{}, fmt.Errorf("read library %s: %w", path, err)
+	}
+	var h refmatch.HouseSound
+	if err := json.Unmarshal(b, &h); err != nil {
+		return refmatch.HouseSound{}, fmt.Errorf("parse library %s: %w (is it a `becky-ref library build` file?)", path, err)
+	}
+	if len(h.Roles) == 0 {
+		return refmatch.HouseSound{}, fmt.Errorf("library %s has no role targets — re-run `becky-ref library build`", path)
+	}
+	return h, nil
+}
+
+func printLibrary(h refmatch.HouseSound, dst string) {
+	fmt.Println("becky-ref library")
+	fmt.Printf("  house sound from %d role(s):\n", len(h.Roles))
+	for _, rt := range h.Roles {
+		fmt.Printf("    %-16s from %d stem(s): %s\n", rt.Role, rt.StemCount, strings.Join(rt.ContributingStems, ", "))
+		fmt.Printf("      loudness %.1f dBFS, crest %.1f dB, brightness %s\n", rt.Profile.LoudnessDB, rt.Profile.CrestDB, hz(rt.Profile.CentroidHz))
+		if rt.Degraded {
+			fmt.Printf("      DEGRADED: %s\n", rt.Note)
+		}
+	}
+	if len(h.Skipped) > 0 {
+		fmt.Printf("  skipped %d file(s):\n", len(h.Skipped))
+		for _, s := range h.Skipped {
+			fmt.Printf("    %s — %s\n", s.Name, s.Reason)
+		}
+	}
+	fmt.Printf("  (%s)\n", h.Note)
+	fmt.Printf("  saved: %s\n", dst)
+	fmt.Println("  now: becky-ref match --library " + dst + " --mine yourstem.wav")
+}
+
+// lowerFirst lowercases the first rune of s (so "Set the ..." reads as "Would set the
+// ..." in the dry-run line).
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
 }
 
 // --- shared helpers ---
