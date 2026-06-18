@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>becky-clip</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- LEFT: search + results / transcript cues -->
+  <aside id="left" class="panel">
+    <div class="left-head">
+      <div class="brand"><span class="diamond"></span> becky<span class="accent">-clip</span></div>
+      <button id="btn-open" class="icon-btn" title="Open case folder">📁</button>
+    </div>
+
+    <div class="search-row">
+      <span class="search-ico">🔍</span>
+      <input id="search" type="text" placeholder="search the transcripts…" autocomplete="off">
+    </div>
+
+    <div id="video-picker" class="video-picker hidden"></div>
+
+    <div id="results" class="results">
+      <div class="empty-hint">
+        <div class="big">📂</div>
+        <p>Open a case folder, then search the transcripts<br>or pick a video to read its cues.</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CENTER: preview (top) + timeline (bottom) -->
+  <main id="center">
+    <section id="preview-wrap">
+      <div id="preview-stage">
+        <video id="vid" preload="auto" playsinline></video>
+        <!-- forensic lower-third overlay (HTML/CSS over the video) -->
+        <div id="overlay" class="overlay hidden" data-pos="bottom">
+          <div id="ov-l1" class="ov-line ov-file"></div>
+          <div id="ov-l2" class="ov-line ov-tc"></div>
+          <div id="ov-l3" class="ov-line ov-meta"></div>
+        </div>
+        <div id="preview-empty" class="preview-empty">
+          <div class="big">▶</div>
+          <p>Click a result to play that exact moment.<br>Double-click to add it to the timeline.</p>
+        </div>
+      </div>
+
+      <div id="transport" class="transport">
+        <button id="btn-play" class="t-btn" title="Play / pause">▶</button>
+        <span id="t-time" class="t-time">0:00</span>
+        <span class="t-src" id="t-src"></span>
+        <span class="spacer"></span>
+        <button id="btn-overlay" class="t-btn toggle" title="Forensic lower-third on/off">▤ overlay</button>
+        <button id="btn-grab" class="t-btn" title="Grab this frame as a still">◳ frame</button>
+        <button id="btn-export" class="t-btn export" title="Export the compilation">⤓ export</button>
+      </div>
+    </section>
+
+    <section id="timeline-wrap">
+      <div class="timeline-head">
+        <span class="tl-title">timeline</span>
+        <span id="tl-stats" class="tl-stats">0 clips · 0:00</span>
+        <span class="spacer"></span>
+        <button id="btn-save" class="t-btn small" title="Save reel">save</button>
+        <button id="btn-load" class="t-btn small" title="Load reel">load</button>
+      </div>
+      <div id="timeline" class="timeline">
+        <div class="tl-empty">double-click a result to add a clip →</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- RIGHT: the Underlord assistant -->
+  <aside id="right" class="panel">
+    <div class="right-head">
+      <span class="ul-ico">🤖</span>
+      <span class="ul-name">Underlord</span>
+      <label class="online-toggle" title="Let Underlord use the frontier model (online, opt-in)">
+        <input id="online" type="checkbox"><span>online</span>
+      </label>
+    </div>
+
+    <div id="chat" class="chat">
+      <div class="ul-intro">
+        <div class="ul-bot">🤖</div>
+        <p>Tell Underlord what you want.<br>It proposes — you approve.</p>
+        <div class="ul-examples">
+          <button class="ex">find every threat to the host family</button>
+          <button class="ex">compile every time he offered money for the cat</button>
+          <button class="ex">turn the lower-third on</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ask-row">
+      <input id="ask" type="text" placeholder="ask Underlord…" autocomplete="off">
+      <button id="btn-ask" class="ask-send" title="Send">➤</button>
+    </div>
+  </aside>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

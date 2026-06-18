@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/term v0.44.0
 	modernc.org/sqlite v1.52.0
@@ -27,6 +28,7 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect

@@ -339,15 +339,33 @@ handoff (§12 + CLAUDE.md §6), cleans `becky-clip-work/cut-tests/` bulk.
 
 ---
 
-## 12. Handoff status (update before ending any session)
+## 12. Handoff status — MVP BUILT + VERIFIED (2026-06-18, `local/becky-clip-2026-06-18`)
 
 - [x] Research locked (R-STACK/R-REUSE/R-CUT/R-AI + spikes + screenshots in `becky-clip-work/`).
 - [x] Spec authored (this file).
-- [ ] Wave 1 — media engine (`edl`/`reel`).
-- [ ] Wave 1 — quotes.
-- [ ] Wave 1 — assistant + footage.
-- [ ] Wave 2 — `cmd/clip` GUI.
-- [ ] `build-all-tools.bat` green + GUI launch screenshot-verified.
+- [x] Wave 1 — media engine (`internal/edl` + `internal/reel` + `cmd/reel`): frame-accurate
+      multi-source render + forensic lower-third (running ORIGINAL-file timecode) + frame/proxy;
+      h264_nvenc→libx264 fallback. Lower-third burn verified by vision.
+- [x] Wave 1 — quotes (`internal/quotes` + `cmd/quotes`): `--exact`/`--select-from-json`/criteria;
+      verbatim-timestamped `_QUOTES.srt`; sha256 source-integrity guard.
+- [x] Wave 1 — assistant + footage (`internal/footage` + `internal/llmlocal` + `internal/assistant`):
+      cost-tiered router (deterministic→local→`claude` CLI/API, verified live), 11-verb
+      propose-then-apply schema, 500GB retrieval funnel.
+- [x] Wave 2 — `cmd/clip` GUI (WebView2): search → click-preview → double-click-add → lower-third
+      → export, screenshot-verified live (`becky-clip-work/shot-loop.png`).
+- [x] Whole module `go build/vet/test` green; gofmt clean; `build-all-tools.bat` builds every tool
+      incl. the gui `becky-clip.exe`. One-click `Build Becky Clip.bat` ships.
+
+**Works today (MVP):** open a case folder → keyword-search transcripts → click a result (preview
+seeks/plays) → double-click (clip added to timeline) → forensic lower-third (filename + running
+ORIGINAL-file timecode + date/person/location) → export a real compilation MP4 (+ EDL + re-based
+SRT + frame stills). Underlord chat panel with propose-then-apply.
+
+**P1 left (next session — not blocking):** native OS folder-picker (today a path prompt + drag-onto-exe);
+timeline ripple/trim polish; load a local GGUF to light up AI Tier-1/2 (works offline at Tier-0 today;
+`claude` CLI Tier-2 verified but unexercised in the GUI); feed `becky-quotes --select-from-json` from the
+Underlord frontier tier for full AI quote discovery; in-window OS file drag-drop. Clean
+`becky-clip-work/{cut-tests,*-smoke}` scratch.
 
 ---
 

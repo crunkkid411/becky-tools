@@ -45,6 +45,15 @@ echo Building becky-canvas.exe ^(GUI window, -tags gui^)...
 go build -tags gui -o bin\becky-canvas.exe .\cmd\canvas
 if errorlevel 1 echo WARN: GUI canvas build failed - headless becky-canvas.exe kept.
 
+REM becky-clip ships as the real WebView2 GUI window (build tag: gui), not the
+REM headless stub. Pure Go (go-webview2, no cgo), so force CGO off for this build.
+echo Building becky-clip.exe ^(GUI window, -tags gui^)...
+set "BECKY_OLDCGO=%CGO_ENABLED%"
+set "CGO_ENABLED=0"
+go build -tags gui -o bin\becky-clip.exe .\cmd\clip
+if errorlevel 1 echo WARN: GUI clip build failed - headless becky-clip.exe kept.
+set "CGO_ENABLED=%BECKY_OLDCGO%"
+
 set "BECKY_OLDCC=%CC%"
 if exist "C:\msys64\mingw64\bin\gcc.exe" set "CC=C:\msys64\mingw64\bin\gcc.exe"
 set "CGO_ENABLED=1"
