@@ -237,6 +237,40 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `local/integrate-cloud-2026-06-17` (local, 2026-06-17) — drained the WHOLE cloud backlog + fixed the update button. MERGED to master.**
+
+Jordan double-clicked "Get Becky Updates" and it left him stuck for an hour. Root
+cause: **7 cloud branches had piled up**, and the button only installs ONE per click —
+and only on a clean fast-forward. Every cloud branch appends to the SAME two logbook
+files (`CLAUDE.md` §6 + the `COLLAB-PROTOCOL.md` registry), so any second branch
+collides on docs even though the *code* never does → the button punted to the
+assistant every time. A prior half-finished manual integration also left the working
+tree mid-cherry-pick, so the button bailed ("unsaved changes") on every later click.
+
+What local did this session (all green: `go build`/`vet`/`test`/`gofmt` + `build-all-tools.bat` exit 0, 38 .exes):
+1. **Integrated all 7 piles** onto this branch and fast-forwarded master:
+   `becky-report`, `becky-ref`/`becky-stems`, becky-ask **Phase 4** planner,
+   **becky-scout** (via the `youtube-playlist-assessment` superset — it supersedes the
+   older `becky-scout-2026-06-16` branch, which was dropped), and the **becky-pipeline
+   motion+report+validate** steps (the two `pipeline-motion-*` branches BOTH extended
+   `becky-pipeline` — an R4 "claim before you build" miss — so I merged them by hand:
+   unified canonical order is `… → motion → validate → report`, report is the final
+   aggregator; reconciled the one contradictory test).
+2. **Durable fix for the button (the real repair): `.gitattributes` `merge=union`** on
+   the two logbook files. Append-only collisions now auto-resolve (keep both sides), so
+   the button stops choking on doc conflicts. Verified live — 3 of this session's merges
+   auto-resolved the §6/registry collision with zero manual work.
+3. Deleted the 7 merged/superseded `claude/*` branches (remote + local) to clear the queue.
+
+Left for local: **nothing** — shipped. STILL PROPOSED for whoever hardens the button
+next (see also the becky-handoff Go tool): (a) **drain the queue** — install ALL
+ready cloud branches per click, not just the newest; (b) **self-heal a poisoned tree**
+— detect a leftover in-progress merge/cherry-pick from a failed run and clean it up (or
+launch the assistant with that context) instead of bailing on "unsaved changes";
+(c) **enforce R4** so two cloud agents never both edit one tool (`becky-pipeline` here).
+
+---
+
 **Branch `claude/drum-machine-ai-g2sz9x` (cloud, 2026-06-17, follow-up push) — reference matching from real studio stems: `becky-ref` + `becky-stems`. READY FOR REVIEW.**
 
 Jordan: "I have literal studio stems from band sessions that sound the way it needs to sound — build more." Decision: turn his good-sounding stems into the *measuring stick*. Two deterministic, fully-offline DSP tools (no model/GPU boundary at all — these run NOW, nothing left for local except `build-all-tools.bat`). Built by parallel subagents on disjoint files; whole module green (`go build`/`vet`/`test`/`gofmt` — 56 packages, 0 failures). Smoke-tested live on synthesized bright/dark + clipping WAVs.
