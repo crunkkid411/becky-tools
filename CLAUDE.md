@@ -320,7 +320,10 @@ tier only.
 drag-onto-exe); load a local GGUF to light up AI Tier-1/2 (works offline at Tier-0 now; `claude`
 Tier-2 verified but unexercised in the GUI); timeline ripple/trim polish; feed `becky-quotes
 --select-from-json` from the Underlord frontier tier for full AI quote discovery; clean
-`becky-clip-work/{cut-tests,*-smoke}` scratch. Branch NOT yet merged to master — review + try it first.
+`becky-clip-work/{cut-tests,*-smoke}` scratch. **MERGED to master + pushed to GitHub 2026-06-18**
+(post-review fixes also landed: the one-click `.bat` encoding bug that made it flash-and-die, the
+native Windows folder picker, the Underlord→**becky** rename, and first-clip auto-dimensions;
+launched + screenshot-verified live: `becky-clip-work/verify-launch.png`).
 
 ---
 
