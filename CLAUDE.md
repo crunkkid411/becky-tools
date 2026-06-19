@@ -515,6 +515,21 @@ and **`SPEC-BECKY-DRUM.md` (the buildable spec — START THERE; §9 is the cloud
   `internal/sampler` instead so the tested drummachine wasn't destabilized — wire them together (a Pad gets
   an optional `*sampler.Sound`).
 
+**>>> RED-TEAM PASS (cloud, 2026-06-19) — READ `research/RED-TEAM-and-nuances.md` BEFORE building.**
+I re-reviewed my own Phase-1 code adversarially and found real holes the passing tests missed:
+(P0) the 4 new packages are **ORPHANS** — nothing wires them to the GUI/engine/AI, so "wire a Pad
+field" badly understated the integration: Phase 2 should build the oto engine directly on
+`sampler.Sound`+`sampledecode` and treat the old `audioengine` sine path as throwaway. (P0) velocity
+did NOT affect loudness (single-layer pads were dynamically dead). (P0) no declick on choke/steal
+(click/pop). (P0) "random" round-robin was actually sequential. Fixed in `internal/sampler` THIS pass
+(tested, still green): added `AmpEnv`, `Sound.VelGain`/`AmpVelTrack` (velocity→loudness),
+`SelectVariantRandom` (honest random RR), `Variant.Reverse`, `Polyphony`, `DeclickMs`, and
+`NewDrumSound` (responsive defaults — kitimport/GUI should use it, not the zero value). Still open
+(see the doc): no resampling (pitch/rate — the engine must add it, quality matters), samplelib
+re-walks the drive every launch (needs a cached index), absolute sample paths (project portability),
+stereo-vs-pan, step length/gate for the piano roll, real-time recording/metronome, audio export,
+8-bit WAV, Go-GC-vs-audio dropouts. None of those are stubbed-as-done; they're listed honestly.
+
 **Left for local:** Phases 2-4 above (all need your machine). Nothing further is cloud-verifiable.
 **Open decisions for Jordan** (in `SPEC-BECKY-DRUM.md` §12): confirm the sample-library roots
 (`X:\music-2\SAMPLES`, `X:\Splice`?), and the small instruct GGUF (Qwen3-4B is on disk → start there).
