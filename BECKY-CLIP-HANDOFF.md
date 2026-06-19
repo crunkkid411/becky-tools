@@ -297,6 +297,44 @@ chat answers via Claude with a visible "via Claude (Claude Code login)" note. Ev
     arrives via `window.__beckyResolve`. The headless `app.Call(verb, argsJSON)` (main.go, tests) is
     UNCHANGED and still synchronous; only the windowed bind is async. Keep both in sync if you touch it.
 
+## ROUND-5 (2026-06-19 — render keeps AUDIO, saves to `<folder>/render`, auto-corroborated)
+Jordan: "there's no fucking audio on the render. Also, why are you saving that to an app data folder?
+… build a new folder called Render." + the deeper directive: USE the becky models for COMPREHENSIVE,
+CORROBORATED testing ("no one datapoint, but many, corroborated before wasting a human's time").
+
+- **Render KEEPS audio.** `internal/reel/args.go` used to drop it (`-an` + `concat …a=0`, "a visual
+  record" — wrong for a quote tool). Now: per-clip `aresample,aformat` → interleaved `concat
+  v=1:a=1` → AAC 192k; clips with no audio stream get a silent `anullsrc` fill bounded to the clip
+  duration so the concat never errors. Gated behind `resolvedOpts.Audio`, which `Render` sets true
+  whenever ffprobe is available (it probes each clip's `mediainfo.HasAudio`). Audio-off keeps the
+  EXACT old argv, so the pure-arg tests are untouched.
+- **Output → `<folder>/render/`, never AppData.** `cmd/clip` export/frames/EDL/SRT used
+  `os.TempDir()/becky-clip`. New `App.renderDir()` writes a `render` subfolder of the OPEN case
+  folder (a new file in a new subfolder — no original modified). Protocol: outputs next to originals.
+- **Every export auto-corroborates audio.** `verifyExportAudio` (cmd/clip/export.go) re-opens the
+  output read-only: ffprobe (stream present) + `mediainfo.MeanVolume` (ffmpeg volumedetect mean vs the
+  −80 dB silence floor). `ExportResult.AudioOK`/`Audio` → GUI shows "✓ audio confirmed: mean −21.3 dB
+  (audible)" or a loud "⚠ AUDIO". This is the cheap always-on corroboration; the DEEP one is
+  becky-validate (Gemma-4 E4B) which on the test render independently HEARD "I want Penguin" + 91.1% VAD.
+
+## 3.z ROUND-5 gotchas
+33. **The render is NO LONGER silent — keep it that way.** Don't re-add `-an`/`concat a=0` for "speed"
+    or "it's a visual record". The whole tool is about quotes; silent output is the bug Jordan was
+    furious about. The audio path is behind `resolvedOpts.Audio` (Render sets it from ffprobe). If you
+    touch `args.go`, run the new `TestBuildRenderArgs_AudioMapsAndSilenceFallback` + check a real export
+    still reports `audio_ok:true`.
+34. **NEVER default human-facing output to AppData/temp.** Exports/frames/EDL/SRT go to
+    `App.renderDir()` = `<case-folder>/render`. The work dir (`os.TempDir()/becky-clip`) is ONLY for
+    ephemeral things a human never opens (preview proxies). This is a hard Becky Tools protocol rule.
+    (Note: a render written into the case folder re-indexes as a video chip on reopen — harmless; it IS
+    a video. If it ever annoys, exclude a `render/` subfolder in `footage.Index`.)
+35. **Corroborate renders with MANY signals, the becky way.** The repeatable recipe (used to verify
+    this round, scripts in `becky-clip-work/`): drive the REAL exe via CDP (`verify_render.py`) to
+    search→add→Export; then (1) `ffprobe` streams, (2) `ffmpeg -af volumedetect` mean/max dB (silence ≈
+    −91/−inf), (3) `becky-validate <mp4> --backend gemma4-local` for VAD %speech + what the model
+    HEARD/SAW (the Gemma-4 E4B model + BF16 mmproj live in `models/gemma4/`; llama-server in
+    `C:\llama.cpp\build\bin`). One probe is not proof; corroborate before claiming done.
+
 ## 4. The "becky" assistant — wired vs not (the honest state + the next big job)
 - **Tier 0 (deterministic, no model)** runs in the GUI today: keyword command parse + `footage`
   grep / `becky-search`. This is what works now. **ROUND-2: verified live** — typing "find every

@@ -294,6 +294,42 @@ contract, function signatures, constraints, and Definition of Done are in
 
 ---
 
+**Branch `local/becky-clip-render-audio-2026-06-19` + `local/becky-clip-audio-corroboration-2026-06-19` (local, 2026-06-19) — becky-clip render: KEEPS AUDIO, saves to `<folder>/render`, and AUTO-CORROBORATES every export. MERGED to master.**
+
+Jordan's round-5 feedback (paraphrased + verbatim): "there's no fucking audio on the render. Also,
+why are you saving that to an app data folder? … We are going to build a new folder called Render."
+Plus the deeper point: USE the becky-tools models for COMPREHENSIVE, CORROBORATED testing (he has
+API keys + the Gemma-4 E4B audio/visual model wired in becky-validate) — "no one datapoint, but many,
+corroborated before wasting a human's time." All addressed; `go build/vet/test ./...` green.
+
+- **AUDIO (the bug):** the render was DELIBERATELY silent (`-an` + `concat …a=0`, commented "a visual
+  record"). Wrong for a quote tool. `internal/reel` now keeps each clip's audio (per-clip
+  aresample/aformat → interleaved `concat v=1:a=1` → AAC 192k); clips lacking an audio stream get a
+  silent `anullsrc` fill bounded to the clip duration so concat never errors. Gated on ffprobe
+  (`mediainfo.HasAudio`); no-ffprobe degrades to silent-WITH-a-note. Old `-an` path kept behind
+  `resolvedOpts.Audio=false` so existing pure-arg tests are untouched; +3 audio tests.
+- **OUTPUT LOCATION (the protocol breach):** export/frames/EDL/SRT defaulted to
+  `os.TempDir()/becky-clip` (AppData — invisible to humans). Now `App.renderDir()` → a `render`
+  subfolder of the OPEN case folder (new file in a new subfolder; no original touched). The
+  Becky Tools protocol: outputs live next to the originals.
+- **AUTO-CORROBORATION (the "earn trust" feature):** after every export, `verifyExportAudio` re-opens
+  the output READ-ONLY and confirms AUDIBLE audio via TWO signals — ffprobe (stream present) + new
+  `mediainfo.MeanVolume` (ffmpeg volumedetect, mean above the −80 dB silence floor). `ExportResult`
+  gains `AudioOK`+`Audio`; the GUI shows "✓ audio confirmed: mean −21.3 dB (audible)" or a loud
+  "⚠ AUDIO" warning. A silent render can never ship unnoticed again.
+
+**VERIFIED end-to-end on the REAL deployed exe (CDP) on `E:/TakingBack2007`** — search penguin → add
+2 clips → Export → `E:\TakingBack2007\render\untitled-compilation_reel.mp4`. FOUR corroborating
+signals: ffprobe (AAC stereo 48 kHz), ffmpeg volumedetect (mean −21.3 dB / peak −2.4 dB), becky-
+validate VAD (91.1% speech), and becky-validate **Gemma-4 which HEARD "I want Penguin"** (matches the
+search term) — the full forensic loop proven by an independent audio model. Evidence:
+`becky-clip-work/{verify_render.py,render-*.png,validate_render.json}`. Details + gotchas (#33-35) in
+`BECKY-CLIP-HANDOFF.md` ROUND-5. **Left for local: nothing** — built + corroborated. Honest minor: the
+render output, being inside the case folder, re-indexes as a video chip on reopen (harmless; it IS a
+video). NOT yet pushed to GitHub.
+
+---
+
 **Branch `local/becky-clip-chatfreeze-2026-06-19` (local, 2026-06-19) — becky-clip: the "search works once then frozen" bug + the broken AI chat, both ROOT-CAUSED, fixed, and verified LIVE on the deployed exe + real folder.**
 
 Jordan's round-4 feedback: search "works ONCE then permanently stuck until I restart"; the AI chat is
