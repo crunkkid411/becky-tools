@@ -282,6 +282,16 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Handoff installed by the local "Get Becky Updates" agent (local, 2026-06-19) — merged `claude/drum-machine-honest-spec` Phase-1 foundations to master; drained the cloud queue.**
+The update button punted to the local agent (2 cloud branches waiting + uncommitted local WIP, so no clean fast-forward). Installed the green, additive work:
+- Merged `claude/drum-machine-honest-spec` (14 commits) into master: `internal/{sampledecode,sampler,kitimport,samplelib}` pure-Go drum foundations + `SPEC-BECKY-DRUM.md`/`SPEC-MASCHINE-CLONE.md` + 10 cited `research/` docs. **Whole module `go build`/`go vet`/`go test ./...` green** on this Windows machine (gofmt `-l` flags only CRLF from `core.autocrlf=true`; content is gofmt-clean once CR is stripped — cosmetic per §4).
+- That merge also carried the `fix(quotes)` CI fix (TestDeriveOutPath `filepath.Base` on a Windows path → green Linux CI), which is **byte-identical** to `claude/fix-quotes-winpath-ci` — so that standalone branch is fully **subsumed**. Both `claude/*` branches deleted (local + remote).
+- The in-progress local WIP (investigate-mode for the agent vault search: `cmd/clip/bridge.go` + `internal/assistant/*`) was stashed for the merge and **restored** afterward — untouched, still uncommitted.
+
+**Honest scope:** only the drum-machine **Phase-1 foundations** landed. They are intentionally **orphan packages** (not yet wired to GUI/engine/AI). The branch's own handoff (below) hands **Phases 2-4** (oto/v3 audio engine, Gio window + piano roll, Qwen tool-call chat-control) to the local agent — that is a separate, larger build, NOT done by this update run. The drum machine does not yet open or make sound; that work remains. `build-all-tools.bat` adds no new `.exe` (no new `cmd/*`).
+
+---
+
 **>>> CLOUD: START HERE (overnight task assigned 2026-06-17). Build `SPEC-HANDOFF-HARDENING.md`.**
 Jordan hit a critical update-button failure today (7 cloud branches piled up; the button
 installs only 1 per click and stalls on logbook-file collisions). Local already shipped
