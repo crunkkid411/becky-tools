@@ -980,8 +980,12 @@
     toast("rendering… this can take a moment");
     try {
       const r = await call("export", {});
-      toast("exported: " + r.mp4);
-      addBotMessage(`Exported the compilation (${r.clips} clips, ${hms(r.duration_sec)}, ${r.codec}).\n${r.mp4}` +
+      toast(r.audio_ok ? "exported (audio ✓): " + r.mp4 : "exported: " + r.mp4, !r.audio_ok);
+      // Surface the always-on audio corroboration so a silent render is obvious.
+      const audioLine = r.audio_ok
+        ? `\n✓ audio confirmed: ${r.audio || "audible"}`
+        : `\n⚠ AUDIO: ${r.audio || "could not confirm audible audio — check ffmpeg/ffprobe"}`;
+      addBotMessage(`Exported the compilation (${r.clips} clips, ${hms(r.duration_sec)}, ${r.codec}).\n${r.mp4}${audioLine}` +
         (r.note ? `\n${r.note}` : ""));
     } catch (e) { toast("export failed: " + e.message, true); }
   }

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"becky-go/internal/edl"
+	"becky-go/internal/mediainfo"
 	"becky-go/internal/reel"
 )
 
@@ -30,6 +31,14 @@ type ExportResult struct {
 	DurationSec float64 `json:"duration_sec"`
 	OutputMB    float64 `json:"output_mb"`
 	Note        string  `json:"note,omitempty"`
+
+	// AudioOK + Audio are the always-on post-render CORROBORATION: after the render,
+	// becky re-opens the output (read-only) and confirms it actually has AUDIBLE
+	// audio (ffprobe stream + ffmpeg volumedetect), so a silent render can never
+	// ship unnoticed again. AudioOK is false when the output has no audio stream or
+	// is effectively silent; Audio is the plain-language summary the GUI shows.
+	AudioOK bool   `json:"audio_ok"`
+	Audio   string `json:"audio,omitempty"`
 }
 
 // ExportReel renders the current reel to a compilation MP4 and writes the EDL +
@@ -77,6 +86,14 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 		srtPath = ""
 	}
 
+	// Always-on corroboration: re-open the render and confirm it actually has
+	// AUDIBLE audio (a render whose whole point is the spoken quotes must never be
+	// silent). Degrades quietly if ffprobe/ffmpeg is unavailable.
+	audioOK, audioNote := a.verifyExportAudio(res.Output)
+	if !audioOK && audioNote != "" {
+		noteParts = append(noteParts, "AUDIO CHECK: "+audioNote)
+	}
+
 	return ExportResult{
 		MP4:         res.Output,
 		EDL:         edlPath,
@@ -86,7 +103,31 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 		DurationSec: res.DurationSec,
 		OutputMB:    res.OutputMB,
 		Note:        strings.Join(noteParts, "; "),
+		AudioOK:     audioOK,
+		Audio:       audioNote,
 	}, nil
+}
+
+// verifyExportAudio re-opens a just-rendered MP4 (READ-ONLY) and corroborates that
+// it carries AUDIBLE audio, with two independent signals: ffprobe (an audio stream
+// exists) and ffmpeg volumedetect (the mean level is above the silence floor — a
+// silent track reads about -91 dB / -inf). It returns (ok, summary): ok=false for
+// "no audio stream" or "silent", with a plain-language summary the GUI surfaces.
+// Degrade-never-crash: if ffprobe/ffmpeg is absent it returns (false, "") so the UI
+// simply makes no audio claim rather than a false one.
+func (a *App) verifyExportAudio(mp4 string) (bool, string) {
+	cfg := a.cfg
+	info, err := mediainfo.Probe(cfg.FFprobe, mp4)
+	if err != nil {
+		return false, "" // can't probe -> make no claim (honest)
+	}
+	if !info.HasAudio {
+		return false, "no audio stream in the render"
+	}
+	if vol, ok := mediainfo.MeanVolume(cfg.FFmpeg, mp4); ok {
+		return vol.Audible, vol.Describe()
+	}
+	return true, "audio stream present"
 }
 
 // WriteEDLOnly writes just the CMX3600 EDL for the current reel (no render).
