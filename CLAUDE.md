@@ -457,18 +457,69 @@ What actually exists on master from this (use or discard with eyes open): `inter
 `cmd/drummachine` (a Gio window that compiles; unverified visually/audibly). Local already
 fixed the ASCII one-click scripts (commit dd25215).
 
-**NEW PLAN (replaces "build it blind"):** research first, in detail; write a real spec; then
-build ONLY pure-Go logic I can run and unit-test here (sample-library scanner, kit format that
-points at real WAV files, sequencing/timing math, MIDI export), and hand off everything that
-needs hardware/samples/models LABELED HONESTLY as unbuilt+unverified — no stub wearing a
-feature's name. In progress on branch `claude/drum-machine-honest-spec`:
-- `SPEC-MASCHINE-CLONE.md` — done: authoritative, source-cited Maschine 2 capability spec (the real build target).
-- Research underway (cloud, no hardware needed): real sample/kit loading (formats Jordan owns,
-  SFZ/DecentSampler, scanning his library), Go real-time audio reality (oto/malgo/portaudio —
-  the render-then-exec approach was wrong), and existing OSS groovebox/sampler projects to build on.
-- Honest cloud↔local split + a buildable v1 spec to follow.
+**NEW PLAN — EXECUTED. Branch `claude/drum-machine-honest-spec` (cloud, 2026-06-19). Research done (exhaustive, cited) + Phase-1 pure-Go FOUNDATIONS built & tested. >>> LOCAL: this is your handoff. Build Phases 2-4 (audio/GUI/model) on your machine. <<<**
 
-Note: I did NOT do the assigned SPEC-HANDOFF-HARDENING task above — Jordan redirected to the drum machine. Still open.
+Jordan's directive: research every Maschine 2 / piano-roll / chat-control nuance to an "annoyingly
+detailed" level, spec it, build what cloud can actually verify, and hand the rest off HONESTLY (no
+stub wearing a feature's name). The whole branch is green: `go build ./... && go vet ./... && go test
+./... && gofmt -l .` all clean (incl. the becky-quotes Windows-path CI fix, cherry-picked here).
+
+**BUILT + TESTED on this branch (cloud-verifiable, pure-Go, offline, NO hardware needed) — use these as-is:**
+- `internal/sampledecode` — correct RIFF/WAV decoder: PCM 16/24/32-bit + IEEE float32 + EXTENSIBLE,
+  normalized float32; parses `smpl`/`acid`/`cue` chunks; `ProbeWAV` header-only. **Fixes the 32-bit-float
+  bug** that silently corrupts float WAVs in go-audio/wav (proven by a bit-exact test). Degrade-never-crash.
+- `internal/sampler` — the SFZ-aligned multisampling **Sound** model (Variant/Layer/Sound/Kit16):
+  velocity layers, sequential round-robin, choke group/off_by+mode, loop modes, pitch
+  (keycenter/transpose/tune), gain/pan; deterministic JSON. THIS replaces the old sine-tone Pad.
+- `internal/kitimport` — `ParseSFZ` + `ParseDecentSampler` → `sampler.Sound`. **This is how his real kits
+  load.** Full drum opcode subset; Windows `\` paths via pathx; missing samples flagged not fatal.
+- `internal/samplelib` — pure-Go library scanner: walks his drives, role-guesses (corroborate-then-
+  conclude), loop-vs-oneshot, BPM/key tokens, Search/ByRole. (The surviving good piece, `internal/drummachine`
+  — patterns/scenes/song/choke — stays; wire a Pad to reference a `sampler.Sound`.)
+
+**RESEARCH (all in `research/`, every claim source-cited) — read the one for the part you're building:**
+`research/gui-toolkit.md` (verdict: **stay on Gio**, build the ImGui-*style* surface — a real Dear-ImGui
+Go binding needs cgo + the GLFW/OpenGL combo that failed here; engine is UI-agnostic so a literal-ImGui
+reskin stays possible), `research/agent-control.md` (the chat-controls-everything design: Qwen tool-calling
++ GBNF output constraint + propose/preview/apply), `research/piano-roll.md`, `research/maschine-sampler.md`,
+`research/maschine-fx-mixer.md`, `research/maschine-groove-smartplay.md`, `research/maschine-arrangement.md`,
+`research/timing-clock.md`, `research/go-dsp-midi.md`, `research/preference-learning.md`. Plus
+`SPEC-MASCHINE-CLONE.md` (the Maschine 2 capability target), `research-go-audio.md`, `research-oss-projects.md`,
+and **`SPEC-BECKY-DRUM.md` (the buildable spec — START THERE; §9 is the cloud/local table, §10 the phases).**
+
+**>>> LOCAL BUILD ORDER (needs your GPU/audio/display/drives — cloud CANNOT verify any of this):**
+1. **Phase 2 — SOUND (the thing that was missing):** audio engine on **pure-Go `oto/v3`** (no cgo;
+   `research-go-audio.md`). One persistent output stream; mix voices in the `io.Reader` pull-callback;
+   **delete the render-then-exec hack** — engine lives in the SAME binary as the window. Drive timing from
+   the **sample-frame counter** (`research/timing-clock.md`), never wall-clock. Wire `sampler`+`sampledecode`
+   → decoded voices; choke groups; `samplesPerStep` math. DoD: load an SFZ/folder kit, hit a pad, HEAR his
+   real sample; loop a pattern in time.
+2. **Phase 3 — WINDOW:** Gio (the proven `cmd/canvas` stack already opens on his PC). Pad grid + **piano
+   roll** (one editor, swappable Y-axis: drum lanes vs chromatic — `research/piano-roll.md`) + mixer + a
+   **sample-browser panel** wired to `samplelib` (drag a sample onto a pad). 
+3. **Phase 4 — CHAT-CONTROLS-EVERYTHING:** Qwen3-4B (already on disk) Hermes tool-calling, GBNF-constrain
+   the JSON action slot, send a compact project snapshot, **propose→preview→apply** on the existing canvas
+   overlay (`research/agent-control.md` + `research/preference-learning.md`). becky `internal/habits` already
+   learns his corrections — emit a correction on every edit/approval.
+
+**Gotchas to fold in while building (from the research, so you don't relearn them):**
+- Add `AmpEnv{Type:Oneshot/AHD/ADSR, A,H,D,S,R}` to `sampler.Sound` — the biggest gap vs real Maschine
+  (`maschine-sampler.md`); also `Polyphony`+oldest-steal, `Tune`, `Reverse`.
+- `internal/drummachine.Song` conflates scene-order with placement — add a `Section`/Timeline
+  (`maschine-arrangement.md`).
+- Swing: pick one scale (MPC 50%=straight vs Maschine 0%=straight) and document it (`groove-smartplay.md`).
+- DSP/FX = hand-rolled pure-Go `internal/dspfx` (RBJ EQ, sidechain compressor, etc.); MIDI export reuses the
+  existing `internal/music` SMF writer, gomidi only for live ports (`go-dsp-midi.md`).
+- Ship the scale/chord tables as `scales.json`/`chords.json` (`groove-smartplay.md`).
+- Naming note: SPEC §1 said "extend `internal/drummachine`"; the multisampling model was put in a NEW
+  `internal/sampler` instead so the tested drummachine wasn't destabilized — wire them together (a Pad gets
+  an optional `*sampler.Sound`).
+
+**Left for local:** Phases 2-4 above (all need your machine). Nothing further is cloud-verifiable.
+**Open decisions for Jordan** (in `SPEC-BECKY-DRUM.md` §12): confirm the sample-library roots
+(`X:\music-2\SAMPLES`, `X:\Splice`?), and the small instruct GGUF (Qwen3-4B is on disk → start there).
+
+Note: SPEC-HANDOFF-HARDENING (top of §6) still NOT done — Jordan redirected to the drum machine twice. Still open.
 
 ---
 
