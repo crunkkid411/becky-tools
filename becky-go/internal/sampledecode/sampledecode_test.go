@@ -104,6 +104,40 @@ func encFloat32(samples []float32) []byte {
 
 func approx(a, b float32) bool { return math.Abs(float64(a-b)) < 1e-6 }
 
+// --- 8-bit UNSIGNED PCM (P2-2: lo-fi/vintage kits) ---
+
+func TestDecodePCM8Bit(t *testing.T) {
+	// 8-bit WAV is UNSIGNED: 0x80 (128) = zero, 0x00 = -1.0, 0xFF = ~+1.0
+	data := []byte{128, 0, 255, 192}
+	w := &wavBuilder{}
+	w.chunk("fmt ", fmtBody(wfPCM, 1, 8, 44100, false, 0))
+	w.chunk("data", data)
+	a, err := DecodeWAV(bytes.NewReader(w.bytes()))
+	if err != nil {
+		t.Fatalf("DecodeWAV 8-bit: %v", err)
+	}
+	if a.Format != FormatPCM {
+		t.Errorf("Format = %v, want pcm", a.Format)
+	}
+	if a.Bits != 8 || a.Channels != 1 || a.SampleRate != 44100 {
+		t.Errorf("header = bits %d ch %d rate %d", a.Bits, a.Channels, a.SampleRate)
+	}
+	if a.Frames != 4 {
+		t.Fatalf("Frames = %d, want 4", a.Frames)
+	}
+	// 128 -> 0.0, 0 -> -1.0, 255 -> 127/128 (+near-full), 192 -> 64/128 (+0.5)
+	want := []float32{0.0, -1.0, float32(127) / 128.0, float32(64) / 128.0}
+	for i, wv := range want {
+		if !approx(a.Samples[i], wv) {
+			t.Errorf("sample[%d] = %v, want %v", i, a.Samples[i], wv)
+		}
+	}
+	// The key unsigned invariant: 0x80 (128) must be exactly zero.
+	if a.Samples[0] != 0 {
+		t.Errorf("8-bit 0x80 should decode to exactly 0.0, got %v", a.Samples[0])
+	}
+}
+
 // --- integer PCM round-trip ---
 
 func TestDecodePCMRoundTrip(t *testing.T) {
