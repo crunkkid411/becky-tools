@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"becky-go/internal/pathx"
 )
 
 func TestDeriveOutPath(t *testing.T) {
@@ -22,7 +24,10 @@ func TestDeriveOutPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filepath.Base(deriveOutPath(tt.out, tt.video, tt.srt))
+			// pathx.Base is separator-agnostic: deriveOutPath emits Windows
+			// paths (C:\...), and filepath.Base can't split "\" on Linux CI
+			// (CLAUDE.md §2 invariant).
+			got := pathx.Base(deriveOutPath(tt.out, tt.video, tt.srt))
 			if got != tt.wantBase {
 				t.Errorf("deriveOutPath = %q, want base %q", got, tt.wantBase)
 			}
