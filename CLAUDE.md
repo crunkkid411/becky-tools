@@ -216,6 +216,12 @@ load-bearing rules, in brief:
   starred-repo mining + reference apps (infinite-kanvas, ACE-Step-DAW, DAW-Copilot,
   cate, jsoncrack, blocksuite, the "show me, don't do it" overlay). Read before any
   becky-canvas GUI/agent-UX work — the research is done, don't redo it.
+- `GUI-RULES.md` — **CANONICAL GUI + audio architecture standard (ratified 2026-06-19).**
+  Read before ANY GUI/audio/DAW/NLE work. The stack (Go engine + Gio GUI + C++ VST3/ASIO
+  audio-host sidecar + Rust/wgpu video sidecar), the deterministic NDJSON engine↔GUI seam,
+  build/verification rules, interaction patterns, and the phased path. No embedded browsers
+  (WebView2 retired). Supersedes the audio-licensing conclusion in `research/gui-toolkit.md`
+  (the VST3→MIT / ASIO→GPL relicensing of 2025-11-04 changed it).
 
 - `SPEC-BECKY-CLIP.md` + `BECKY-CLIP-HANDOFF.md` — becky-clip, the forensic transcript-based
   video COMPILATION editor (WebView2 GUI + Go engine). The spec is *what it is*; the HANDOFF is
@@ -281,6 +287,15 @@ load-bearing rules, in brief:
 ---
 
 ## 6. Live handoff — current branch status
+
+**Drum machine: orphan foundations WIRED into a playable engine + AI control; GUI/audio STANDARD ratified (local, 2026-06-19). Branch `local/drum-and-gui-standard-2026-06-19`.**
+Built via 3 background subagents (2 disjoint build agents in isolated worktrees + 2 research passes) then integrated here. Whole module `go build`/`go vet`/`go test ./...` green; `go build -tags audio ./cmd/daw-engine` green (mingw CC).
+- **Real sampler audio engine** (`internal/audioengine/sampler_engine.go`, `cmd/daw-engine/machine.go`): closes red-team P0-2/3/4 + P1-1/2 — velocity→gain, AmpEnv, declick on every voice stop/choke/steal, Hermite resample (pitch + device rate), seeded round-robin. `becky-daw-engine --render-machine <machine.json> [--out wav]` bounces a REAL-sample beat offline + deterministic; `--play-machine` plays live (`-tags audio`). 8-bit PCM added to sampledecode.
+- **Kit loading + AI control** (`internal/drummachine/kitload.go`+`kitportable.go`, `samplelib/persist.go`, `machinectl/model.go`): closes P0-1 (the orphans are wired) — `Pad.Sound *sampler.Sound`, `LoadKitFromSFZ`/`LoadKitFromFolder`, persistent `~/.becky/samplelib.json` mtime index, project-portable kit paths (root-relative + SHA-256 relink), and `machinectl` real local-model tool-call (grammar-constrained JSON) with the deterministic keyword parser as silent fallback.
+- **`GUI-RULES.md` (root) = CANONICAL** GUI/audio standard, ratified by Jordan. Go engine + Gio GUI + C++ VST3/ASIO audio-host sidecar (PortAudio + now-MIT VST3 SDK + GPL ASIO SDK → his Steinberg UR12) + Rust/wgpu video sidecar (Vegas-fast NLE), all over ONE deterministic NDJSON seam. WebView2 retired. The Nov-2025 Steinberg relicensing (VST3→MIT, ASIO→GPL) is what unblocked the bare-metal VST3 host. See §5 doc map.
+- **Left for local (NOT done this run):** wire the `cmd/drummachine` Gio WINDOW to the new engine+kits+AI (pad-click auditions a real sample, sequencer plays via `--play-machine`, kit/sample browser, AI box) — the window still drives the OLD sine path; the CLI render path works now. Then Jordan sound-checks on the UR12. GUI-RULES Phases 2-4 (C++ ASIO/VST3 host, Rust video sidecar, retire WebView2 from becky-clip) are separate future builds.
+
+---
 
 **Handoff installed by the local "Get Becky Updates" agent (local, 2026-06-19) — merged `claude/drum-machine-honest-spec` Phase-1 foundations to master; drained the cloud queue.**
 The update button punted to the local agent (2 cloud branches waiting + uncommitted local WIP, so no clean fast-forward). Installed the green, additive work:
