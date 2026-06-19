@@ -39,7 +39,6 @@ type ExportResult struct {
 func (a *App) ExportReel(outPath string) (ExportResult, error) {
 	a.mu.Lock()
 	r := a.reel
-	work := a.workDir
 	a.mu.Unlock()
 
 	if len(r.Clips) == 0 {
@@ -47,10 +46,11 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 	}
 
 	if strings.TrimSpace(outPath) == "" {
-		if err := os.MkdirAll(work, 0o755); err != nil {
-			return ExportResult{}, fmt.Errorf("create work dir: %w", err)
+		dir, err := a.renderDir()
+		if err != nil {
+			return ExportResult{}, err
 		}
-		outPath = filepath.Join(work, slugName(r.Name)+"_reel.mp4")
+		outPath = filepath.Join(dir, slugName(r.Name)+"_reel.mp4")
 	}
 	outPath = absOut(outPath)
 
@@ -93,13 +93,16 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 func (a *App) WriteEDLOnly(outPath string) (string, error) {
 	a.mu.Lock()
 	r := a.reel
-	work := a.workDir
 	a.mu.Unlock()
 	if len(r.Clips) == 0 {
 		return "", fmt.Errorf("the timeline is empty")
 	}
 	if strings.TrimSpace(outPath) == "" {
-		outPath = filepath.Join(work, slugName(r.Name)+".edl")
+		dir, err := a.renderDir()
+		if err != nil {
+			return "", err
+		}
+		outPath = filepath.Join(dir, slugName(r.Name)+".edl")
 	}
 	outPath = absOut(outPath)
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
@@ -115,13 +118,16 @@ func (a *App) WriteEDLOnly(outPath string) (string, error) {
 func (a *App) WriteSRTOnly(outPath string) (string, error) {
 	a.mu.Lock()
 	r := a.reel
-	work := a.workDir
 	a.mu.Unlock()
 	if len(r.Clips) == 0 {
 		return "", fmt.Errorf("the timeline is empty")
 	}
 	if strings.TrimSpace(outPath) == "" {
-		outPath = filepath.Join(work, slugName(r.Name)+".srt")
+		dir, err := a.renderDir()
+		if err != nil {
+			return "", err
+		}
+		outPath = filepath.Join(dir, slugName(r.Name)+".srt")
 	}
 	outPath = absOut(outPath)
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
@@ -140,15 +146,13 @@ func (a *App) GrabFrame(source string, t float64) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("frame source is not in the open folder: %s", source)
 	}
-	a.mu.Lock()
-	work := a.workDir
-	a.mu.Unlock()
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		return "", fmt.Errorf("create work dir: %w", err)
+	dir, err := a.renderDir()
+	if err != nil {
+		return "", err
 	}
 	full := baseName(v.Path)
 	stem := strings.TrimSuffix(full, filepath.Ext(full))
-	out := filepath.Join(work, fmt.Sprintf("%s_%.3fs.png", slugName(stem), t))
+	out := filepath.Join(dir, fmt.Sprintf("%s_%.3fs.png", slugName(stem), t))
 	if err := reel.GrabFrame(v.Path, t, out); err != nil {
 		return "", err
 	}
@@ -186,6 +190,28 @@ func writeTextFile(path string, fn func(*bufio.Writer) error) error {
 		return err
 	}
 	return w.Flush()
+}
+
+// renderDir is where HUMAN-FACING outputs go: a "render" subfolder of the OPEN
+// case folder. This is the Becky Tools protocol — save next to the originals, where
+// a human can find them, NEVER in a hidden AppData/temp dir. It is created on
+// demand. Writing a NEW file into a NEW subfolder never modifies an original (the
+// forensic invariant holds). Only when no folder is open (e.g. a headless call with
+// an explicit timeline) does it fall back to the becky work dir so a render still
+// has somewhere to land.
+func (a *App) renderDir() (string, error) {
+	a.mu.Lock()
+	folder := a.folder
+	work := a.workDir
+	a.mu.Unlock()
+	dir := work
+	if strings.TrimSpace(folder) != "" {
+		dir = filepath.Join(folder, "render")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create render dir %q: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // absOut returns the cleaned absolute form of an output path (best-effort).

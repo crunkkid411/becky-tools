@@ -31,11 +31,16 @@ const (
 //   - in filter_complex: [i:v] drawtext(lower-third), scale=W:H (aspect-
 //     preserving) + pad, setsar=1, fps=OUTFPS, format=yuv420p,
 //     setpts=PTS-STARTPTS -> [vN]
-//   - then concat=n=<count>:v=1:a=0 over all [vN] -> [vout], mapped to the codec.
+//   - then concat over all clips -> [vout] (+ [aout] when audio is on).
 //
-// Audio is dropped (-an + concat a=0); the forensic compilation is a visual
-// record. fontFile/width/height/outFPS/codec come from opts (resolved by
-// Render). The output path is the final argv element.
+// AUDIO: when opts.Audio is set (Render turns it on whenever ffprobe is available
+// to detect streams), the compilation KEEPS each clip's audio — a transcript/quote
+// tool whose export is silent is useless. Clips that have no audio stream get a
+// silent anullsrc input bounded to the clip's duration, so the audio concat has a
+// segment for every clip and never errors (degrade-never-crash). With audio off we
+// keep the old visual-only behaviour (-an, concat a=0). fontFile/width/height/
+// outFPS/codec come from opts (resolved by Render). The output path is the final
+// argv element.
 func buildRenderArgs(r edl.Reel, opts resolvedOpts) ([]string, error) {
 	if len(r.Clips) == 0 {
 		return nil, fmt.Errorf("reel has no clips")
@@ -52,25 +57,73 @@ func buildRenderArgs(r edl.Reel, opts resolvedOpts) ([]string, error) {
 		)
 	}
 
-	// filter_complex (normalize + lower-third per input, then concat).
-	filter, outLabel := buildFilterComplex(r, opts)
-	args = append(args, "-filter_complex", filter, "-map", outLabel)
+	// Silent fill-inputs for clips that have no audio stream (appended AFTER the N
+	// clip inputs, in clip order, so audioInputIndices' numbering lines up). Each is
+	// bounded to its clip's duration with -t before -i.
+	if opts.Audio {
+		for i, c := range r.Clips {
+			if !(i < len(opts.ClipHasAudio) && opts.ClipHasAudio[i]) {
+				args = append(args,
+					"-f", "lavfi",
+					"-t", formatSeconds(c.Dur()),
+					"-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+				)
+			}
+		}
+	}
+
+	// filter_complex (normalize + lower-third per input, then concat video [+audio]).
+	filter, vLabel, aLabel := buildFilterComplex(r, opts)
+	args = append(args, "-filter_complex", filter, "-map", vLabel)
+	if opts.Audio {
+		args = append(args, "-map", aLabel)
+	}
 
 	// Codec + quality.
 	args = append(args, "-c:v", opts.Codec)
 	args = append(args, codecQualityArgs(opts)...)
-	args = append(args, "-pix_fmt", "yuv420p", "-an")
+	args = append(args, "-pix_fmt", "yuv420p")
+	if opts.Audio {
+		args = append(args, "-c:a", "aac", "-b:a", "192k")
+	} else {
+		args = append(args, "-an")
+	}
 
 	args = append(args, opts.Output)
 	return args, nil
 }
 
-// buildFilterComplex builds the filter_complex graph string and the final
-// output pad label ("[vout]"). Each input is normalized + lower-thirded, then
-// all are concatenated.
-func buildFilterComplex(r edl.Reel, opts resolvedOpts) (string, string) {
+// audioInputIndices returns, per clip, the ffmpeg INPUT index whose audio stream
+// feeds that clip's segment: the clip's own input i when it has an audio stream, or
+// a dedicated silent anullsrc input (appended after the N clip inputs, in clip
+// order) when it doesn't. Returns nil when opts.Audio is off. buildRenderArgs
+// appends the anullsrc inputs in the SAME clip order so these indices line up.
+func audioInputIndices(r edl.Reel, opts resolvedOpts) []int {
+	if !opts.Audio {
+		return nil
+	}
+	idx := make([]int, len(r.Clips))
+	next := len(r.Clips)
+	for i := range r.Clips {
+		if i < len(opts.ClipHasAudio) && opts.ClipHasAudio[i] {
+			idx[i] = i // the clip's own audio: [i:a]
+		} else {
+			idx[i] = next // a silent anullsrc input
+			next++
+		}
+	}
+	return idx
+}
+
+// buildFilterComplex builds the filter_complex graph plus the video output label
+// ("[vout]") and the audio output label ("[aout]", empty when audio is off). Each
+// clip is normalized + lower-thirded -> [vN]; when audio is on, each clip's audio
+// (its own stream or a silent fill) is resampled/normalized -> [aN], and the graph
+// concatenates the interleaved [v0][a0][v1][a1]... with a=1.
+func buildFilterComplex(r edl.Reel, opts resolvedOpts) (graph, vOut, aOut string) {
 	var chains []string
-	var labels []string
+	var vLabels, aLabels []string
+	aidx := audioInputIndices(r, opts)
 
 	for i, c := range r.Clips {
 		fps := c.FPS(opts.OutFPS)
@@ -86,15 +139,35 @@ func buildFilterComplex(r edl.Reel, opts resolvedOpts) (string, string) {
 			"format=yuv420p",
 			"setpts=PTS-STARTPTS",
 		)
-		label := fmt.Sprintf("[v%d]", i)
-		chains = append(chains, fmt.Sprintf("[%d:v]%s%s", i, strings.Join(steps, ","), label))
-		labels = append(labels, label)
+		vLabel := fmt.Sprintf("[v%d]", i)
+		chains = append(chains, fmt.Sprintf("[%d:v]%s%s", i, strings.Join(steps, ","), vLabel))
+		vLabels = append(vLabels, vLabel)
+
+		if opts.Audio {
+			aLabel := fmt.Sprintf("[a%d]", i)
+			// Normalize every segment to a common rate/layout + reset PTS so concat
+			// joins cleanly regardless of the source's audio format.
+			chains = append(chains, fmt.Sprintf(
+				"[%d:a]aresample=async=1,aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS%s",
+				aidx[i], aLabel))
+			aLabels = append(aLabels, aLabel)
+		}
 	}
 
-	const outLabel = "[vout]"
-	concat := fmt.Sprintf("%sconcat=n=%d:v=1:a=0%s", strings.Join(labels, ""), len(r.Clips), outLabel)
-	graph := strings.Join(chains, ";") + ";" + concat
-	return graph, outLabel
+	vOut = "[vout]"
+	if !opts.Audio {
+		concat := fmt.Sprintf("%sconcat=n=%d:v=1:a=0%s", strings.Join(vLabels, ""), len(r.Clips), vOut)
+		return strings.Join(chains, ";") + ";" + concat, vOut, ""
+	}
+
+	aOut = "[aout]"
+	var inter strings.Builder
+	for i := range r.Clips {
+		inter.WriteString(vLabels[i])
+		inter.WriteString(aLabels[i])
+	}
+	concat := fmt.Sprintf("%sconcat=n=%d:v=1:a=1%s%s", inter.String(), len(r.Clips), vOut, aOut)
+	return strings.Join(chains, ";") + ";" + concat, vOut, aOut
 }
 
 // codecQualityArgs returns the quality flags for the chosen codec. An explicit

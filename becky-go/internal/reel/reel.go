@@ -61,6 +61,14 @@ type resolvedOpts struct {
 	Width    int
 	Height   int
 	FontFile string
+
+	// Audio turns on keeping the clips' sound in the compilation (set by Render
+	// whenever ffprobe is available to detect streams). ClipHasAudio[i] says whether
+	// clip i's source actually has an audio stream — clips without one are filled
+	// with silence so the audio concat never errors. With Audio off the render is
+	// visual-only (the old -an behaviour).
+	Audio        bool
+	ClipHasAudio []bool
 }
 
 const libx264 = "libx264"
@@ -83,12 +91,28 @@ func Render(r edl.Reel, opts Options) (Result, error) {
 
 	ropts := resolveOptions(r, opts, cfg)
 
+	// Keep the clips' AUDIO in the compilation — it is a record of WHAT WAS SAID; a
+	// transcript/quote tool whose export is silent is useless. We can do this safely
+	// only when ffprobe is available to tell which clips actually HAVE an audio
+	// stream (clips without one get silence so the concat never errors). With no
+	// ffprobe we degrade to a silent render and say so.
+	var note string
+	if cfg.FFprobe != "" && available(cfg.FFprobe) {
+		ropts.Audio = true
+		ropts.ClipHasAudio = make([]bool, len(r.Clips))
+		for i, c := range r.Clips {
+			if info, e := mediainfo.Probe(cfg.FFprobe, c.Source); e == nil {
+				ropts.ClipHasAudio[i] = info.HasAudio
+			}
+		}
+	} else {
+		note = "audio omitted: ffprobe unavailable to detect audio streams"
+	}
+
 	args, err := buildRenderArgs(r, ropts)
 	if err != nil {
 		return Result{}, err
 	}
-
-	var note string
 	runErr := runFFmpeg(cfg.FFmpeg, opts.Verbose, args)
 	if runErr != nil && shouldFallbackToLibx264(ropts.Codec) {
 		// Degrade-never-crash: nvenc failed (GPU-less box or init error). Retry

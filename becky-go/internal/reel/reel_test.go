@@ -63,7 +63,7 @@ func TestResolveOptions_AutoMatchesFirstClip(t *testing.T) {
 	}
 
 	// The filter graph normalizes every clip to the first clip's size + fps.
-	graph, _ := buildFilterComplex(r, ro)
+	graph, _, _ := buildFilterComplex(r, ro)
 	for _, want := range []string{"scale=1920:1080", "fps=25"} {
 		if !strings.Contains(graph, want) {
 			t.Fatalf("filter graph should normalize to first clip; missing %q in:\n%s", want, graph)
@@ -153,7 +153,7 @@ func TestBuildRenderArgs_EmptyReelErrors(t *testing.T) {
 
 func TestBuildFilterComplex_ConcatAndNormalize(t *testing.T) {
 	r := twoClipReel()
-	graph, outLabel := buildFilterComplex(r, resolveOptionsForTest(r))
+	graph, outLabel, _ := buildFilterComplex(r, resolveOptionsForTest(r))
 
 	if outLabel != "[vout]" {
 		t.Fatalf("out label = %q, want [vout]", outLabel)
@@ -170,9 +170,67 @@ func TestBuildFilterComplex_ConcatAndNormalize(t *testing.T) {
 	}
 }
 
+// TestBuildRenderArgs_AudioMapsAndSilenceFallback: with audio on and one clip
+// lacking an audio stream, the argv maps [aout], encodes AAC, drops -an, and adds a
+// silent anullsrc input bounded to the audioless clip's duration.
+func TestBuildRenderArgs_AudioMapsAndSilenceFallback(t *testing.T) {
+	r := twoClipReel()
+	ro := resolveOptionsForTest(r)
+	ro.Audio = true
+	ro.ClipHasAudio = []bool{true, false} // clip 0 has audio; clip 1 does not
+	args, err := buildRenderArgs(r, ro)
+	if err != nil {
+		t.Fatalf("buildRenderArgs: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"-map [vout]", "-map [aout]", "-c:a aac", "-b:a 192k"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("audio args missing %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, " -an") {
+		t.Fatalf("an audio render must NOT pass -an:\n%s", joined)
+	}
+	// The audioless clip (dur 2.000) gets a silent fill input, -t-bounded before -i.
+	if !containsSubseq(args, []string{"-f", "lavfi", "-t", "2.000", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"}) {
+		t.Fatalf("expected a -t-bounded silent fill input for the audioless clip:\n%v", args)
+	}
+}
+
+// TestBuildFilterComplex_AudioConcat: with audio on and both clips having audio,
+// the graph normalizes each clip's own audio and concatenates v+a interleaved.
+func TestBuildFilterComplex_AudioConcat(t *testing.T) {
+	r := twoClipReel()
+	ro := resolveOptionsForTest(r)
+	ro.Audio = true
+	ro.ClipHasAudio = []bool{true, true}
+	graph, vOut, aOut := buildFilterComplex(r, ro)
+	if vOut != "[vout]" || aOut != "[aout]" {
+		t.Fatalf("labels = %q,%q, want [vout],[aout]", vOut, aOut)
+	}
+	for _, want := range []string{"[0:a]aresample", "[1:a]aresample", "[a0]", "[a1]", "concat=n=2:v=1:a=1[vout][aout]"} {
+		if !strings.Contains(graph, want) {
+			t.Fatalf("audio graph missing %q in:\n%s", want, graph)
+		}
+	}
+}
+
+// TestAudioInputIndices_SilenceNumbering: an audioless clip is routed to a silent
+// input appended after the clip inputs; an audioful clip uses its own [i:a].
+func TestAudioInputIndices_SilenceNumbering(t *testing.T) {
+	r := twoClipReel()
+	ro := resolveOptionsForTest(r)
+	ro.Audio = true
+	ro.ClipHasAudio = []bool{false, true} // clip 0 silent-filled, clip 1 own audio
+	idx := audioInputIndices(r, ro)
+	if len(idx) != 2 || idx[0] != 2 || idx[1] != 1 {
+		t.Fatalf("audioInputIndices = %v, want [2 1] (clip0->silent input #2, clip1->own [1:a])", idx)
+	}
+}
+
 func TestBuildFilterComplex_LowerThirdBurned(t *testing.T) {
 	r := twoClipReel()
-	graph, _ := buildFilterComplex(r, resolveOptionsForTest(r))
+	graph, _, _ := buildFilterComplex(r, resolveOptionsForTest(r))
 
 	// Clip 1: original timecode of In=10s @30fps -> 00:00:10:00, colons escaped.
 	if !strings.Contains(graph, `timecode='00\:00\:10\:00'`) {
