@@ -575,3 +575,95 @@ func TestOrphanGrepDeterministic(t *testing.T) {
 		t.Fatalf("equal-score orphans should order by title; got %q, %q", first[0].Name, first[1].Name)
 	}
 }
+
+// TestResolveLocalSuffix: becky-clip's local re-transcription "<stem>_LOCAL.srt"
+// is recognised as the video's transcript when it is the only one present.
+func TestResolveLocalSuffix(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "kitchen.mov"), "v")
+	writeFile(t, filepath.Join(root, "kitchen_LOCAL.srt"), srtBody("unlock"))
+
+	by := indexByName(t, root)
+	v, ok := by["kitchen.mov"]
+	if !ok || !v.HasTranscript {
+		t.Fatalf("kitchen.mov should pair its _LOCAL.srt; got %+v", v)
+	}
+	if filepath.Base(v.TranscriptPath) != "kitchen_LOCAL.srt" {
+		t.Fatalf("transcript = %q, want kitchen_LOCAL.srt", v.TranscriptPath)
+	}
+	// And it is greppable through the same funnel becky-clip search uses.
+	idx, _ := Index(root)
+	if got := GrepTranscripts(idx, []string{"unlock"}); len(got) != 1 || got[0].Name != "kitchen.mov" {
+		t.Fatalf("grep over resolved _LOCAL transcript = %+v, want 1 hit", got)
+	}
+}
+
+// TestResolveLocalWithIDToken: a "<stem>_LOCAL.srt" whose stem carries a yt-dlp
+// "[id]" token (the real becky-clip case) is still recognised.
+func TestResolveLocalWithIDToken(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "2026-06-16_Scene_[46T0KmQA7Eg].mp4"), "v")
+	writeFile(t, filepath.Join(root, "2026-06-16_Scene_[46T0KmQA7Eg]_LOCAL.srt"), srtBody("threat"))
+
+	by := indexByName(t, root)
+	v, ok := by["2026-06-16_Scene_[46T0KmQA7Eg].mp4"]
+	if !ok || !v.HasTranscript {
+		t.Fatalf("id-tokened video should pair its _LOCAL.srt; got %+v", v)
+	}
+	if filepath.Base(v.TranscriptPath) != "2026-06-16_Scene_[46T0KmQA7Eg]_LOCAL.srt" {
+		t.Fatalf("transcript = %q, want the _LOCAL one", v.TranscriptPath)
+	}
+}
+
+// TestResolveOfficialPreferredOverLocal: when BOTH an official "<stem>.en.srt" and
+// a becky "<stem>_LOCAL.srt" sit beside a video, the OFFICIAL one is chosen (it is
+// matched by the strict resolver that runs first). This is the forensic preference
+// Jordan asked for: keep both versions, surface the original.
+func TestResolveOfficialPreferredOverLocal(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "stream.mp4"), "v")
+	writeFile(t, filepath.Join(root, "stream.en.srt"), srtBody("official"))
+	writeFile(t, filepath.Join(root, "stream_LOCAL.srt"), srtBody("localtake"))
+
+	by := indexByName(t, root)
+	v, ok := by["stream.mp4"]
+	if !ok || !v.HasTranscript {
+		t.Fatalf("stream.mp4 should have a transcript; got %+v", v)
+	}
+	if filepath.Base(v.TranscriptPath) != "stream.en.srt" {
+		t.Fatalf("official .en.srt must be preferred over _LOCAL; got %q", v.TranscriptPath)
+	}
+}
+
+// TestResolveBareOfficialPreferredOverLocal: same preference with a bare official
+// "<stem>.srt" (no language tag) vs "<stem>_LOCAL.srt".
+func TestResolveBareOfficialPreferredOverLocal(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "stream.mp4"), "v")
+	writeFile(t, filepath.Join(root, "stream.srt"), srtBody("official"))
+	writeFile(t, filepath.Join(root, "stream_LOCAL.srt"), srtBody("localtake"))
+
+	by := indexByName(t, root)
+	v := by["stream.mp4"]
+	if filepath.Base(v.TranscriptPath) != "stream.srt" {
+		t.Fatalf("bare official .srt must be preferred over _LOCAL; got %q", v.TranscriptPath)
+	}
+}
+
+// TestResolveLocalMatchExactSuffix: localMatch is exact about the "_LOCAL" suffix —
+// a "_LOCALE" file is NOT claimed by it (it may still pair via the generic
+// boundary rule, which is fine; this guards localMatch itself).
+func TestResolveLocalMatchExactSuffix(t *testing.T) {
+	root := t.TempDir()
+	if got := localMatch(root, "clip", nil); got != "" {
+		t.Fatalf("localMatch with no _LOCAL file should be empty, got %q", got)
+	}
+	writeFile(t, filepath.Join(root, "clip_LOCALE.srt"), srtBody("x"))
+	if got := localMatch(root, "clip", nil); got != "" {
+		t.Fatalf("localMatch must require exact _LOCAL suffix, matched %q", got)
+	}
+	writeFile(t, filepath.Join(root, "clip_LOCAL.srt"), srtBody("x"))
+	if got := localMatch(root, "clip", nil); filepath.Base(got) != "clip_LOCAL.srt" {
+		t.Fatalf("localMatch should find clip_LOCAL.srt, got %q", got)
+	}
+}

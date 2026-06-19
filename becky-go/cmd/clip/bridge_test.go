@@ -193,3 +193,41 @@ func remarshal(t *testing.T, v any, dst any) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 }
+
+// TestProbeVerbDegrades: the probe verb returns the {duration} contract and
+// degrades to 0 for an un-probeable / unknown source (no ffprobe needed). The
+// fixture videos are fake bytes, so ffprobe (if present) also yields 0 — either
+// way the contract holds and there is no error.
+func TestProbeVerbDegrades(t *testing.T) {
+	app, _ := openFixture(t)
+
+	// Known source, but fake bytes → duration 0 (ffprobe can't read it), ok=true.
+	r := callEnv(t, app, "probe", `{"source":"ring.mp4"}`)
+	if !r.OK {
+		t.Fatalf("probe verb should not error: %s", r.Error)
+	}
+	var pr ProbeResult
+	remarshal(t, r.Data, &pr)
+	if pr.Duration != 0 {
+		t.Fatalf("fake-byte video should probe to 0, got %v", pr.Duration)
+	}
+
+	// Unknown source → also {duration:0}, ok=true (degrade, not an error).
+	r = callEnv(t, app, "probe", `{"source":"nope.mp4"}`)
+	if !r.OK {
+		t.Fatalf("probe of an unknown source should degrade, not error: %s", r.Error)
+	}
+	remarshal(t, r.Data, &pr)
+	if pr.Duration != 0 {
+		t.Fatalf("unknown source should probe to 0, got %v", pr.Duration)
+	}
+}
+
+// TestProbeUnknownSourceDirect checks App.Probe directly returns 0 for a source
+// outside the open folder (path security: probe only touches indexed originals).
+func TestProbeUnknownSourceDirect(t *testing.T) {
+	app, _ := openFixture(t)
+	if got := app.Probe("/etc/passwd").Duration; got != 0 {
+		t.Fatalf("probe of an out-of-folder path must be 0, got %v", got)
+	}
+}

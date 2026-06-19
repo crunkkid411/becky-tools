@@ -78,6 +78,17 @@ var subtitleSubdirs = map[string]bool{
 // "clip1" reject "clip10" (next char '0' is not here).
 const separators = "_-. "
 
+// localMarker is the stem suffix becky-clip appends for LOCAL re-transcription:
+// "<stem>_LOCAL.srt". becky-clip's local ASR NEVER overwrites an original/official
+// ".srt"/".en.srt" (the forensic invariant — see cmd/clip/transcribe.go), so a
+// becky-made transcript always carries this distinct suffix. It is recognised as a
+// transcript here (localMatch). Because the strict sidecar.FindSubtitle (official
+// "<stem>.srt"/"<stem>.en.srt"/"<stem>.<lang>.srt") runs BEFORE this forgiving
+// resolver in Index(), an official transcript is always PREFERRED when both an
+// official and a "_LOCAL" sit beside the same video; the "_LOCAL" surfaces only
+// when it is the sole transcript. Kept in sync with cmd/clip/transcribe.go.
+const localMarker = "_LOCAL"
+
 // resolveTranscript is the forgiving fallback resolver. It returns the best
 // nearby subtitle sidecar for videoPath, or "" if none is found safely. claimed
 // is the set of already-paired subtitle paths (cleaned) within the current index
@@ -106,6 +117,16 @@ func resolveTranscript(videoPath string, claimed map[string]bool) string {
 
 	// Rule 1: same directory, boundary-prefix match.
 	if hit := boundaryMatch(dir, stem, claimed); hit != "" {
+		return hit
+	}
+
+	// Rule 1b: becky's own LOCAL re-transcription, "<stem>_LOCAL.srt", in the same
+	// directory. (boundaryMatch already covers this name via the "_" separator, but
+	// matching it explicitly makes the forensic contract intentional and test-locked
+	// rather than incidental.) It runs AFTER the official boundary match, and the
+	// strict sidecar.FindSubtitle runs before resolveTranscript at all, so an
+	// official transcript is always preferred when both exist.
+	if hit := localMatch(dir, stem, claimed); hit != "" {
 		return hit
 	}
 
@@ -260,6 +281,26 @@ func boundaryMatch(dir, stem string, claimed map[string]bool) string {
 		return bestEN
 	}
 	return best
+}
+
+// localMatch returns "<stem>_LOCAL.<subtitleExt>" in dir if present and not
+// already claimed, or "". This is becky-clip's own local-ASR transcript (see
+// localMarker). Comparison is case-insensitive on the stem; the suffix must be
+// exactly the video stem + localMarker (so "kitchen_LOCAL.srt" matches
+// "kitchen.mov", but "kitchen_LOCALE.srt" — a different qualifier — does not). The
+// first matching subtitle extension in sorted order wins, for determinism.
+func localMatch(dir, stem string, claimed map[string]bool) string {
+	wantStem := strings.ToLower(stem + localMarker)
+	for _, n := range subtitleNames(dir) {
+		full := filepath.Join(dir, n)
+		if claimed[filepath.Clean(full)] {
+			continue
+		}
+		if strings.ToLower(stemOf(n)) == wantStem {
+			return full
+		}
+	}
+	return ""
 }
 
 // stemMatchesBoundary reports whether subStem (a subtitle's lowercased stem) is a

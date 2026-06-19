@@ -45,6 +45,33 @@
     transcribingAll: false,
   };
 
+  // sourceDur caches each source's real duration (seconds) from the `probe` verb,
+  // so edge-trim clamps + the "drop a whole video" default don't re-probe per drag.
+  // path → number (seconds), or 0 when unknown.
+  const sourceDur = new Map();
+
+  // DEFAULT_VIDEO_SEC is the fallback length used when `probe` fails for a video
+  // dropped onto the timeline — large enough that the clip is usable; trim fixes it.
+  const DEFAULT_VIDEO_SEC = 600;
+
+  // probeDuration returns a source's duration in seconds, cached. It asks the
+  // backend `probe` verb once per source; on any failure it resolves to 0 (caller
+  // treats 0 as "unknown" → no upper clamp / uses a sane default). Never throws.
+  async function probeDuration(source) {
+    if (!source) return 0;
+    if (sourceDur.has(source)) return sourceDur.get(source);
+    try {
+      const r = await call("probe", { source });
+      const d = r && (r.duration || r.duration_sec || r.seconds);
+      const sec = d > 0 ? d : 0;
+      sourceDur.set(source, sec);
+      return sec;
+    } catch (e) {
+      sourceDur.set(source, 0);
+      return 0;
+    }
+  }
+
   // ---------- toast ----------
   let toastEl;
   function toast(msg, isErr) {
@@ -153,6 +180,26 @@
       chip.className = "vchip" + (v.has_transcript ? " has-tr" : "");
       chip.dataset.name = v.name;
       const busy = !!state.transcribing[v.name];
+
+      // Drag a video chip → drop on the timeline to add the WHOLE video as a clip
+      // (requirement #1). The chip carries its source path on the dataTransfer; the
+      // timeline drop handler probes the duration and calls add_clip. draggable on
+      // the chip itself (not the inner buttons) so click-to-play still works.
+      chip.draggable = true;
+      chip.addEventListener("dragstart", (e) => {
+        chipDrag = { source: v.path, name: v.name };
+        chip.classList.add("vchip-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "copy";
+          // payload (some WebView builds require non-empty data for a drag to start)
+          try { e.dataTransfer.setData("text/plain", v.path); } catch (_) {}
+        }
+      });
+      chip.addEventListener("dragend", () => {
+        chip.classList.remove("vchip-dragging");
+        chipDrag = null;
+        setTimelineDropTarget(false);
+      });
 
       const play = document.createElement("button");
       play.className = "vchip-play";
@@ -537,6 +584,10 @@
       el.style.width = widths[i] + "px";
       const inOut = `${hms(c.in)}–${hms(c.out)}`;
       el.innerHTML =
+        // edge grab-handles: drag the LEFT to move the source IN, the RIGHT to move
+        // the source OUT (requirement #3). Thin, subtle until hover; ew-resize cursor.
+        `<span class="c-handle left" title="drag to extend/trim the start (in-point)"></span>` +
+        `<span class="c-handle right" title="drag to extend/trim the end (out-point)"></span>` +
         `<span class="c-idx">${i + 1}</span>` +
         `<div class="c-name">${escapeHtml(c.name)}</div>` +
         `<div class="c-label">${escapeHtml(c.label || inOut)}</div>` +
@@ -550,12 +601,25 @@
       el.querySelector(".c-x").onclick = (e) => { e.stopPropagation(); removeClip(c.id); };
       el.querySelector(".c-trim.minus").onclick = (e) => { e.stopPropagation(); trimClip(c, +0.5, 0); };
       el.querySelector(".c-trim.plus").onclick = (e) => { e.stopPropagation(); trimClip(c, -0.5, 0); };
+      // single-click previews the clip (existing behaviour); double-click re-seeks to
+      // its in-point. Edge-drag suppresses both (the handle stops propagation, and a
+      // drag sets clipDidResize so the trailing click is swallowed).
       el.onclick = () => {
+        if (clipDidResize) { clipDidResize = false; return; }
+        activeTimelineClip = c;
+        selectClipEl(el);
+        previewAt({ source: c.source, name: c.name, start: c.in, end: c.out });
+      };
+      el.ondblclick = () => {
         activeTimelineClip = c;
         selectClipEl(el);
         previewAt({ source: c.source, name: c.name, start: c.in, end: c.out });
       };
       wireDrag(el);
+      wireEdgeResize(el, c);
+      // prefetch the source duration so the OUT clamp is ready the instant Jordan
+      // grabs an edge (best-effort; resize re-clamps from the cache on commit too).
+      probeDuration(c.source);
       track.appendChild(el);
     });
 
@@ -582,6 +646,115 @@
     if (nout <= nin) nout = nin + 0.25;
     try { applyTimeline(await call("set_trim", { id: c.id, in: nin, out: nout })); toast("trimmed clip"); }
     catch (e) { toast(e.message, true); }
+  }
+
+  // MIN_CLIP_SEC is the shortest a clip may be dragged to — keeps out > in with a
+  // readable floor so an edge-drag can never collapse a clip to nothing.
+  const MIN_CLIP_SEC = 0.5;
+
+  // clipDidResize is set true at the END of an edge-resize drag so the synthetic
+  // click that follows pointerup on the clip body doesn't also fire previewAt.
+  let clipDidResize = false;
+
+  // wireEdgeResize gives a clip block its two drag-to-trim/extend handles
+  // (requirement #3 — the key feature). Pointer-events drive a LIVE, optimistic
+  // width change; the authoritative set_trim fires once on release.
+  //
+  // px→seconds: the block's on-screen width maps to its dur_sec, so
+  //   pxPerSec = clipWidthPx / dur_sec   (consistent with how widths are computed:
+  //   width ∝ dur_sec, clamped by TL_MIN_PX). We read the ACTUAL rendered width at
+  //   grab time so a floored short clip still drags at its true on-screen rate.
+  //   dSec = (pointerX − startX) / pxPerSec.
+  //
+  // LEFT handle  → new in  = in0 + dSec  (drag LEFT = dSec<0 = earlier in = EXTEND
+  //                backward for context before the quote; drag RIGHT = trim start).
+  // RIGHT handle → new out = out0 + dSec (drag RIGHT = later out = EXTEND forward;
+  //                drag LEFT = trim end).
+  // Clamp: in ≥ 0, out ≤ sourceDuration (probe cache; 0 = unknown ⇒ no upper cap),
+  //        and out − in ≥ MIN_CLIP_SEC. Extending PAST the original cue boundary is
+  //        allowed (that is the whole point) up to the real source bounds.
+  function wireEdgeResize(el, c) {
+    el.querySelectorAll(".c-handle").forEach((h) => {
+      const isLeft = h.classList.contains("left");
+      h.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();           // never start a reorder drag from a handle
+        if (e.button !== undefined && e.button !== 0) return; // left button only
+
+        resizing = true;
+        el.draggable = false;          // suppress the HTML5 reorder drag while resizing
+        el.classList.add("resizing");
+        h.setPointerCapture && h.setPointerCapture(e.pointerId);
+
+        const startX = e.clientX;
+        const in0 = c.in || 0;
+        const out0 = c.out || 0;
+        const dur0 = Math.max(out0 - in0, 0.0001);
+        const widthPx0 = el.getBoundingClientRect().width || (dur0 * TL_PX_PER_SEC);
+        const pxPerSec = widthPx0 / dur0 || TL_PX_PER_SEC;
+        const srcDur = sourceDur.get(c.source) || 0;   // 0 ⇒ unknown ⇒ no upper clamp
+        let nin = in0, nout = out0;
+        let raf = 0, moved = false;
+
+        const io = el.querySelector(".c-io");
+        const durLbl = el.querySelector(".c-dur");
+
+        const paint = () => {
+          raf = 0;
+          const w = Math.max(TL_MIN_PX, Math.round((nout - nin) * pxPerSec));
+          el.style.width = w + "px";
+          if (io) io.textContent = `${hms(nin)}–${hms(nout)}`;
+          if (durLbl) durLbl.textContent = hms(nout - nin);
+        };
+
+        const onMove = (ev) => {
+          const dSec = (ev.clientX - startX) / pxPerSec;
+          if (Math.abs(ev.clientX - startX) > 2) moved = true;
+          if (isLeft) {
+            nin = in0 + dSec;
+            if (nin < 0) nin = 0;                       // clamp in ≥ 0
+            if (nin > out0 - MIN_CLIP_SEC) nin = out0 - MIN_CLIP_SEC; // keep out>in
+          } else {
+            nout = out0 + dSec;
+            if (srcDur > 0 && nout > srcDur) nout = srcDur;            // clamp out ≤ src
+            if (nout < in0 + MIN_CLIP_SEC) nout = in0 + MIN_CLIP_SEC;  // keep out>in
+          }
+          if (!raf) raf = requestAnimationFrame(paint);  // coalesce DOM writes
+        };
+
+        const onUp = async (ev) => {
+          h.releasePointerCapture && h.releasePointerCapture(e.pointerId);
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          if (raf) { cancelAnimationFrame(raf); paint(); }
+          el.classList.remove("resizing");
+          resizing = false;
+          clipDidResize = moved;       // swallow the trailing click only if we moved
+          // restore draggability on the next tick (after the click would have fired)
+          setTimeout(() => { el.draggable = true; }, 0);
+
+          if (!moved) return;          // a tap on the handle: nothing to commit
+          // Final clamp (defensive) + commit via set_trim; re-render from the result.
+          let fin = isLeft ? nin : in0;
+          let fout = isLeft ? out0 : nout;
+          if (fin < 0) fin = 0;
+          if (srcDur > 0 && fout > srcDur) fout = srcDur;
+          if (fout < fin + MIN_CLIP_SEC) fout = fin + MIN_CLIP_SEC;
+          try {
+            applyTimeline(await call("set_trim", { id: c.id, in: fin, out: fout }));
+            toast(isLeft ? "set in-point" : "set out-point");
+          } catch (err) {
+            toast(err.message, true);
+            renderTimeline();          // revert the optimistic width on failure
+          }
+        };
+
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+      // a handle must never start the block's native reorder drag
+      h.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
+    });
   }
 
   // syncPlayhead positions the timeline playhead while a timeline clip is playing:
@@ -631,23 +804,107 @@
     catch (e) { toast(e.message, true); }
   }
 
-  // drag-to-reorder
+  // ---------- drag a CLIP to reorder ----------
+  // dragId = the id of the timeline clip currently being dragged to reorder.
+  // chipDrag = {source,name} of a VIDEO chip being dragged in from the picker.
+  // Only ONE of these is non-null at a time. resizing guards the reorder drag so an
+  // edge-trim never also reorders (edges set draggable=false during the resize).
   let dragId = null;
+  let chipDrag = null;
+  let resizing = false;
+
+  // wireDrag makes a clip block reorder-draggable. The MIDDLE of the block drags to
+  // reorder (requirement #2); the edge handles (added in renderTimeline) own trim and
+  // suppress this by setting draggable=false on pointerdown. Drop computes the target
+  // index from the clip dropped onto and calls reorder; the strip re-renders in order.
   function wireDrag(el) {
-    el.addEventListener("dragstart", () => { dragId = el.dataset.id; el.classList.add("drag"); });
-    el.addEventListener("dragend", () => { el.classList.remove("drag"); clearDragOver(); });
-    el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("dragover"); });
-    el.addEventListener("dragleave", () => el.classList.remove("dragover"));
+    el.addEventListener("dragstart", (e) => {
+      if (resizing) { e.preventDefault(); return; }
+      dragId = el.dataset.id;
+      el.classList.add("drag");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", el.dataset.id); } catch (_) {}
+      }
+    });
+    el.addEventListener("dragend", () => { el.classList.remove("drag"); clearDragOver(); dragId = null; });
+    el.addEventListener("dragover", (e) => {
+      if (dragId == null || dragId === el.dataset.id) return; // ignore self / non-clip drags
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      // insertion indicator: highlight the LEFT edge if dropping before this clip,
+      // the RIGHT edge if after (based on cursor vs the block's horizontal midpoint).
+      const rect = el.getBoundingClientRect();
+      const after = (e.clientX - rect.left) > rect.width / 2;
+      el.classList.toggle("dropbefore", !after);
+      el.classList.toggle("dropafter", after);
+    });
+    el.addEventListener("dragleave", () => { el.classList.remove("dropbefore", "dropafter"); });
     el.addEventListener("drop", async (e) => {
-      e.preventDefault(); el.classList.remove("dragover");
       if (dragId == null || dragId === el.dataset.id) return;
-      const to = parseInt(el.dataset.index, 10);
-      try { applyTimeline(await call("reorder", { id: dragId, to })); }
-      catch (err) { toast(err.message, true); }
+      e.preventDefault();
+      e.stopPropagation();             // don't also fire the #timeline (chip) drop
+      const after = el.classList.contains("dropafter");
+      el.classList.remove("dropbefore", "dropafter");
+      // target index = this block's index, +1 when dropping on its right half so the
+      // dragged clip lands AFTER it. reorder() on the backend clamps out-of-range.
+      let to = parseInt(el.dataset.index, 10);
+      if (after) to += 1;
+      const id = dragId;
       dragId = null;
+      try { applyTimeline(await call("reorder", { id, to })); toast("reordered clip"); }
+      catch (err) { toast(err.message, true); }
     });
   }
-  function clearDragOver() { document.querySelectorAll(".clip.dragover").forEach((c) => c.classList.remove("dragover")); }
+  function clearDragOver() {
+    document.querySelectorAll(".clip.dropbefore, .clip.dropafter").forEach((c) =>
+      c.classList.remove("dropbefore", "dropafter"));
+  }
+
+  // ---------- drag a VIDEO chip onto the timeline → add the whole video ----------
+  // setTimelineDropTarget toggles the loud "drop here" highlight on #timeline while a
+  // video chip hovers it.
+  function setTimelineDropTarget(on) { timeline.classList.toggle("drop-target", !!on); }
+
+  // wireTimelineDropZone wires #timeline (a stable node — wired ONCE in wire()) to
+  // accept a video chip drop. It only reacts when a chip drag is in flight (chipDrag
+  // set) so it never interferes with clip-reorder drops (those are handled + stopped
+  // on the clip block itself).
+  function wireTimelineDropZone() {
+    timeline.addEventListener("dragover", (e) => {
+      if (!chipDrag) return;           // only for video-chip drags
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      setTimelineDropTarget(true);
+    });
+    timeline.addEventListener("dragleave", (e) => {
+      // only clear when the pointer actually left the timeline box (not a child)
+      if (e.target === timeline) setTimelineDropTarget(false);
+    });
+    timeline.addEventListener("drop", async (e) => {
+      if (!chipDrag) return;
+      e.preventDefault();
+      setTimelineDropTarget(false);
+      const drag = chipDrag;
+      chipDrag = null;
+      await addVideoAsClip(drag.source, drag.name);
+    });
+  }
+
+  // addVideoAsClip adds an ENTIRE video to the timeline as one clip: in=0, out=its
+  // real duration (probed + cached), label = the filename. Probe failures fall back
+  // to DEFAULT_VIDEO_SEC so the clip is still usable (edge-trim then fixes it).
+  async function addVideoAsClip(source, name) {
+    if (!source) { toast("that video has no source path", true); return; }
+    toast("adding " + (name || "video") + "…");
+    let dur = await probeDuration(source);
+    if (!(dur > 0)) dur = DEFAULT_VIDEO_SEC;
+    try {
+      const tl = await call("add_clip", { source, in: 0, out: dur, label: name || "" });
+      applyTimeline(tl);
+      toast("added " + (name || "video"));
+    } catch (e) { toast(e.message, true); }
+  }
 
   // ---------- overlay toggle ----------
   async function toggleOverlay() {
@@ -831,6 +1088,7 @@
       catch (err) { toast(err.message, true); }
     });
     document.querySelectorAll(".ex").forEach((b) => b.onclick = () => ask(b.textContent));
+    wireTimelineDropZone();   // accept a video chip dropped onto the timeline
 
     bootstrap();
     maybeAutodrive();

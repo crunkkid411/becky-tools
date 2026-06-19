@@ -1,24 +1,38 @@
 package main
 
-// transcribe.go wires the existing, working becky-transcribe ASR tool into
-// becky-clip so a detective can GENERATE a transcript for raw footage that has
-// no .srt sidecar (the showstopper: SPEC-BECKY-CLIP / FIX-PLAN — becky-clip was
-// entirely transcript-gated with no way to make one). It runs becky-transcribe
-// on a source video, writes the subtitle sidecar (<stem>.srt) NEXT TO the source
-// (exactly like the <video>.beckymeta.json sidecar — the original video bytes are
-// NEVER written), then re-indexes the open folder so the new transcript is
-// immediately searchable.
+// transcribe.go wires becky's caption pipeline into becky-clip so a detective can
+// GENERATE a usable transcript for raw footage — WITHOUT ever altering the
+// original files (the load-bearing forensic invariant of this whole project).
 //
-// HARD INVARIANTS (CLAUDE.md §2, FIX-PLAN): originals are sacred — only a NEW
-// sidecar beside the video is written, never the video. Degrade-never-crash: a
-// missing becky-transcribe binary is a clear typed error, and a failed video in a
-// batch is recorded and skipped, never a panic. The real ASR exec sits behind the
-// runTranscribe seam (mirroring app.go's pickFolderFn) so `go test` exercises the
-// wiring with a fake that writes a canned .srt — no test ever shells the real
-// ASR/ffmpeg/GPU.
+// The sequence for one video (Jordan's exact requirements):
+//  1. Ask becky-captions whether a TRUSTWORTHY official transcript already exists
+//     beside the video or can be cheaply fetched from YouTube — and crucially,
+//     whether the official captions COVER the full downloaded video (he edits
+//     incriminating segments out of his livestreams with YouTube's "edit"
+//     feature, which shortens the captions; a 2-hour .srt for a 3-hour video means
+//     the stream was edited and the official transcript is NOT trustworthy).
+//  2. If becky-captions says use_official → the official .srt is already in the
+//     folder (present or just fetched). We do NOTHING but re-index so it's picked
+//     up. We never re-transcribe over a complete official transcript.
+//  3. If it says local_needed (no official transcript, none available online, or
+//     the official one is short because the stream was edited) — OR becky-captions
+//     is not installed — we run the real local ASR (becky-transcribe), writing to
+//     a SEPARATE "<stem>_LOCAL.srt" sidecar. We NEVER overwrite an official
+//     ".srt"/".en.srt"; the original transcript stays byte-for-byte intact, and we
+//     keep two versions exactly as he asked.
+//
+// HARD INVARIANTS (CLAUDE.md §2, Jordan's project conditions): the original video
+// AND any original/official .srt are NEVER written — local ASR only ever produces
+// the becky-owned "<stem>_LOCAL.srt". Degrade-never-crash: a missing
+// becky-transcribe binary is a typed error; a missing becky-captions binary is not
+// fatal (we just go straight to local ASR); one failed video in a batch is
+// recorded and skipped. The real execs (becky-captions, becky-transcribe) sit
+// behind the runCaptions / runTranscribe seams so `go test` exercises the wiring
+// with fakes — no test ever shells the real ASR/yt-dlp/ffmpeg/GPU.
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"becky-go/internal/captions"
 	"becky-go/internal/footage"
 	"becky-go/internal/proc"
 )
@@ -35,14 +50,20 @@ import (
 // generous; BECKY_TRANSCRIBE_TIMEOUT (a Go duration like "45m") overrides it.
 const transcribeTimeout = 30 * time.Minute
 
+// captionsTimeout bounds one becky-captions exec. It probes the video and may do
+// a single yt-dlp subtitle fetch (no media download), so it is far quicker than
+// ASR; BECKY_CAPTIONS_TIMEOUT overrides it.
+const captionsTimeout = 10 * time.Minute
+
 // runTranscribe is the seam over the real ASR exec. It runs
 //
 //	becky-transcribe <videoPath> --format srt --output <srtOut>
 //
-// writing the subtitle sidecar to srtOut (which is beside the source video). It
-// defaults to the real exec.CommandContext; tests override it with a fake that
-// writes a canned .srt so the whole transcribe→re-index flow is exercised
-// offline. Production never reassigns it.
+// writing the subtitle sidecar to srtOut (which is the becky-owned
+// "<stem>_LOCAL.srt" beside the source video). It defaults to the real
+// exec.CommandContext; tests override it with a fake that writes a canned .srt so
+// the whole transcribe→re-index flow is exercised offline. Production never
+// reassigns it.
 var runTranscribe = func(ctx context.Context, transcribeBin, videoPath, srtOut string) error {
 	cmd := exec.CommandContext(ctx, transcribeBin, videoPath, "--format", "srt", "--output", srtOut)
 	proc.NoWindow(cmd) // becky-transcribe is a console app; no flash when the GUI spawns it
@@ -54,6 +75,35 @@ var runTranscribe = func(ctx context.Context, transcribeBin, videoPath, srtOut s
 		return fmt.Errorf("becky-transcribe failed: %w%s", err, transcribeErrTail(errBuf.String()))
 	}
 	return nil
+}
+
+// runCaptions is the seam over the real becky-captions exec. It runs
+//
+//	becky-captions <videoPath> --json [--offline]
+//
+// and parses the captions.Decision from stdout. It defaults to the real exec;
+// tests override it with a fake that returns a canned Decision so the
+// captions→ASR routing is exercised offline. Production never reassigns it. A
+// non-zero exit or unparseable output is an error (the caller then degrades to
+// local ASR — a missing/edited transcript must never block making one).
+var runCaptions = func(ctx context.Context, captionsBin, videoPath string, offline bool) (captions.Decision, error) {
+	args := []string{videoPath, "--json"}
+	if offline {
+		args = append(args, "--offline")
+	}
+	cmd := exec.CommandContext(ctx, captionsBin, args...)
+	proc.NoWindow(cmd)
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	out, err := cmd.Output()
+	if err != nil {
+		return captions.Decision{}, fmt.Errorf("becky-captions failed: %w%s", err, transcribeErrTail(errBuf.String()))
+	}
+	var d captions.Decision
+	if err := json.Unmarshal(out, &d); err != nil {
+		return captions.Decision{}, fmt.Errorf("becky-captions returned unparseable JSON: %w", err)
+	}
+	return d, nil
 }
 
 // transcribeErrTail formats the last of a captured stderr for an error message
@@ -112,8 +162,36 @@ func resolveTranscribeBin() (string, error) {
 	return "", &TranscribeError{msg: "becky-transcribe not found — build it with build-all-tools.bat (or set BECKY_TRANSCRIBE to its path)"}
 }
 
-// transcribeExeName is the becky-transcribe binary's filename for the host OS
-// (.exe on Windows).
+// resolveCaptionsBin finds the becky-captions executable, in the same order as
+// resolveTranscribeBin: BECKY_CAPTIONS → next to the running exe → PATH. Unlike
+// becky-transcribe, becky-captions is OPTIONAL: if it can't be located we return
+// ("", false) and the caller goes straight to local ASR (the original behaviour),
+// so an install without becky-captions still works. A BECKY_CAPTIONS that points
+// at a missing file also yields ("", false) — degrade, don't fail.
+func resolveCaptionsBin() (string, bool) {
+	if p := strings.TrimSpace(os.Getenv("BECKY_CAPTIONS")); p != "" {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		if fileExists(p) {
+			return p, true
+		}
+		return "", false
+	}
+	if exe, err := os.Executable(); err == nil {
+		cand := filepath.Join(filepath.Dir(exe), captionsExeName())
+		if fileExists(cand) {
+			return cand, true
+		}
+	}
+	if p, err := exec.LookPath("becky-captions"); err == nil {
+		return p, true
+	}
+	return "", false
+}
+
+// transcribeExeName / captionsExeName are the sibling binaries' filenames for the
+// host OS (.exe on Windows).
 func transcribeExeName() string {
 	if isWindows() {
 		return "becky-transcribe.exe"
@@ -121,17 +199,46 @@ func transcribeExeName() string {
 	return "becky-transcribe"
 }
 
-// srtSidecarPath returns the subtitle sidecar path for a video: <stem>.srt in the
-// SAME directory as the source (separator-safe). This is the canonical sidecar
-// internal/sidecar.FindSubtitle resolves on the next index, so a fresh transcript
-// is immediately picked up as HasTranscript.
-func srtSidecarPath(videoPath string) string {
+func captionsExeName() string {
+	if isWindows() {
+		return "becky-captions.exe"
+	}
+	return "becky-captions"
+}
+
+// localSrtSidecarPath returns the LOCAL-ASR subtitle sidecar path for a video:
+// "<stem>_LOCAL.srt" in the SAME directory as the source (separator-safe). The
+// "_LOCAL" suffix is the forensic guarantee: local re-transcription NEVER touches
+// an original/official "<stem>.srt" or "<stem>.en.srt" — it writes a clearly
+// becky-generated, separate file, so the case always has both versions and the
+// original transcript is provably unaltered. The indexer recognises it as a
+// transcript (footage.discover) while still preferring an official .srt.
+func localSrtSidecarPath(videoPath string) string {
 	dir := filepath.Dir(videoPath)
 	base := filepath.Base(videoPath)
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
 	if stem == "" {
 		stem = base
 	}
+	return filepath.Join(dir, stem+"_LOCAL.srt")
+}
+
+// officialSrtExists reports whether an ORIGINAL/official subtitle (<stem>.en.srt
+// or <stem>.srt — NOT a _LOCAL one) sits next to the video. It is the safety
+// interlock for the forensic invariant: before local ASR writes anything, we
+// confirm we are not about to clobber an original. (We only ever write to the
+// _LOCAL path, but this guard documents and enforces "originals are sacred" even
+// if a future change altered the output path.)
+func officialSrtExists(videoPath string) bool {
+	return fileExists(captions.OfficialSRTPath(videoPath)) ||
+		fileExists(bareSrtPath(videoPath))
+}
+
+// bareSrtPath returns "<stem>.srt" beside the video.
+func bareSrtPath(videoPath string) string {
+	dir := filepath.Dir(videoPath)
+	base := filepath.Base(videoPath)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
 	return filepath.Join(dir, stem+".srt")
 }
 
@@ -147,12 +254,50 @@ func transcribeContext(parent context.Context) (context.Context, context.CancelF
 	return context.WithTimeout(parent, to)
 }
 
-// transcribeOne runs ASR on one indexed video and writes its <stem>.srt sidecar
-// beside the source. It is the shared core of Transcribe + TranscribeAll: resolve
-// the binary, run the (seamed) exec, and confirm the sidecar was produced. It does
-// NOT re-index — the caller re-indexes once after a batch.
+// captionsContext builds a per-exec context with the (overridable) becky-captions
+// timeout. The caller must defer the returned cancel.
+func captionsContext(parent context.Context) (context.Context, context.CancelFunc) {
+	to := captionsTimeout
+	if d := strings.TrimSpace(os.Getenv("BECKY_CAPTIONS_TIMEOUT")); d != "" {
+		if parsed, err := time.ParseDuration(d); err == nil && parsed > 0 {
+			to = parsed
+		}
+	}
+	return context.WithTimeout(parent, to)
+}
+
+// transcribeOne runs the caption sequence for one indexed video:
+//
+//  1. If becky-captions is available, ask it. On "use_official" the official .srt
+//     is already in place — return nil (the caller re-indexes; nothing was made,
+//     nothing was overwritten).
+//  2. Otherwise (local_needed, or becky-captions absent / errored) run local ASR
+//     to "<stem>_LOCAL.srt" via the runTranscribe seam — NEVER over an official
+//     ".srt"/".en.srt". transcribeBin is the pre-resolved becky-transcribe path.
+//
+// It does NOT re-index — the caller re-indexes once after a batch.
 func (a *App) transcribeOne(transcribeBin string, v footage.Video) error {
-	srtOut := srtSidecarPath(v.Path)
+	// (1) Caption decision (optional tool — absence is not fatal).
+	if capBin, ok := resolveCaptionsBin(); ok {
+		cctx, ccancel := captionsContext(context.Background())
+		dec, err := runCaptions(cctx, capBin, v.Path, false)
+		ccancel()
+		if err == nil && dec.Action == captions.ActionUseOfficial {
+			// A complete official transcript already exists / was fetched beside the
+			// video. Do not run local ASR; do not touch the original. Done.
+			return nil
+		}
+		// On err or local_needed we fall through to local ASR. (becky-captions
+		// already logged its reasoning to stderr.)
+	}
+
+	// (2) Local ASR → the becky-owned _LOCAL sidecar. Never overwrite an official.
+	srtOut := localSrtSidecarPath(v.Path)
+	if officialSrtExists(v.Path) && filepath.Clean(srtOut) == filepath.Clean(captions.OfficialSRTPath(v.Path)) {
+		// Defensive: localSrtSidecarPath is always "_LOCAL", so this can never be an
+		// official path — but guard anyway so the invariant can't be broken silently.
+		return fmt.Errorf("refusing to overwrite an original transcript at %s", srtOut)
+	}
 	ctx, cancel := transcribeContext(context.Background())
 	defer cancel()
 	if err := runTranscribe(ctx, transcribeBin, v.Path, srtOut); err != nil {
@@ -164,13 +309,13 @@ func (a *App) transcribeOne(transcribeBin string, v footage.Video) error {
 	return nil
 }
 
-// Transcribe runs the real local ASR (becky-transcribe) on the video named name
-// (basename) in the open folder, writes the subtitle sidecar (<stem>.srt) NEXT TO
-// the source video, then re-indexes the open folder and returns the fresh
-// FolderView (so the UI sees has_transcript flip to true). Re-transcribing a video
-// that already has a transcript is allowed — it overwrites the sidecar. This is
-// synchronous and long-running (the GUI shows a spinner); the exec is bounded by a
-// generous timeout. The original video is never modified — only the .srt sidecar.
+// Transcribe runs the caption sequence (official-first, local fallback to
+// "<stem>_LOCAL.srt") for the video named name (basename) in the open folder,
+// then re-indexes and returns the fresh FolderView (so the UI sees has_transcript
+// flip to true). It NEVER overwrites an original/official transcript. This is
+// synchronous and long-running (the GUI shows a spinner). becky-transcribe must be
+// resolvable for the local-ASR path; becky-captions is optional (its absence just
+// skips the official check and goes straight to local ASR).
 func (a *App) Transcribe(name string) (FolderView, error) {
 	v, ok := a.lookupVideo(name)
 	if !ok {
@@ -202,12 +347,14 @@ type TranscribeFailure struct {
 	Error string `json:"error"`
 }
 
-// TranscribeAll transcribes every indexed video that lacks a transcript, writing
-// each <stem>.srt sidecar beside its source, then re-indexes once and returns the
-// fresh FolderView with counts. Degrade-never-crash: one video's failure is
-// recorded in Errors and the batch continues; a missing becky-transcribe binary is
-// a single clear error before any work. Videos that already have a transcript are
-// skipped (use per-video Transcribe to force a re-transcribe).
+// TranscribeAll runs the per-video caption sequence for every indexed video that
+// lacks a transcript, then re-indexes once and returns the fresh FolderView with
+// counts. Each video either keeps/fetches its complete official .srt
+// (use_official) or gets a becky-owned "<stem>_LOCAL.srt" (local_needed) — never
+// an overwritten original. Degrade-never-crash: one video's failure is recorded in
+// Errors and the batch continues; a missing becky-transcribe binary is a single
+// clear error before any work. Videos that already have a transcript are skipped
+// (use per-video Transcribe to force a re-transcribe).
 func (a *App) TranscribeAll() (TranscribeAllResult, error) {
 	a.mu.Lock()
 	pending := make([]footage.Video, 0, len(a.index.Videos))

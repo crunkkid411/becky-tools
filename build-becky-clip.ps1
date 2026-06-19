@@ -80,7 +80,7 @@ try {
     # so raw footage becomes searchable. becky-clip finds it next to becky-clip.exe.
     # Building it is just compiling a small Go wrapper (fast); actually running ASR
     # uses the local Parakeet model + Python already set up on this PC.
-    Title "2/4  Building the transcriber (becky-transcribe, for raw footage)..."
+    Title "2/4  Building the transcriber + caption helper (for raw footage)..."
     $TranscribeExe = Join-Path $BinDir 'becky-transcribe.exe'
     & go build -o $TranscribeExe .\cmd\transcribe
     if ($LASTEXITCODE -eq 0) {
@@ -89,6 +89,18 @@ try {
         Warn "    becky-transcribe didn't build. The window still works for footage that"
         Warn "    already has transcripts, but the in-window Transcribe button won't run"
         Warn "    until this builds. Copy the red text above to your assistant."
+    }
+    # becky-captions: before local ASR, it checks YouTube (via yt-dlp) for the official
+    # auto-captions and detects YouTube-edited streams (short captions vs full video), so
+    # the Transcribe button uses the official transcript when it's complete and only falls
+    # back to local ASR (writing a SEPARATE <name>_LOCAL.srt) when needed. Optional: if it
+    # doesn't build, transcription still works (it just always uses local ASR).
+    $CaptionsExe = Join-Path $BinDir 'becky-captions.exe'
+    & go build -o $CaptionsExe .\cmd\captions
+    if ($LASTEXITCODE -eq 0) {
+        Good ("    Caption helper built:  " + $CaptionsExe)
+    } else {
+        Warn "    becky-captions didn't build (optional). Transcription falls back to local ASR."
     }
 
     # 3) ffmpeg check (preview proxies, frame export, and the final render) ------

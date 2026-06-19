@@ -73,10 +73,14 @@ func TestTranscribeOneFlipsHasTranscript(t *testing.T) {
 		t.Fatalf("kitchen.mov should have a transcript after Transcribe, got %+v", after)
 	}
 
-	// The sidecar landed NEXT TO the source (kitchen.srt), never the video.
-	srt := filepath.Join(filepath.Dir(after.Path), "kitchen.srt")
+	// The LOCAL-ASR sidecar landed NEXT TO the source as the becky-owned
+	// "kitchen_LOCAL.srt" — never the video, and never an official "kitchen.srt".
+	srt := filepath.Join(filepath.Dir(after.Path), "kitchen_LOCAL.srt")
 	if !fileExists(srt) {
-		t.Fatalf("expected sidecar at %s", srt)
+		t.Fatalf("expected local-ASR sidecar at %s", srt)
+	}
+	if fileExists(filepath.Join(filepath.Dir(after.Path), "kitchen.srt")) {
+		t.Fatalf("local ASR must NOT create an official kitchen.srt")
 	}
 
 	// The new transcript is immediately searchable.

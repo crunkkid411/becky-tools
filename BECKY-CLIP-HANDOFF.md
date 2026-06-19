@@ -204,10 +204,44 @@ moment → double-clicks to drop the clip on a timeline → burns an unobtrusive
     search is slow; there's an in-memory parse cache (path+modtime) so re-searches are fast. Results
     are capped per-group (200 playable / 200 transcript-only) so a flood never buries playable hits.
 24. **becky-transcribe is now length-agnostic by default (windowed decoding).** See ROUND-2.5. The
-    `runTranscribe` exec in `cmd/clip/transcribe.go` doesn't pass `--chunk-seconds`, so it uses the
-    helper default (900s) — long videos chunk automatically. The go-forward path for Jordan's
-    un-transcribed complete videos: click ⊕ Transcribe → writes `<stem>.srt` beside the video →
-    strict match finds it → fully searchable + extractable.
+    `runTranscribe` exec in `cmd/clip/transcribe.go` uses the helper default window (900s) — long
+    videos chunk automatically. ROUND-3 UPDATE: local ASR now writes `<stem>_LOCAL.srt` (NOT
+    `<stem>.srt`) so it never collides with / overwrites an official transcript (see #25).
+
+## ROUND-3 (later 2026-06-18 — caption pipeline, forensic non-overwrite, real NLE timeline)
+- **Caption-first transcription + YouTube-edit detection** (`cmd/captions` + `internal/captions`,
+  wired into `cmd/clip/transcribe.go`): before local ASR, `becky-captions` checks for a TRUSTWORTHY
+  official transcript — uses an existing `<stem>.en.srt`/`.srt` or fetches YouTube auto-subs via
+  yt-dlp by the `[id]` (placing it as `<stem>.en.srt`, same folder, no new dirs). It compares the
+  srt's coverage to the VIDEO duration: `coverage_ratio >= 0.90` → `use_official`; short (he edits
+  incriminating bits out with YouTube's editor → the official captions shrink) or missing →
+  `local_needed`. Verified live on his real video (`[46T0KmQA7Eg]`, ratio 0.999 → use_official).
+- **Forensic non-overwrite:** local ASR writes a SEPARATE `<stem>_LOCAL.srt`; an official `.srt`/
+  `.en.srt` is NEVER touched (verified: original sha256 byte-identical before/after). Both versions
+  coexist. footage discovery recognizes `_LOCAL.srt` (official preferred when both exist).
+- **Real NLE timeline** (`assets/`): drag a video chip onto the timeline to add it (in=0, out=probed
+  duration); drag clips to reorder; **drag either clip EDGE to extend/trim in both directions** —
+  left handle = earlier in-point (context BEFORE the quote), right handle = later out-point (context
+  AFTER), clamped to `[0, source_duration]` via the new `probe` verb. All verified live via CDP
+  pointer/DnD events (out 17005→17009 on right-drag; in 17000→16995 on left-drag; reorder
+  c1,c2,c3→c2,c3,c1; chip→timeline added a clip).
+
+## 3.x ROUND-3 gotchas
+25. **Local re-transcribe must NEVER overwrite an original `.srt`.** Forensic invariant: originals
+    (video AND any official/official-fetched `.srt`) are sacred. Local ASR output is ALWAYS
+    `<stem>_LOCAL.srt`. Overwriting a prior `_LOCAL` (becky-owned) is fine; overwriting `.srt`/
+    `.en.srt` is forbidden (`officialSrtExists` guard in `cmd/clip/transcribe.go`).
+26. **yt-dlp EXITS NON-ZERO even when it successfully writes the subtitle** (benign
+    `[SubtitlesConvertor] ... already in the requested format` + comment-scrape give-ups). Judge
+    success by whether an `.srt` actually LANDED, not by the exit code (`internal/captions/fetch.go`).
+27. **Edit-detection = coverage ratio, not exact match.** `CoverageOK = 0.90` (`internal/captions`).
+    A 2-hour srt for a 3-hour video (ratio 0.67) ⇒ likely YouTube-edited ⇒ `local_needed` (transcribe
+    the FULL downloaded video to `_LOCAL.srt`). Tune the const if false-positives appear on videos
+    with long silent tails.
+28. **`probe` verb gives the frontend a source's true duration** (ffprobe via mediainfo, NoWindow).
+    The timeline edge-trim clamps `out <= duration`; a probe failure (e.g. a `.part`/`.ts` stub)
+    falls back to a 600s default so a clip is still draggable/trimmable. becky-captions + becky-transcribe
+    must BOTH ship next to becky-clip.exe (the one-click `build-becky-clip.ps1` builds all three).
 
 ## 4. The "becky" assistant — wired vs not (the honest state + the next big job)
 - **Tier 0 (deterministic, no model)** runs in the GUI today: keyword command parse + `footage`

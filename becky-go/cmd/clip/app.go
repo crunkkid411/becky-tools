@@ -31,6 +31,7 @@ import (
 	"becky-go/internal/config"
 	"becky-go/internal/edl"
 	"becky-go/internal/footage"
+	"becky-go/internal/mediainfo"
 	"becky-go/internal/sidecar"
 )
 
@@ -276,6 +277,37 @@ func (a *App) lookupVideo(name string) (footage.Video, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.index.VideoByName(name)
+}
+
+// ProbeResult is the reply for the probe verb: a source's true duration in
+// seconds (float). The frontend uses it to clamp timeline trim/extend so a clip
+// can't be dragged past the end of its source. Duration is 0 when the source
+// isn't probe-able (no ffprobe, unreadable, not in the folder) — a degrade, not an
+// error, so the UI just falls back to its own bounds.
+type ProbeResult struct {
+	Duration float64 `json:"duration"`
+}
+
+// Probe returns the duration (seconds) of a source video via ffprobe. The source
+// must be an indexed video in the open folder (path security — probe can only
+// touch originals the case folder already knows). Degrade-never-crash: an
+// unresolved source or an ffprobe failure returns {duration: 0}, never an error,
+// so the timeline UI keeps working without ffprobe. Read-only: the video bytes are
+// only inspected, never written.
+func (a *App) Probe(source string) ProbeResult {
+	v, ok := a.resolveSource(source)
+	if !ok {
+		return ProbeResult{Duration: 0}
+	}
+	ff := strings.TrimSpace(os.Getenv("BECKY_FFPROBE"))
+	if ff == "" {
+		ff = "ffprobe"
+	}
+	info, err := mediainfo.Probe(ff, v.Path)
+	if err != nil || info.Duration < 0 {
+		return ProbeResult{Duration: 0}
+	}
+	return ProbeResult{Duration: info.Duration}
 }
 
 // ---- search (keyword across the folder's transcripts) ---------------------

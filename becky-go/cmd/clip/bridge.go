@@ -59,11 +59,17 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "media_url":
 		// Resolve a source (or proxy) to a /media URL the <video> can load.
 		return a.mediaURLReply(argString(args, "source"))
+	case "probe":
+		// Report a source's true duration (seconds) so the UI can clamp timeline
+		// trim/extend. Degrades to {duration:0} when not probe-able (no ffprobe).
+		return a.Probe(argString(args, "source")), nil
 
-	// ---- transcription (generate the missing .srt sidecar) ----
+	// ---- transcription (caption pipeline: official-first, local fallback) ----
 	case "transcribe":
-		// Run the real local ASR on one video → write <stem>.srt beside it →
-		// re-index. Long-running (the GUI shows a spinner).
+		// Run the caption sequence on one video: prefer a complete official .srt
+		// (present or fetched via becky-captions); else local ASR to
+		// <stem>_LOCAL.srt (never overwriting an original) → re-index.
+		// Long-running (the GUI shows a spinner).
 		return a.Transcribe(argString(args, "name"))
 	case "transcribe_all":
 		// Transcribe every indexed video lacking a transcript (degrade per video).

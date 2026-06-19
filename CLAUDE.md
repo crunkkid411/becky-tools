@@ -294,6 +294,37 @@ contract, function signatures, constraints, and Definition of Done are in
 
 ---
 
+**Branch `local/becky-clip-fix3-2026-06-18` (local, 2026-06-18) — becky-clip: visible quotes + no console-flash + caption/edit-detection pipeline + forensic non-overwrite + real NLE timeline. MERGED to master + pushed.**
+
+Jordan's 3rd round of real-folder feedback (`E:\TakingBack2007`, 484 videos + 418 yt-dlp `.en.srt`).
+Two acute bugs + four new requirements, ALL fixed and verified by driving the live window on his
+real folder (CDP). Built via parallel subagents + orchestrator integration; `go build/vet/test ./...`
+green, gofmt-clean, `node --check` clean.
+- **Search "showed a count but the sidebar never changed":** the `.video-picker` had no height cap →
+  with hundreds of videos it grew ~15000px and pushed `#results` off-screen. Capped it (max-height
+  34vh, own scroll); results now visible (227 penguin quotes, first at top 442 of a 761px window).
+- **Console-window FLASH on every video click** (seizure-inducing): windowsgui parent + console-app
+  children. `internal/proc.NoWindow` (CREATE_NO_WINDOW) on every child exec in the GUI chain (reel
+  ffmpeg/ffprobe, mediainfo, becky-transcribe + its ffmpeg/python/vad). Verified: no conhost on click.
+- **Caption-first transcription + YouTube-edit detection** (`becky-captions` = `cmd/captions` +
+  `internal/captions`): before local ASR, check for a trustworthy official transcript (existing
+  `<stem>.en.srt` or yt-dlp-fetched by `[id]`, placed same-folder/same-naming) and compare its
+  coverage to the VIDEO duration (`>=0.90` → use official; short = he YouTube-edited out segments →
+  local). Verified live (`[46T0KmQA7Eg]` ratio 0.999 → use_official; a no-srt video fetched cleanly).
+- **Forensic non-overwrite:** local ASR writes `<stem>_LOCAL.srt`, NEVER an official `.srt` (verified
+  sha256 unchanged). Both versions coexist. footage recognizes `_LOCAL.srt`.
+- **Real NLE timeline:** drag a video chip onto the timeline (adds it, in=0/out=probed); drag clips
+  to reorder; **drag either clip EDGE to extend/trim both directions** for pre/post-quote context,
+  clamped to source duration via a new `probe` verb. All verified live (right-drag out 17005→17009,
+  left-drag in 17000→16995, reorder c1,c2,c3→c2,c3,c1, chip→timeline added a clip).
+
+The one-click `build-becky-clip.ps1` builds becky-clip (windowsgui, no console) + becky-transcribe +
+becky-captions. Details: `BECKY-CLIP-HANDOFF.md` ROUND-3 + gotchas §3.25-28. Evidence:
+`becky-clip-work/real-{4,5,6,7}-*.png`. **Left for local: nothing** — shipped. Honest caveat: the
+edit-detection coverage threshold (0.90) may want tuning on videos with long silent tails.
+
+---
+
 **Branch `local/becky-clip-fix2-2026-06-18` (local, 2026-06-18) — becky-transcribe long-video fix + becky-clip real-folder usability. MERGED to master + pushed.**
 
 Jordan's real-folder feedback after round 2. Four fixes, all verified by driving the live window on
