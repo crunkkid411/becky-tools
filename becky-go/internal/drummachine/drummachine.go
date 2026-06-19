@@ -338,6 +338,33 @@ func (m *Machine) SetPadSample(pad int, path string) (*Machine, error) {
 	return out, nil
 }
 
+// WithKit returns a new Machine with the Kit replaced. The Bank and Scenes are
+// preserved unchanged — this is a drop-in kit swap, not a new project. The
+// replacement Kit is deep-copied so the caller's Kit is never aliased.
+func (m *Machine) WithKit(k Kit) *Machine {
+	out := m.clone()
+	out.Kit = cloneKit(k)
+	return out
+}
+
+// WithPadSound returns a new Machine with the selected pad's SamplePath set to
+// path and its Sound pointer set to snd (may be nil for a path-only simple pad).
+// Out-of-range pad -> (unchanged copy, error).
+func (m *Machine) WithPadSound(pad int, path string, snd *sampler.Sound) (*Machine, error) {
+	out := m.clone()
+	if pad < 0 || pad >= len(out.Kit.Pads) {
+		return out, padErr(pad)
+	}
+	out.Kit.Pads[pad].SamplePath = path
+	if snd != nil {
+		cp := *snd
+		out.Kit.Pads[pad].Sound = &cp
+	} else {
+		out.Kit.Pads[pad].Sound = nil
+	}
+	return out, nil
+}
+
 // SetPadLevel sets linear level (clamped 0..1).
 func (m *Machine) SetPadLevel(pad int, level float64) (*Machine, error) {
 	out := m.clone()

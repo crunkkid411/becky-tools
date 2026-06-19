@@ -46,6 +46,7 @@ import (
 
 	"becky-go/internal/drummachine"
 	"becky-go/internal/machinectl"
+	"becky-go/internal/samplelib"
 )
 
 // App holds all GUI state. It lives on the UI goroutine; cross-goroutine state (the
@@ -87,6 +88,19 @@ type App struct {
 	playing  bool        // a --play-machine run is live
 	playProc *os.Process // the live engine process so ■ Stop can kill it
 	curPath  string      // the machine.json path (set by Open/Save), "" if unsaved
+
+	// kit / sample browser — wired in gui_kit.go.
+	kitFolderBtn    widget.Clickable
+	kitSFZBtn       widget.Clickable
+	browserToggle   widget.Clickable
+	browserScanBtn  widget.Clickable
+	browserSearch   widget.Editor
+	browserList     widget.List
+	browserShowing  bool               // whether the side panel is visible
+	browserLoading  bool               // scan goroutine is running (guarded by mu)
+	browserSamples  []samplelib.Sample // full index from last scan (guarded by mu)
+	browserFiltered []samplelib.Sample // filtered view (guarded by mu)
+	browserBtns     []widget.Clickable // one per browserFiltered entry
 }
 
 func main() {
@@ -116,6 +130,7 @@ func newApp(w *app.Window) *App {
 	}
 	a.command.SingleLine = true
 	a.command.Submit = true
+	a.browserSearch.SingleLine = true
 	a.syncStepButtons()
 	a.status = "16 pads. Click a pad to hear it; click steps to build a beat; or just tell becky what you want."
 	return a
@@ -185,6 +200,9 @@ func (a *App) handleInput(gtx layout.Context) {
 		a.startSave()
 	}
 
+	// Kit load + sample browser controls.
+	a.handleKitInput(gtx)
+
 	// The AI command box: Enter or the run icon submits the instruction.
 	runCmd := a.runBtn.Clicked(gtx)
 	for {
@@ -205,25 +223,38 @@ func (a *App) handleInput(gtx layout.Context) {
 
 // layoutFrame fills the window black and stacks: a top bar (transport + file), the
 // big pad grid, the selected-pad step sequencer, then the AI box + status line.
+// When the sample browser is open it splits the area horizontally: main content on
+// the left, the browser panel on the right.
 func (a *App) layoutFrame(gtx layout.Context) {
 	paint.Fill(gtx.Ops, colWindowBg)
 	layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(a.layoutTopBar),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-			layout.Flexed(1, a.layoutPads),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-			layout.Rigid(a.layoutSequencer),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-			layout.Rigid(a.layoutAIBox),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-			layout.Rigid(a.layoutStatus),
+		main := func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(a.layoutTopBar),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Flexed(1, a.layoutPads),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(a.layoutSequencer),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(a.layoutAIBox),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(a.layoutStatus),
+			)
+		}
+		if !a.browserShowing {
+			return main(gtx)
+		}
+		// Show browser panel to the right.
+		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+			layout.Flexed(1, main),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+			layout.Rigid(a.layoutBrowserPanel),
 		)
 	})
 }
 
-// layoutTopBar draws the transport (▶ / ■), the tempo + swing readout, and the
-// Open / Save buttons in one row.
+// layoutTopBar draws the transport (▶ / ■), the tempo + swing readout, kit load
+// buttons, and the Open / Save buttons in one row.
 func (a *App) layoutTopBar(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -240,6 +271,9 @@ func (a *App) layoutTopBar(gtx layout.Context) layout.Dimensions {
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: gtx.Constraints.Min}
 		}),
+		// Kit load controls (Load Folder | Load SFZ | Browse samples).
+		layout.Rigid(a.layoutKitButtons),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return a.iconBtn(gtx, &a.openBtn, a.icons.folder, "open", colElecBlue)
 		}),
