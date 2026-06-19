@@ -1,4 +1,4 @@
-# Build-Becky-Drum.ps1 — the one-click "Build my drum machine" button for Jordan.
+# Build-Becky-Drum.ps1 - the one-click "Build my drum machine" button for Jordan.
 #
 # Double-clicking the Desktop shortcut (or "Build Becky Drum.bat") runs this. It:
 #   1. Builds the drum-machine WINDOW  (becky-drummachine.exe, the GUI).
@@ -7,7 +7,11 @@
 #   4. Opens the drum machine.
 #
 # Jordan never types anything. He clicks, watches, and the window opens. No local
-# Claude agent involved — this just compiles what the cloud already wrote.
+# Claude agent involved - this just compiles what the cloud already wrote.
+#
+# NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads .ps1 files as the
+# system ANSI codepage when there is no BOM, so a stray Unicode dash/quote becomes a
+# parse error and the build window flashes shut. Plain ASCII avoids that entirely.
 
 param([switch]$NoPause, [switch]$NoLaunch)   # switches are only for automated testing.
 
@@ -31,7 +35,7 @@ function Bad   ($m) { Write-Host $m -ForegroundColor Red }
 function Title ($m) { Write-Host ""; Write-Host $m -ForegroundColor Cyan; Write-Host ("-" * 60) -ForegroundColor DarkCyan }
 function Finish ($code) { Write-Host ""; if (-not $NoPause) { Read-Host 'Press Enter to close this window' }; exit $code }
 
-Title "Becky Drum Machine — building your instrument"
+Title "Becky Drum Machine - building your instrument"
 
 # ----- sanity checks ----------------------------------------------------------
 if (-not (Test-Path $GoDir)) {
@@ -71,7 +75,7 @@ try {
     if ($audioOk) {
         Good "    Sound engine built:  $AudioExe"
     } else {
-        Warn "    Sound engine didn't build — the window will still OPEN, but pads"
+        Warn "    Sound engine didn't build - the window will still OPEN, but pads"
         Warn "    won't make sound until this is fixed. Usually means the C compiler"
         Warn "    (MSYS2/mingw at $mingw) isn't installed. Tell your assistant."
     }
@@ -85,7 +89,7 @@ try {
         $sc = $ws.CreateShortcut($lnk)
         $sc.TargetPath = $GuiExe
         $sc.WorkingDirectory = $BinDir   # so the window finds the sibling sound engine
-        $sc.Description = 'Becky Drum Machine — AI-first 16-pad groovebox'
+        $sc.Description = 'Becky Drum Machine - AI-first 16-pad groovebox'
         $sc.Save()
         Good "    Shortcut ready:  $lnk"
     } catch {

@@ -104,6 +104,14 @@ and Windows for every push and PR. Green CI means the deterministic Go layer is
 sound. CI does **not** exercise the ML path (no model weights / GPU on CI) — that
 is validated locally on real footage.
 
+**One-click `.bat`/`.ps1` launcher scripts MUST be ASCII-only** (no em-dashes `—`, smart
+quotes, en-dashes, etc.), and every user-facing `.bat` must end with `pause`. A double-clicked
+`.bat` runs Windows **PowerShell 5.1**, which reads a BOM-less `.ps1` as the system ANSI
+codepage — so a single stray Unicode char makes the whole script fail to PARSE and the window
+flashes shut with no visible error. This silently broke both `Build Becky Clip.bat` and the
+cloud-written `Build Becky Drum.bat` (fixed 2026-06-18). Before shipping a launcher, parse-check
+it under 5.1: `powershell -Command "$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('x.ps1',[ref]$null,[ref]$e);$e"`.
+
 ---
 
 ## 4. Cloud ↔ Local handoff protocol
@@ -208,6 +216,11 @@ load-bearing rules, in brief:
   starred-repo mining + reference apps (infinite-kanvas, ACE-Step-DAW, DAW-Copilot,
   cate, jsoncrack, blocksuite, the "show me, don't do it" overlay). Read before any
   becky-canvas GUI/agent-UX work — the research is done, don't redo it.
+
+- `SPEC-BECKY-CLIP.md` + `BECKY-CLIP-HANDOFF.md` — becky-clip, the forensic transcript-based
+  video COMPILATION editor (WebView2 GUI + Go engine). The spec is *what it is*; the HANDOFF is
+  *how to change it without re-making solved mistakes* (gotchas, non-obvious logic, dead ends
+  already ruled out). **Read the HANDOFF before touching becky-clip.**
 
 **Specs (read the one for the tool you're building):**
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
