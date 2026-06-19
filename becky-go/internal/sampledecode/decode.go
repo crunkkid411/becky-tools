@@ -43,7 +43,7 @@ func parseFmt(c []byte) (fmtChunk, error) {
 	if f.tag != wfPCM && f.tag != wfFloat {
 		return fmtChunk{}, fmt.Errorf("sampledecode: unsupported format tag 0x%04X", f.tag)
 	}
-	if f.bits == 0 || f.bits%8 != 0 {
+	if f.bits == 0 || f.bits%8 != 0 || f.bits > 32 {
 		return fmtChunk{}, fmt.Errorf("sampledecode: unsupported bit depth %d", f.bits)
 	}
 	return f, nil
@@ -75,8 +75,11 @@ func decodeSamples(data []byte, f fmtChunk) ([]float32, int, error) {
 	}
 
 	// Confirm we actually support this (tag, bits) pair before allocating.
+	// P2-2: 8-bit WAV is UNSIGNED (128 = zero) — different from all other PCM depths
+	// which are signed two's complement. We handle it explicitly so lo-fi/vintage kits
+	// load without error. The bit depth check above allows 8-bit through.
 	switch {
-	case f.tag == wfPCM && (f.bits == 16 || f.bits == 24 || f.bits == 32):
+	case f.tag == wfPCM && (f.bits == 8 || f.bits == 16 || f.bits == 24 || f.bits == 32):
 	case f.tag == wfFloat && f.bits == 32:
 	default:
 		return nil, 0, fmt.Errorf("sampledecode: unsupported format tag 0x%04X / %d-bit", f.tag, f.bits)
@@ -87,6 +90,10 @@ func decodeSamples(data []byte, f fmtChunk) ([]float32, int, error) {
 	for i := 0; i < frames*ch; i++ {
 		p := data[i*bytesPerSmp:]
 		switch {
+		case f.tag == wfPCM && f.bits == 8:
+			// 8-bit PCM is UNSIGNED: 0x00 = -1.0, 0x80 (128) = 0.0, 0xFF = ~+1.0.
+			// Signed value = byte - 128; scale to [-1,1] by dividing by 128.
+			out[i] = float32(int(p[0])-128) / 128.0
 		case f.tag == wfPCM && f.bits == 16:
 			out[i] = float32(int16(binary.LittleEndian.Uint16(p))) / 32768.0
 		case f.tag == wfPCM && f.bits == 24:
