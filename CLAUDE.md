@@ -294,6 +294,38 @@ contract, function signatures, constraints, and Definition of Done are in
 
 ---
 
+**Branch `local/becky-clip-fix2-2026-06-18` (local, 2026-06-18) — becky-transcribe long-video fix + becky-clip real-folder usability. MERGED to master + pushed.**
+
+Jordan's real-folder feedback after round 2. Four fixes, all verified by driving the live window on
+his ACTUAL case folder `X:/Videos/2026/01_jan/takingback2007` (16 stream videos + a `transcripts/`
+subfolder of 418 yt-dlp `.en.srt`). Built via 4 parallel subagents (disjoint files) + orchestrator
+integration; whole module `go build/vet/test ./...` green, gofmt-clean, `node --check` clean.
+- **becky-transcribe now transcribes ANY length by default** (`cmd/transcribe/main.go` +
+  `internal/pyhelpers/transcribe_parakeet.py`): the helper was loading the WHOLE wav + decoding in
+  ONE pass (VRAM scales with length → multi-hour OOM; CPU fallback re-ran the whole clip). Now it
+  decodes in time-WINDOWS (`--chunk-seconds`, default 900), model loaded ONCE, per-window GPU→CPU
+  fallback that keeps done windows. Deterministic; a sub-window file is byte-identical to before.
+  Verified: 50s clip one-shot == `--chunk-seconds 10` (6 windows) at the seams; CPU path works.
+- **No console window** (`-ldflags "-H windowsgui"` in both build scripts; PE subsystem now 2).
+- **Search returns timestamped QUOTES on his real folder** (was 0): forgiving discovery
+  (`internal/footage/discover.go` — boundary-prefix, caption subfolders incl. `transcripts/`,
+  lone-pair, **YouTube-`[id]` pairing**) + **transcript-first search** (orphaned `.srt` are
+  searchable "transcript-only" quotes). Live: `search penguin` → 213 quotes (13 playable from
+  id-paired videos + 200 transcript-only); clicking a playable quote seeks his real 1.5GB video to
+  the exact moment (19:32) and plays.
+- **Real NLE timeline** (`assets/`): ruler, duration-proportional clip blocks, playhead, trim
+  (`set_trim`), drag-reorder, ✕, strong empty state; **hours-aware timecodes** (`H:MM:SS`); zoned
+  VIDEOS/QUOTES panel with loud empty states.
+
+Go-forward path for his 16 un-transcribed complete videos: click ⊕ Transcribe (now works on 4-hour
+streams) → `<stem>.srt` lands beside the video → fully searchable + extractable. New gotchas +
+the real-folder findings are in `BECKY-CLIP-HANDOFF.md` (ROUND-2.5 + gotchas §3.20-24). Evidence:
+`becky-clip-work/real-*.png`. **Left for local: nothing** — shipped. Honest caveats: transcript-only
+quotes are find-only (no video to extract until transcribed/located); his 418 orphaned srt are for
+streams whose complete videos aren't in that folder (a data situation, not a tool bug).
+
+---
+
 **Branch `local/becky-clip-fix-2026-06-18` (local, 2026-06-18) — `becky-clip` ROUND 2: "it's a fancy .jpg" -> actually works on real footage. MERGED to master + pushed.**
 
 Jordan reported the shipped becky-clip was non-functional on his real footage: search did nothing,

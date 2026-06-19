@@ -50,7 +50,8 @@ REM headless stub. Pure Go (go-webview2, no cgo), so force CGO off for this buil
 echo Building becky-clip.exe ^(GUI window, -tags gui^)...
 set "BECKY_OLDCGO=%CGO_ENABLED%"
 set "CGO_ENABLED=0"
-go build -tags gui -o bin\becky-clip.exe .\cmd\clip
+REM -H windowsgui = no console window pops up when the .exe is double-clicked.
+go build -tags gui -ldflags "-H windowsgui" -o bin\becky-clip.exe .\cmd\clip
 if errorlevel 1 echo WARN: GUI clip build failed - headless becky-clip.exe kept.
 set "CGO_ENABLED=%BECKY_OLDCGO%"
 

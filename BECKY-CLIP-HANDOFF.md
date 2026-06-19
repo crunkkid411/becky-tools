@@ -30,6 +30,33 @@ WebView2 window via CDP on real footage, not a demo):
 - **One-click build** (`build-becky-clip.ps1`) now also builds `becky-transcribe.exe` so the
   Transcribe button works out of the box.
 
+## ROUND-2.5 FIX SUMMARY (later 2026-06-18 — Jordan's real-folder feedback)
+After round 2, Jordan tried it on his ACTUAL case folder (`X:/Videos/2026/01_jan/takingback2007`)
+and hit four real issues; all fixed + verified by driving the live window on that real folder:
+- **becky-transcribe choked on long videos** (multi-hour livestreams OOM'd the GPU; CPU re-ran the
+  WHOLE clip = "ridiculous wait"). Root cause: the Python helper loaded the ENTIRE wav + decoded it
+  in ONE pass (VRAM scales with length). Fix: **windowed decoding inside the helper** — model loaded
+  ONCE, audio processed in time-windows (`--chunk-seconds`, default 900), per-window GPU→CPU fallback
+  that keeps already-done windows. Default behavior, deterministic; a file under one window is
+  byte-identical to before. Now handles 4 min or 4 hours. (`cmd/transcribe/main.go` + `internal/pyhelpers/transcribe_parakeet.py`.)
+- **The cmd/console window on launch** — fixed by building the gui exe with `-ldflags "-H windowsgui"`
+  (PE subsystem 2). No console box pops up. (`build-becky-clip.ps1` + `build-all-tools.bat`.)
+- **"Search only shows full videos, not quotes."** The engine+GUI quote-search was actually fine
+  (proven). The REAL cause: his `.srt` live in a `transcripts/` SUBFOLDER with names that DON'T match
+  the video stems (yt-dlp downloads; many videos absent/`.part`). Fixes: (1) **forgiving discovery**
+  (`internal/footage/discover.go`) — same-dir boundary-prefix, caption subfolders (`subs/ subtitles/
+  captions/ transcripts/ srt/`), lone-pair, and **YouTube-`[id]` pairing** (the robust key for yt-dlp:
+  pair a video and a subtitle that share the same bracketed 11-char id even when the rest differs);
+  (2) **transcript-first search** — `.srt` with no linked video are indexed as searchable
+  "transcript-only" quotes (his 418 orphans became searchable; `search penguin` → 213 quotes, 13
+  playable + 200 transcript-only). Transcript-only results show the quote+timecode+derived episode
+  title but can't be played/extracted (honest toast on add).
+- **"No visible/functional timeline."** Rebuilt as a real mini-NLE (`assets/`): time RULER,
+  clip blocks with width proportional to duration, a playhead that tracks playback, trim −/+
+  (`set_trim`), drag-reorder, ✕ remove, and a strong empty state. Plus **hours-aware timecodes**
+  (`H:MM:SS` ≥ 1h, was the broken `72:33`) and a zoned **VIDEOS / QUOTES** left panel with loud
+  empty states (explains WHEN nothing matches and WHY).
+
 ---
 
 ## 0. What it is, in one breath
@@ -156,6 +183,31 @@ moment → double-clicks to drop the clip on a timeline → burns an unobtrusive
 19. **`build-becky-clip.ps1` now builds BOTH `becky-clip.exe` and `becky-transcribe.exe`** (steps
     1/4 + 2/4) so the in-window Transcribe button works on a fresh checkout. Keep it ASCII-only and
     parse-check under 5.1 (gotcha #1).
+20. **NO console window: build the gui exe with `-ldflags "-H windowsgui"`.** Without it, Go makes a
+    console-subsystem exe and Windows pops a black cmd box on double-click (Jordan hated it). Both
+    `build-becky-clip.ps1` and `build-all-tools.bat` now pass it. Verify: PE subsystem must be 2 (GUI),
+    not 3 (console). TRADE-OFF: a windowsgui exe has no stdout/stderr console, so diagnostics vanish —
+    use `BECKY_CLIP_DEBUG=1` (WebView2 devtools) when debugging.
+21. **Real footage rarely has `<stem>.srt` next to the video.** Jordan's `.srt` sit in a
+    `transcripts/` subfolder with names that DON'T match the video stem, and many are orphaned (the
+    video is absent or a `.mp4.part`). Discovery is now forgiving (`internal/footage/discover.go`):
+    same-dir boundary-prefix, caption subfolders, lone-pair, and **YouTube-`[id]` pairing** — the
+    robust key for yt-dlp content (pair video↔srt sharing the bracketed 11-char id). DON'T loosen
+    `sidecar.FindSubtitle` (pipeline-wide + strict); the forgiving logic lives in footage, scoped to
+    becky-clip. Guard against false pairs (e.g. `clip1` must NOT grab `clip10`): require a separator
+    boundary, not a bare prefix.
+22. **Transcript-only search results exist now.** `.srt` with no linked video are searchable as
+    "transcript-only" quotes (`SearchResult.TranscriptOnly=true`, `Source=""`, `Name=` derived episode
+    title). They render with a muted badge and CANNOT be played/added (honest toast) — they're
+    find-only until the source video is transcribed/located. Don't try to `media_url`/`add_clip` them.
+23. **Searching parses every `.srt` in the tree.** Jordan's folder has 418 srt (~60MB). The first
+    search is slow; there's an in-memory parse cache (path+modtime) so re-searches are fast. Results
+    are capped per-group (200 playable / 200 transcript-only) so a flood never buries playable hits.
+24. **becky-transcribe is now length-agnostic by default (windowed decoding).** See ROUND-2.5. The
+    `runTranscribe` exec in `cmd/clip/transcribe.go` doesn't pass `--chunk-seconds`, so it uses the
+    helper default (900s) — long videos chunk automatically. The go-forward path for Jordan's
+    un-transcribed complete videos: click ⊕ Transcribe → writes `<stem>.srt` beside the video →
+    strict match finds it → fully searchable + extractable.
 
 ## 4. The "becky" assistant — wired vs not (the honest state + the next big job)
 - **Tier 0 (deterministic, no model)** runs in the GUI today: keyword command parse + `footage`

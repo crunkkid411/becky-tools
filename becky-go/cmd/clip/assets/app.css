@@ -87,9 +87,13 @@ button { font-family: inherit; }
 .video-picker { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .video-picker.hidden { display: none; }
 
-/* picker header: video count + the prominent "Transcribe all" action */
+/* picker header: VIDEOS zone label + count + the prominent "Transcribe all" action */
 .vp-head { width: 100%; display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-.vp-count { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+.vp-zone {
+  color: var(--neon); font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.5px; padding-right: 8px; border-right: 1px solid var(--line);
+}
+.vp-count { color: var(--dim); font-size: 11px; }
 .vp-all {
   margin-left: auto; background: #14241c; color: var(--neon); border: 1px solid var(--neon-dim);
   border-radius: 6px; padding: 4px 9px; cursor: pointer; font-size: 11px; font-weight: 700; line-height: 1;
@@ -135,6 +139,19 @@ button { font-family: inherit; }
 .cta-transcribe:disabled { background: var(--neon-dim); color: #0a0a0a; cursor: default; animation: pulse 1.1s ease-in-out infinite; }
 .cta-sub { margin-top: 10px !important; font-size: 11px !important; color: var(--dim); }
 
+/* QUOTES zone header — makes the results panel a clearly-separate zone from the
+   VIDEOS list above, and always states the search outcome so it's never ambiguous. */
+.results-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 7px 8px 7px 4px; margin: 0 4px 2px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.results-head .rh-label {
+  color: var(--neon); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
+}
+.results-head .rh-count { color: var(--dim); font-size: 11px; line-height: 1.3; }
+
 .results { flex: 1; overflow-y: auto; padding: 4px 8px 10px; min-height: 0; }
 .result {
   display: block; width: 100%; text-align: left; cursor: pointer;
@@ -145,8 +162,24 @@ button { font-family: inherit; }
 .result.sel { border-color: var(--neon); border-left-color: var(--neon); background: #16291d; }
 .result .meta { display: flex; gap: 8px; font-size: 11px; color: var(--dim); margin-bottom: 3px; }
 .result .meta .tc { color: var(--neon); font-variant-numeric: tabular-nums; }
-.result .meta .src { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result .meta .src { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .result .txt { font-size: 12.5px; line-height: 1.35; }
+
+/* transcript-only hit: an orphaned quote whose source video isn't linked yet.
+   Muted (no neon accent — it isn't actionable) with a small honest badge so it
+   reads clearly as "found the quote, but no video to play/extract". */
+.result.transcript-only {
+  border-left-color: #3a3a3a; background: #0b0b0b; cursor: default;
+}
+.result.transcript-only:hover { border-color: var(--line); border-left-color: #3a3a3a; background: #0f0f0f; }
+.result.transcript-only.sel { border-color: var(--dim); border-left-color: var(--dim); background: #121212; }
+.result.transcript-only .tc { color: var(--dim); }
+.result .ro-badge {
+  margin-left: auto; flex: 0 0 auto;
+  color: #0a0a0a; background: var(--dim); border-radius: 4px;
+  padding: 1px 6px; font-size: 9.5px; font-weight: 700; letter-spacing: .3px;
+  text-transform: uppercase; white-space: nowrap;
+}
 
 .empty-hint, .preview-empty, .ul-intro, .tl-empty {
   color: var(--dim); text-align: center;
@@ -154,6 +187,7 @@ button { font-family: inherit; }
 .empty-hint { padding: 36px 16px; }
 .empty-hint .big, .preview-empty .big { font-size: 34px; opacity: .55; margin-bottom: 8px; }
 .empty-hint p, .preview-empty p { line-height: 1.5; font-size: 12.5px; }
+.empty-hint .orphan-note { color: var(--dim); font-size: 11.5px; }
 
 /* ---------- CENTER ---------- */
 #center { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; min-height: 0; }
@@ -218,28 +252,86 @@ button { font-family: inherit; }
   display: flex; align-items: center; gap: 10px;
   padding: 7px 12px; border-bottom: 1px solid var(--line);
 }
-.tl-title { color: var(--dim); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
+.tl-title { color: var(--neon); text-transform: uppercase; letter-spacing: 1.5px; font-size: 11px; font-weight: 700; }
 .tl-stats { color: var(--neon); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* The timeline is a mini NLE: a horizontal-scrolling region holding a time RULER
+   on top and a TRACK of proportional clip blocks below. Both share one inner
+   width (set by JS = sum of clip widths) so ruler ticks line up over clips. */
 .timeline {
-  display: flex; gap: 6px; padding: 10px 12px; overflow-x: auto; min-height: 78px;
-  align-items: stretch;
+  display: flex; flex-direction: column; padding: 0; overflow-x: auto; overflow-y: hidden;
+  min-height: 104px; background:
+    repeating-linear-gradient(90deg, transparent 0, transparent 39px, #111 39px, #111 40px);
 }
-.tl-empty { color: var(--dim); align-self: center; font-size: 12px; padding-left: 4px; }
+
+/* ruler — compilation time, ticks at each clip boundary + a final total tick */
+.tl-ruler {
+  position: relative; height: 18px; flex: 0 0 auto; min-width: 100%;
+  border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.tl-ruler .tl-tick {
+  position: absolute; top: 0; transform: translateX(0);
+  padding-left: 4px; border-left: 1px solid #2f2f2f;
+  color: var(--dim); font-size: 9.5px; line-height: 18px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; pointer-events: none;
+}
+.tl-ruler .tl-tick.end { transform: translateX(-100%); border-left: 0; border-right: 1px solid #2f2f2f; padding: 0 4px 0 0; color: var(--neon); }
+
+/* track — the row of clip blocks; position:relative so the playhead overlays it */
+.tl-track {
+  position: relative; flex: 1 1 auto; min-width: 100%;
+  display: flex; gap: 4px; padding: 8px 0; align-items: stretch;
+}
+
+/* playhead — tracks preview playback when a timeline clip is playing */
+.tl-playhead {
+  position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+  background: var(--neon); box-shadow: 0 0 8px var(--neon); pointer-events: none; z-index: 5;
+}
+.tl-playhead::before {
+  content: ""; position: absolute; top: -2px; left: -4px;
+  border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid var(--neon);
+}
+.tl-playhead.hidden { display: none; }
+
+/* strong empty state — reads as the editor surface even with no clips */
+.tl-empty {
+  flex: 1; align-self: center; text-align: center; color: var(--dim);
+  padding: 8px 16px; max-width: 460px; margin: 0 auto;
+}
+.tl-empty .tle-ico { font-size: 22px; color: var(--neon-dim); }
+.tl-empty .tle-title { color: var(--text); font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+.tl-empty .tle-sub { font-size: 11.5px; line-height: 1.45; margin-top: 3px; }
+
+/* clip block — width set inline by JS (∝ duration). A real track LEGO, not a list item. */
 .clip {
-  position: relative; flex: 0 0 auto; width: 120px; height: 56px;
+  position: relative; flex: 0 0 auto; height: 64px; min-width: 96px;
   background: linear-gradient(180deg, #15301a, #0e1f12);
-  border: 1px solid var(--neon-dim); border-radius: 6px; cursor: grab;
-  padding: 6px 7px; overflow: hidden; user-select: none;
+  border: 1px solid var(--neon-dim); border-radius: 5px; cursor: grab;
+  padding: 5px 7px 4px; overflow: hidden; user-select: none;
 }
 .clip:hover { border-color: var(--neon); }
+.clip.playing { border-color: var(--neon); box-shadow: inset 0 0 0 1px var(--neon), 0 0 8px rgba(57,255,20,.3); }
 .clip.drag { opacity: .5; }
 .clip.dragover { box-shadow: -3px 0 0 var(--neon); }
-.clip .c-idx { position: absolute; top: 3px; right: 5px; color: var(--neon); font-size: 10px; font-weight: 700; }
-.clip .c-name { font-size: 10px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clip .c-label { font-size: 11px; color: var(--text); margin-top: 2px; line-height: 1.2;
+.clip .c-idx { position: absolute; top: 3px; right: 6px; color: var(--neon); font-size: 10px; font-weight: 700; }
+.clip .c-name { font-size: 10px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.clip .c-label { font-size: 11px; color: var(--text); margin-top: 1px; line-height: 1.2;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.clip .c-dur { position: absolute; bottom: 3px; left: 7px; color: var(--neon); font-size: 10px; font-variant-numeric: tabular-nums; }
-.clip .c-x { position: absolute; bottom: 2px; right: 4px; color: var(--dim); cursor: pointer; font-size: 13px; line-height: 1; }
+/* footer row: trim − , source in–out, trim + , duration */
+.clip .c-foot {
+  position: absolute; left: 6px; right: 6px; bottom: 3px;
+  display: flex; align-items: center; gap: 4px;
+}
+.clip .c-trim {
+  flex: 0 0 auto; width: 16px; height: 16px; padding: 0; line-height: 14px; text-align: center;
+  background: #0c130d; color: var(--neon); border: 1px solid var(--neon-dim); border-radius: 4px;
+  cursor: pointer; font-size: 12px; font-weight: 700;
+}
+.clip .c-trim:hover { background: #16291d; border-color: var(--neon); }
+.clip .c-io { color: var(--dim); font-size: 9.5px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip .c-dur { margin-left: auto; color: var(--neon); font-size: 10px; font-variant-numeric: tabular-nums; }
+.clip .c-x { position: absolute; top: 2px; left: 5px; color: var(--dim); cursor: pointer; font-size: 12px; line-height: 1; }
 .clip .c-x:hover { color: var(--crimson); }
 
 /* ---------- RIGHT (becky) ---------- */

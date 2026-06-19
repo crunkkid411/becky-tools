@@ -36,6 +36,7 @@
   const state = {
     folder: "",
     videos: [],
+    orphanCount: 0,      // transcripts with no linked video (searchable, not playable)
     activeVideo: null,   // currently-previewing video {path,name,...}
     overlayOn: false,
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
@@ -72,10 +73,20 @@
     const p = (n) => String(n).padStart(2, "0");
     return `${p(h)}:${p(m)}:${p(s)}:${p(f)}`;
   }
-  function mmss(sec) {
+  // hms renders a SOURCE-RELATIVE / compilation time for humans: "H:MM:SS" once
+  // it's an hour or longer (so a 4-hour livestream reads 1:12:33, not 72:33), and
+  // "M:SS" under an hour. Used everywhere a time is shown to Jordan (result
+  // timecodes, transport, clip labels, the timeline ruler). The forensic
+  // lower-third keeps its separate frame-accurate smpte() — don't route that here.
+  function hms(sec) {
     if (!(sec >= 0)) sec = 0;
     const t = Math.round(sec);
-    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+    const s = t % 60;
+    const m = Math.floor(t / 60) % 60;
+    const h = Math.floor(t / 3600);
+    const p2 = (n) => String(n).padStart(2, "0");
+    if (h > 0) return `${h}:${p2(m)}:${p2(s)}`;
+    return `${m}:${p2(s)}`;
   }
 
   // ---------- folder + videos ----------
@@ -93,14 +104,23 @@
     if (!fv) return;
     state.folder = fv.root;
     state.videos = fv.videos || [];
+    state.orphanCount = fv.orphan_count || 0;
     renderVideoPicker();
     const need = state.videos.filter((v) => !v.has_transcript).length;
     const hint = need
-      ? `${need} of ${state.videos.length} have no transcript yet. Click a video to play it, hit ⊕ to transcribe one, or “⊕ Transcribe all”.`
-      : `Search the transcripts, or click a video to play it and read its cues.`;
-    results.innerHTML = `<div class="empty-hint"><div class="big">🔎</div>
-      <p>${state.videos.length} video(s) indexed.<br>${escapeHtml(hint)}</p></div>`;
-    toast(`opened ${state.videos.length} video(s)`);
+      ? `${need} of ${state.videos.length} have no transcript yet. Click a video above to play it, hit ⊕ to transcribe one, or “⊕ Transcribe all”.`
+      : `Search the transcripts above, or click a video to play it and read its cues.`;
+    // Orphan transcripts (subtitles with no linked video) are searchable too — say
+    // so, so a folder that's mostly loose transcripts never looks empty/broken.
+    const orphanLine = state.orphanCount
+      ? `<br><span class="orphan-note">+ ${state.orphanCount} transcript(s) with no linked video yet — searchable, shown as “transcript only”.</span>`
+      : "";
+    results.innerHTML =
+      `<div class="results-head"><span class="rh-label">Quotes</span>` +
+      `<span class="rh-count">search a word to find quotes across the transcripts</span></div>` +
+      `<div class="empty-hint"><div class="big">🔎</div>` +
+      `<p>${state.videos.length} video(s) indexed.<br>${escapeHtml(hint)}${orphanLine}</p></div>`;
+    toast(`opened ${state.videos.length} video(s)` + (state.orphanCount ? ` + ${state.orphanCount} loose transcript(s)` : ""));
   }
 
   // renderVideoPicker draws one chip per video. Clicking the chip PLAYS the video
@@ -115,7 +135,9 @@
     const head = document.createElement("div");
     head.className = "vp-head";
     const need = state.videos.filter((v) => !v.has_transcript).length;
-    head.innerHTML = `<span class="vp-count">${state.videos.length} video${state.videos.length === 1 ? "" : "s"}</span>`;
+    head.innerHTML =
+      `<span class="vp-zone">Videos</span>` +
+      `<span class="vp-count">${state.videos.length} file${state.videos.length === 1 ? "" : "s"} · click to play</span>`;
     const allBtn = document.createElement("button");
     allBtn.className = "vp-all";
     allBtn.id = "btn-transcribe-all";
@@ -167,7 +189,7 @@
     try {
       const cues = await call("transcript", { name });
       if (!cues || !cues.length) { showTranscribeCTA(name); return; }
-      renderResults(cues);
+      renderResults(cues, "", "cues");
       toast(`${cues.length} cues`);
     } catch (e) { toast(e.message, true); }
   }
@@ -255,28 +277,106 @@
     try {
       const hits = await call("search", { query: q });
       if (!hits || !hits.length) {
-        results.innerHTML = `<div class="empty-hint"><div class="big">∅</div>
-          <p>No transcript matches for “${escapeHtml(q)}”.</p></div>`;
+        results.innerHTML = renderNoHits(q);
         return;
       }
-      renderResults(hits, q);
+      renderResults(hits, q, "search");
+      toast(`${hits.length} quote${hits.length === 1 ? "" : "s"} for “${q}”`);
     } catch (e) { toast(e.message, true); }
   }
 
+  // renderNoHits explains WHY a search found nothing, using the indexed videos —
+  // so Jordan is never left staring at the chips wondering if search even ran.
+  // The cause is almost always "no transcript yet", which search can't see past.
+  function renderNoHits(q) {
+    const total = state.videos.length;
+    const without = state.videos.filter((v) => !v.has_transcript).length;
+    let msg, icon;
+    if (total > 0 && without === total) {
+      icon = "📝";
+      msg = `None of these ${total} video${total === 1 ? "" : "s"} have a transcript yet — ` +
+        `click ⊕ on a video (or “⊕ Transcribe all”) to make them searchable.`;
+    } else if (without > 0) {
+      icon = "🔎";
+      msg = `Found 0 quotes for “${escapeHtml(q)}”.<br>` +
+        `Note: ${without} of ${total} video${total === 1 ? "" : "s"} still have no transcript ` +
+        `(⊕ to transcribe them).`;
+    } else {
+      icon = "∅";
+      msg = `No quotes match “${escapeHtml(q)}”.`;
+    }
+    return `<div class="results-head"><span class="rh-label">Quotes</span>` +
+      `<span class="rh-count">0 quotes for “${escapeHtml(q)}”</span></div>` +
+      `<div class="empty-hint"><div class="big">${icon}</div><p>${msg}</p></div>`;
+  }
+
   // ---------- results list (click → seek, dblclick → add) ----------
-  function renderResults(items, query) {
+  // renderResults paints the QUOTES zone of the left panel: a header that names
+  // what's shown (so a search NEVER looks like it "did nothing"), then one button
+  // per hit. Each hit reads unmistakably as a quote — a source-relative timecode
+  // (via hms, hours-aware), the source file, and the verbatim line with the
+  // search term highlighted. headerKind: "search" (N quotes for 'query') or
+  // "cues" (a single video's transcript).
+  function renderResults(items, query, headerKind) {
     results.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "results-head";
+    const n = items.length;
+    if (headerKind === "search") {
+      // Count playable vs transcript-only so the header is honest about how many
+      // hits can actually be added to the timeline right now.
+      const onlyN = items.filter((it) => it.transcript_only).length;
+      const playN = n - onlyN;
+      let breakdown = "";
+      if (onlyN > 0 && playN > 0) breakdown = ` (${playN} playable, ${onlyN} transcript-only)`;
+      else if (onlyN > 0) breakdown = ` (transcript-only — no linked video yet)`;
+      head.innerHTML =
+        `<span class="rh-label">Quotes</span>` +
+        `<span class="rh-count">${n} quote${n === 1 ? "" : "s"} across the transcripts for ` +
+        `“${escapeHtml(query || "")}”${escapeHtml(breakdown)}</span>`;
+    } else {
+      head.innerHTML =
+        `<span class="rh-label">Quotes</span>` +
+        `<span class="rh-count">${n} line${n === 1 ? "" : "s"} in this transcript — click to jump, double-click to add</span>`;
+    }
+    results.appendChild(head);
+
     items.forEach((it) => {
       const el = document.createElement("button");
-      el.className = "result";
+      const transcriptOnly = !!it.transcript_only;
+      el.className = "result" + (transcriptOnly ? " transcript-only" : "");
+      el.title = transcriptOnly
+        ? "transcript-only quote — its source video isn't linked yet, so it can't be played or added"
+        : "click to jump to this moment · double-click to add to the timeline";
+      const badge = transcriptOnly
+        ? `<span class="ro-badge" title="this quote's source video isn't in the folder yet">transcript only · no video</span>`
+        : "";
       el.innerHTML =
-        `<div class="meta"><span class="tc">${it.timecode}</span>` +
-        `<span class="src">${escapeHtml(it.name)}</span></div>` +
+        `<div class="meta"><span class="tc">${hms(it.start || 0)}</span>` +
+        `<span class="src">${escapeHtml(it.name)}</span>${badge}</div>` +
         `<div class="txt">${highlight(it.text, query)}</div>`;
-      el.onclick = () => { selectResult(el); previewAt(it); };
-      el.ondblclick = () => addClipFrom(it);
+      if (transcriptOnly) {
+        // A transcript-only hit is NOT playable/extractable. Single-click just
+        // selects it + shows the text (no seek); double-click is an honest no-op
+        // toast instead of adding a broken clip.
+        el.onclick = () => { selectResult(el); showTranscriptOnly(it); };
+        el.ondblclick = () =>
+          toast("This quote has no linked video yet. Transcribe/locate the source video to extract it.", true);
+      } else {
+        el.onclick = () => { selectResult(el); previewAt(it); };
+        el.ondblclick = () => addClipFrom(it);
+      }
       results.appendChild(el);
     });
+  }
+
+  // showTranscriptOnly surfaces a transcript-only quote's text + episode title
+  // without touching the preview (there's no video to seek). It uses the transport
+  // source label as a quiet place to show which episode the quote is from.
+  function showTranscriptOnly(it) {
+    $("t-src").textContent = it.name + " · transcript only";
+    toast("Transcript-only quote (no linked video yet)");
   }
   function selectResult(el) {
     document.querySelectorAll(".result").forEach((r) => r.classList.remove("sel"));
@@ -324,8 +424,9 @@
   }
 
   vid.addEventListener("timeupdate", () => {
-    $("t-time").textContent = mmss(vid.currentTime || 0);
+    $("t-time").textContent = hms(vid.currentTime || 0);
     tickOverlay();
+    syncPlayhead();
   });
   vid.addEventListener("error", () => {
     if (vid.getAttribute("src")) toast("this clip's codec may need a proxy (ffmpeg)", true);
@@ -354,31 +455,175 @@
     tickOverlay();
   }
 
+  // TL_MIN_PX is the floor width for a clip block: a 1-second clip must still be
+  // wide enough to read its label and hit its trim/remove controls, so very short
+  // clips don't collapse to a sliver. Above the floor, width is PROPORTIONAL to
+  // duration (a real NLE track), so a 30s clip is visibly ~6× a 5s clip.
+  const TL_MIN_PX = 96;
+  const TL_PX_PER_SEC = 5;   // proportional scale; clamped by the floor above
+
+  // activeTimelineClip is the clip currently driving the preview (set when you
+  // click a timeline block), so the playhead can track playback within it.
+  let activeTimelineClip = null;
+
+  // renderTimeline draws the editor surface: a time RULER across the compilation
+  // (hms ticks), a PLAYHEAD, and one proportional-width block per clip with a
+  // readable label, source in/out (hms), trim −/+ (set_trim), remove (✕), and
+  // drag-to-reorder. It reads ClipView.dur_sec / start_sec and TimelineView
+  // .duration_sec straight from the backend — no client-side arithmetic of truth.
   function renderTimeline() {
     const clips = state.timeline.clips || [];
-    $("tl-stats").textContent = `${clips.length} clip${clips.length === 1 ? "" : "s"} · ${mmss(state.timeline.duration_sec)}`;
+    const total = state.timeline.duration_sec || 0;
+    $("tl-stats").textContent =
+      `${clips.length} clip${clips.length === 1 ? "" : "s"} · ${hms(total)}`;
     timeline.innerHTML = "";
+
     if (!clips.length) {
-      timeline.innerHTML = `<div class="tl-empty">double-click a result to add a clip →</div>`;
+      activeTimelineClip = null;
+      timeline.innerHTML =
+        `<div class="tl-empty"><div class="tle-ico">⌧</div>` +
+        `<div class="tle-title">Your compilation timeline</div>` +
+        `<div class="tle-sub">Double-click a quote (or a search result) to drop that exact ` +
+        `moment here, then Export.</div></div>`;
       return;
     }
+
+    // The track is at least as wide as the panel; clips lay out left-to-right with
+    // width ∝ duration. The ruler spans the same width so ticks line up with clips.
+    const track = document.createElement("div");
+    track.className = "tl-track";
+
+    let widths = clips.map((c) => Math.max(TL_MIN_PX, Math.round((c.dur_sec || 0) * TL_PX_PER_SEC)));
+    const trackW = widths.reduce((a, b) => a + b, 0);
+    track.style.width = trackW + "px";
+
+    // ---- ruler (compilation time) ----
+    const ruler = document.createElement("div");
+    ruler.className = "tl-ruler";
+    ruler.style.width = trackW + "px";
+    // a labelled tick at each clip boundary; offset accumulates the block widths
+    // so the tick sits exactly above where its clip begins.
+    let acc = 0;
+    clips.forEach((c, i) => {
+      const tick = document.createElement("span");
+      tick.className = "tl-tick";
+      tick.style.left = acc + "px";
+      tick.textContent = hms(c.start_sec || 0);
+      ruler.appendChild(tick);
+      acc += widths[i];
+    });
+    // a trailing end-tick so the total duration is always labelled
+    const endTick = document.createElement("span");
+    endTick.className = "tl-tick end";
+    endTick.style.left = trackW + "px";
+    endTick.textContent = hms(total);
+    ruler.appendChild(endTick);
+    // click the ruler → seek the preview to that compilation time (maps to the
+    // clip under the cursor + its source offset)
+    ruler.onclick = (e) => seekCompilationAtPx(clips, widths, trackW, total, e);
+
+    // ---- playhead ----
+    const playhead = document.createElement("div");
+    playhead.className = "tl-playhead hidden";
+    playhead.id = "tl-playhead";
+
+    // ---- clip blocks ----
     clips.forEach((c, i) => {
       const el = document.createElement("div");
       el.className = "clip";
       el.draggable = true;
       el.dataset.id = c.id;
       el.dataset.index = i;
+      el.style.width = widths[i] + "px";
+      const inOut = `${hms(c.in)}–${hms(c.out)}`;
       el.innerHTML =
         `<span class="c-idx">${i + 1}</span>` +
         `<div class="c-name">${escapeHtml(c.name)}</div>` +
-        `<div class="c-label">${escapeHtml(c.label || mmss(c.in) + "–" + mmss(c.out))}</div>` +
-        `<span class="c-dur">${mmss(c.dur_sec)}</span>` +
-        `<span class="c-x" title="remove">✕</span>`;
+        `<div class="c-label">${escapeHtml(c.label || inOut)}</div>` +
+        `<div class="c-foot">` +
+          `<button class="c-trim minus" title="trim 0.5s off the start">−</button>` +
+          `<span class="c-io" title="source in–out">${inOut}</span>` +
+          `<button class="c-trim plus" title="add 0.5s back to the start">+</button>` +
+          `<span class="c-dur">${hms(c.dur_sec)}</span>` +
+        `</div>` +
+        `<span class="c-x" title="remove this clip">✕</span>`;
       el.querySelector(".c-x").onclick = (e) => { e.stopPropagation(); removeClip(c.id); };
-      el.onclick = () => previewAt({ source: c.source, name: c.name, start: c.in, end: c.out });
+      el.querySelector(".c-trim.minus").onclick = (e) => { e.stopPropagation(); trimClip(c, +0.5, 0); };
+      el.querySelector(".c-trim.plus").onclick = (e) => { e.stopPropagation(); trimClip(c, -0.5, 0); };
+      el.onclick = () => {
+        activeTimelineClip = c;
+        selectClipEl(el);
+        previewAt({ source: c.source, name: c.name, start: c.in, end: c.out });
+      };
       wireDrag(el);
-      timeline.appendChild(el);
+      track.appendChild(el);
     });
+
+    track.appendChild(playhead);
+    timeline.appendChild(ruler);
+    timeline.appendChild(track);
+    if (activeTimelineClip && !findClip(activeTimelineClip.id)) activeTimelineClip = null;
+    syncPlayhead();
+  }
+
+  // selectClipEl highlights the clicked clip block (the one driving the preview).
+  function selectClipEl(el) {
+    document.querySelectorAll(".clip").forEach((c) => c.classList.remove("playing"));
+    if (el) el.classList.add("playing");
+  }
+
+  // trimClip adjusts the source IN of a clip by dIn seconds (and OUT by dOut),
+  // via the existing set_trim verb. Used by the −/+ trim buttons. We clamp so IN
+  // never crosses OUT and never goes negative — set_trim gets sane numbers.
+  async function trimClip(c, dIn, dOut) {
+    let nin = (c.in || 0) + dIn;
+    let nout = (c.out || 0) + dOut;
+    if (nin < 0) nin = 0;
+    if (nout <= nin) nout = nin + 0.25;
+    try { applyTimeline(await call("set_trim", { id: c.id, in: nin, out: nout })); toast("trimmed clip"); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  // syncPlayhead positions the timeline playhead while a timeline clip is playing:
+  // compilation position = that clip's start_sec + (preview time − clip.in). It
+  // only shows when the preview is on the source the active timeline clip points
+  // at, so scrubbing a raw video (not a clip) doesn't move it.
+  function syncPlayhead() {
+    const ph = $("tl-playhead");
+    if (!ph) return;
+    const c = activeTimelineClip;
+    const total = state.timeline.duration_sec || 0;
+    if (!c || !state.activeVideo || state.activeVideo.path !== c.source || total <= 0) {
+      ph.classList.add("hidden");
+      return;
+    }
+    const within = Math.min(Math.max((vid.currentTime || 0) - (c.in || 0), 0), (c.dur_sec || 0));
+    const comp = (c.start_sec || 0) + within;
+    const widths = (state.timeline.clips || []).map((k) => Math.max(TL_MIN_PX, Math.round((k.dur_sec || 0) * TL_PX_PER_SEC)));
+    const trackW = widths.reduce((a, b) => a + b, 0);
+    ph.style.left = (trackW > 0 ? (comp / total) * trackW : 0) + "px";
+    ph.classList.remove("hidden");
+  }
+
+  // seekCompilationAtPx maps an x click on the ruler/track to a compilation second,
+  // finds which clip covers it, and seeks the preview to that clip's source offset.
+  function seekCompilationAtPx(clips, widths, trackW, total, e) {
+    if (trackW <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left + (e.currentTarget.scrollLeft || 0);
+    let acc = 0;
+    for (let i = 0; i < clips.length; i++) {
+      if (x <= acc + widths[i] || i === clips.length - 1) {
+        const c = clips[i];
+        const frac = widths[i] > 0 ? Math.min(Math.max((x - acc) / widths[i], 0), 1) : 0;
+        const srcT = (c.in || 0) + frac * (c.dur_sec || 0);
+        activeTimelineClip = c;
+        selectClipEl(document.querySelector(`.clip[data-id="${c.id}"]`));
+        previewAt({ source: c.source, name: c.name, start: srcT, end: c.out });
+        return;
+      }
+      acc += widths[i];
+    }
   }
 
   async function removeClip(id) {
@@ -429,7 +674,7 @@
     try {
       const r = await call("export", {});
       toast("exported: " + r.mp4);
-      addBotMessage(`Exported the compilation (${r.clips} clips, ${mmss(r.duration_sec)}, ${r.codec}).\n${r.mp4}` +
+      addBotMessage(`Exported the compilation (${r.clips} clips, ${hms(r.duration_sec)}, ${r.codec}).\n${r.mp4}` +
         (r.note ? `\n${r.note}` : ""));
     } catch (e) { toast("export failed: " + e.message, true); }
   }
@@ -539,6 +784,7 @@
 
   // ---------- helpers ----------
   function findVideo(name) { return state.videos.find((v) => v.name === name) || null; }
+  function findClip(id) { return (state.timeline.clips || []).find((c) => c.id === id) || null; }
   function escapeHtml(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")

@@ -58,12 +58,25 @@ type Video struct {
 	Meta           Meta   `json:"meta"`
 }
 
+// OrphanTranscript is a subtitle file that paired to NO indexed video — its
+// source video is absent from the folder (not downloaded, still a ".mp4.part", or
+// living elsewhere). It is still SEARCHABLE: a detective with 418 loose `.en.srt`
+// in a "transcripts/" subfolder can find the moment even though the video isn't
+// here yet. Title is a human episode label derived from the filename
+// (deriveTranscriptTitle). Path is the absolute subtitle path.
+type OrphanTranscript struct {
+	Path  string `json:"path"`  // absolute path to the orphaned subtitle file
+	Title string `json:"title"` // human label derived from the filename
+}
+
 // FolderIndex is the in-memory map of a case folder: every video plus its
-// sidecars. It carries no media bytes — filenames + small JSON only, so it stays
-// in the megabytes regardless of the folder's terabytes.
+// sidecars, and every subtitle that paired to no video. It carries no media
+// bytes — filenames + small JSON only, so it stays in the megabytes regardless of
+// the folder's terabytes.
 type FolderIndex struct {
-	Root   string  `json:"root"`   // absolute case-folder root (the search scope)
-	Videos []Video `json:"videos"` // sorted by Path for deterministic output
+	Root    string             `json:"root"`              // absolute case-folder root (the search scope)
+	Videos  []Video            `json:"videos"`            // sorted by Path for deterministic output
+	Orphans []OrphanTranscript `json:"orphans,omitempty"` // subtitles paired to no video; sorted by Path
 }
 
 // Index walks folder recursively and builds a FolderIndex: every video file (by
@@ -77,7 +90,14 @@ func Index(folder string) (FolderIndex, error) {
 	if err != nil {
 		abs = folder
 	}
-	idx := FolderIndex{Root: abs, Videos: []Video{}}
+	idx := FolderIndex{Root: abs, Videos: []Video{}, Orphans: []OrphanTranscript{}}
+
+	// claimed tracks subtitle sidecars already paired to a video in this walk
+	// (cleaned paths) so the forgiving resolver never pairs one .srt to two
+	// videos when another candidate exists. The strict FindSubtitle result is
+	// claimed too. Videos are visited in WalkDir's lexical order, which is
+	// deterministic, so claim order is stable.
+	claimed := map[string]bool{}
 
 	walkErr := filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -98,9 +118,17 @@ func Index(folder string) (FolderIndex, error) {
 			Path: path,
 			Name: filepath.Base(path),
 		}
-		if sub := sidecar.FindSubtitle(path); sub != "" {
+		// Strict match first (unchanged behavior — covers freshly-transcribed
+		// "<stem>.srt" exactly). Only when it finds nothing do we fall back to
+		// the forgiving, boundary-aware resolver for real-world transcript names.
+		sub := sidecar.FindSubtitle(path)
+		if sub == "" {
+			sub = resolveTranscript(path, claimed)
+		}
+		if sub != "" {
 			v.TranscriptPath = sub
 			v.HasTranscript = true
+			claimed[filepath.Clean(sub)] = true
 		}
 		if m, ok := loadMetaQuiet(path); ok {
 			v.Meta = m
@@ -113,6 +141,9 @@ func Index(folder string) (FolderIndex, error) {
 	}
 
 	sort.Slice(idx.Videos, func(i, j int) bool { return idx.Videos[i].Path < idx.Videos[j].Path })
+	// After every video has claimed its transcript, the leftover subtitles in the
+	// tree (incl. "transcripts/" subfolders) are orphans — searchable on their own.
+	idx.Orphans = collectOrphans(abs, claimed)
 	return idx, nil
 }
 

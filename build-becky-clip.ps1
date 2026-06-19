@@ -62,7 +62,10 @@ try {
     Title "1/4  Building the window (search + preview + timeline + becky chat)..."
     $oldCgo = $env:CGO_ENABLED
     $env:CGO_ENABLED = '0'   # go-webview2 is pure Go; build without cgo
-    & go build -tags gui -o $GuiExe .\cmd\clip
+    # -H windowsgui = GUI-subsystem exe => Windows does NOT spawn a console window
+    # when Jordan double-clicks it (the annoying black cmd box). WebView2 still opens
+    # its own window normally; diagnostics just don't get a console (use BECKY_CLIP_DEBUG).
+    & go build -tags gui -ldflags "-H windowsgui" -o $GuiExe .\cmd\clip
     $built = ($LASTEXITCODE -eq 0)
     $env:CGO_ENABLED = $oldCgo
     if (-not $built) {

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"becky-go/internal/beckyio"
@@ -107,6 +108,9 @@ func main() {
 	lang := flag.String("lang", "en", "language code")
 	device := flag.String("device", "", "device: auto, cuda, cpu (default auto: GPU with automatic CPU fallback on OOM)")
 	numThreads := flag.Int("num-threads", 4, "ONNX inference threads")
+	chunkSeconds := flag.Float64("chunk-seconds", 900, "decode in time windows of this many seconds (keeps RAM/VRAM bounded on long files; 0 = whole file at once)")
+	chunkOverlap := flag.Float64("chunk-overlap", 2, "seconds of overlap between windows so boundary words are fully decoded")
+	noChunk := flag.Bool("no-chunk", false, "decode the whole file in one pass (equivalent to --chunk-seconds 0)")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD speech-mask gate (keep ASR segments over silence)")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
@@ -149,8 +153,15 @@ func main() {
 		beckyio.Fatalf("materialize helper: %v", err)
 	}
 
+	// --no-chunk forces a single whole-file pass (chunk-seconds 0); otherwise the
+	// default (900s) windows long files so RAM/VRAM stay bounded with no user action.
+	chunkSecs := resolveChunkSeconds(*chunkSeconds, *noChunk)
+	if n := windowCount(info.Duration, chunkSecs); n > 1 {
+		beckyio.Logf(*verbose, "transcribing in %d windows of %gs (overlap %gs)", n, chunkSecs, *chunkOverlap)
+	}
+
 	beckyio.Logf(*verbose, "running Parakeet-v3 (device=%s, model=%s)...", dev, cfg.ParakeetModelDir)
-	res, err := runHelper(cfg.Python, script, wav, cfg.ParakeetModelDir, dev, *lang, *numThreads, *verbose)
+	res, err := runHelper(cfg.Python, script, wav, cfg.ParakeetModelDir, dev, *lang, *numThreads, chunkSecs, *chunkOverlap, *verbose)
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
@@ -256,10 +267,36 @@ func extractAudio(ffmpeg, input string) (string, error) {
 	return path, nil
 }
 
-func runHelper(python, script, wav, modelDir, device, lang string, numThreads int, verbose bool) (helperResult, error) {
+// resolveChunkSeconds applies the --no-chunk override: it forces a single
+// whole-file pass (0) regardless of the --chunk-seconds value.
+func resolveChunkSeconds(chunkSeconds float64, noChunk bool) float64 {
+	if noChunk {
+		return 0
+	}
+	return chunkSeconds
+}
+
+// windowCount mirrors the helper's window geometry so the verbose log matches
+// what transcribe_parakeet.py will actually do: with step = chunkSeconds, a file
+// of duration d is decoded in ceil(d/step) windows; a non-positive step or a
+// file no longer than one window is a single pass.
+func windowCount(duration, chunkSeconds float64) int {
+	if chunkSeconds <= 0 || duration <= chunkSeconds {
+		return 1
+	}
+	n := int(duration / chunkSeconds)
+	if float64(n)*chunkSeconds < duration {
+		n++
+	}
+	return n
+}
+
+func runHelper(python, script, wav, modelDir, device, lang string, numThreads int, chunkSeconds, chunkOverlap float64, verbose bool) (helperResult, error) {
 	args := []string{script, wav, "--model-dir", modelDir,
 		"--num-threads", fmt.Sprintf("%d", numThreads),
-		"--device", device, "--lang", lang}
+		"--device", device, "--lang", lang,
+		"--chunk-seconds", strconv.FormatFloat(chunkSeconds, 'f', -1, 64),
+		"--chunk-overlap", strconv.FormatFloat(chunkOverlap, 'f', -1, 64)}
 	cmd := exec.Command(python, args...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

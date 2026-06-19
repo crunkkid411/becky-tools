@@ -189,10 +189,14 @@ func (a *App) PickFolder() (PickFolderResult, error) {
 }
 
 // FolderView is the LEFT-panel payload: the open root + each video with whether
-// it has a transcript and a short meta summary.
+// it has a transcript and a short meta summary. OrphanCount is how many
+// transcripts in the tree paired to NO indexed video (their source video is
+// absent / still a ".part") — searchable but not playable; the UI can note it so
+// a folder of loose transcripts doesn't look empty.
 type FolderView struct {
-	Root   string      `json:"root"`
-	Videos []VideoView `json:"videos"`
+	Root        string      `json:"root"`
+	Videos      []VideoView `json:"videos"`
+	OrphanCount int         `json:"orphan_count,omitempty"`
 }
 
 // VideoView is one indexed video for the UI list.
@@ -209,7 +213,7 @@ type VideoView struct {
 func (a *App) folderView() FolderView {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	fv := FolderView{Root: a.index.Root, Videos: make([]VideoView, 0, len(a.index.Videos))}
+	fv := FolderView{Root: a.index.Root, Videos: make([]VideoView, 0, len(a.index.Videos)), OrphanCount: len(a.index.Orphans)}
 	for _, v := range a.index.Videos {
 		fv.Videos = append(fv.Videos, VideoView{
 			Path:          v.Path,
@@ -276,34 +280,53 @@ func (a *App) lookupVideo(name string) (footage.Video, bool) {
 
 // ---- search (keyword across the folder's transcripts) ---------------------
 
-// SearchResult is one transcript hit for the LEFT results list.
+// SearchResult is one transcript hit for the LEFT results list. A video-backed
+// hit carries Source = the source video path (click→seek+play, dblclick→add). A
+// transcript-only hit (TranscriptOnly=true) comes from an orphaned transcript
+// whose video isn't in the folder yet: Source is "", Name is the derived episode
+// title, and it is NOT playable/extractable — the GUI shows the quote with an
+// honest "transcript only" badge.
 type SearchResult struct {
-	Source   string  `json:"source"`
-	Name     string  `json:"name"`
-	Start    float64 `json:"start"`
-	End      float64 `json:"end"`
-	Text     string  `json:"text"`
-	Timecode string  `json:"timecode"`
-	Score    float64 `json:"score"`
+	Source         string  `json:"source"`
+	Name           string  `json:"name"`
+	Start          float64 `json:"start"`
+	End            float64 `json:"end"`
+	Text           string  `json:"text"`
+	Timecode       string  `json:"timecode"`
+	Score          float64 `json:"score"`
+	TranscriptOnly bool    `json:"transcript_only,omitempty"`
 }
 
-// Search runs the deterministic Tier-0 keyword grep across every transcript in
-// the open folder (footage.GrepTranscripts). The query is split into terms; an
-// empty query returns nothing. Results are ranked best-first and capped so a
-// flood of weak hits never swamps the panel.
+// Search runs the deterministic Tier-0 keyword grep across the open folder's
+// transcripts — BOTH the videos that have a transcript (footage.GrepTranscripts,
+// playable hits) AND the orphaned transcripts whose video isn't indexed yet
+// (footage.GrepOrphans, transcript-only hits). The query is split into terms; an
+// empty query returns nothing. Playable hits are listed first (they're
+// actionable), then transcript-only hits; each group is ranked best-first and
+// separately capped so a flood of either never swamps the panel.
 func (a *App) Search(query string) []SearchResult {
 	terms := searchTerms(query)
 	a.mu.Lock()
 	idx := a.index
 	a.mu.Unlock()
 
-	cands := footage.GrepTranscripts(idx, terms)
-	const maxResults = 200
-	if len(cands) > maxResults {
-		cands = cands[:maxResults]
+	// maxPlayable + maxTranscriptOnly cap each group independently: a case with
+	// 418 orphan transcripts must not bury the handful of playable hits, and vice
+	// versa. The combined list stays bounded for the UI.
+	const maxPlayable = 200
+	const maxTranscriptOnly = 200
+
+	video := footage.GrepTranscripts(idx, terms)
+	if len(video) > maxPlayable {
+		video = video[:maxPlayable]
 	}
-	out := make([]SearchResult, 0, len(cands))
-	for _, c := range cands {
+	orphans := footage.GrepOrphans(idx, terms)
+	if len(orphans) > maxTranscriptOnly {
+		orphans = orphans[:maxTranscriptOnly]
+	}
+
+	out := make([]SearchResult, 0, len(video)+len(orphans))
+	for _, c := range video {
 		out = append(out, SearchResult{
 			Source:   c.Source,
 			Name:     c.Name,
@@ -312,6 +335,18 @@ func (a *App) Search(query string) []SearchResult {
 			Text:     c.Text,
 			Timecode: mmss(c.Timestamp),
 			Score:    c.Score,
+		})
+	}
+	for _, c := range orphans {
+		out = append(out, SearchResult{
+			Source:         "", // no playable/extractable video for an orphan transcript
+			Name:           c.Name,
+			Start:          c.Timestamp,
+			End:            c.End,
+			Text:           c.Text,
+			Timecode:       mmss(c.Timestamp),
+			Score:          c.Score,
+			TranscriptOnly: true,
 		})
 	}
 	return out
