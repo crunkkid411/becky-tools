@@ -9,6 +9,7 @@ package kitimport
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,15 +38,44 @@ type ParseSFZResult struct {
 // distinct MIDI key, layered by velocity, with round-robin variants ordered by
 // seq_position. It never returns a partial-file failure for a missing sample or
 // an unknown opcode; only an unreadable file is an error.
+//
+// Preprocessing (P2-9):
+//   - `#define $VAR value` macros are resolved in subsequent text.
+//   - `#include "file.sfz"` inlines the referenced file (depth-limited to 8 levels).
+//   - `<control> default_path=...` sets a prefix applied to all `sample=` values
+//     in regions that follow it (per sfzformat.com/headers/control/).
 func ParseSFZ(path string) (ParseSFZResult, error) {
-	f, err := os.Open(path)
+	baseDir := filepath.Dir(path)
+	var notes []string
+
+	// Pre-process: resolve #define macros and #include directives, producing a flat
+	// list of (line, fileDir) pairs for the main parser.
+	lines, prepNotes, err := preprocessSFZ(path, baseDir, map[string]bool{}, 0)
 	if err != nil {
 		return ParseSFZResult{}, err
 	}
-	defer f.Close()
+	notes = append(notes, prepNotes...)
 
-	baseDir := filepath.Dir(path)
-	var notes []string
+	// Collect #define macros from the preprocessed lines and remove them from the
+	// line stream. Macros defined in included files are already substituted by
+	// preprocessSFZ.
+	defines := map[string]string{}
+	var filteredLines []sfzLine
+	for _, l := range lines {
+		text := strings.TrimSpace(l.text)
+		if strings.HasPrefix(text, "#define") {
+			// #define $VAR value
+			parts := strings.Fields(text)
+			if len(parts) == 3 {
+				defines[parts[1]] = parts[2]
+				notes = append(notes, "resolved #define: "+parts[1]+" = "+parts[2])
+			} else {
+				notes = append(notes, "skipped malformed #define: "+text)
+			}
+			continue
+		}
+		filteredLines = append(filteredLines, l)
+	}
 
 	// SFZ scoping: opcodes accumulate at <global>, then <group>, then <region>;
 	// the most specific scope wins at flush (region overrides group overrides
@@ -57,35 +87,40 @@ func ParseSFZ(path string) (ParseSFZResult, error) {
 		scopeGroup
 		scopeRegion
 		scopeIgnore
+		scopeControl
 	)
 	global := map[string]string{}
 	group := map[string]string{}
 	var current map[string]string // the active region's opcode map, nil until <region>
 	scope := scopeGlobal
 	var regions []region
+	var defaultPath string // <control> default_path prefix
 
 	flushRegion := func() {
 		if current != nil {
-			regions = append(regions, region{opcodes: mergeOpcodes(global, group, current)})
+			merged := mergeOpcodes(global, group, current)
+			// Apply default_path to sample= if set and sample path is not absolute.
+			if defaultPath != "" {
+				if s, ok := merged["sample"]; ok && !isAbsolutePath(s) {
+					merged["sample"] = defaultPath + s
+				}
+			}
+			regions = append(regions, region{opcodes: merged})
 			current = nil
 		}
 	}
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		line := stripSFZComment(sc.Text())
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, l := range filteredLines {
+		text := stripSFZComment(l.text)
+		// Apply #define substitutions to this line.
+		for k, v := range defines {
+			text = strings.ReplaceAll(text, k, v)
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
 			continue
 		}
-		// #include / #define are out of scope — note and skip (sfzformat.com/extensions).
-		if strings.HasPrefix(line, "#include") || strings.HasPrefix(line, "#define") {
-			notes = append(notes, "skipped preprocessor directive: "+line)
-			continue
-		}
-		// A line can hold multiple <header> sections and opcode=value tokens.
-		tokens := tokenizeSFZ(line)
+		tokens := tokenizeSFZ(text)
 		for _, tok := range tokens {
 			switch low := strings.ToLower(tok); {
 			case low == "<global>":
@@ -101,9 +136,13 @@ func ParseSFZ(path string) (ParseSFZResult, error) {
 				flushRegion()
 				current = map[string]string{}
 				scope = scopeRegion
+			case low == "<control>":
+				// <control> sets default_path and other session-level defaults.
+				// Opcodes inside <control> are not region opcodes.
+				flushRegion()
+				scope = scopeControl
 			case strings.HasPrefix(tok, "<") && strings.HasSuffix(tok, ">"):
-				// <control>, <curve>, <effect>, etc. — not modeled; note and route
-				// their opcodes to nowhere so they can't pollute a real region.
+				// <curve>, <effect>, etc. — not modeled; route to ignore.
 				flushRegion()
 				notes = append(notes, "skipped header "+low)
 				scope = scopeIgnore
@@ -119,19 +158,117 @@ func ParseSFZ(path string) (ParseSFZResult, error) {
 					group[key] = val
 				case scopeGlobal:
 					global[key] = val
+				case scopeControl:
+					if key == "default_path" {
+						// Normalise to forward slashes; join with baseDir if relative.
+						dp := strings.ReplaceAll(val, `\`, "/")
+						if !filepath.IsAbs(dp) {
+							dp = filepath.Join(l.dir, dp) + "/"
+						}
+						defaultPath = dp
+					}
 				default: // scopeIgnore
 				}
 			}
 		}
 	}
 	flushRegion()
-	if err := sc.Err(); err != nil {
-		return ParseSFZResult{}, err
-	}
 
 	sounds, missingNotes := regionsToSounds(regions, baseDir)
 	notes = append(notes, missingNotes...)
 	return ParseSFZResult{Sounds: sounds, Notes: notes}, nil
+}
+
+// sfzLine is one pre-processed text line with its source-file directory (needed so
+// relative sample= paths resolve against the right base).
+type sfzLine struct {
+	text string
+	dir  string // directory of the file this line came from
+}
+
+// maxIncludeDepth limits recursive #include to prevent infinite loops.
+const maxIncludeDepth = 8
+
+// preprocessSFZ reads path, resolves #include directives inline (depth-limited),
+// and returns a flat list of sfzLine values. Macro definitions (#define) are left
+// in the stream for the caller to handle (so macros defined in included files can
+// be used after the include). Errors from an unreadable #include are noted but not
+// fatal — the include is skipped.
+func preprocessSFZ(path, dir string, seen map[string]bool, depth int) ([]sfzLine, []string, error) {
+	if depth > maxIncludeDepth {
+		return nil, []string{fmt.Sprintf("skipped #include (depth limit %d): %s", maxIncludeDepth, path)}, nil
+	}
+	if seen[path] {
+		return nil, []string{"skipped circular #include: " + path}, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	seen[path] = true
+	defer func() { delete(seen, path) }()
+
+	var lines []sfzLine
+	var notes []string
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		text := strings.TrimSpace(stripSFZComment(sc.Text()))
+		if text == "" {
+			continue
+		}
+		if strings.HasPrefix(text, "#include") {
+			// #include "file.sfz"  or  #include <file.sfz>
+			inner := extractIncludePath(text)
+			if inner == "" {
+				notes = append(notes, "skipped malformed #include: "+text)
+				continue
+			}
+			incPath := inner
+			if !filepath.IsAbs(inner) {
+				incPath = filepath.Join(dir, filepath.FromSlash(inner))
+			}
+			incLines, incNotes, incErr := preprocessSFZ(incPath, filepath.Dir(incPath), seen, depth+1)
+			if incErr != nil {
+				notes = append(notes, "skipped unreadable #include "+inner+": "+incErr.Error())
+			} else {
+				lines = append(lines, incLines...)
+				notes = append(notes, incNotes...)
+			}
+			continue
+		}
+		lines = append(lines, sfzLine{text: sc.Text(), dir: dir})
+	}
+	if err := sc.Err(); err != nil {
+		return lines, notes, err
+	}
+	return lines, notes, nil
+}
+
+// extractIncludePath pulls the filename out of a #include "file" or #include <file>
+// directive. Returns "" on a malformed line.
+func extractIncludePath(line string) string {
+	line = strings.TrimPrefix(line, "#include")
+	line = strings.TrimSpace(line)
+	if len(line) < 2 {
+		return ""
+	}
+	var close byte
+	switch line[0] {
+	case '"':
+		close = '"'
+	case '<':
+		close = '>'
+	default:
+		return ""
+	}
+	end := strings.IndexByte(line[1:], close)
+	if end < 0 {
+		return ""
+	}
+	return line[1 : end+1]
 }
 
 // mergeOpcodes layers global <- group <- region so the most specific wins.
@@ -375,11 +512,53 @@ func buildSound(g *keyGroup, baseDir string) (sampler.Sound, []string) {
 		snd.Layers = append(snd.Layers, *layerMap[vk])
 	}
 
+	// P2-8: warn about velocity gaps (1..127 range not fully covered).
+	// Convert layerOrder to the velRange slice the gap checker expects.
+	var velRanges []velRange
+	for _, vk := range layerOrder {
+		velRanges = append(velRanges, velRange{lo: vk.lo, hi: vk.hi})
+	}
+	notes = append(notes, velocityGapNotes(velRanges, snd.Name)...)
+
 	// Name the Sound from the first sample's basename (separator-agnostic).
 	if len(snd.Layers) > 0 && len(snd.Layers[0].RoundRobin) > 0 {
 		snd.Name = stripExt(pathx.Base(snd.Layers[0].RoundRobin[0].SamplePath))
 	}
 	return snd, notes
+}
+
+// velRange is a [lo, hi] velocity range for gap checking.
+type velRange struct{ lo, hi int }
+
+// velocityGapNotes checks whether the sorted velocity layers cover the full 1..127
+// range without gaps or overlaps, and returns a human-readable note for each issue.
+// A sound with only one layer (the common one-shot case) gets no warning.
+func velocityGapNotes(layers []velRange, soundName string) []string {
+	if len(layers) <= 1 {
+		return nil
+	}
+	var ns []string
+	prefix := "velocity"
+	if soundName != "" {
+		prefix = soundName + " velocity"
+	}
+	if layers[0].lo > 1 {
+		ns = append(ns, fmt.Sprintf("%s gap: no layer covers 1..%d", prefix, layers[0].lo-1))
+	}
+	for i := 1; i < len(layers); i++ {
+		prev := layers[i-1]
+		cur := layers[i]
+		if cur.lo > prev.hi+1 {
+			ns = append(ns, fmt.Sprintf("%s gap: no layer covers %d..%d", prefix, prev.hi+1, cur.lo-1))
+		} else if cur.lo <= prev.hi {
+			ns = append(ns, fmt.Sprintf("%s overlap: layers %d..%d and %d..%d overlap",
+				prefix, prev.lo, prev.hi, cur.lo, cur.hi))
+		}
+	}
+	if last := layers[len(layers)-1]; last.hi < 127 {
+		ns = append(ns, fmt.Sprintf("%s gap: no layer covers %d..127", prefix, last.hi+1))
+	}
+	return ns
 }
 
 // regionToVariant maps the SFZ opcodes of one region onto a sampler.Variant,

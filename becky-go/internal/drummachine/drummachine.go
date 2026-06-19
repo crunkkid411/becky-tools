@@ -33,6 +33,7 @@ import (
 
 	"becky-go/internal/dawmodel"
 	"becky-go/internal/music"
+	"becky-go/internal/sampler"
 )
 
 // SchemaVersion is the on-disk machine.json schema version. Bump only on a
@@ -61,18 +62,25 @@ var validStepCounts = []int{16, 32, 64}
 // is the unit a producer tweaks (swap sample, set level/pan/pitch/decay, assign a
 // choke group). It is plain data; the audio engine reads it, this package only
 // edits it.
+//
+// Sound is the rich multisampling model from internal/sampler (velocity layers,
+// round-robin variants, choke/off-by, envelope). When non-nil it is the authoritative
+// source: SamplePath is kept for backward compatibility with old machine.json files
+// and for simple one-sample pads that don't need full SFZ modelling. When both are
+// set, Sound wins for playback; SamplePath stays as a human-readable hint.
 type Pad struct {
-	Index          int     `json:"index"`          // 0..15, fixed position in the 4x4 grid
-	Name           string  `json:"name"`           // human label ("Kick", "Snare", …)
-	SamplePath     string  `json:"samplePath"`     // path to the sample WAV ("" = use synth/none)
-	Level          float64 `json:"level"`          // linear gain 0..1 (1 = unity)
-	Pan            float64 `json:"pan"`            // -1 (hard left) .. +1 (hard right)
-	PitchSemitones float64 `json:"pitchSemitones"` // playback transpose in semitones
-	Decay          float64 `json:"decay"`          // amp decay in seconds; 0 = one-shot / full length
-	ChokeGroup     int     `json:"chokeGroup"`     // 0 = none; pads sharing a non-zero group cut each other
-	Mute           bool    `json:"mute"`           // this pad is silenced
-	Solo           bool    `json:"solo"`           // this pad is soloed (any solo -> only soloed pads sound)
-	MidiNote       int     `json:"midiNote"`       // GM percussion note for channel-9 mapping
+	Index          int            `json:"index"`          // 0..15, fixed position in the 4x4 grid
+	Name           string         `json:"name"`           // human label ("Kick", "Snare", …)
+	SamplePath     string         `json:"samplePath"`     // path to the sample WAV ("" = use synth/none)
+	Sound          *sampler.Sound `json:"sound,omitempty"` // rich multisampling model; nil = simple/none
+	Level          float64        `json:"level"`          // linear gain 0..1 (1 = unity)
+	Pan            float64        `json:"pan"`            // -1 (hard left) .. +1 (hard right)
+	PitchSemitones float64        `json:"pitchSemitones"` // playback transpose in semitones
+	Decay          float64        `json:"decay"`          // amp decay in seconds; 0 = one-shot / full length
+	ChokeGroup     int            `json:"chokeGroup"`     // 0 = none; pads sharing a non-zero group cut each other
+	Mute           bool           `json:"mute"`           // this pad is silenced
+	Solo           bool           `json:"solo"`           // this pad is soloed (any solo -> only soloed pads sound)
+	MidiNote       int            `json:"midiNote"`       // GM percussion note for channel-9 mapping
 }
 
 // Kit is the sound set: exactly 16 pads. The slice is always length PadCount; Pads
@@ -226,7 +234,16 @@ func (m *Machine) clone() *Machine {
 }
 
 func cloneKit(k Kit) Kit {
-	k.Pads = append([]Pad(nil), k.Pads...)
+	pads := make([]Pad, len(k.Pads))
+	copy(pads, k.Pads)
+	// Deep-copy Sound pointers so edits never alias across machines.
+	for i, p := range pads {
+		if p.Sound != nil {
+			cp := *p.Sound
+			pads[i].Sound = &cp
+		}
+	}
+	k.Pads = pads
 	return k
 }
 
@@ -640,36 +657,90 @@ type Trigger struct {
 // returns the pads that actually sound, in the SAME order they appear in the input
 // (deterministic).
 //
-// Rule: within each non-zero choke group, only the LAST-listed triggered pad
-// survives — it "chokes" (cuts off) every earlier pad in that group. Pads in choke
-// group 0 (none) never choke and are always kept. A pad index that is out of range
-// is dropped (degrade-never-crash). The input is not mutated.
+// Choke model — single source of truth is sampler.Sound (when non-nil):
+//   - Sound.ChokeGroup: pads sharing a non-zero group use last-wins (same group cuts
+//     the earlier one). Mirrors SFZ `group` opcode.
+//   - Sound.OffBy: a triggered pad is immediately cut by any later trigger whose pad
+//     belongs to any listed off_by group. Mirrors SFZ `off_by` opcode.
 //
-// This models the classic open/closed-hat behaviour: trigger the open hat then the
-// closed hat in the same group and only the closed hat is left ringing.
+// Fallback: if Sound is nil, the pad-level ChokeGroup field is used with the same
+// last-wins rule (backward compatibility with old kits that don't have a Sound).
+//
+// Pads in choke group 0 (none) never choke and are always kept. A pad index that is
+// out of range is dropped (degrade-never-crash). The input is not mutated.
 func (m *Machine) ResolveChokes(triggers []Trigger) []int {
-	// Find, per group, the index (within triggers) of the last triggered pad.
-	lastInGroup := map[int]int{} // group -> trigger position of the survivor
+	// padChokeGroup returns the effective choke group for a pad (Sound wins over Pad.ChokeGroup).
+	padChokeGroup := func(pad int) int {
+		p := m.Kit.Pads[pad]
+		if p.Sound != nil {
+			return p.Sound.ChokeGroup
+		}
+		return p.ChokeGroup
+	}
+	// padOffBy returns the off_by group list for a pad (Sound only; Pad has none).
+	padOffBy := func(pad int) []int {
+		p := m.Kit.Pads[pad]
+		if p.Sound != nil {
+			return p.Sound.OffBy
+		}
+		return nil
+	}
+
+	// Pass 1: for each choke group, record the trigger-list position of the LAST triggered pad.
+	lastInGroup := map[int]int{} // chokeGroup -> position of last trigger in that group
 	for i, t := range triggers {
 		if t.Pad < 0 || t.Pad >= len(m.Kit.Pads) {
 			continue
 		}
-		g := m.Kit.Pads[t.Pad].ChokeGroup
+		g := padChokeGroup(t.Pad)
 		if g == 0 {
 			continue
 		}
-		lastInGroup[g] = i // later positions overwrite -> last wins
+		lastInGroup[g] = i
 	}
-	out := make([]int, 0, len(triggers))
+
+	// Pass 2: keep only triggers that are not choked.
+	// A trigger at position i is choked when:
+	//  (a) its choke group is non-zero AND it is not the last in that group (last-wins), OR
+	//  (b) a LATER trigger has it in its off_by list (off_by kills the earlier one).
+	killed := make([]bool, len(triggers))
 	for i, t := range triggers {
+		if t.Pad < 0 || t.Pad >= len(m.Kit.Pads) {
+			killed[i] = true
+			continue
+		}
+		g := padChokeGroup(t.Pad)
+		if g != 0 && lastInGroup[g] != i {
+			killed[i] = true // later pad in same group chokes this one
+		}
+	}
+	// Apply off_by: later triggers may kill earlier ones that belong to the listed groups.
+	for later, t := range triggers {
 		if t.Pad < 0 || t.Pad >= len(m.Kit.Pads) {
 			continue
 		}
-		g := m.Kit.Pads[t.Pad].ChokeGroup
-		if g != 0 && lastInGroup[g] != i {
-			continue // choked by a later pad in the same group
+		for _, offGrp := range padOffBy(t.Pad) {
+			if offGrp == 0 {
+				continue
+			}
+			for earlier := 0; earlier < later; earlier++ {
+				if killed[earlier] {
+					continue
+				}
+				if t2 := triggers[earlier]; t2.Pad >= 0 && t2.Pad < len(m.Kit.Pads) {
+					if padChokeGroup(t2.Pad) == offGrp {
+						killed[earlier] = true
+					}
+				}
+			}
 		}
-		out = append(out, t.Pad)
+	}
+
+	out := make([]int, 0, len(triggers))
+	for i, t := range triggers {
+		if !killed[i] && t.Pad >= 0 && t.Pad < len(m.Kit.Pads) {
+			out = append(out, t.Pad)
+		}
 	}
 	return out
 }

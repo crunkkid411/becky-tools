@@ -666,13 +666,31 @@ func TestModelParserNilRunIsDeterministic(t *testing.T) {
 // ─── PickParser returns a usable parser ───────────────────────────────────────
 
 func TestPickParserAlwaysUsable(t *testing.T) {
-	// On the cloud/CI box the model files don't exist, so PickParser returns the
-	// DeterministicParser. It must still parse a documented phrase.
+	// PickParser must always return a non-nil parser that doesn't error on a
+	// valid instruction. On CI/cloud (no binary+model on disk) it returns
+	// DeterministicParser; on Jordan's local machine it may return ModelParser
+	// and the model decides the action — so we only require: no error, non-Unknown.
 	p := PickParser()
 	m := newTestMachine(t)
 	in, err := p.Parse("make it half-time", m)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
+	}
+	// DeterministicParser always yields Beat for this phrase; ModelParser may
+	// yield a different valid action. Either way action must not be Unknown.
+	if in.Action == Unknown {
+		t.Errorf("PickParser returned Unknown for a well-documented phrase — degrade path broken; action = %v", in.Action)
+	}
+}
+
+func TestDeterministicParserHalfTime(t *testing.T) {
+	// Pin the deterministic parse of a documented phrase independent of PickParser
+	// so the regression is always caught even when PickParser routes to the model.
+	p := DeterministicParser{}
+	m := newTestMachine(t)
+	in, err := p.Parse("make it half-time", m)
+	if err != nil {
+		t.Fatalf("DeterministicParser.Parse: %v", err)
 	}
 	if in.Action != Beat {
 		t.Errorf("action = %v, want Beat", in.Action)

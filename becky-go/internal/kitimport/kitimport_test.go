@@ -248,7 +248,9 @@ func TestParseSFZUnknownOpcodeTolerated(t *testing.T) {
 	if v.StartFrame != 100 || v.EndFrame != 20000 {
 		t.Errorf("offset/end = %d/%d, want 100/20000", v.StartFrame, v.EndFrame)
 	}
-	if !anyContains(res.Notes, "preprocessor") {
+	// The preprocessor emits a note for the missing #include and for the #define.
+	// Check for either keyword so the test is resilient to message wording.
+	if !anyContains(res.Notes, "#include") && !anyContains(res.Notes, "#define") {
 		t.Errorf("expected #include/#define to be noted, got %v", res.Notes)
 	}
 }
