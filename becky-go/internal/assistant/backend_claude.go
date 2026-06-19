@@ -15,7 +15,11 @@ import (
 // 2.x): print mode + JSON output + an appended system prompt, with the (possibly
 // large) user/candidate block piped on STDIN to dodge argv length limits.
 //
-//	claude -p --output-format json --model <alias> --append-system-prompt <rules> --max-turns 1
+//	claude -p --output-format json --strict-mcp-config --mcp-config {"mcpServers":{}} \
+//	  --tools "" --system-prompt <rules> --model <alias> --max-turns 1
+//
+// (The MCP/tools/system-prompt flags make it a fast answer engine on OAuth rather
+// than a slow agent; see the Complete() args comment for the measured why.)
 //
 // --output-format json wraps the reply as {"type":"result","result":"<text>",…};
 // we read .result. Aliases (opus/haiku) are used (durable across snapshot bumps,
@@ -71,8 +75,23 @@ func (b *claudeCLIBackend) Complete(ctx context.Context, req Request) (string, e
 	args := []string{
 		"-p",                      // print mode, non-interactive, exit
 		"--output-format", "json", // single JSON result envelope
+		// Make `claude -p` behave as a fast ANSWER engine, not an agent. Three flags,
+		// each load-bearing (measured + verified live 2026-06-19 — without them the
+		// in-app chat hung at "thinking..." or returned no answer):
+		//   --strict-mcp-config + empty --mcp-config: skip the user's MCP servers.
+		//     A heavy Claude Code install boots its whole MCP ecosystem on every turn
+		//     (~100s+ cold start → past the 90s turn timeout). becky-clip uses none.
+		//   --tools "": give the model NO built-in tools. Otherwise opus tries to USE
+		//     tools (Bash/grep/...) to "investigate", spends the single turn, and
+		//     returns error_max_turns with no text. With no tools it just answers.
+		//   --system-prompt (REPLACE, not append): drop Claude Code's coding-agent
+		//     framing so becky answers as itself in plain language (append left it
+		//     narrating fake tool calls). Keeps OAuth (NOT --bare, which forces a key).
+		// Net: a clean answer in ~15-25s on OAuth, no API key required.
+		"--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
+		"--tools", "",
+		"--system-prompt", req.System, // becky's role + forensic + action rules (replaces default)
 		"--model", model, // opus (deep) / haiku (mid) alias
-		"--append-system-prompt", req.System, // becky forensic + action rules
 		"--max-turns", "1", // one shot, no agentic loop
 	}
 	if req.JSONSchema != "" {

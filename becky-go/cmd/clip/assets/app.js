@@ -11,13 +11,63 @@
 (function () {
   "use strict";
 
-  // ---- bridge ----
+  // ---- bridge (ASYNCHRONOUS) ----
+  // The Go binding window.beckyCall(reqId, verb, argsJSON) ENQUEUES the work and
+  // returns immediately; the backend runs the verb OFF the WebView2 UI thread and
+  // calls window.__beckyResolve(reqId, envelopeJSON) when it finishes. This is the
+  // fix for the freeze where ONE slow verb (an ffmpeg proxy/ffprobe on a multi-GB
+  // file, ASR, an online Claude turn) blocked the whole window and queued every
+  // later call — including the next search — behind it. Now the UI stays live and
+  // calls run concurrently; a long transcription no longer wedges search/chat.
+  const __pending = new Map();
+  let __reqSeq = 0;
+
+  // The backend resolves a call by id. Defined up-front so a reply can never race
+  // ahead of it. Unknown ids (e.g. a reply after a reload) are ignored.
+  window.__beckyResolve = function (reqId, envelopeJSON) {
+    const done = __pending.get(String(reqId));
+    if (!done) return;
+    __pending.delete(String(reqId));
+    done(envelopeJSON);
+  };
+
+  // BRIDGE_TIMEOUT_MS is a safety net so a verb that never returns (a hung exec with
+  // no backend deadline) eventually fails that ONE call rather than leaking forever.
+  // It is deliberately longer than the slowest legit verb (transcription, ~30 min on
+  // the Go side, which delivers its own timeout error first), so it never fires on a
+  // real long-running op — the window stays responsive throughout regardless.
+  const BRIDGE_TIMEOUT_MS = 35 * 60 * 1000;
+
+  // bridgeSend posts one verb and resolves with the raw JSON envelope string.
+  function bridgeSend(verb, args) {
+    return new Promise((resolve, reject) => {
+      if (typeof window.beckyCall !== "function") {
+        reject(new Error("backend bridge not available (run the windows GUI build)"));
+        return;
+      }
+      const reqId = String(++__reqSeq);
+      let settled = false;
+      __pending.set(reqId, (env) => { settled = true; resolve(env); });
+      const fail = (e) => {
+        if (settled) return;
+        settled = true;
+        __pending.delete(reqId);
+        reject(e instanceof Error ? e : new Error(String((e && e.message) || e)));
+      };
+      try {
+        // beckyCall now just enqueues; the real reply arrives via __beckyResolve.
+        const ack = window.beckyCall(reqId, verb, args ? JSON.stringify(args) : "");
+        if (ack && typeof ack.catch === "function") ack.catch(fail);
+      } catch (e) { fail(e); return; }
+      setTimeout(() => {
+        if (__pending.has(reqId)) { __pending.delete(reqId); if (!settled) { settled = true; reject(new Error("becky timed out")); } }
+      }, BRIDGE_TIMEOUT_MS);
+    });
+  }
+
   // call(verb, args) → resolves to the verb's data, or throws the backend error.
   async function call(verb, args) {
-    if (typeof window.beckyCall !== "function") {
-      throw new Error("backend bridge not available (run the windows GUI build)");
-    }
-    const raw = await window.beckyCall(verb, args ? JSON.stringify(args) : "");
+    const raw = await bridgeSend(verb, args);
     let env;
     try { env = JSON.parse(raw); } catch (e) { throw new Error("bad bridge reply"); }
     if (!env.ok) throw new Error(env.error || "command failed");
@@ -1026,9 +1076,16 @@
   function addUserMessage(t) { return pushMsg("user", t); }
   function addBotMessage(t, tier, note) {
     const el = pushMsg("bot", t);
-    if (tier) { const b = document.createElement("div"); b.className = "tier"; b.textContent = tier; el.prepend(b); }
+    if (tier) { const b = document.createElement("div"); b.className = "tier"; b.textContent = tierLabel(tier); el.prepend(b); }
     if (note) { const n = document.createElement("div"); n.className = "note"; n.textContent = note; el.appendChild(n); }
     return el;
+  }
+  // tierLabel renders the backend's numeric tier as a friendly word, so the chat
+  // badge reads "Claude" / "local model" instead of a raw "2" (Tier 0 = instant
+  // keyword work is gated out by the caller's `if (tier)` and shows no badge).
+  function tierLabel(tier) {
+    if (typeof tier === "number") return tier >= 2 ? "Claude" : tier === 1 ? "local model" : "instant";
+    return String(tier);
   }
   function pushMsg(cls, text) {
     const el = document.createElement("div");
@@ -1140,6 +1197,23 @@
       const fv = await call("reindex", {});
       if (fv && (fv.videos || []).length) applyFolderView(fv);
     } catch (e) {}
+    showBeckyStatus();
+  }
+
+  // showBeckyStatus tells the user, in the chat intro, exactly which AI backend is
+  // live — Claude (their Claude Code login or API key), the local model, or none —
+  // so they can SEE what is answering instead of guessing/assuming it's faked. It
+  // also syncs the "use Claude" toggle to the backend's real state. Best-effort.
+  async function showBeckyStatus() {
+    try {
+      const st = await call("status", {});
+      const cb = $("online");
+      if (cb) cb.checked = !!st.online;
+      const intro = chat.querySelector(".ul-intro p");
+      if (intro && st.summary) intro.textContent = st.summary;
+      const name = document.querySelector(".right-head .ul-name");
+      if (name && st.summary) name.title = st.summary;
+    } catch (e) { /* older build / no status verb — keep the static intro */ }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);

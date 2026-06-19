@@ -16,6 +16,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -64,10 +65,32 @@ func main() {
 	}
 	defer w.Destroy()
 
-	// THE bridge: window.beckyCall(verb, argsJSON) → JSON envelope. One bound
-	// function is the whole control surface (every verb is allowlisted in
-	// dispatch). It returns the JSON string the page parses.
-	if err := w.Bind("beckyCall", app.Call); err != nil {
+	// THE bridge — ASYNCHRONOUS. window.beckyCall(reqID, verb, argsJSON) ENQUEUES
+	// the work and returns immediately; the result is delivered back to the page via
+	// window.__beckyResolve(reqID, envelopeJSON) when the verb finishes.
+	//
+	// WHY async (this is the fix for the "window freezes / search works once then
+	// stalls" bug): go-webview2 invokes a bound function SYNCHRONOUSLY on the
+	// WebView2 UI message-loop thread (pkg/edge/chromium.go MessageReceived →
+	// MessageCallback → callbinding). So the OLD `w.Bind("beckyCall", app.Call)` ran
+	// every verb to completion ON the UI thread — a slow verb (ffprobe/ffmpeg proxy
+	// on a multi-GB file, ASR, an online Claude turn) froze the whole window AND
+	// queued every later call (including the next search) behind it forever. Running
+	// app.Call on a goroutine keeps the UI thread free and lets calls run
+	// concurrently; the quick promise-resolve is marshalled back onto the UI thread
+	// via w.Dispatch (ExecuteScript must run there). app.Call never panics, but we
+	// recover defensively so a goroutine can never take the process down.
+	if err := w.Bind("beckyCall", func(reqID, verb, argsJSON string) {
+		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					b, _ := json.Marshal(map[string]any{"ok": false, "error": fmt.Sprintf("internal error: %v", rec)})
+					deliverBridgeReply(w, reqID, string(b))
+				}
+			}()
+			deliverBridgeReply(w, reqID, app.Call(verb, argsJSON))
+		}()
+	}); err != nil {
 		fmt.Fprintln(os.Stderr, "becky-clip: bind failed:", err)
 		os.Exit(1)
 	}
@@ -101,6 +124,21 @@ func main() {
 
 	w.Navigate(target)
 	w.Run() // blocks until the window is closed / Terminate
+}
+
+// deliverBridgeReply resolves the page-side promise for reqID with the verb's JSON
+// envelope. The envelope is passed to JS as a JSON-encoded string literal
+// (json.Marshal of the string — a valid JS string), which window.__beckyResolve
+// JSON.parses. ExecuteScript (w.Eval) must run on the UI thread, so it is posted
+// via w.Dispatch (this is the only thing that touches the UI thread; the heavy work
+// already ran on the goroutine).
+func deliverBridgeReply(w webview2.WebView, reqID, envelope string) {
+	lit, err := json.Marshal(envelope)
+	if err != nil {
+		lit = []byte(`"{\"ok\":false,\"error\":\"reply encode failed\"}"`)
+	}
+	js := "window.__beckyResolve(" + strconv.Quote(reqID) + "," + string(lit) + ")"
+	w.Dispatch(func() { w.Eval(js) })
 }
 
 // firstNonFlagArg returns the first argv entry that is not a -flag (the optional

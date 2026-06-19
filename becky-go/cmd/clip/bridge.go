@@ -129,6 +129,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		return map[string]any{"path": path, "url": a.frameURL(path)}, nil
 
 	// ---- becky assistant ----
+	case "status":
+		// Which AI backend is powering the chat (claude CLI / API key / local) +
+		// the online toggle — so the UI can SHOW the user it's really on Claude.
+		return a.BeckyStatus(), nil
 	case "set_online":
 		a.SetOnline(argBool(args, "on"))
 		return map[string]any{"online": argBool(args, "on")}, nil

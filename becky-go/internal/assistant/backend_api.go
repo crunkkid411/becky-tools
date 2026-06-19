@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -38,14 +39,36 @@ type apiBackend struct {
 	http     *http.Client
 }
 
-// newAPIBackend builds the Tier-2b backend. model is a snapshot id/class label
-// (e.g. "claude-opus-4-8"); the key is read from the environment.
+// newAPIBackend builds the Tier-2b backend. The model is resolved to a concrete
+// Anthropic API id (the /v1/messages API rejects the CLI aliases like "opus"); the
+// key is read from the environment (becky-clip also lets the user drop it in a key
+// file — see cmd/clip ensureAnthropicKeyEnv).
 func newAPIBackend(model string) *apiBackend {
 	return &apiBackend{
 		key:      os.Getenv("ANTHROPIC_API_KEY"),
-		model:    model,
+		model:    resolveAPIModel(model),
 		endpoint: anthropicEndpoint,
 		http:     &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+// resolveAPIModel maps a CLI-style alias (opus/sonnet/haiku) or an empty value to a
+// concrete Anthropic API model id, which /v1/messages requires. BECKY_ANTHROPIC_MODEL
+// overrides. Ids are current snapshots; re-verify via the in-repo claude-api skill
+// if the API rejects one. A value that is already a concrete id passes through.
+func resolveAPIModel(model string) string {
+	if m := strings.TrimSpace(os.Getenv("BECKY_ANTHROPIC_MODEL")); m != "" {
+		return m
+	}
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "", "opus":
+		return "claude-opus-4-8"
+	case "sonnet":
+		return "claude-sonnet-4-6"
+	case "haiku":
+		return "claude-haiku-4-5"
+	default:
+		return model
 	}
 }
 

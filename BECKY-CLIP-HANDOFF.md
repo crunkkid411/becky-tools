@@ -243,6 +243,60 @@ moment → double-clicks to drop the clip on a timeline → burns an unobtrusive
     falls back to a 600s default so a clip is still draggable/trimmable. becky-captions + becky-transcribe
     must BOTH ship next to becky-clip.exe (the one-click `build-becky-clip.ps1` builds all three).
 
+## ROUND-4 (2026-06-19 — the freeze fix + a Claude-backed chat)
+Jordan: search "works ONCE then permanently stuck until I restart"; the AI chat is "fucking
+broken"; "let me use an api key or my claude code oauth." BOTH root-caused and fixed, verified by
+DRIVING THE REAL deployed `becky-go/bin/becky-clip.exe` on his real folder (`E:/TakingBack2007`,
+484 videos) via CDP — search penguin(227)->click a result->money(400)->cat(400) updates every time;
+chat answers via Claude with a visible "via Claude (Claude Code login)" note. Evidence:
+`becky-clip-work/verify-*.png`, driver `becky-clip-work/cdp_verify.py`.
+
+- **THE FREEZE WAS THE BRIDGE, NOT SEARCH.** go-webview2 invokes a bound function SYNCHRONOUSLY on
+  the WebView2 UI thread (`pkg/edge/chromium.go` `MessageReceived` -> `MessageCallback` ->
+  `callbinding`). The old `w.Bind("beckyCall", app.Call)` therefore ran EVERY verb to completion on
+  the UI thread. A fast verb (search) was fine; but clicking a result fires `media_url` ->
+  `reel.Proxy` -> ffprobe (+ a full ffmpeg transcode for HEVC) on a multi-GB file ON THE UI THREAD
+  -> the whole window froze, and every later `beckyCall` (incl. the next search) queued behind it
+  forever = "stuck on the first search." FIX: the bind now ENQUEUES — runs `app.Call` on a goroutine
+  and resolves the page promise via `window.__beckyResolve(reqId, env)` marshalled back with
+  `w.Dispatch`/`w.Eval` (`cmd/clip/window_gui.go` `deliverBridgeReply`; JS side `bridgeSend` in
+  `app.js`). The UI stays live during ffmpeg/ASR/Claude; calls run concurrently. (The ROUND-2.5
+  claim that ASR "didn't freeze the window" was WRONG — the code path is unambiguous.)
+- **CHAT was a keyword grep wearing a chat costume.** It only reached a model if the (default-OFF)
+  online toggle AND the conservative tier classifier both picked frontier; otherwise it degraded to
+  a grep. FIX: `App.Ask` now calls the NEW `assistant.Router.Assist` (a CHAT brain, separate from the
+  action-only `Handle`): a Tier-0 command still runs instantly, a "find every time X" ask still runs
+  the funnel, and ANY other message is ANSWERED by the best available model. `online` now defaults ON
+  in becky-clip; the toggle is relabelled "use Claude". A `status` verb + chat intro line shows which
+  backend is live ("Connected to Claude (your Claude Code login)") so he can SEE it's real.
+- **API key OR OAuth, both wired.** `ensureAnthropicKeyEnv` lets him drop a key in `anthropic_key.txt`
+  (next to the exe / workdir / user-config dir) or `BECKY_ANTHROPIC_KEY` — no env-var fiddling; the
+  API backend now resolves the alias to a real id (`resolveAPIModel`). The OAuth `claude` CLI path
+  needs zero config and is the default.
+
+## 3.y ROUND-4 gotchas
+29. **NEVER bind a slow function directly with go-webview2 `w.Bind`.** It runs on the UI thread and
+    freezes the window + blocks all later calls. Bind a thin enqueuer that goroutines the work and
+    resolves via `window.__beckyResolve` + `w.Dispatch(w.Eval(...))`. This is the whole ballgame for
+    a responsive WebView2 app; every slow verb (export/transcribe/proxy/probe/online-ask) depends on it.
+30. **`claude -p` must be invoked LEAN or it's unusable as a chat backend** (`internal/assistant/backend_claude.go`).
+    On a heavy Claude Code install the default cold-start is ~100s+ (it boots the whole MCP ecosystem) ->
+    it blows past the 90s turn timeout and the chat hangs at "thinking...". The verified-fast recipe
+    keeps OAuth (no key) and answers in ~15-25s:
+    `claude -p --output-format json --strict-mcp-config --mcp-config {"mcpServers":{}} --tools "" --system-prompt <rules> --model <alias> --max-turns 1`.
+    Three load-bearing flags: `--strict-mcp-config`+empty `--mcp-config` (skip MCP startup),
+    `--tools ""` (else opus tries to USE built-in tools to "investigate", burns the single turn, and
+    returns `error_max_turns` with NO text), and `--system-prompt` to REPLACE (not append) Claude
+    Code's coding-agent framing (append left it narrating fake `grep` calls). `--bare` is a TRAP: it's
+    fast but forces `ANTHROPIC_API_KEY` and DISABLES OAuth ("Not logged in").
+31. **CDP verification of the REAL exe (the only proof that counts):** launch
+    `becky-go/bin/becky-clip.exe "<folder>"` with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223 --remote-allow-origins=*"` and `BECKY_CLIP_DEBUG=1`, then run
+    `python becky-clip-work/cdp_verify.py`. It drives search->click->re-search (proves the freeze fix)
+    and the chat (proves Claude answers). Re-use/extend it; don't trust a demo screenshot (ROUND-2's mistake).
+32. **The bridge is now `beckyCall(reqId, verb, argsJSON)` (3 args) and returns nothing** — the reply
+    arrives via `window.__beckyResolve`. The headless `app.Call(verb, argsJSON)` (main.go, tests) is
+    UNCHANGED and still synchronous; only the windowed bind is async. Keep both in sync if you touch it.
+
 ## 4. The "becky" assistant — wired vs not (the honest state + the next big job)
 - **Tier 0 (deterministic, no model)** runs in the GUI today: keyword command parse + `footage`
   grep / `becky-search`. This is what works now. **ROUND-2: verified live** — typing "find every

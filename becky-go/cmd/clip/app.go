@@ -67,7 +67,9 @@ type App struct {
 	// so a session with no chat never spawns a model. nil until built.
 	router *assistant.Router
 
-	// online toggles the assistant's Tier-2 frontier escalation (opt-in).
+	// online toggles the assistant's Tier-2 frontier (Claude) escalation. becky-clip
+	// defaults it ON (Jordan explicitly wants the chat backed by his Claude) — the
+	// GUI toggle turns it off for pure-offline forensic work.
 	online bool
 
 	// workDir is where transient outputs (frame stills, proxies, anchors) land —
@@ -84,8 +86,11 @@ type App struct {
 // session starts with no folder open and offline (Tier-2 off).
 func NewApp() *App {
 	a := &App{
-		cfg:     config.Load(),
-		online:  false,
+		cfg: config.Load(),
+		// Default ON so the chat uses Claude (CLI/OAuth or API key) out of the box —
+		// the user's explicit ask. Harmless if no frontier backend is present
+		// (the assistant just falls to the local model / keyword search).
+		online:  true,
 		workDir: defaultWorkDir(),
 	}
 	a.reel = newReel("Untitled compilation")
@@ -778,6 +783,10 @@ func (a *App) ensureRouter() *assistant.Router {
 	if a.router != nil {
 		return a.router
 	}
+	// Let the user supply an Anthropic API key without touching environment
+	// variables (his explicit ask) — env first, then a plain-text key file. The
+	// claude CLI (Claude Code OAuth) path needs none of this.
+	ensureAnthropicKeyEnv(a.workDir)
 	localModel := strings.TrimSpace(os.Getenv("BECKY_CLIP_MODEL"))
 	corrLog := filepath.Join(a.workDir, "corrections.jsonl")
 	a.router = assistant.NewDefaultRouter(
@@ -791,6 +800,49 @@ func (a *App) ensureRouter() *assistant.Router {
 		},
 	)
 	return a.router
+}
+
+// ensureAnthropicKeyEnv lets a non-dev supply an Anthropic API key WITHOUT setting
+// an environment variable (the user's explicit ask): if ANTHROPIC_API_KEY isn't
+// already set, it reads a key from BECKY_ANTHROPIC_KEY or a plain-text
+// "anthropic_key.txt" placed next to the becky-clip exe, in the work dir, or in the
+// user config dir, and exports it so the API backend (built next) picks it up. The
+// claude CLI (Claude Code OAuth) path needs none of this. Best-effort: any failure
+// just leaves the API backend unavailable (the chat then uses the CLI / local).
+func ensureAnthropicKeyEnv(workDir string) {
+	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
+		return
+	}
+	if k := strings.TrimSpace(os.Getenv("BECKY_ANTHROPIC_KEY")); k != "" {
+		_ = os.Setenv("ANTHROPIC_API_KEY", k)
+		return
+	}
+	for _, p := range anthropicKeyFiles(workDir) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if k := strings.TrimSpace(string(b)); k != "" {
+			_ = os.Setenv("ANTHROPIC_API_KEY", k)
+			return
+		}
+	}
+}
+
+// anthropicKeyFiles lists the plain-text key-file locations checked in order: next
+// to the exe, in the work dir, then the OS user-config dir.
+func anthropicKeyFiles(workDir string) []string {
+	var paths []string
+	if exe, err := os.Executable(); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), "anthropic_key.txt"))
+	}
+	if workDir != "" {
+		paths = append(paths, filepath.Join(workDir, "anthropic_key.txt"))
+	}
+	if cfg, err := os.UserConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(cfg, "becky-clip", "anthropic_key.txt"))
+	}
+	return paths
 }
 
 // SetOnline toggles the assistant's Tier-2 frontier escalation (opt-in).
@@ -820,7 +872,23 @@ func (a *App) Ask(ctx context.Context, utterance string) (assistant.Proposal, er
 	}
 	a.mu.Unlock()
 
-	return r.Handle(ctx, utterance, cx, nil)
+	// Assist is the CHAT brain (not the action-only Handle): a Tier-0 command runs
+	// instantly, a "find every time X" ask runs the retrieval funnel, and anything
+	// else (a question, a fuzzy request) is ANSWERED by Claude (CLI/OAuth or API
+	// key) when available — so becky is a real assistant, not a keyword grep.
+	return r.Assist(ctx, utterance, cx, nil)
+}
+
+// BeckyStatus reports which AI backends are usable right now (claude CLI / API key
+// / local model) plus the current online toggle, so the GUI can tell the user — in
+// plain language — what is powering the chat and how to enable more. It builds the
+// router (cheap) to query each backend's Available().
+func (a *App) BeckyStatus() assistant.BackendStatus {
+	st := a.ensureRouter().Status()
+	a.mu.Lock()
+	st.Online = a.online
+	a.mu.Unlock()
+	return st
 }
 
 // budget returns a generous per-session Tier-2 budget so opt-in online turns can
