@@ -68,6 +68,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
 
 	"becky-go/internal/drumcmd"
@@ -138,25 +139,57 @@ func (p ModelParser) Parse(instruction string, m *drummachine.Machine) (Intent, 
 	return in, nil
 }
 
-// errModelStub marks the unimplemented model exec. The local agent replaces the
-// body of execRunModel with the real os/exec call (see the contract at the top).
-var errModelStub = errors.New("machinectl: model exec is a stub — wire execRunModel on the local machine")
+// errModelStub is kept for test injection; production now uses the real exec.
+var errModelStub = errors.New("machinectl: model exec is a stub (test-only)")
 
-// execRunModel is the STUB the local Windows agent must implement: run the
-// llama.cpp one-shot completion binary with the prompt and deterministic flags
-// (--temp 0 --seed 42 -n 192 --no-display-prompt -m model -p prompt) and return
-// stdout. Until then it returns errModelStub so the parser degrades to keywords.
+// machineGBNF is a GBNF grammar constraining the model to a strict JSON object
+// matching the machineJSON contract. This prevents the model from emitting
+// markdown, explanation, or structurally invalid JSON — important for a
+// deterministic (--temp 0) small model.
+const machineGBNF = `
+root   ::= "{" ws action ws "," ws pad-f ws "," ws value-f ws "," ws group-f ws "," ws on-f ws "," ws sample-f ws "," ws kit-f ws "," ws transport-f ws "," ws genre-f ws "," ws drum-f ws "," ws note-f ws "}"
+ws     ::= [ \t\n]*
+action ::= "\"action\"" ws ":" ws "\"" action-val "\""
+action-val ::= "beat" | "load_kit" | "set_pad_sample" | "set_pad_level" | "set_pad_pan" | "set_pad_pitch" | "set_pad_decay" | "set_choke" | "mute_pad" | "solo_pad" | "set_tempo" | "set_swing" | "transport" | "new_pattern" | "duplicate_pattern" | "add_scene" | "genre_starter" | "unknown"
+pad-f  ::= "\"pad\"" ws ":" ws number
+value-f ::= "\"value\"" ws ":" ws number
+group-f ::= "\"group\"" ws ":" ws number
+on-f   ::= "\"on\"" ws ":" ws boolean
+sample-f ::= "\"sample\"" ws ":" ws string
+kit-f  ::= "\"kit\"" ws ":" ws string
+transport-f ::= "\"transport\"" ws ":" ws string
+genre-f ::= "\"genre\"" ws ":" ws string
+drum-f ::= "\"drum\"" ws ":" ws string
+note-f ::= "\"note\"" ws ":" ws string
+boolean ::= "true" | "false"
+number  ::= "-"? [0-9]+ ("." [0-9]+)?
+string  ::= "\"" ([^"\\] | "\\" .)* "\""
+`
+
+// execRunModel runs the llama.cpp one-shot completion binary with the prompt and
+// deterministic flags (--temp 0 --seed 42 -n 256 --no-display-prompt) and returns
+// stdout. The GBNF grammar constrains the output to valid strict JSON.
 //
-// Reference implementation (the local agent uncomments / adapts this):
-//
-//	cmd := exec.Command(bin, "-m", model, "--temp", "0", "--seed", "42",
-//	    "-n", "192", "--no-display-prompt", "-p", prompt)
-//	var out, errb strings.Builder
-//	cmd.Stdout, cmd.Stderr = &out, &errb
-//	if err := cmd.Run(); err != nil { return out.String(), err }
-//	return out.String(), nil
+// Degrade-never-crash: any exec error returns ("", err) so the caller falls back
+// to the deterministic parser.
 func execRunModel(bin, model, prompt string) (string, error) {
-	return "", errModelStub
+	// #nosec G204 — bin and model paths come from env vars or well-known defaults.
+	cmd := exec.Command(bin,
+		"-m", model,
+		"--temp", "0",
+		"--seed", "42",
+		"-n", "256",
+		"--no-display-prompt",
+		"--grammar", strings.TrimSpace(machineGBNF),
+		"-p", prompt,
+	)
+	var out, errb strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return out.String(), err
+	}
+	return out.String(), nil
 }
 
 // ─── machine summary (grounds the prompt) ─────────────────────────────────────
