@@ -288,12 +288,50 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/drummachine-kit-wiring-20260619` (cloud, 2026-06-19) — `cmd/drummachine` Gio window: REAL kit loading + sample browser wired in. READY FOR LOCAL.**
+
+The Gio window (the actual double-clickable drum machine) now loads real kits and
+plays real samples through `becky-daw-engine` — replacing the empty/sine fallback path.
+`go build/vet/test ./...` all green; `go build -tags gui ./cmd/drummachine` clean;
+`CC=.../gcc.exe go build -tags audio ./cmd/daw-engine` clean.
+
+**What was wired (3 files, +591/-12):**
+- `internal/drummachine/drummachine.go`: added `WithKit(k Kit) *Machine` (immutable kit-swap)
+  and `WithPadSound(pad, path, *Sound) (*Machine, error)` (immutable pad-sample assignment).
+- `cmd/drummachine/gui_kit.go` (NEW, `//go:build gui`): `startLoadKitFolder` (PowerShell
+  FolderBrowserDialog on goroutine -> `LoadKitFromFolder` -> `WithKit`), `startLoadKitSFZ`
+  (.sfz/.dspreset picker -> `LoadKitFromSFZ` -> `WithKit`), `startScanBrowser` (background
+  `samplelib.ScanWithCache` from `X:\music-2\SAMPLES` or `X:\Splice`), `applyBrowserFilter`
+  (live name/role filter), `assignSampleToPad` (click -> `sampler.NewDrumSound` + `WithPadSound`
+  -> immediate `auditionPad`), `layoutKitButtons` (top-bar row), `layoutBrowserPanel`
+  (240dp collapsible right panel, max 400 rows, Scan footer), `handleKitInput` (all
+  kit/browser clicks per frame), Windows pickers with 5-min timeout, `padSampleName`.
+- `cmd/drummachine/gui.go`: samplelib import; 11 browser fields on App; `handleKitInput`
+  called from `handleInput`; `layoutFrame` horizontal split when browser shown;
+  `layoutTopBar` includes kit buttons.
+
+**How Jordan sound-checks:**
+1. Run `Build Becky Drum.bat` -> builds `becky-drummachine.exe` + `becky-daw-engine.exe`.
+2. Open Becky Drum Machine.
+3. Click **[kit folder]** -> pick any sample folder -> 16 pads show loaded sample names.
+4. Click a pad -> REAL sample plays (via `--play-pad`).
+5. Click **[play]** -> sequencer loops with real audio (`--play-machine --loops 16`).
+6. Or click **[browse]** -> search "kick" -> click result -> pad assigned + auditioned.
+7. Or AI box: "load 808 kit" / "put a snare on pad 2" / "make it half-time".
+
+**Left for local: `build-all-tools.bat` + sound-check on the UR12.** Nothing else.
+Caveats: pickers are Windows-only (PowerShell/STA). Browser auto-scans `X:\music-2\SAMPLES`
+then `X:\Splice`; shows a "no library found" note if neither exists. GUI-RULES Phases 2-4
+(C++ ASIO/VST3 host, Rust video sidecar) remain separate future builds.
+
+---
+
 **Drum machine: orphan foundations WIRED into a playable engine + AI control; GUI/audio STANDARD ratified (local, 2026-06-19). Branch `local/drum-and-gui-standard-2026-06-19`.**
 Built via 3 background subagents (2 disjoint build agents in isolated worktrees + 2 research passes) then integrated here. Whole module `go build`/`go vet`/`go test ./...` green; `go build -tags audio ./cmd/daw-engine` green (mingw CC).
-- **Real sampler audio engine** (`internal/audioengine/sampler_engine.go`, `cmd/daw-engine/machine.go`): closes red-team P0-2/3/4 + P1-1/2 — velocity→gain, AmpEnv, declick on every voice stop/choke/steal, Hermite resample (pitch + device rate), seeded round-robin. `becky-daw-engine --render-machine <machine.json> [--out wav]` bounces a REAL-sample beat offline + deterministic; `--play-machine` plays live (`-tags audio`). 8-bit PCM added to sampledecode.
-- **Kit loading + AI control** (`internal/drummachine/kitload.go`+`kitportable.go`, `samplelib/persist.go`, `machinectl/model.go`): closes P0-1 (the orphans are wired) — `Pad.Sound *sampler.Sound`, `LoadKitFromSFZ`/`LoadKitFromFolder`, persistent `~/.becky/samplelib.json` mtime index, project-portable kit paths (root-relative + SHA-256 relink), and `machinectl` real local-model tool-call (grammar-constrained JSON) with the deterministic keyword parser as silent fallback.
-- **`GUI-RULES.md` (root) = CANONICAL** GUI/audio standard, ratified by Jordan. Go engine + Gio GUI + C++ VST3/ASIO audio-host sidecar (PortAudio + now-MIT VST3 SDK + GPL ASIO SDK → his Steinberg UR12) + Rust/wgpu video sidecar (Vegas-fast NLE), all over ONE deterministic NDJSON seam. WebView2 retired. The Nov-2025 Steinberg relicensing (VST3→MIT, ASIO→GPL) is what unblocked the bare-metal VST3 host. See §5 doc map.
-- **Left for local (NOT done this run):** wire the `cmd/drummachine` Gio WINDOW to the new engine+kits+AI (pad-click auditions a real sample, sequencer plays via `--play-machine`, kit/sample browser, AI box) — the window still drives the OLD sine path; the CLI render path works now. Then Jordan sound-checks on the UR12. GUI-RULES Phases 2-4 (C++ ASIO/VST3 host, Rust video sidecar, retire WebView2 from becky-clip) are separate future builds.
+- **Real sampler audio engine** (`internal/audioengine/sampler_engine.go`, `cmd/daw-engine/machine.go`): closes red-team P0-2/3/4 + P1-1/2 -- velocity->gain, AmpEnv, declick on every voice stop/choke/steal, Hermite resample (pitch + device rate), seeded round-robin. `becky-daw-engine --render-machine <machine.json> [--out wav]` bounces a REAL-sample beat offline + deterministic; `--play-machine` plays live (`-tags audio`). 8-bit PCM added to sampledecode.
+- **Kit loading + AI control** (`internal/drummachine/kitload.go`+`kitportable.go`, `samplelib/persist.go`, `machinectl/model.go`): closes P0-1 (the orphans are wired) -- `Pad.Sound *sampler.Sound`, `LoadKitFromSFZ`/`LoadKitFromFolder`, persistent `~/.becky/samplelib.json` mtime index, project-portable kit paths (root-relative + SHA-256 relink), and `machinectl` real local-model tool-call (grammar-constrained JSON) with the deterministic keyword parser as silent fallback.
+- **`GUI-RULES.md` (root) = CANONICAL** GUI/audio standard, ratified by Jordan. Go engine + Gio GUI + C++ VST3/ASIO audio-host sidecar (PortAudio + now-MIT VST3 SDK + GPL ASIO SDK -> his Steinberg UR12) + Rust/wgpu video sidecar (Vegas-fast NLE), all over ONE deterministic NDJSON seam. WebView2 retired. See §5 doc map.
+- **Left for local:** the Gio WINDOW wiring is DONE (see branch above). Jordan sound-checks on the UR12. GUI-RULES Phases 2-4 (C++ ASIO/VST3 host, Rust video sidecar, retire WebView2 from becky-clip) are separate future builds.
 
 ---
 
