@@ -154,6 +154,49 @@ func TestTranscribe_LocalNeeded_WritesLocalKeepsOriginal(t *testing.T) {
 	}
 }
 
+// TestRetranscribe_BareSrt_NeverOverwritten is the exact-complaint test: a video
+// with a BARE "<stem>.srt" (not ".en.srt"), the user hits "re-transcribe" (the ↻
+// button), local ASR runs — and the original "<stem>.srt" is byte-for-byte
+// unchanged while a SEPARATE "<stem>_LOCAL.srt" is written. The tooltip's old
+// "overwrites the .srt" claim was false; this proves it.
+func TestRetranscribe_BareSrt_NeverOverwritten(t *testing.T) {
+	app, dir, name := newClipFolder(t)
+
+	bare := filepath.Join(dir, "stream_[ABCDEFGHIJK].srt")
+	mustWrite(t, bare, cannedSRT)
+	before := sha256Of(t, bare)
+
+	// Force local ASR (as a re-transcribe would when the user wants a fresh local
+	// pass): captions says local_needed.
+	withFakeCaptions(t, captions.Decision{Action: captions.ActionLocalNeeded})
+
+	origRun := runTranscribe
+	t.Cleanup(func() { runTranscribe = origRun })
+	gotOut := ""
+	runTranscribe = func(_ context.Context, _bin, _video, srtOut string) error {
+		gotOut = srtOut
+		return os.WriteFile(srtOut, []byte("DIFFERENT local ASR content"), 0o644)
+	}
+	fakeBin := filepath.Join(t.TempDir(), transcribeExeName())
+	mustWrite(t, fakeBin, "x")
+	t.Setenv("BECKY_TRANSCRIBE", fakeBin)
+
+	if _, err := app.Transcribe(name); err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+
+	wantLocal := filepath.Join(dir, "stream_[ABCDEFGHIJK]_LOCAL.srt")
+	if filepath.Clean(gotOut) != filepath.Clean(wantLocal) {
+		t.Fatalf("local ASR output = %q, want the _LOCAL sidecar %q", gotOut, wantLocal)
+	}
+	if !fileExists(wantLocal) {
+		t.Fatalf("expected a separate _LOCAL sidecar at %s", wantLocal)
+	}
+	if after := sha256Of(t, bare); after != before {
+		t.Fatalf("FORENSIC VIOLATION: re-transcribe modified the original .srt: %s -> %s", before, after)
+	}
+}
+
 // TestTranscribe_CaptionsAbsent_GoesLocal: with NO becky-captions resolvable, the
 // sequence skips straight to local ASR and writes "<stem>_LOCAL.srt".
 func TestTranscribe_CaptionsAbsent_GoesLocal(t *testing.T) {

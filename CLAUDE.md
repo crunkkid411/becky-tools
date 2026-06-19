@@ -327,6 +327,13 @@ nothing** — built + verified on the real exe. Honest caveats: an opus chat tur
 "thinking…" spinner shows; the async bridge keeps the window live); a no-key user relies on the
 `claude` CLI being signed in (the status line says so plainly if it isn't). NOT yet pushed to GitHub.
 
+Follow-up (same day): killed the re-transcribe button's FALSE "overwrites the .srt" tooltip — it
+now reads "writes a SEPARATE <name>_LOCAL.srt; your original transcript is never touched" (the
+behavior was always safe — local ASR only ever writes `_LOCAL.srt` — but the text lied and made it
+feel unusable). Locked in by `TestRetranscribe_BareSrt_NeverOverwritten` (sha256-proves a bare
+`<stem>.srt` is byte-identical after a local re-transcribe) and verified on the live exe (the tooltip
+no longer contains "overwrites").
+
 ---
 
 **Branch `local/becky-clip-fix3-2026-06-18` (local, 2026-06-18) — becky-clip: visible quotes + no console-flash + caption/edit-detection pipeline + forensic non-overwrite + real NLE timeline. MERGED to master + pushed.**

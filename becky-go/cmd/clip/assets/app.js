@@ -262,7 +262,7 @@
       tr.className = "vchip-tr" + (busy ? " busy" : "");
       tr.textContent = busy ? "…" : (v.has_transcript ? "↻" : "⊕");
       tr.disabled = busy || state.transcribingAll;
-      tr.title = busy ? "transcribing…" : (v.has_transcript ? "re-transcribe (overwrites the .srt)" : "transcribe this video (local Parakeet ASR)");
+      tr.title = busy ? "transcribing…" : (v.has_transcript ? "re-transcribe locally — writes a SEPARATE <name>_LOCAL.srt; your original transcript is never touched" : "transcribe this video (local Parakeet ASR)");
       tr.onclick = (e) => { e.stopPropagation(); transcribeVideo(v.name); };
       chip.appendChild(tr);
 
