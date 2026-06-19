@@ -7,6 +7,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -148,6 +150,22 @@ func atoiSafe(s string) int {
 func atofSafe(s string) float64 {
 	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	return f
+}
+
+// fileExists reports whether path is an existing, regular (non-directory) file.
+// Used to resolve sidecar/binary paths without a panic on a missing entry.
+func fileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
+}
+
+// isWindows reports whether the running binary is on Windows (so a sibling
+// executable's name gets the .exe suffix).
+func isWindows() bool {
+	return runtime.GOOS == "windows"
 }
 
 // truthy reports whether a string value means "on" (true/1/yes/on). Anything

@@ -239,6 +239,55 @@ func TestProposeThenApply(t *testing.T) {
 	}
 }
 
+// TestOfflineSemanticAskYieldsKeywordSearch is the offline-GUI path proof: with NO
+// backends available (no local model, frontier off — exactly the default offline
+// becky-clip session), a semantic "find every time he…" ask must still produce a
+// usable Tier-0 keyword search (a becky-search exec command the GUI can run to
+// populate results) — and the query must be the MEANINGFUL keywords, not the whole
+// sentence (which would grep nothing). This is the FIX-PLAN §4 requirement.
+func TestOfflineSemanticAskYieldsKeywordSearch(t *testing.T) {
+	idx := tinyIndex(t)
+	// No backends at all: every Available() fails → the router falls to the Tier-0
+	// retrieval floor.
+	r := NewRouter(Options{Log: func(string, ...any) {}})
+
+	cx := onlineCtx(idx)
+	cx.Online = false // offline, as the default becky-clip session is
+	p, err := r.Handle(context.Background(), "find every time he offered money for the cat", cx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A usable search action + its becky-search exec command must be present so the
+	// frontend can populate results.
+	if len(p.Actions) == 0 || p.Actions[0].Verb != VerbSearch {
+		t.Fatalf("offline semantic ask should propose a search action, got %+v", p.Actions)
+	}
+	if len(p.ExecCommands) == 0 || p.ExecCommands[0].Bin != "becky-search" {
+		t.Fatalf("offline ask should attach a becky-search exec command, got %+v", p.ExecCommands)
+	}
+
+	// The query must be the keywords (money/cat), NOT the whole sentence — the
+	// framing/stop words ("find", "every", "time", "he", "offered") are stripped.
+	q := strings.ToLower(argString(p.Actions[0], "query"))
+	for _, want := range []string{"money", "cat"} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("keyword search query %q should contain %q", q, want)
+		}
+	}
+	// Pure framing/stop words must be gone (proving it's not the whole sentence).
+	// (Content words like "offered" legitimately survive — retrievalTerms only
+	// strips framing/stop words, and the query still greps on money/cat.)
+	for _, banned := range []string{"every", "time", " he "} {
+		if strings.Contains(q, banned) {
+			t.Fatalf("keyword search query %q should NOT contain framing word %q", q, banned)
+		}
+	}
+	if p.Note == "" {
+		t.Fatal("an offline-degraded turn should carry an honest note")
+	}
+}
+
 // TestBudgetExhaustedGate: a frontier ask with an exhausted budget degrades, even
 // with online ON and a frontier backend available.
 func TestBudgetExhaustedGate(t *testing.T) {

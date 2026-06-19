@@ -88,9 +88,15 @@ func cmdSearch(argv []string) {
 
 // cmdCall invokes one bridge verb directly (scripted checks / debugging). The
 // args payload is an optional JSON object string, exactly as the GUI sends it.
+// An optional third positional [folder] opens that case folder in THIS process
+// before the verb runs — needed for headless smoke-testing of verbs that act on
+// the open folder (transcribe / transcribe_all / search / add_clip), since each
+// CLI invocation is a fresh process with no folder open. The GUI never needs this
+// (its long-lived App opens a folder via open_folder/pick_folder first); this is a
+// headless convenience only and does not change the bridge/verb contract.
 func cmdCall(argv []string) {
 	if len(argv) < 1 {
-		beckyio.Fatalf("usage: becky-clip call <verb> [argsJSON]")
+		beckyio.Fatalf("usage: becky-clip call <verb> [argsJSON] [folder]")
 	}
 	verb := argv[0]
 	argsJSON := ""
@@ -98,6 +104,11 @@ func cmdCall(argv []string) {
 		argsJSON = argv[1]
 	}
 	app := NewApp()
+	if len(argv) > 2 && argv[2] != "" {
+		if _, err := app.OpenFolder(argv[2]); err != nil {
+			beckyio.Fatalf("open folder %q: %v", argv[2], err)
+		}
+	}
 	reply := app.Call(verb, argsJSON)
 	fmt.Fprintln(os.Stdout, reply)
 }

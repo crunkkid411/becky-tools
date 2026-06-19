@@ -86,15 +86,54 @@ button { font-family: inherit; }
 
 .video-picker { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .video-picker.hidden { display: none; }
+
+/* picker header: video count + the prominent "Transcribe all" action */
+.vp-head { width: 100%; display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.vp-count { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+.vp-all {
+  margin-left: auto; background: #14241c; color: var(--neon); border: 1px solid var(--neon-dim);
+  border-radius: 6px; padding: 4px 9px; cursor: pointer; font-size: 11px; font-weight: 700; line-height: 1;
+}
+.vp-all:hover:not(:disabled) { border-color: var(--neon); box-shadow: 0 0 8px rgba(57,255,20,.35); }
+.vp-all:disabled { opacity: .45; cursor: default; }
+
+/* a video chip is now a container: [▶ play name] [⊕ transcribe] */
 .vchip {
   background: #101810; color: var(--text); border: 1px solid var(--line);
-  border-radius: 999px; padding: 4px 10px; cursor: pointer; font-size: 12px;
-  display: flex; align-items: center; gap: 5px;
+  border-radius: 999px; padding: 0; font-size: 12px;
+  display: inline-flex; align-items: stretch; overflow: hidden; max-width: 100%;
 }
 .vchip:hover { border-color: var(--neon); }
-.vchip.active { border-color: var(--neon); color: var(--neon); background: #14241c; }
-.vchip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.vchip.active { border-color: var(--neon); background: #14241c; }
+.vchip.active .vname { color: var(--neon); }
+.vchip-play {
+  background: transparent; color: inherit; border: 0; cursor: pointer;
+  display: flex; align-items: center; gap: 5px; padding: 4px 6px 4px 10px;
+  font-size: 12px; min-width: 0; max-width: 220px;
+}
+.vchip-play .vname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vchip .dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
 .vchip.has-tr .dot { background: var(--neon); box-shadow: 0 0 6px var(--neon); }
+.vchip-tr {
+  flex: 0 0 auto; background: #0c130d; color: var(--neon); border: 0; border-left: 1px solid var(--line);
+  cursor: pointer; padding: 0 9px; font-size: 13px; line-height: 1; font-weight: 700;
+}
+.vchip-tr:hover:not(:disabled) { background: #16291d; }
+.vchip-tr:disabled { color: var(--dim); cursor: default; }
+.vchip-tr.busy { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* the big "Transcribe this video" call-to-action in the empty-cues state */
+.cta-wrap { padding-top: 30px; }
+.cta-transcribe {
+  margin-top: 6px; background: var(--neon); color: #000; border: 0; border-radius: 8px;
+  padding: 11px 18px; cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: .3px;
+  box-shadow: 0 0 0 0 rgba(57,255,20,.5); transition: box-shadow .2s ease, transform .08s ease;
+}
+.cta-transcribe:hover:not(:disabled) { box-shadow: 0 0 16px rgba(57,255,20,.55); transform: translateY(-1px); }
+.cta-transcribe:active:not(:disabled) { transform: translateY(0); }
+.cta-transcribe:disabled { background: var(--neon-dim); color: #0a0a0a; cursor: default; animation: pulse 1.1s ease-in-out infinite; }
+.cta-sub { margin-top: 10px !important; font-size: 11px !important; color: var(--dim); }
 
 .results { flex: 1; overflow-y: auto; padding: 4px 8px 10px; min-height: 0; }
 .result {

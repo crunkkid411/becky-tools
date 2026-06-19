@@ -60,6 +60,18 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// Resolve a source (or proxy) to a /media URL the <video> can load.
 		return a.mediaURLReply(argString(args, "source"))
 
+	// ---- transcription (generate the missing .srt sidecar) ----
+	case "transcribe":
+		// Run the real local ASR on one video → write <stem>.srt beside it →
+		// re-index. Long-running (the GUI shows a spinner).
+		return a.Transcribe(argString(args, "name"))
+	case "transcribe_all":
+		// Transcribe every indexed video lacking a transcript (degrade per video).
+		return a.TranscribeAll()
+	case "reindex":
+		// Re-walk the open folder after external changes (no-op if none open).
+		return a.Reindex(), nil
+
 	// ---- timeline mutation ----
 	case "add_clip":
 		return a.AddClip(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argString(args, "label"))

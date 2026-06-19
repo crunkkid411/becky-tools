@@ -2,10 +2,12 @@
 #
 # Double-clicking the Desktop shortcut (or "Build Becky Clip.bat") runs this. It:
 #   1. Builds the becky-clip WINDOW (becky-clip.exe - the WebView2 GUI).
-#   2. Checks that ffmpeg is available (used for preview proxies / frame export /
+#   2. Builds becky-transcribe.exe next to it, so the in-window "Transcribe" button
+#      can turn raw footage (no .srt) into a searchable transcript via local ASR.
+#   3. Checks that ffmpeg is available (used for preview proxies / frame export /
 #      rendering; the window still opens without it, but export needs it).
-#   3. Drops a "Becky Clip" icon on your Desktop.
-#   4. Opens the editor.
+#   4. Drops a "Becky Clip" icon on your Desktop.
+#   5. Opens the editor.
 #
 # Jordan never types anything. He clicks, watches, and the window opens. becky-clip
 # is the forensic transcript-based video editor: open a case folder, search (or ask
@@ -57,7 +59,7 @@ try {
     if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
 
     # 1) The WINDOW (pure Go + WebView2, no C compiler needed) ------------------
-    Title "1/3  Building the window (search + preview + timeline + becky chat)..."
+    Title "1/4  Building the window (search + preview + timeline + becky chat)..."
     $oldCgo = $env:CGO_ENABLED
     $env:CGO_ENABLED = '0'   # go-webview2 is pure Go; build without cgo
     & go build -tags gui -o $GuiExe .\cmd\clip
@@ -70,8 +72,24 @@ try {
     }
     Good ("    Window built:  " + $GuiExe)
 
-    # 2) ffmpeg check (preview proxies, frame export, and the final render) ------
-    Title "2/3  Checking ffmpeg (needed to export your compilation)..."
+    # 2) The TRANSCRIBER (becky-transcribe.exe, beside the window) ---------------
+    # The in-window "Transcribe" button runs this on a video that has no .srt yet,
+    # so raw footage becomes searchable. becky-clip finds it next to becky-clip.exe.
+    # Building it is just compiling a small Go wrapper (fast); actually running ASR
+    # uses the local Parakeet model + Python already set up on this PC.
+    Title "2/4  Building the transcriber (becky-transcribe, for raw footage)..."
+    $TranscribeExe = Join-Path $BinDir 'becky-transcribe.exe'
+    & go build -o $TranscribeExe .\cmd\transcribe
+    if ($LASTEXITCODE -eq 0) {
+        Good ("    Transcriber built:  " + $TranscribeExe)
+    } else {
+        Warn "    becky-transcribe didn't build. The window still works for footage that"
+        Warn "    already has transcripts, but the in-window Transcribe button won't run"
+        Warn "    until this builds. Copy the red text above to your assistant."
+    }
+
+    # 3) ffmpeg check (preview proxies, frame export, and the final render) ------
+    Title "3/4  Checking ffmpeg (needed to export your compilation)..."
     if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
         Good "    ffmpeg found - preview, frame export, and rendering will work."
     } else {
@@ -80,8 +98,8 @@ try {
         Warn "    ffmpeg. Tell your assistant to put ffmpeg on PATH."
     }
 
-    # 3) Desktop shortcut -------------------------------------------------------
-    Title "3/3  Putting a 'Becky Clip' icon on your Desktop..."
+    # 4) Desktop shortcut -------------------------------------------------------
+    Title "4/4  Putting a 'Becky Clip' icon on your Desktop..."
     try {
         $desktop = [Environment]::GetFolderPath('Desktop')
         $lnk = Join-Path $desktop 'Becky Clip.lnk'

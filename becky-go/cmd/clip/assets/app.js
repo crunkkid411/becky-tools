@@ -40,6 +40,8 @@
     overlayOn: false,
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
     base: "",
+    transcribing: {},    // name → true while ASR runs (guards double-runs)
+    transcribingAll: false,
   };
 
   // ---------- toast ----------
@@ -86,49 +88,158 @@
 
   // applyFolderView renders an indexed case folder (shared by the path-based
   // open and the native picker): update state, draw the video chips, prompt the
-  // user to search or pick a video.
+  // user to search, play a video, or make a transcript.
   function applyFolderView(fv) {
     if (!fv) return;
     state.folder = fv.root;
     state.videos = fv.videos || [];
     renderVideoPicker();
+    const need = state.videos.filter((v) => !v.has_transcript).length;
+    const hint = need
+      ? `${need} of ${state.videos.length} have no transcript yet. Click a video to play it, hit ⊕ to transcribe one, or “⊕ Transcribe all”.`
+      : `Search the transcripts, or click a video to play it and read its cues.`;
     results.innerHTML = `<div class="empty-hint"><div class="big">🔎</div>
-      <p>${state.videos.length} video(s) indexed.<br>Search, or pick a video to read its transcript.</p></div>`;
+      <p>${state.videos.length} video(s) indexed.<br>${escapeHtml(hint)}</p></div>`;
     toast(`opened ${state.videos.length} video(s)`);
   }
 
+  // renderVideoPicker draws one chip per video. Clicking the chip PLAYS the video
+  // (raw — no transcript needed) and loads its cues if any. Each chip also carries
+  // a small ⊕ "transcribe" button so a detective can make a transcript on the spot.
   function renderVideoPicker() {
     const vp = $("video-picker");
     vp.innerHTML = "";
     if (!state.videos.length) { vp.classList.add("hidden"); return; }
     vp.classList.remove("hidden");
+
+    const head = document.createElement("div");
+    head.className = "vp-head";
+    const need = state.videos.filter((v) => !v.has_transcript).length;
+    head.innerHTML = `<span class="vp-count">${state.videos.length} video${state.videos.length === 1 ? "" : "s"}</span>`;
+    const allBtn = document.createElement("button");
+    allBtn.className = "vp-all";
+    allBtn.id = "btn-transcribe-all";
+    allBtn.textContent = state.transcribingAll ? "transcribing…" : "⊕ Transcribe all";
+    allBtn.disabled = state.transcribingAll || need === 0;
+    allBtn.title = need === 0 ? "every video already has a transcript" : "run ASR on every video that has no transcript";
+    allBtn.onclick = transcribeAll;
+    head.appendChild(allBtn);
+    vp.appendChild(head);
+
     state.videos.forEach((v) => {
-      const b = document.createElement("button");
-      b.className = "vchip" + (v.has_transcript ? " has-tr" : "");
-      b.innerHTML = `<span class="dot"></span>${escapeHtml(v.name)}`;
-      b.title = v.has_transcript ? "has transcript — click to read its cues" : "no transcript";
-      b.onclick = () => loadTranscript(v);
-      vp.appendChild(b);
+      const chip = document.createElement("div");
+      chip.className = "vchip" + (v.has_transcript ? " has-tr" : "");
+      chip.dataset.name = v.name;
+      const busy = !!state.transcribing[v.name];
+
+      const play = document.createElement("button");
+      play.className = "vchip-play";
+      play.innerHTML = `<span class="dot"></span><span class="vname">${escapeHtml(v.name)}</span>`;
+      play.title = v.has_transcript ? "play this video + read its cues" : "play this video (no transcript yet)";
+      play.onclick = () => openVideo(v);
+      chip.appendChild(play);
+
+      const tr = document.createElement("button");
+      tr.className = "vchip-tr" + (busy ? " busy" : "");
+      tr.textContent = busy ? "…" : (v.has_transcript ? "↻" : "⊕");
+      tr.disabled = busy || state.transcribingAll;
+      tr.title = busy ? "transcribing…" : (v.has_transcript ? "re-transcribe (overwrites the .srt)" : "transcribe this video (local Parakeet ASR)");
+      tr.onclick = (e) => { e.stopPropagation(); transcribeVideo(v.name); };
+      chip.appendChild(tr);
+
+      vp.appendChild(chip);
     });
   }
 
-  async function loadTranscript(v) {
+  // openVideo: the chip click. PLAY the raw video immediately (decoupled from any
+  // transcript), mark the chip active, then load its cues if it has a transcript.
+  async function openVideo(v) {
     setActiveChip(v.name);
+    state.activeVideo = v;
+    previewAt({ source: v.path, name: v.name, start: 0 });
+    if (v.has_transcript) loadCues(v.name);
+    else showTranscribeCTA(v.name);
+  }
+
+  // loadCues fills the results list with a video's transcript cues (no preview
+  // change). Used after a chip click and after a transcribe completes.
+  async function loadCues(name) {
     try {
-      const cues = await call("transcript", { name: v.name });
-      if (!cues || !cues.length) {
-        results.innerHTML = `<div class="empty-hint"><div class="big">📝</div>
-          <p>No transcript cues for ${escapeHtml(v.name)}.</p></div>`;
-        return;
-      }
+      const cues = await call("transcript", { name });
+      if (!cues || !cues.length) { showTranscribeCTA(name); return; }
       renderResults(cues);
       toast(`${cues.length} cues`);
     } catch (e) { toast(e.message, true); }
   }
 
+  // showTranscribeCTA turns the dead-end "no cues" state into the single most
+  // important action: a big, inviting "Transcribe this video" button.
+  function showTranscribeCTA(name) {
+    const busy = !!state.transcribing[name];
+    results.innerHTML =
+      `<div class="empty-hint cta-wrap"><div class="big">📝</div>` +
+      `<p>No transcript yet for<br><b>${escapeHtml(name)}</b>.</p>` +
+      `<button class="cta-transcribe" id="cta-tr" ${busy ? "disabled" : ""}>` +
+      (busy ? "transcribing…" : "⊕ Transcribe this video") + `</button>` +
+      `<p class="cta-sub">Local Parakeet ASR — this can take a minute.</p></div>`;
+    const btn = $("cta-tr");
+    if (btn && !busy) btn.onclick = () => transcribeVideo(name);
+  }
+
   function setActiveChip(name) {
     document.querySelectorAll(".vchip").forEach((c) =>
-      c.classList.toggle("active", c.textContent.trim() === name));
+      c.classList.toggle("active", c.dataset.name === name));
+  }
+
+  // ---------- transcribe (ASR) ----------
+  // transcribeVideo runs ASR on one video. ASR is slow (tens of seconds to
+  // minutes), so we show a clear in-progress state and guard against double-runs.
+  // On success the returned FolderView re-renders the picker (now has_transcript)
+  // and we auto-load that video's fresh cues.
+  async function transcribeVideo(name) {
+    if (state.transcribing[name] || state.transcribingAll) return;
+    state.transcribing[name] = true;
+    renderVideoPicker();
+    if (!state.activeVideo || state.activeVideo.name === name) showTranscribeCTA(name);
+    toast(`transcribing ${name}… (local Parakeet ASR, this can take a minute)`);
+    try {
+      const fv = await call("transcribe", { name });
+      delete state.transcribing[name];
+      if (fv) { state.folder = fv.root; state.videos = fv.videos || []; }
+      renderVideoPicker();
+      setActiveChip(name);
+      toast(`transcribed ${name}`);
+      loadCues(name);
+    } catch (e) {
+      delete state.transcribing[name];
+      renderVideoPicker();
+      showTranscribeCTA(name);
+      toast("transcribe failed: " + e.message, true);
+    }
+  }
+
+  // transcribeAll runs ASR on every video lacking a transcript, with progress.
+  async function transcribeAll() {
+    if (state.transcribingAll) return;
+    const pending = state.videos.filter((v) => !v.has_transcript).length;
+    if (!pending) { toast("every video already has a transcript"); return; }
+    state.transcribingAll = true;
+    renderVideoPicker();
+    toast(`transcribing ${pending} video(s)… (local Parakeet ASR, this can take a while)`);
+    try {
+      const r = await call("transcribe_all", {});
+      state.transcribingAll = false;
+      if (r && r.folder) { state.folder = r.folder.root; state.videos = r.folder.videos || []; }
+      renderVideoPicker();
+      const done = r ? (r.transcribed || 0) : 0;
+      const failed = r ? (r.failed || 0) : 0;
+      toast(`transcribed ${done}, failed ${failed}`, failed > 0);
+      (r && r.errors || []).forEach((e) => addBotMessage(`⚠ ${e.name}: ${e.error}`));
+    } catch (e) {
+      state.transcribingAll = false;
+      renderVideoPicker();
+      toast("transcribe all failed: " + e.message, true);
+    }
   }
 
   // ---------- search ----------
@@ -517,6 +628,14 @@
       try { state.base = await window.beckyBase(); } catch (e) {}
     }
     try { applyTimeline(await call("timeline", {})); } catch (e) {}
+    // If a folder was already opened before the window showed (a path passed on
+    // argv / drag-onto-exe / a shortcut), render it so the detective lands straight
+    // in their case instead of an empty panel. reindex returns the current folder
+    // view (or an empty one when nothing is open, in which case we keep the hint).
+    try {
+      const fv = await call("reindex", {});
+      if (fv && (fv.videos || []).length) applyFolderView(fv);
+    } catch (e) {}
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);

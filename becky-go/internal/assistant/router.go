@@ -306,13 +306,20 @@ func (r *Router) downgradeToLocal(ctx context.Context, utt string, cx Context, n
 	return p
 }
 
-// degradeToRetrieval is the terminal floor (R-AI §1.3): a literal search over the
-// utterance, always available because it is just a command. It returns a search
-// action + the becky-search exec command, with an honest note.
+// degradeToRetrieval is the terminal floor (R-AI §1.3): a keyword search derived
+// from the utterance, always available because it is just a command. It returns a
+// search action + the becky-search exec command, with an honest note. The query is
+// chosen most-specific-first: an explicit literal ("find 'cat'") wins; otherwise
+// the framing/stop words are stripped to the meaningful keywords (so a semantic
+// ask offline — "find every time he offered money for the cat" — searches
+// "money cat", not the whole sentence, which would grep nothing). Only when no
+// keyword survives does it fall back to the raw utterance.
 func (r *Router) degradeToRetrieval(utt string, cx Context, note string) Proposal {
 	q := strings.TrimSpace(utt)
 	if lit, ok := parseLiteralSearch(strings.ToLower(utt)); ok {
 		q = lit
+	} else if terms := retrievalTerms(utt); len(terms) > 0 {
+		q = strings.Join(terms, " ")
 	}
 	p := Proposal{
 		Actions:     []Action{{Verb: VerbSearch, Args: map[string]any{"query": q, "mode": "keyword"}}},

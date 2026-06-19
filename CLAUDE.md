@@ -294,6 +294,35 @@ contract, function signatures, constraints, and Definition of Done are in
 
 ---
 
+**Branch `local/becky-clip-fix-2026-06-18` (local, 2026-06-18) — `becky-clip` ROUND 2: "it's a fancy .jpg" -> actually works on real footage. MERGED to master + pushed.**
+
+Jordan reported the shipped becky-clip was non-functional on his real footage: search did nothing,
+no video played, no timeline, AI chat maybe-not-wired. ROOT CAUSE (confirmed): the tool was entirely
+**transcript-gated** — `footage.Index` only flags `has_transcript` when a `<stem>.srt` sidecar
+already exists, and there was NO way in the GUI to GENERATE one or to PLAY a video without one. The
+original "verification" was a `demo-case/` of hand-authored `.srt` next to color-bar clips — it never
+touched real footage. Fixed via 2 parallel subagents (disjoint files) + orchestrator integration, and
+**verified by driving the REAL WebView2 window via CDP on real footage** (not a demo):
+- **Transcription wired** (`cmd/clip/transcribe.go` + verbs `transcribe`/`transcribe_all`/`reindex`):
+  in-window Transcribe runs the real local `becky-transcribe` (Parakeet) -> writes `<stem>.srt` beside
+  the source -> re-indexes -> cues + search light up. Seam-tested offline.
+- **Play ANY video** (assets): chip-click plays the raw video (decoupled from transcripts); HEVC etc.
+  auto-proxy via `reel.Proxy`; empty-cues state shows a big "Transcribe this video" CTA.
+- **argv/drag launch renders the folder** (`app.js bootstrap()` -> `reindex`); was opening in the
+  backend but leaving the UI empty.
+- **Offline `ask becky`** extracts keywords (`router.go`) so plain-English requests populate results.
+- **One-click `build-becky-clip.ps1`** now builds `becky-transcribe.exe` too (Transcribe works fresh).
+
+Verified live end-to-end: open folder -> play raw h264 + HEVC(proxy) -> Transcribe (real ASR, 112 words)
+-> search "unlock" (4 hits) -> click seeks to 0:06 -> 2-clip timeline -> overlay -> export real 11.2s MP4 +
+EDL + re-based SRT. Window stays responsive during ASR (`IsHungAppWindow=False`). `go build/test/vet`
+green, gofmt-clean, `node --check` OK. Evidence: `becky-clip-work/live-*.png`, `cdp_drive.py`,
+`FIX-PLAN.md`. New gotchas + the CDP verification recipe are in `BECKY-CLIP-HANDOFF.md` (§3.14-19).
+**Left for local: nothing** — shipped. Backlog (non-blocking) in HANDOFF §7: Tier-1/2 AI quote
+discovery (set `BECKY_CLIP_MODEL`), no-audio pre-check, post-proxy autoplay nudge.
+
+---
+
 **Branch `local/becky-clip-2026-06-18` (local, 2026-06-18) — `becky-clip`: the forensic, transcript-based, AI-first video COMPILATION editor. MVP BUILT + screenshot-verified. Full spec: `SPEC-BECKY-CLIP.md`.**
 
 Jordan's biggest unsolved bottleneck: 500GB of footage + recurring "compile every time X happened"

@@ -4,7 +4,31 @@
 > becky-clip. `SPEC-BECKY-CLIP.md` says *what it is*; THIS file says *what will bite you* — the
 > mistakes already made, the non-obvious logic, and the dead ends already ruled out, so we stop
 > re-making solved mistakes. When you learn a new non-obvious thing, ADD it here.
-> Last updated 2026-06-18 (initial build + first round of Jordan's fixes).
+> Last updated 2026-06-18 (round 2: the "it's a fancy .jpg" fix — transcription
+> integration + play-any-video + argv-launch render + live-window verification).
+
+## ROUND-2 FIX SUMMARY (read this first if you weren't here for it)
+Jordan reported becky-clip was non-functional on his real footage: search did nothing,
+videos didn't play, no timeline, "might as well be a .jpg". **Root cause (confirmed): the
+whole tool was transcript-GATED** — `footage.Index` only flags a video `has_transcript` when
+a `<stem>.srt/.vtt/.json3` sidecar already sits next to it, and there was NO way in the GUI to
+*generate* one and NO way to *play a video without a transcript*. The original demo only ever
+"worked" because `demo-case/` ships hand-authored `.srt` next to color-bar test clips. Real
+raw footage (no sidecars) → every video `has_transcript:false` → search greps nothing, chips
+show "no cues", preview unreachable. What round 2 added/fixed (all verified by DRIVING the real
+WebView2 window via CDP on real footage, not a demo):
+- **Transcribe integration** (`cmd/clip/transcribe.go`): in-window "Transcribe" / "Transcribe
+  all" runs the real local `becky-transcribe` (Parakeet) → writes `<stem>.srt` beside the
+  source → re-indexes → cues + search light up. Verbs `transcribe`/`transcribe_all`/`reindex`.
+- **Play ANY video** (assets): clicking a video chip now PLAYS it (decoupled from transcripts);
+  exotic codecs (HEVC) auto-proxy via `reel.Proxy`. Empty-cues state shows a big "Transcribe
+  this video" CTA — the dead-end is now an action.
+- **argv/drag launch renders the folder** (`app.js bootstrap()` now calls `reindex` and renders
+  it). Before, a folder passed on argv opened in the backend but the UI stayed empty.
+- **Offline `ask becky`** derives keywords (`router.go degradeToRetrieval`) so a plain-English
+  request populates results even with no model loaded.
+- **One-click build** (`build-becky-clip.ps1`) now also builds `becky-transcribe.exe` so the
+  Transcribe button works out of the box.
 
 ---
 
@@ -102,10 +126,44 @@ moment → double-clicks to drop the clip on a timeline → burns an unobtrusive
 13. **`gofmt -l .` lists many files on Windows — that's cosmetic CRLF, not real.** Files are stored
     LF in git (autocrlf), so Linux CI gofmt is green. Check your OWN new files with a scoped
     `gofmt -l <dir>`; don't try to "fix" the whole-repo list.
+14. **VERIFY BY DRIVING THE REAL WINDOW — the previous agent shipped a demo-only "verified".**
+    becky-clip is just a web page served on localhost whose only native dep is the bound
+    `window.beckyCall`. WebView2 honors `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` — launch with
+    `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223 --remote-allow-origins=*"`
+    `BECKY_CLIP_DEBUG=1` and you get a real CDP endpoint at `http://127.0.0.1:9223/json`. Then drive
+    the live UI for real (click chips, run transcribe, search, export) + `Page.captureScreenshot`.
+    A throwaway driver is in `becky-clip-work/cdp_drive.py` (`eval '<js>'` / `shot <png>`). This is
+    how round 2 was verified end-to-end on real footage. **Do NOT trust a `demo-case` screenshot as proof.**
+15. **becky-clip was transcript-GATED; transcription is now wired (`cmd/clip/transcribe.go`).** It
+    execs `becky-transcribe <video> --format srt --output <stem>.srt`, writing the sidecar BESIDE
+    the source (allowed — like `<stem>.beckymeta.json`; never the video). The real ASR sits behind
+    the `runTranscribe` seam (like `pickFolderFn`) so `go test` uses a fake. becky-clip finds
+    `becky-transcribe.exe` via `$BECKY_TRANSCRIBE` → next to its own exe → PATH. It needs the local
+    Parakeet model + python (already on Jordan's PC). A video with NO audio stream fails with a raw
+    ffmpeg "does not contain any stream" error (surfaced as a toast — honest, but a pre-check for an
+    audio track would be friendlier; backlog).
+16. **The transcribe bridge call is SYNCHRONOUS but does NOT freeze the window.** go-webview2 runs
+    the bound `beckyCall` off the UI message-loop thread — confirmed with `IsHungAppWindow=False` /
+    `Responding=True` across a live ~40s ASR run. So a long transcription keeps the window
+    responsive (the spinner animates). **Don't "fix" this with an async job model — it isn't broken.**
+17. **Passing Windows paths through CDP `Runtime.evaluate` is escaping hell.** `"X:\AI-2\..."` gets
+    its backslashes eaten by JS string-escaping (`\A`→`A`). Use FORWARD slashes (`X:/AI-2/...`) — Go's
+    filepath + the bridge accept them on Windows. (This bit the round-2 verification; not an app bug.)
+18. **Exotic-codec preview autoplay is best-effort.** Clicking an HEVC video builds an H.264 proxy
+    (`reel.Proxy`, ~1-2s) then plays — but because the proxy is awaited, the browser's user-gesture
+    token has expired so `play()` may be blocked → the first frame shows paused; the ▶ button plays
+    it. h264 (no proxy, fast) autoplays fine. Minor; backlog (muted-autoplay or a play-on-canplay nudge).
+19. **`build-becky-clip.ps1` now builds BOTH `becky-clip.exe` and `becky-transcribe.exe`** (steps
+    1/4 + 2/4) so the in-window Transcribe button works on a fresh checkout. Keep it ASCII-only and
+    parse-check under 5.1 (gotcha #1).
 
 ## 4. The "becky" assistant — wired vs not (the honest state + the next big job)
 - **Tier 0 (deterministic, no model)** runs in the GUI today: keyword command parse + `footage`
-  grep / `becky-search`. This is what works now.
+  grep / `becky-search`. This is what works now. **ROUND-2: verified live** — typing "find every
+  time he said unlock" into the ask box returns a proposal AND populates the results panel with the
+  matching quotes (the `becky-search` exec_command → `runExecCommands` → `runSearch` path works).
+  `router.go degradeToRetrieval` now strips framing words to keywords so the offline floor searches
+  "unlock" not the whole sentence. So the button → router → results loop IS wired (Tier-0 end-to-end).
 - **Tier 1 (local GGUF via `internal/llmlocal`)** and **Tier 2 (frontier)** are BUILT and the
   `claude` CLI path is unit-verified, but they are **NOT yet driven end-to-end from the "ask becky"
   button.** THE NEXT MAJOR FEATURE: wire `Router.Handle` into the GUI chat so "find every time he
@@ -134,13 +192,21 @@ proof + tested ffmpeg recipes), `R-AI.md` (the router design + claude flags). Sc
 `shot-loop.png` (full loop on a demo case), `verify-launch.png` (fresh launch + becky rename).
 
 ## 7. P1 backlog (not blocking; in rough priority)
-1. Wire "ask becky" plain-English search end-to-end (§4) — the headline AI feature.
+1. ~~Wire "ask becky" plain-English search end-to-end~~ — DONE in round 2 for Tier-0 (§4). Still
+   open: Tier-1/2 (local GGUF / `claude`) → `becky-quotes --select-from-json` for AI quote
+   *discovery* beyond keyword grep (set `BECKY_CLIP_MODEL` to a text GGUF to light up Tier-1).
 2. Confirm the native folder picker pops for Jordan (§3.10); add a fallback if STA misbehaves.
+   (The path-prompt fallback + argv/drag-launch render both work; the native dialog itself can't be
+   CDP-tested — eyeball it.)
 3. Timeline polish: ripple/trim handles, drag-reorder finesse, markers/regions UX.
-4. In-window OS file drag-drop (Gio had the same gap; WebView2 may need a small shim).
-5. Exotic-codec preview proxies surfaced in the UI (engine supports `reel.Proxy` already).
-6. Clean scratch: `becky-clip-work/{cut-tests,*-smoke}` (~13MB throwaway clips/screens; a delete-
-   guard hook blocked auto-cleanup — safe to `rm -rf` by hand).
+4. In-window OS file drag-drop (WebView2 may need a small shim).
+5. ~~Exotic-codec preview proxies~~ — DONE: clicking an HEVC video proxies + plays (§3.18); only the
+   post-proxy AUTOPLAY is best-effort (plays on ▶). Optional: muted-autoplay or play-on-`canplay`.
+6. Transcribe niceties: pre-check for an audio stream (friendlier than the raw ffmpeg error on a
+   no-audio clip, §3.15); a batch-progress count for "Transcribe all" on big folders.
+7. Clean scratch: `becky-clip-work/{cut-tests,*-smoke,spikes}` (throwaway clips/screens; a delete-
+   guard hook blocks auto-cleanup — safe to remove by hand). The round-2 evidence
+   (`live-*.png`, `cdp_drive.py`, `FIX-PLAN.md`, `live-case/`) is worth keeping.
 
 ## 8. How to iterate safely (the loop)
 1. Branch off master (`local/becky-clip-*`); never commit directly to master (a hook enforces it).
