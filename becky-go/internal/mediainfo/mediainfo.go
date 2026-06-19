@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"becky-go/internal/proc"
 )
 
 // Info is the subset of ffprobe output the tools care about.
@@ -49,6 +51,7 @@ func Probe(ffprobe, path string) (Info, error) {
 		"-show_streams",
 		path,
 	)
+	proc.NoWindow(cmd) // suppress the console-window flash for GUI callers
 	out, err := cmd.Output()
 	if err != nil {
 		return Info{}, fmt.Errorf("ffprobe failed: %w", err)

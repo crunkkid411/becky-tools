@@ -84,7 +84,12 @@ button { font-family: inherit; }
 .search-ico { opacity: .7; }
 #search { flex: 1; background: transparent; border: 0; color: var(--text); outline: none; font-size: 13px; }
 
-.video-picker { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
+/* The video list is CAPPED + scrolls on its own. Without this, a folder with
+   hundreds of videos makes this box thousands of px tall and pushes the search
+   results (#results, below it) completely off-screen — the bug where "search
+   shows a count but the sidebar never changes". flex:0 0 auto so it never steals
+   the results' space. */
+.video-picker { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; flex: 0 0 auto; max-height: 34vh; overflow-y: auto; }
 .video-picker.hidden { display: none; }
 
 /* picker header: VIDEOS zone label + count + the prominent "Transcribe all" action */

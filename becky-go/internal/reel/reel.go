@@ -22,6 +22,7 @@ import (
 	"becky-go/internal/config"
 	"becky-go/internal/edl"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/proc"
 )
 
 // Options configures a render. Zero values fall back to deterministic defaults:
@@ -246,6 +247,7 @@ func fontFile() string {
 // runFFmpeg execs ffmpeg with the given args, capturing stderr for diagnostics.
 func runFFmpeg(ffmpeg string, verbose bool, args []string) error {
 	cmd := exec.Command(ffmpeg, args...)
+	proc.NoWindow(cmd) // no console-window flash when the GUI (windowsgui) spawns ffmpeg
 	var errBuf strings.Builder
 	if verbose {
 		cmd.Stderr = teeStderr(&errBuf)

@@ -22,6 +22,7 @@ import (
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/proc"
 	"becky-go/internal/pyhelpers"
 )
 
@@ -258,6 +259,7 @@ func extractAudio(ffmpeg, input string) (string, error) {
 	cmd := exec.Command(ffmpeg, "-y", "-i", input,
 		"-vn", "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
 		"-loglevel", "error", path)
+	proc.NoWindow(cmd) // no console flash when becky-clip spawns us windowless
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
@@ -298,6 +300,7 @@ func runHelper(python, script, wav, modelDir, device, lang string, numThreads in
 		"--chunk-seconds", strconv.FormatFloat(chunkSeconds, 'f', -1, 64),
 		"--chunk-overlap", strconv.FormatFloat(chunkOverlap, 'f', -1, 64)}
 	cmd := exec.Command(python, args...)
+	proc.NoWindow(cmd) // no console flash when becky-clip spawns us windowless
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	if verbose {

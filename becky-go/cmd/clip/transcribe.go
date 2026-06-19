@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"becky-go/internal/footage"
+	"becky-go/internal/proc"
 )
 
 // transcribeTimeout bounds one becky-transcribe exec. Transcription of a long
@@ -44,6 +45,7 @@ const transcribeTimeout = 30 * time.Minute
 // offline. Production never reassigns it.
 var runTranscribe = func(ctx context.Context, transcribeBin, videoPath, srtOut string) error {
 	cmd := exec.CommandContext(ctx, transcribeBin, videoPath, "--format", "srt", "--output", srtOut)
+	proc.NoWindow(cmd) // becky-transcribe is a console app; no flash when the GUI spawns it
 	// Diagnostics (Parakeet/ffmpeg progress) go to the clip's stderr; stdout is
 	// unused for --output runs. Capture stderr so a failure carries a readable tail.
 	var errBuf strings.Builder

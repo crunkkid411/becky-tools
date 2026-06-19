@@ -10,6 +10,7 @@ import (
 
 	"becky-go/internal/config"
 	"becky-go/internal/pathx"
+	"becky-go/internal/proc"
 )
 
 // webSafeCodecs are the video codecs a WebView2 <video> element can decode
@@ -101,6 +102,7 @@ func videoCodec(ffprobe, source string) (string, error) {
 		"-print_format", "json",
 		source,
 	)
+	proc.NoWindow(cmd) // no console-window flash on video-click (GUI is windowsgui)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("ffprobe failed: %w", err)

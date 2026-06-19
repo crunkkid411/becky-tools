@@ -25,6 +25,7 @@ import (
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
+	"becky-go/internal/proc"
 	"becky-go/internal/pyhelpers"
 )
 
@@ -197,6 +198,7 @@ func runTranscribeVAD(python, script, model, wav string) ([]vadSpan, error) {
 	outFile := filepath.Join(os.TempDir(), fmt.Sprintf("becky_transcribe_vad_%d.json", os.Getpid()))
 	defer os.Remove(outFile)
 	cmd := exec.Command(python, script, wav, "--model", model, "--output", outFile)
+	proc.NoWindow(cmd) // no console flash when becky-clip spawns us windowless
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
