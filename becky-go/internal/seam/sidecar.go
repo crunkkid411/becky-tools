@@ -155,6 +155,10 @@ func (sc *Sidecar) Close() {
 // (events). It runs in its own goroutine.
 func (sc *Sidecar) pump(r io.Reader) {
 	scanner := bufio.NewScanner(r)
+	// Allow large lines: a vst.scan over a big plugin library (or a long param
+	// list) can exceed bufio.Scanner's default 64 KB token limit, which would
+	// otherwise end the pump early and silently drop the sidecar.
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -162,6 +166,12 @@ func (sc *Sidecar) pump(r io.Reader) {
 		}
 		sc.dispatch(line)
 	}
+	// The pump is the SOLE sender to sc.events, so it (not shutdown) closes the
+	// channel — and only here, after the read loop has exited. Closing it from
+	// shutdown() would race with a concurrent dispatch() send: both the pump and
+	// the cmd.Wait() watcher goroutine call shutdown(), so closing events there
+	// can panic "send on closed channel" while the pump is still dispatching.
+	close(sc.events)
 	sc.shutdown()
 }
 
@@ -236,9 +246,9 @@ func (sc *Sidecar) shutdown() {
 				Error: "sidecar closed",
 			}
 		}
-
-		// Close the events channel after unblocking all waiters.
-		close(sc.events)
+		// NOTE: sc.events is closed by the pump goroutine (the sole sender),
+		// after its read loop exits — never here — to avoid a send-on-closed-
+		// channel race with dispatch(). See pump().
 	})
 }
 
