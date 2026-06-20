@@ -44,6 +44,17 @@ var ErrNoSuchPort = errors.New("midilive: no MIDI output port matches the reques
 // ErrPortClosed is returned by Send when called on a closed/zero port handle.
 var ErrPortClosed = errors.New("midilive: MIDI output port is not open")
 
+// ErrVirtualMIDIUnavailable is returned by CreateVirtualPort when the
+// teVirtualMIDI driver/DLL (shipped with loopMIDI, file teVirtualMIDI64.dll) is
+// not present or cannot be loaded. The wrapped error carries the real loader
+// reason (e.g. "the specified module could not be found"). Callers should treat
+// it as "becky can't make its own port here" and degrade — e.g. fall back to
+// OpenNamed on an existing loopMIDI port, or write an SMF to disk.
+var ErrVirtualMIDIUnavailable = errors.New("midilive: teVirtualMIDI driver/DLL is unavailable")
+
+// ErrVirtualPortClosed is returned by SendBytes on a closed/zero virtual port.
+var ErrVirtualPortClosed = errors.New("midilive: virtual MIDI port is not open")
+
 // Port describes one MIDI OUTPUT device as reported by the OS. Index is the
 // winmm device id passed to midiOutOpen; Name is the user-visible port name
 // (e.g. "loopMIDI Port", "Microsoft GS Wavetable Synth").
@@ -236,3 +247,76 @@ func (p *OutPort) Send(msg uint32) error { return p.send(msg) }
 
 // Close releases the OS port handle. Safe to call more than once.
 func (p *OutPort) Close() error { return p.close() }
+
+// ---------------------------------------------------------------------------
+// Virtual MIDI port — becky CREATES its OWN port (no loopMIDI setup by hand).
+//
+// Where OutPort *opens an existing* OS MIDI output (winmm), VirtualPort *creates
+// a brand-new virtual port* via the teVirtualMIDI driver that ships with loopMIDI
+// (DLL: teVirtualMIDI64.dll, installed in System32). The new port shows up as a
+// normal MIDI device to every other app on the machine — so Maschine, with no
+// manual loopMIDI config, can select "becky" as a MIDI input and receive the
+// drum pattern we send. Still no cgo: the driver is reached with a LazyDLL
+// syscall, exactly like the winmm code above. Real work is in midilive_windows.go.
+// ---------------------------------------------------------------------------
+
+// VirtualPort is a virtual MIDI port that becky created and now owns. It exists
+// only while the process holds it open (the teVirtualMIDI driver tears the port
+// down when the handle closes), so a caller keeps the VirtualPort alive for as
+// long as the port should be visible to instruments. Construct it with
+// CreateVirtualPort; stream raw MIDI bytes with SendBytes; release it with Close.
+type VirtualPort struct {
+	name   string
+	handle uintptr // LPVM_MIDI_PORT from virtualMIDICreatePortEx2; 0 means closed
+	open   bool
+}
+
+// Name returns the visible name of the created port (what instruments see).
+func (v *VirtualPort) Name() string {
+	if v == nil {
+		return ""
+	}
+	return v.name
+}
+
+// IsOpen reports whether the virtual port is currently held open.
+func (v *VirtualPort) IsOpen() bool { return v != nil && v.open && v.handle != 0 }
+
+// CreateVirtualPort creates a NEW virtual MIDI port named name and returns a
+// handle that keeps it alive. The port is transmit-capable: becky sends MIDI
+// into it and any app listening on that MIDI input (e.g. Maschine) receives it.
+//
+// On success the port is visible to other applications until Close is called (or
+// the process exits). On a non-Windows build, or when the teVirtualMIDI driver
+// is not installed, it returns a typed error (ErrUnsupportedOS /
+// ErrVirtualMIDIUnavailable) — degrade-never-crash; the caller should fall back.
+func CreateVirtualPort(name string) (*VirtualPort, error) { return createVirtualPort(name) }
+
+// VirtualMIDIVersion returns the teVirtualMIDI client-DLL and kernel-driver
+// version strings (each "major.minor.release.build"), for a diagnostic line that
+// explains a creation failure. On non-Windows / when the driver is unavailable it
+// returns ErrUnsupportedOS / ErrVirtualMIDIUnavailable.
+func VirtualMIDIVersion() (dll, driver string, err error) { return virtualMIDIVersion() }
+
+// SendBytes streams one raw MIDI message (status + data bytes) into the virtual
+// port immediately. The bytes must be a complete MIDI command (e.g. {0x99,36,100}
+// for a note-on); the driver validates them. Returns ErrVirtualPortClosed on a
+// closed/zero port.
+func (v *VirtualPort) SendBytes(b []byte) error { return v.sendBytes(b) }
+
+// Close tears down the virtual port and releases the driver handle. After Close
+// the port disappears from other apps' device lists. Safe to call more than once.
+func (v *VirtualPort) Close() error { return v.close() }
+
+// ---------------------------------------------------------------------------
+// Schedule -> raw bytes. The teVirtualMIDI API takes raw MIDI bytes (LPBYTE),
+// not the packed winmm DWORD, so unpack a ScheduledMessage's Msg into the 3-byte
+// short-message form. Pure Go, OS-independent, unit-testable everywhere.
+// ---------------------------------------------------------------------------
+
+// MsgBytes unpacks a packed midiOutShortMsg DWORD (status | data1<<8 | data2<<16)
+// into the raw MIDI byte sequence for that channel-voice message. Note-on/off and
+// other 3-byte channel messages return 3 bytes; this is what teVirtualMIDI wants.
+func MsgBytes(msg uint32) []byte {
+	return []byte{byte(msg & 0xFF), byte((msg >> 8) & 0xFF), byte((msg >> 16) & 0xFF)}
+}

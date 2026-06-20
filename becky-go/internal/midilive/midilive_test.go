@@ -165,3 +165,60 @@ func TestSendOnClosedPort(t *testing.T) {
 		t.Fatalf("Close on a zero port should be a no-op, got %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Virtual port — the bytes-unpacking helper and the closed-port contract are
+// pure Go and behave identically on every platform, so they're tested here. The
+// actual teVirtualMIDI port creation needs the Windows driver and is exercised by
+// `becky-midi create-port` live, not in CI.
+// ---------------------------------------------------------------------------
+
+func TestMsgBytes(t *testing.T) {
+	t.Parallel()
+	// A note-on (kick, ch9, vel100) packs as status|data1<<8|data2<<16; MsgBytes
+	// must unpack it back to the 3 raw MIDI bytes teVirtualMIDI wants, in order.
+	on := NoteOnMsg(DrumChannel, NoteKick, 100)
+	got := MsgBytes(on)
+	want := []byte{0x99, 36, 100}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("MsgBytes(noteOn) = %v, want %v", got, want)
+	}
+	// Note-off (kick) -> {0x89, 36, 0}.
+	off := MsgBytes(NoteOffMsg(DrumChannel, NoteKick))
+	if len(off) != 3 || off[0] != 0x89 || off[1] != 36 || off[2] != 0 {
+		t.Fatalf("MsgBytes(noteOff) = %v, want [0x89 36 0]", off)
+	}
+	// Round-trip: PackShortMsg of the bytes equals the original packed message.
+	if rt := PackShortMsg(got[0], got[1], got[2]); rt != on {
+		t.Fatalf("round-trip mismatch: PackShortMsg(MsgBytes(x)) = %#x, want %#x", rt, on)
+	}
+}
+
+func TestVirtualPortClosedContract(t *testing.T) {
+	t.Parallel()
+	var v VirtualPort // zero value: not open
+	if v.IsOpen() {
+		t.Fatal("a zero VirtualPort must not report open")
+	}
+	if v.Name() != "" {
+		t.Fatalf("a zero VirtualPort Name() = %q, want empty", v.Name())
+	}
+	if err := v.SendBytes([]byte{0x99, 36, 100}); err == nil {
+		t.Fatal("SendBytes on a zero/closed virtual port must return an error")
+	}
+	// Close on a zero port is a safe no-op on every platform.
+	if err := v.Close(); err != nil {
+		t.Fatalf("Close on a zero virtual port should be a no-op, got %v", err)
+	}
+	// A nil receiver must also be safe (the CLI may defer Close before checking err).
+	var vp *VirtualPort
+	if vp.IsOpen() {
+		t.Fatal("nil *VirtualPort must not report open")
+	}
+	if vp.Name() != "" {
+		t.Fatal("nil *VirtualPort Name() must be empty")
+	}
+	if err := vp.Close(); err != nil {
+		t.Fatalf("Close on a nil *VirtualPort should be a no-op, got %v", err)
+	}
+}

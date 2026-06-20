@@ -17,3 +17,15 @@ func openNamed(string) (*OutPort, error) { return nil, ErrUnsupportedOS }
 func (p *OutPort) send(uint32) error { return ErrUnsupportedOS }
 
 func (p *OutPort) close() error { return nil }
+
+// Virtual-port creation rides the Windows teVirtualMIDI driver, which has no
+// Linux/macOS equivalent. Creating degrades to ErrUnsupportedOS; a zero port's
+// SendBytes/Close behave like any closed port so callers don't special-case OS.
+
+func createVirtualPort(string) (*VirtualPort, error) { return nil, ErrUnsupportedOS }
+
+func (v *VirtualPort) sendBytes([]byte) error { return ErrVirtualPortClosed }
+
+func (v *VirtualPort) close() error { return nil }
+
+func virtualMIDIVersion() (string, string, error) { return "", "", ErrUnsupportedOS }
