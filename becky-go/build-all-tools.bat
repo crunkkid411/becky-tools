@@ -15,11 +15,14 @@ set FAILED=
 set COUNT=0
 for /d %%D in (cmd\*) do (
   set NAME=%%~nxD
-  if /i "!NAME!"=="becky" (
-    set OUT=becky.exe
-  ) else (
-    set OUT=becky-!NAME!.exe
-  )
+  REM Default: cmd\<name> ships as becky-<name>.exe. Two exceptions:
+  REM  - cmd\becky is the orchestrator (becky.exe, no prefix).
+  REM  - cmd\becky-<name> is ALREADY prefixed (becky-reaper, becky-vst, ...) so
+  REM    ship it as-is; prepending again would emit becky-becky-<name>.exe and
+  REM    leave the real becky-<name>.exe stale (silent build-skip bug, fixed).
+  set OUT=becky-!NAME!.exe
+  if /i "!NAME!"=="becky" set OUT=becky.exe
+  if /i "!NAME:~0,6!"=="becky-" set OUT=!NAME!.exe
   echo Building !OUT! ^(cmd\!NAME!^)...
   go build -o bin\!OUT! .\cmd\!NAME!
   if errorlevel 1 (
