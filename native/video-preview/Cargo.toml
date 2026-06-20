@@ -1,0 +1,30 @@
+[package]
+name = "becky-video-preview"
+version = "0.1.0"
+edition = "2021"
+description = "becky-tools native GPU video-preview sidecar (Rust + wgpu). Frame-accurate, no browser. Driven by the Go engine over NDJSON/stdio (GUI-RULES.md Phase 4)."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "becky-video-preview"
+path = "src/main.rs"
+
+[dependencies]
+# GPU. wgpu 29 = latest stable on crates.io (verified 2026-06-19).
+wgpu = "29"
+# Block the async device/adapter requests on a native thread (no tokio needed).
+pollster = "0.4"
+# Zero-copy byte casting for vertex / readback buffers.
+bytemuck = { version = "1", features = ["derive"] }
+# NDJSON protocol (MIT/Apache).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# PNG encode of the read-back GPU frame (MIT).
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Real window for the `video.window` verb (Jordan-verified surface).
+winit = "0.30"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
