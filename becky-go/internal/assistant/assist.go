@@ -2,6 +2,9 @@ package assistant
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"becky-go/internal/footage"
@@ -40,15 +43,22 @@ func (r *Router) Assist(ctx context.Context, utt string, cx Context, searchHits 
 	d := classifyTier(utt, cx)
 
 	var p Proposal
-	switch d.Tier {
-	case TierDeterministic:
-		if len(d.Actions) > 0 {
-			// A fully-parsed command or literal search — run it, no model tokens.
-			p = r.deterministic(d, cx)
+	switch {
+	case d.Tier == TierDeterministic && len(d.Actions) > 0:
+		// A fully-parsed command or literal search — run it, no model tokens.
+		p = r.deterministic(d, cx)
+	case investigateIntent(utt):
+		// "find the documented evidence in my vault / which video / look it up in my
+		// notes" — becky navigates the granted folders READ-ONLY and cites the
+		// evidence, the way Claude Code does. Needs the claude CLI (only it reads
+		// local files) + online + budget; otherwise say so plainly.
+		if r.canInvestigate(cx) {
+			p = r.investigate(ctx, utt, cx)
 		} else {
-			p = r.assistFallback(ctx, utt, cx, searchHits)
+			p = r.degradeToRetrieval(utt, cx,
+				"To read your notes/vault/folder, turn on \"use Claude\" (and make sure the claude CLI is signed in). Showing a keyword search for now.")
 		}
-	case TierFrontier:
+	case d.Tier == TierFrontier:
 		// Semantic "find every time X" / multi-step plan → the retrieval funnel,
 		// which already gates on online+budget and self-degrades to local / keyword.
 		p = r.viaFrontier(ctx, utt, d, cx, searchHits)
@@ -58,6 +68,12 @@ func (r *Router) Assist(ctx context.Context, utt string, cx Context, searchHits 
 
 	r.finalize(&p)
 	return p, nil
+}
+
+// canInvestigate reports whether the agentic file-investigator can run: it needs
+// the claude CLI (only it reads local files), the online toggle on, and budget left.
+func (r *Router) canInvestigate(cx Context) bool {
+	return cx.Online && !cx.Budget.Exhausted() && IsAvailable(r.claudeCLI)
 }
 
 // assistFallback answers conversationally with the best available capable model,
@@ -285,3 +301,137 @@ func assistUserPrompt(ts TimelineState, utt string, cands []footage.Candidate) s
 	}
 	return tl + "\n\nUSER: " + utt
 }
+
+// --- investigate: agentic READ-ONLY file/notes navigation --------------------
+// This is the capability the user demanded: point becky at a folder / Obsidian
+// vault and have it navigate the markdown + transcripts and CITE the exact evidence
+// video + timestamp — the way Claude Code can. It runs the claude CLI with read-only
+// tools (Read/Glob/Grep/LS) over an allowlist of folders.
+
+// investigateCues are phrases meaning "go READ files/notes to find/verify
+// something" (vs. a quick chat or a clip edit). Generous on purpose.
+var investigateCues = []string{
+	"vault", "obsidian", "my notes", "the notes", "in my notes", "markdown", "wiki",
+	"evidence", "documented", "case file", "case notes",
+	"which video", "what video", "which file", "what file", "where was", "where did",
+	"where is the", "look it up", "look up", "find the video", "find evidence",
+	"reported to the auth", "read my", "read the notes", "go look",
+}
+
+var (
+	// barePathRE matches a Windows/Unix-rooted path up to whitespace (no spaces):
+	// E:\TakingBack2007 , C:/case/vault.
+	barePathRE = regexp.MustCompile(`[A-Za-z]:[\\/]\S+`)
+	// quotedPathRE matches a quoted absolute path (keeps spaces): "E:\Taking Back\v".
+	quotedPathRE = regexp.MustCompile(`["']([A-Za-z]:[\\/][^"'\r\n]+)["']`)
+)
+
+// investigateIntent reports whether utt asks becky to navigate files/notes to
+// find/verify evidence — true when it names an absolute path OR carries a cue.
+func investigateIntent(utt string) bool {
+	if barePathRE.MatchString(utt) || quotedPathRE.MatchString(utt) {
+		return true
+	}
+	u := strings.ToLower(utt)
+	for _, kw := range investigateCues {
+		if strings.Contains(u, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// investigateDirs is the READ-ONLY folder allowlist becky may navigate: the open
+// case folder, an optional BECKY_CLIP_VAULT default, and any absolute path named in
+// the message (quoted paths preserve spaces). Only existing dirs are kept (a typo'd
+// path is skipped, never granted); a file path is reduced to its directory. Deduped.
+func investigateDirs(utt string, cx Context) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(strings.Trim(p, `"'`))
+		if p == "" {
+			return
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			return // doesn't exist -> don't grant it
+		}
+		if !fi.IsDir() {
+			p = filepath.Dir(p)
+		}
+		c := filepath.Clean(p)
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	if cx.FolderRoot != "" {
+		add(cx.FolderRoot)
+	}
+	if v := strings.TrimSpace(os.Getenv("BECKY_CLIP_VAULT")); v != "" {
+		add(v)
+	}
+	for _, m := range quotedPathRE.FindAllStringSubmatch(utt, -1) {
+		add(m[1])
+	}
+	for _, m := range barePathRE.FindAllString(utt, -1) {
+		add(m)
+	}
+	return out
+}
+
+// shortDirs renders folder basenames for the chat note (readable provenance).
+func shortDirs(dirs []string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		out = append(out, baseName(d))
+	}
+	return out
+}
+
+// investigate runs becky as a read-only file investigator over the granted folders
+// and returns its cited findings. Caller has already confirmed canInvestigate.
+func (r *Router) investigate(ctx context.Context, utt string, cx Context) Proposal {
+	dirs := investigateDirs(utt, cx)
+	if len(dirs) == 0 {
+		return r.degradeToRetrieval(utt, cx,
+			"becky has no folder to investigate — open a case folder (or name a real path) and ask again.")
+	}
+	out, err := r.claudeCLI.Complete(ctx, Request{
+		System:    investigateSystemPrompt,
+		User:      utt,
+		Agentic:   true,
+		AllowDirs: dirs,
+		MaxTurns:  16,
+		Tier:      TierFrontier,
+	})
+	if err != nil {
+		return r.degradeToRetrieval(utt, cx,
+			"becky's investigation hit an error ("+errLine(err)+") — showing a keyword search instead.")
+	}
+	return Proposal{
+		PreviewText: strings.TrimSpace(out),
+		Tier:        TierFrontier,
+		Note:        "investigated " + strings.Join(shortDirs(dirs), ", ") + " via Claude (Claude Code login)",
+		Cost:        CostNote{Model: r.claudeCLI.Name()},
+	}
+}
+
+// investigateSystemPrompt is the read-only forensic investigator role.
+const investigateSystemPrompt = `You are "becky", a forensic investigator inside becky-clip. You can READ files in
+the folders you have been granted: video files, their .srt/.en.srt transcripts, and
+Obsidian-style markdown notes (which cross-reference pages with [[wiki links]] and
+cite evidence by filename + timestamp).
+
+Answer the user's question by actually reading the relevant files. Then:
+- CITE the exact source file(s) you used.
+- When the evidence is something said in a video, name the VIDEO filename and the
+  timestamp(s), quoting the transcript line verbatim.
+- Corroborate: prefer findings supported by two or more independent signals (e.g. a
+  spoken quote AND a note/title that agree); say plainly when something is a single
+  weak signal or a judgment call.
+- If the relevant video has NO transcript yet, say which video file needs
+  transcribing rather than guessing.
+Be concise and concrete. Never claim a transcript says something it does not. You
+have READ-ONLY access — never modify any file.`
