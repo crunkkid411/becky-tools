@@ -60,8 +60,10 @@ detail: `SPEC-BECKY-REAPER.md`.
 
 > **Local LLM = llama.cpp, ALWAYS (NOT Ollama).** Every becky local-model path uses
 > llama.cpp's `llama-server` (OpenAI-compatible `/v1/chat/completions`), per `internal/llmlocal`.
-> The in-REAPER "REAPER Chat" extension expects a server on `http://localhost:11435/v1/chat/completions`
-> — point `llama-server --port 11435` at it (do **not** use Ollama).
+> The in-REAPER "REAPER Chat" extension expects a server on `http://localhost:11435/v1/chat/completions`.
+> **`becky-reaper brain --start`** boots that server for you (resolves a chat GGUF + `llama-server`
+> and binds them to :11435); **`Start Becky REAPER Brain.bat`** is the one-click launcher, and
+> **`Open Becky DAW.bat`** auto-starts the brain if the port isn't already serving. Do **not** use Ollama.
 
 ## Non-obvious decisions
 
