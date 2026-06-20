@@ -42,6 +42,8 @@ func main() {
 		err = cmdBuild(os.Args[2:])
 	case "render":
 		err = cmdRender(os.Args[2:])
+	case "brain":
+		err = cmdBrain(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -63,8 +65,10 @@ func usage() {
   demo     --out demo.rpp [--render]      tiny audible synth-bass riff
   build    --in arr.json --out song.rpp [--render]   from a becky arrangement
   render   --rpp song.rpp [--out out.wav] render an existing .rpp via REAPER
+  brain    [--start|--check]               serve REAPER Chat's llama backend on :11435
 
 env: BECKY_REAPER overrides the REAPER executable path.
+     BECKY_LLAMA_SERVER / BECKY_REAPER_MODEL override the brain's binary/GGUF.
 `)
 }
 

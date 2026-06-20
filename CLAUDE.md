@@ -293,6 +293,36 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/build-mq4p7l` (cloud, 2026-06-20) — REAPER Chat live-blocker FIXED: `becky-reaper brain` boots the llama-server REAPER Chat connects to (:11435). READY FOR LOCAL.**
+Closes spec §6 step 0 / `CLOUD-HANDOFF-REAPER.md` item #1 — the exact failure in `reaper1.jpg`
+(`Failed to connect to http://localhost:11435/v1/chat/completions`). The cause: nothing was
+serving 11435. The fix is a llama.cpp `llama-server` on that port (becky standard; **Ollama stays
+banned**). Built on top of `claude/becky-reaper-daw` (merged into this branch for the foundation).
+- **`internal/reaperbrain`** (NEW, pure-Go, 12 tests green): `Resolver.Resolve()` locates a chat
+  GGUF (`BECKY_REAPER_MODEL` → becky default `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` → best-scoring
+  `*.gguf` under `X:\AI-2\becky-tools\models`, embeddings/mmproj/vad disqualified) + the
+  `llama-server` binary (`BECKY_LLAMA_SERVER` → `C:\llama.cpp\build\bin\llama-server.exe` → PATH),
+  binds them to :11435, and renders the exact argv. `CheckHealth` probes whether REAPER Chat can
+  connect. Degrade-never-crash: missing pieces → a plain-language error, never a panic (verified on
+  this cloud box with no model/binary). Fully unit-testable (injectable env/stat/lookPath/glob).
+- **`becky-reaper brain`** subcommand: `brain` prints the plan + connection status; `brain --start`
+  launches the server (foreground, announces "REAPER brain is LIVE" once /health is up, Ctrl-C to
+  stop); `brain --check` probes :11435.
+- **One-click launchers (ASCII-only, verified no-BOM):** `Start Becky REAPER Brain.bat` +
+  `start-becky-brain.ps1` (builds the exe if needed → `brain --start`). `open-becky-daw.ps1` now
+  auto-starts the brain in its own window if :11435 isn't already serving — so opening the DAW also
+  makes REAPER Chat work in one click.
+- `go build/vet/test ./...` green for the new code; `gofmt -l` clean. (Pre-existing Linux-only
+  Windows-path test failures in `internal/videopreview` + `internal/kdenlive` are inherited from
+  master, NOT from this work — out of scope here.)
+- **Left for local:** `build-all-tools.bat` (auto-discovers `cmd/becky-reaper`), then double-click
+  **Start Becky REAPER Brain** (or Open Becky DAW), confirm REAPER Chat connects and controls the
+  DAW. Needs a chat GGUF + `llama-server.exe` on disk (both already present per `internal/config`).
+  Remaining `CLOUD-HANDOFF-REAPER.md` items #2-4 (ReaScript VST emitter, routing fidelity, pipe
+  becky-compose/drum/wire into `becky-reaper build`) are separate future builds.
+
+---
+
 **AI-FIRST DAW = becky DRIVES REAPER. BUILT + PROVEN on master (local, 2026-06-20). Full spec: `SPEC-BECKY-REAPER.md`.**
 Jordan (frustrated, paraphrased): stop bullshitting + USE your vision; "just download an opensource daw but give yourself complete control of it." He attached `cubase1-7.JPG` (his real project `kato_turn_the_lights_off_cover`, 132 BPM) + `maschine2.jpg`. I described all 8 (vision works — was never the problem). The REAL error: we kept hand-building a Cubase clone in Go/Gio (`cmd/canvas` — `CANVAS-BLUEPRINT.md` admits it's a "4-lane toy", piano/mixer/VST "not in the window"). The decisive fact: **REAPER 7.69 is already installed** and is the most scriptable pro DAW (plain-text `.rpp`, full Lua API, hosts all his VSTs). So: **REAPER is the DAW he opens; becky is the AI brain that authors/drives it** — the same fork-first pivot as kdenlive(video)/Hydrogen(drums), applied to audio.
 - **Built (`go build/vet/test ./...` + gofmt GREEN; 8 tests):** `internal/reaper` (deterministic `.rpp` writer — tracks, Cubase-style bus FOLDERS via ISBUS, gain/pan/mute/solo, audio + MIDI items at 960 PPQ, optional built-in ReaSynth so MIDI renders AUDIBLE with zero plugin-state guessing; `FromArrangement(dawmodel.Arrangement)`; `JordanTemplate()` = his bus tree; `DemoProject()`), `cmd/becky-reaper` (`template`/`demo`/`build`/`render`; `becky-reaper.exe` in `bin/`), and one-click `Open Becky DAW.bat` + `open-becky-daw.ps1` (ASCII, PS-5.1 parse-checked).

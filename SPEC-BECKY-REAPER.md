@@ -100,7 +100,11 @@ brain" launcher (boot `llama-server` on 11435 with a resident GGUF) is the immed
 
 ## 6. Next steps (honest, prioritized)
 
-0. **Wire REAPER Chat to llama-server on :11435** (see §5b) — the live blocker; do this first.
+0. **Wire REAPER Chat to llama-server on :11435** (see §5b) — the live blocker. **DONE
+   (cloud, 2026-06-20, branch `claude/build-mq4p7l`):** `becky-reaper brain --start` (+ the
+   one-click `Start Becky REAPER Brain.bat`) boots a llama.cpp `llama-server` on :11435 serving
+   `/v1/chat/completions`. `internal/reaperbrain` resolves a chat GGUF + the binary from env/disk;
+   degrade-never-crash; 12 tests. `open-becky-daw.ps1` auto-starts it. Local: build + sound-check.
 1. **ReaScript VST emitter** — generate a `.lua` from the arrangement that loads his
    real plugins onto tracks (`TrackFX_AddByName`) so a generated session opens with
    Serum/TAL-Drum/Maschine already inserted. (The hard, high-value next piece.)
