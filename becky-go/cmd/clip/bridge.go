@@ -174,7 +174,10 @@ func (a *App) mediaURLReply(source string) (any, error) {
 // askReply runs a becky turn with a per-turn deadline and returns the
 // Proposal. A backend hang can't wedge the UI — the context bounds it.
 func (a *App) askReply(utterance string) (any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// Generous: an agentic "investigate my notes/vault" turn reads files over
+	// several steps (~1-2 min). The async bridge keeps the window responsive
+	// throughout (a "thinking…" spinner shows), so a longer cap costs nothing.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 	p, err := a.Ask(ctx, utterance)
 	if err != nil {

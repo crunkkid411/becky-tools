@@ -50,6 +50,15 @@ public:
     // verb vst.editor.open {instanceId} -> best-effort native editor window.
     json editor_open(const json& args);
 
+    // verb vst.state.save {instanceId|path, out} -> writes a .vstpreset-format file
+    // capturing the plugin's IComponent + IEditController state. Works for ANY VST3.
+    json state_save(const json& args);
+
+    // verb vst.state.load {instanceId|path, file} -> reads a .vstpreset-format file
+    // and applies it (setState/setComponentState) BEFORE the next render. The state's
+    // component class id must match the loaded plugin's.
+    json state_load(const json& args);
+
     // verb render {instanceId?, path?, events?, durationSec, sampleRate?, out, ...}.
     // OFFLINE: no device. Loads a plugin if `path` is given (else uses instanceId),
     // runs its processor for durationSec applying note/param events, writes a WAV,

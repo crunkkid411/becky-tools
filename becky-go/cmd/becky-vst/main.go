@@ -40,6 +40,10 @@ func main() {
 		os.Exit(runScan(os.Args[2:]))
 	case "render":
 		os.Exit(runRender(os.Args[2:]))
+	case "save-state":
+		os.Exit(runSaveState(os.Args[2:]))
+	case "load-state":
+		os.Exit(runLoadState(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
@@ -55,6 +59,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  becky-vst devices")
 	fmt.Fprintln(os.Stderr, "  becky-vst scan [--dir <path>] [--json]")
 	fmt.Fprintln(os.Stderr, "  becky-vst render --plugin <X.vst3> [--note 60] [--velocity 0.9] [--seconds 2] --out <wav> [--json]")
+	fmt.Fprintln(os.Stderr, "  becky-vst save-state --plugin <X.vst3> --out <file.vstpreset> [--json]")
+	fmt.Fprintln(os.Stderr, "  becky-vst load-state --plugin <X.vst3> --state <file.vstpreset> [--note 60] [--seconds 2] --out <wav> [--json]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Drives the native becky-audio-host sidecar to host Jordan's VST3 plugins.")
 }
@@ -212,6 +218,101 @@ func runRender(argv []string) int {
 	fmt.Println("  result: SILENT (plugin loaded + processed, but the sampled output was silent)")
 	// Silence is plugin-dependent (some need a specific input), not a host
 	// failure; exit 0 so a corroboration script can still inspect the WAV.
+	return 0
+}
+
+// runSaveState loads a plugin and writes its current plugin state (component +
+// controller) to a .vstpreset-format file via vst.state.save.
+func runSaveState(argv []string) int {
+	fs := flag.NewFlagSet("save-state", flag.ContinueOnError)
+	plugin := fs.String("plugin", "", "path to the .vst3 plugin (required)")
+	out := fs.String("out", "", "output .vstpreset path (required)")
+	sampleRate := fs.Int("samplerate", 48000, "sample rate to load at")
+	asJSON := fs.Bool("json", false, "print the full JSON result")
+	if err := fs.Parse(argv); err != nil {
+		return 2
+	}
+	if *plugin == "" || *out == "" {
+		fmt.Fprintln(os.Stderr, "becky-vst save-state: --plugin and --out are required")
+		return 2
+	}
+	ctx := context.Background()
+	c := openHost(ctx)
+	if c == nil {
+		return 1
+	}
+	defer c.Close()
+
+	inst, err := c.LoadVSTOptions(ctx, *plugin, *sampleRate, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-vst: save-state: load: %v\n", err)
+		return 1
+	}
+	res, err := c.SaveState(ctx, inst.InstanceID, *out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-vst: save-state: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		printJSON(res)
+		return 0
+	}
+	fmt.Printf("Saved %s state -> %s\n", res.Name, res.Out)
+	fmt.Printf("  classId=%s  saved=%v\n", res.ClassID, res.Saved)
+	return 0
+}
+
+// runLoadState loads a plugin, applies a saved .vstpreset to it (vst.state.load),
+// then renders it — proving the saved sound is restored and audible.
+func runLoadState(argv []string) int {
+	fs := flag.NewFlagSet("load-state", flag.ContinueOnError)
+	plugin := fs.String("plugin", "", "path to the .vst3 plugin (required)")
+	state := fs.String("state", "", "path to the .vstpreset to apply (required)")
+	out := fs.String("out", "", "output WAV path (required)")
+	note := fs.Int("note", 60, "MIDI note number to play (default 60 = C4)")
+	velocity := fs.Float64("velocity", 0.9, "note velocity 0..1")
+	seconds := fs.Float64("seconds", 2.0, "render duration in seconds")
+	sampleRate := fs.Int("samplerate", 48000, "render sample rate")
+	asJSON := fs.Bool("json", false, "print the full JSON result")
+	if err := fs.Parse(argv); err != nil {
+		return 2
+	}
+	if *plugin == "" || *state == "" || *out == "" {
+		fmt.Fprintln(os.Stderr, "becky-vst load-state: --plugin, --state and --out are required")
+		return 2
+	}
+	ctx := context.Background()
+	c := openHost(ctx)
+	if c == nil {
+		return 1
+	}
+	defer c.Close()
+
+	ls, err := c.LoadStatePath(ctx, *plugin, *state, audiohost.RenderOptions{SampleRate: *sampleRate})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-vst: load-state: %v\n", err)
+		return 1
+	}
+	events := []audiohost.NoteEvent{
+		audiohost.NoteOn(0, *note, *velocity),
+		audiohost.NoteOff(*seconds*0.8, *note),
+	}
+	res, err := c.Render(ctx, ls.InstanceID, events, *seconds, *out,
+		audiohost.RenderOptions{SampleRate: *sampleRate})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "becky-vst: load-state: render: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		printJSON(struct {
+			Load   audiohost.StateLoadResult `json:"load"`
+			Render audiohost.RenderResult    `json:"render"`
+		}{ls, res})
+		return 0
+	}
+	fmt.Printf("Applied %s state from %s\n", ls.Name, *state)
+	fmt.Printf("Rendered -> %s  (peak=%.2f dB, rms=%.2f dB, nonSilent=%v)\n",
+		res.Out, res.PeakDb, res.RMSDb, res.NonSilent)
 	return 0
 }
 

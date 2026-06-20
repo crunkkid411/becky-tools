@@ -1,0 +1,8 @@
+TITLE: Penguin Bounty Smoke
+FCM: NON-DROP FRAME
+001  BL000001 V     C        00:00:01:00 00:00:03:00 00:00:00:00 00:00:02:00
+* FROM CLIP NAME: srcA.mp4
+* COMMENT: I'll pay 500 for the cat
+002  BL000002 V     C        00:00:00:13 00:00:02:13 00:00:02:00 00:00:04:00
+* FROM CLIP NAME: srcB.mp4
+* COMMENT: bring me Penguin and there is a reward

@@ -12,6 +12,14 @@
 //	becky-nle --probe  <video>                         # print width/height/fps/duration/frames as JSON
 //	becky-nle --export-range <video> --in S --out S [--out-file f.mp4]  # cut [in,out] to a new MP4 next to the source
 //
+// DRIVE THE REAL KDENLIVE (the pivot — generate a kdenlive/MLT project + render it
+// headless via the bundled melt.exe, or open it in the real kdenlive GUI):
+//
+//	becky-nle --build-project <cutlist.json> [--project out.kdenlive]   # cut-list -> VALID .kdenlive
+//	becky-nle --source <video> --in S --out S [--project out.kdenlive]  # inline single-source build
+//	becky-nle --render <proj.kdenlive> [--out-file f.mp4] [--vcodec h264_nvenc]  # .kdenlive -> mp4 (melt)
+//	becky-nle --open <proj.kdenlive>                                    # launch real kdenlive on the project
+//
 // Run the real window with the gui tag:
 //
 //	go run   -tags gui ./cmd/becky-nle [video]
@@ -36,11 +44,8 @@ import (
 	"becky-go/internal/videopreview"
 )
 
-const (
-	exitOK       = 0
-	exitDegraded = 1
-	exitBadArgs  = 2
-)
+// Exit codes are defined in kdenlive.go (build-tag-neutral) so both the headless
+// (!gui) and gui builds share them.
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
@@ -51,9 +56,17 @@ func run(args []string, stdout, stderr *os.File) int {
 	fs.SetOutput(stderr)
 	probe := fs.String("probe", "", "print metadata (width/height/fps/duration/frames) for a video as JSON, then exit")
 	exportSrc := fs.String("export-range", "", "source video to cut a marked range from")
-	inSec := fs.Float64("in", 0, "in-mark seconds (with --export-range)")
-	outSec := fs.Float64("out", 0, "out-mark seconds (with --export-range)")
-	outFile := fs.String("out-file", "", "output MP4 path (default: <source-dir>/<stem>_range.mp4)")
+	inSec := fs.Float64("in", 0, "in-mark seconds (with --export-range / --build-project --source)")
+	outSec := fs.Float64("out", 0, "out-mark seconds (with --export-range / --build-project --source)")
+	outFile := fs.String("out-file", "", "output MP4 path (default: <source-dir>/<stem>_range.mp4, or <proj-dir>/<stem>.mp4 for --render)")
+
+	// Drive-the-real-kdenlive verbs.
+	buildProject := fs.String("build-project", "", "cut-list JSON -> a VALID .kdenlive project (or use --source/--in/--out for a single clip)")
+	render := fs.String("render", "", ".kdenlive project to render to an MP4 via the bundled melt.exe")
+	open := fs.String("open", "", ".kdenlive project to open in the real kdenlive GUI")
+	project := fs.String("project", "", "output .kdenlive path for --build-project (default: <first-source-dir>/<title>.kdenlive)")
+	source := fs.String("source", "", "single source video for an inline project build (with --in/--out)")
+	vcodec := fs.String("vcodec", "", "video codec for --render (default h264_nvenc, falls back to libx264)")
 	if err := fs.Parse(args); err != nil {
 		return exitBadArgs
 	}
@@ -61,12 +74,24 @@ func run(args []string, stdout, stderr *os.File) int {
 	switch {
 	case *probe != "":
 		return doProbe(*probe, stdout, stderr)
+	case *render != "":
+		return doRender(*render, *outFile, *vcodec, stdout, stderr)
+	case *open != "":
+		return doOpen(*open, stderr)
+	case *buildProject != "" || *source != "":
+		// --build-project carries the cut-list JSON path; an inline build uses
+		// --source/--in/--out. loadCutList enforces "JSON xor inline".
+		return doBuildProject(*buildProject, *source, *inSec, *outSec, *project, stdout, stderr)
 	case *exportSrc != "":
 		return doExport(*exportSrc, *inSec, *outSec, *outFile, stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, "becky-nle: nothing to do.")
 		fmt.Fprintln(stderr, "  becky-nle --probe <video>")
 		fmt.Fprintln(stderr, "  becky-nle --export-range <video> --in S --out S [--out-file f.mp4]")
+		fmt.Fprintln(stderr, "  becky-nle --build-project <cutlist.json> [--project out.kdenlive]")
+		fmt.Fprintln(stderr, "  becky-nle --source <video> --in S --out S [--project out.kdenlive]")
+		fmt.Fprintln(stderr, "  becky-nle --render <proj.kdenlive> [--out-file f.mp4]")
+		fmt.Fprintln(stderr, "  becky-nle --open <proj.kdenlive>")
 		fmt.Fprintln(stderr, "  (the real window: go build -tags gui ./cmd/becky-nle)")
 		return exitBadArgs
 	}

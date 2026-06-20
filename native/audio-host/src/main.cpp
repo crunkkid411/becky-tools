@@ -74,6 +74,10 @@ bool dispatch(const json& msg, AudioDevice& audio, VstHost& vst) {
             emit_response_ok(id, vst.note_off(args));
         } else if (name == "vst.editor.open") {
             emit_response_ok(id, vst.editor_open(args));
+        } else if (name == "vst.state.save") {
+            emit_response_ok(id, vst.state_save(args));
+        } else if (name == "vst.state.load") {
+            emit_response_ok(id, vst.state_load(args));
         } else if (name == "render") {
             emit_response_ok(id, vst.render(args));
         } else {

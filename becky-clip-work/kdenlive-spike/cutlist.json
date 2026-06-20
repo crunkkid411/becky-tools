@@ -1,0 +1,7 @@
+{
+  "title": "reddit-twoclip-e2e",
+  "clips": [
+    {"source": "E:/TakingBack2007/01-02-reddit.mp4", "in": 2.0,  "out": 10.0, "name": "span A"},
+    {"source": "E:/TakingBack2007/01-02-reddit.mp4", "in": 40.0, "out": 48.0, "name": "span B"}
+  ]
+}

@@ -276,6 +276,60 @@ func (c *Client) RenderPath(ctx context.Context, vst3Path string, events []NoteE
 	return r, err
 }
 
+// --- VST state (.vstpreset) verbs ---
+
+// SaveState writes the loaded instance's plugin state (component + controller) to
+// outFile in .vstpreset format (vst.state.save). Works for any VST3; the file can
+// later be re-applied with LoadState. Returns the plugin name + class id written.
+func (c *Client) SaveState(ctx context.Context, instanceID int, outFile string) (StateSaveResult, error) {
+	var r StateSaveResult
+	if outFile == "" {
+		return r, fmt.Errorf("audiohost: SaveState: empty out path")
+	}
+	err := c.call(ctx, seam.TypeCommand, "vst.state.save", map[string]interface{}{
+		"instanceId": instanceID,
+		"out":        outFile,
+	}, &r)
+	return r, err
+}
+
+// LoadState applies a previously saved .vstpreset file to an existing loaded
+// instance (vst.state.load). The state is applied before the next render. The
+// file's component class id must match the instance's plugin.
+func (c *Client) LoadState(ctx context.Context, instanceID int, file string) (StateLoadResult, error) {
+	var r StateLoadResult
+	if file == "" {
+		return r, fmt.Errorf("audiohost: LoadState: empty state file path")
+	}
+	err := c.call(ctx, seam.TypeCommand, "vst.state.load", map[string]interface{}{
+		"instanceId": instanceID,
+		"file":       file,
+	}, &r)
+	return r, err
+}
+
+// LoadStatePath instantiates the plugin at vst3Path, applies the .vstpreset file
+// to it, and registers it as a new instance (vst.state.load with a path). The
+// returned StateLoadResult.InstanceID is the handle for later render/param verbs.
+func (c *Client) LoadStatePath(ctx context.Context, vst3Path, file string, opts RenderOptions) (StateLoadResult, error) {
+	var r StateLoadResult
+	if vst3Path == "" {
+		return r, fmt.Errorf("audiohost: LoadStatePath: empty plugin path")
+	}
+	if file == "" {
+		return r, fmt.Errorf("audiohost: LoadStatePath: empty state file path")
+	}
+	args := map[string]interface{}{"path": vst3Path, "file": file}
+	if opts.SampleRate > 0 {
+		args["samplerate"] = opts.SampleRate
+	}
+	if opts.Buffer > 0 {
+		args["buffer"] = opts.Buffer
+	}
+	err := c.call(ctx, seam.TypeCommand, "vst.state.load", args, &r)
+	return r, err
+}
+
 // Shutdown asks the host to exit cleanly (shutdown verb), then closes the
 // client. Prefer this over Close when you want a graceful host exit.
 func (c *Client) Shutdown(ctx context.Context) error {

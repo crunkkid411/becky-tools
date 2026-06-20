@@ -98,6 +98,8 @@ set(VST3_SOURCES
   "${VST3}/public.sdk/source/vst/hosting/processdata.cpp"
   # public.sdk vst utility
   "${VST3}/public.sdk/source/vst/utility/stringconvert.cpp"
+  # .vstpreset save/load helper (vst.state.save / vst.state.load verbs)
+  "${VST3}/public.sdk/source/vst/vstpresetfile.cpp"
   # canonical VST interface IID definitions (the SDK's single INIT_CLASS_IID TU)
   "${VST3}/public.sdk/source/vst/vstinitiids.cpp"
 )

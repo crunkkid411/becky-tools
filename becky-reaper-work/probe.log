@@ -1,0 +1,21 @@
+STARTUP FIRED 1781939139
+main project tracks=17
+  [0] DRUMS_bus              folderdepth=1
+  [1] Kick                   folderdepth=0
+  [2] Snare                  folderdepth=0
+  [3] OH                     folderdepth=0
+  [4] Claps                  folderdepth=-1
+  [5] GUITARS_bus            folderdepth=1
+  [6] Gtr L                  folderdepth=0
+  [7] Gtr R                  folderdepth=-1
+  [8] BASS_bus               folderdepth=1
+  [9] Synth Bass             folderdepth=0
+  [10] Sub                    folderdepth=-1
+  [11] VOCALS_bus             folderdepth=1
+  [12] Lead Vox               folderdepth=0
+  [13] Backing Vox            folderdepth=0
+  [14] Screams                folderdepth=-1
+  [15] FX_bus                 folderdepth=1
+  [16] Cymbal Transitions     folderdepth=-1
+tempo=132
+DONE ok=true err=nil

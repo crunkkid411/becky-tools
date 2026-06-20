@@ -222,6 +222,11 @@ load-bearing rules, in brief:
   build/verification rules, interaction patterns, and the phased path. No embedded browsers
   (WebView2 retired). Supersedes the audio-licensing conclusion in `research/gui-toolkit.md`
   (the VST3→MIT / ASIO→GPL relicensing of 2025-11-04 changed it).
+- `SPEC-BECKY-REAPER.md` — **the WORKING AI-first DAW (BUILT + PROVEN 2026-06-20).** becky
+  authors/drives **REAPER** (already installed, fully scriptable, hosts all his VSTs) via a
+  deterministic `.rpp` writer (`internal/reaper` + `cmd/becky-reaper`) + ReaScript; REAPER is the
+  DAW Jordan opens, becky is the AI brain. The pragmatic answer to "download an opensource DAW and
+  control it" — complements (does not replace) the GUI-RULES native stack. One-click `Open Becky DAW.bat`.
 
 - `SPEC-BECKY-CLIP.md` + `BECKY-CLIP-HANDOFF.md` — becky-clip, the forensic transcript-based
   video COMPILATION editor (WebView2 GUI + Go engine). The spec is *what it is*; the HANDOFF is
@@ -287,6 +292,25 @@ load-bearing rules, in brief:
 ---
 
 ## 6. Live handoff — current branch status
+
+**AI-FIRST DAW = becky DRIVES REAPER. BUILT + PROVEN on master (local, 2026-06-20). Full spec: `SPEC-BECKY-REAPER.md`.**
+Jordan (frustrated, paraphrased): stop bullshitting + USE your vision; "just download an opensource daw but give yourself complete control of it." He attached `cubase1-7.JPG` (his real project `kato_turn_the_lights_off_cover`, 132 BPM) + `maschine2.jpg`. I described all 8 (vision works — was never the problem). The REAL error: we kept hand-building a Cubase clone in Go/Gio (`cmd/canvas` — `CANVAS-BLUEPRINT.md` admits it's a "4-lane toy", piano/mixer/VST "not in the window"). The decisive fact: **REAPER 7.69 is already installed** and is the most scriptable pro DAW (plain-text `.rpp`, full Lua API, hosts all his VSTs). So: **REAPER is the DAW he opens; becky is the AI brain that authors/drives it** — the same fork-first pivot as kdenlive(video)/Hydrogen(drums), applied to audio.
+- **Built (`go build/vet/test ./...` + gofmt GREEN; 8 tests):** `internal/reaper` (deterministic `.rpp` writer — tracks, Cubase-style bus FOLDERS via ISBUS, gain/pan/mute/solo, audio + MIDI items at 960 PPQ, optional built-in ReaSynth so MIDI renders AUDIBLE with zero plugin-state guessing; `FromArrangement(dawmodel.Arrangement)`; `JordanTemplate()` = his bus tree; `DemoProject()`), `cmd/becky-reaper` (`template`/`demo`/`build`/`render`; `becky-reaper.exe` in `bin/`), and one-click `Open Becky DAW.bat` + `open-becky-daw.ps1` (ASCII, PS-5.1 parse-checked).
+- **PROVEN (pasted evidence, not "it compiled"):** (1) a becky ReaScript drove REAPER to build a session + render a real 24-bit/48k WAV — ffprobe `pcm_s24le 48000 2ch` + volumedetect **mean -13.7 dB / max -6.8 dB**. (2) becky-GENERATED `.rpp` files open correctly in REAPER (loaded + enumerated via ReaScript): `demo.rpp`=2 tracks (BASS_bus folder opens/closes), `jordan_template.rpp`=**17 tracks, all 5 bus folders correct** (DRUMS/GUITARS/BASS/VOCALS/FX), tempo 132. Mirrors his Cubase bus tree.
+- **Left for next (honest, see SPEC §6):** (1) ReaScript VST emitter — load his REAL plugins (Serum 2/TAL-Drum/Maschine/Ozone) onto tracks via `TrackFX_AddByName` so a generated session opens with instruments inserted; (2) add his REAPER license to kill the eval-nag modal -> reliable headless `-renderproject`; (3) routing fidelity (nested sub-busses + sends, audio-clip paths); (4) pipe `becky-wire`/`becky-drum`/`becky-compose` -> `becky-reaper build`. NOT yet pushed to GitHub. Scratch + evidence in `becky-reaper-work/` (incl. ground-truth `reference.rpp`). The Gio `cmd/canvas` work stays a longer-horizon native option, NOT a blocker.
+
+---
+
+**FORK-FIRST PIVOT EXECUTED — Becky Canvas DAW engine pieces forked/built + VERIFIED on master (local, 2026-06-20).**
+Jordan: the hand-built drum machine + NLE are "complete disasters" — fork mature FOSS + make becky the AI BRAIN that drives them (full plan: `SPEC-FORK-STRATEGY.md`; Canvas integration plan: `CANVAS-BLUEPRINT.md`). Done across ~9 subagents. **Every "VERIFIED" below has pasted ffprobe/enumeration evidence — nothing claimed on "it compiled":**
+- **VIDEO -> real kdenlive:** `internal/kdenlive` + `cmd/becky-nle` write a real `.kdenlive` MLT project + render headless via the bundled `melt.exe` v7.37. VERIFIED: cut of `E:/TakingBack2007/01-02-reddit.mp4` -> 16.0s / h264 / 480-frame MP4 (ffprobe). kdenlive popups disabled in `%LOCALAPPDATA%\kdenliverc` (it's becky's headless backend ONLY; Jordan never opens it).
+- **DRUM -> real Hydrogen:** installed via GitHub release (`__COMPAT_LAYER=RunAsInvoker` past the UAC manifest, baked into the export path); `internal/hydrogen` + `cmd/becky-groove` write `.h2song`/`drumkit.xml` + OSC. VERIFIED real audio from **43,200** of his samples (`X:\music-2\SAMPLES`), ffprobe mean -19.2 dB / max -2.9 dB.
+- **MIDI:** `internal/midilive` + `cmd/becky-midi` (pure-Go winmm, NO cgo) send notes; **`--create-port` self-creates a virtual MIDI port via teVirtualMIDI** — VERIFIED "becky" appears in the MIDI INPUT list (before/after enum) so Maschine can select it; **Jordan never touches loopMIDI**. The control schema (`research/becky-control-schema.md`) maps AI edits -> Hydrogen-OSC / Maschine-MIDI / kdenlive-melt.
+- **PIANO ROLL engine:** `internal/pianoroll` (clip model + move/resize/transpose/quantize/humanize + `.mid` IO), tests green.
+- **AUDIO TRACKS engine:** `internal/audiotrack` (region model + mixdown + waveform peaks) merged (compiles); a subagent is finishing tests + a real-mixdown ffprobe proof.
+- **REAL MASCHINE via VST3 (the tool he loves):** `becky-vst` loads `Maschine 2.vst3` cleanly BUT it boots EMPTY (pad notes -> byte-identical silent render, MD5-proven). Fix added: **`vst.state.save/load` verbs** (`IComponent` get/setState via the VST3 SDK PresetFile) in `native/audio-host` + `internal/audiohost`; **C++ host REBUILT (exit 0)**. Go client tests green. STILL OPEN: the state round-trip + actual-kit-load verification — loading a Maschine kit needs capturing its state once via the editor/a preset (its kit lives in its own project state, not in VST params).
+- `go build / vet / test ./...` GREEN on master; the architect's audit found the existing `cmd/canvas` window opens but is "mostly stubs" (4×16 on/off toy drum; piano/mixer/VST not in the window).
+**LEFT FOR NEXT:** (1) finish + verify `audiotrack`; (2) Maschine real-kit-load (capture its state); (3) **THE CAPSTONE — wire the drum/piano/audio/mixer/VST panels into the Becky Canvas Gio window** per `CANVAS-BLUEPRINT.md` (converge on the `dawmodel.Arrangement` spine; `cmd/canvas` is a SINGLE-OWNER integration, not parallel). Not yet pushed to GitHub.
 
 **ALL native binaries BUILT + every chain VERIFIED end-to-end on deployed binaries (local, 2026-06-19).**
 After landing Phases 1-4 + the Wave-2 Go clients, I built every binary and proved the chains on Jordan's actual hardware (no stubs):

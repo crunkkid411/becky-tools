@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Penguin bounty compilation",
+  "overlay": {"enabled": true, "show_filename": true, "show_timecode": true, "show_date": true, "show_person": true, "position": "bottom"},
+  "clips": [
+    {"id":"c1","source":"X:\AI-2\becky-tools\becky-clip-work\demo-case\ring-doorbell.mp4","in":4.0,"out":6.5,"label":"two hundred dollars if you bring Penguin home","meta":{"date":"2026-05-14","person":"Subject A","source_fps":30}},
+    {"id":"c2","source":"X:\AI-2\becky-tools\becky-clip-work\demo-case\kitchen-cam.mp4","in":3.0,"out":5.0,"label":"money for whoever finds Penguin","meta":{"date":"2026-05-15","person":"Witness B","source_fps":30}}
+  ]
+}
