@@ -82,8 +82,25 @@ All verified locally on 2026-06-20 (scratch in `becky-reaper-work/`):
 - **Local-only (needs REAPER + audio HW):** rendering, opening, and loading his real
   VSTs via ReaScript. All of section 3 was local-verified.
 
+## 5b. FIELD FINDING (reaper1.jpg, 2026-06-20) — the live blocker
+
+Jordan's screenshot (`reaper1.jpg`, on `master`) shows the generated `becky-session.rpp`
+**open in REAPER with its bus tree**, plus a **"REAPER Chat"** AI-control extension already
+installed ("Ask me to control your DAW: add tracks, set FX parameters, create MIDI"). He
+typed *"change tempo to 128, add a four-on-the-floor kick for ~2 min, arm the vocal track"*
+and it failed: `Error: Failed to connect to http://localhost:11435/v1/chat/completions`.
+
+**Diagnosis (verified locally):** nothing was listening on 11435 (or 11434). The fix is a
+**llama.cpp `llama-server`** bound to **port 11435** serving the OpenAI-compatible
+`/v1/chat/completions` (the becky standard — see `internal/llmlocal`). **Do NOT use Ollama**
+(Jordan's explicit, repeated requirement). Concretely:
+`llama-server -m <model.gguf> --port 11435 --host 127.0.0.1` (any chat GGUF on disk).
+Then REAPER Chat's natural-language DAW control works. A one-click "start becky's REAPER
+brain" launcher (boot `llama-server` on 11435 with a resident GGUF) is the immediate win.
+
 ## 6. Next steps (honest, prioritized)
 
+0. **Wire REAPER Chat to llama-server on :11435** (see §5b) — the live blocker; do this first.
 1. **ReaScript VST emitter** — generate a `.lua` from the arrangement that loads his
    real plugins onto tracks (`TrackFX_AddByName`) so a generated session opens with
    Serum/TAL-Drum/Maschine already inserted. (The hard, high-value next piece.)

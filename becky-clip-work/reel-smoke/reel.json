@@ -1,0 +1,39 @@
+{
+  "version": "1",
+  "name": "Penguin Bounty Smoke",
+  "clips": [
+    {
+      "id": "c1",
+      "source": "X:\\AI-2\\becky-tools\\becky-clip-work\\reel-smoke\\srcA.mp4",
+      "in": 1.0,
+      "out": 3.0,
+      "label": "I'll pay 500 for the cat",
+      "meta": {
+        "date": "2026-06-18",
+        "person": "J.DOE",
+        "location": "KITCHEN",
+        "source_fps": 30
+      }
+    },
+    {
+      "id": "c2",
+      "source": "X:\\AI-2\\becky-tools\\becky-clip-work\\reel-smoke\\srcB.mp4",
+      "in": 0.5,
+      "out": 2.5,
+      "label": "bring me Penguin and there is a reward",
+      "meta": {
+        "date": "2026-06-19",
+        "person": "A.ROE",
+        "source_fps": 25
+      }
+    }
+  ],
+  "overlay": {
+    "enabled": true,
+    "show_filename": true,
+    "show_timecode": true,
+    "show_date": true,
+    "show_person": true,
+    "position": "bottom"
+  }
+}

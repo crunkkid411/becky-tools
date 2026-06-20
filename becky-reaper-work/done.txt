@@ -1,0 +1,4 @@
+ReaSynth fx idx=0
+saved reference.rpp
+render issued; ref_render.wav exists=false
+pcall ok=true err=nil
