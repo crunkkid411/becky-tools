@@ -1,0 +1,16 @@
+# becky-audio-host: never commit fetched SDKs, downloaded headers, or build output.
+# These are fetched locally on Jordan's PC by scripts/fetch-deps.ps1, exactly like
+# model weights (GUI-RULES.md section 3).
+third_party/
+build/
+*.exe
+*.wav
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.pdb
+CMakeCache.txt
+CMakeFiles/
+selftest_render.wav
