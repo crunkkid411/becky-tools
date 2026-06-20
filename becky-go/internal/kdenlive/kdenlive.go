@@ -29,7 +29,6 @@ package kdenlive
 import (
 	"fmt"
 	"math"
-	"path/filepath"
 	"strings"
 
 	"becky-go/internal/pathx"
@@ -200,5 +199,9 @@ func (p *Project) Validate() error {
 // one string is what trips strict parsers. We canonicalize to forward slashes
 // (valid on Windows melt and POSIX) and leave a drive letter intact.
 func resourcePath(p string) string {
-	return filepath.ToSlash(strings.TrimSpace(p))
+	// NOT filepath.ToSlash: that only rewrites the *host* separator, so a Windows
+	// path passed through on Linux/CI keeps its backslashes. These paths may be
+	// Windows paths regardless of host (CLAUDE.md invariant), so replace '\'
+	// explicitly on every OS.
+	return strings.ReplaceAll(strings.TrimSpace(p), `\`, "/")
 }
