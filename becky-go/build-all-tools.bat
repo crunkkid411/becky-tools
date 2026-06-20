@@ -55,6 +55,16 @@ go build -tags gui -ldflags "-H windowsgui" -o bin\becky-clip.exe .\cmd\clip
 if errorlevel 1 echo WARN: GUI clip build failed - headless becky-clip.exe kept.
 set "CGO_ENABLED=%BECKY_OLDCGO%"
 
+REM becky-nle ships as the real Gio GUI window (build tag: gui), the AI-integrated NLE.
+REM Pure Go (Gio, no cgo), so force CGO off; -H windowsgui = no console flash on launch.
+REM It previews video via the sibling becky-video-preview.exe (built by build-becky-nle.ps1).
+echo Building becky-nle.exe ^(GUI window, -tags gui^)...
+set "BECKY_OLDCGO=%CGO_ENABLED%"
+set "CGO_ENABLED=0"
+go build -tags gui -ldflags "-H windowsgui" -o bin\becky-nle.exe .\cmd\becky-nle
+if errorlevel 1 echo WARN: GUI nle build failed - headless becky-nle.exe kept.
+set "CGO_ENABLED=%BECKY_OLDCGO%"
+
 set "BECKY_OLDCC=%CC%"
 if exist "C:\msys64\mingw64\bin\gcc.exe" set "CC=C:\msys64\mingw64\bin\gcc.exe"
 set "CGO_ENABLED=1"
