@@ -288,6 +288,18 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**ALL native binaries BUILT + every chain VERIFIED end-to-end on deployed binaries (local, 2026-06-19).**
+After landing Phases 1-4 + the Wave-2 Go clients, I built every binary and proved the chains on Jordan's actual hardware (no stubs):
+- **AUDIO chain PROVEN:** `becky-vst` (Go) -> `internal/audiohost` -> seam -> `becky-audio-host.exe` (C++) -> loaded his REAL "808 Studio II" VST3 -> rendered NON-SILENT WAV (peak -6 dB / rms -10 dB), independently corroborated by ffmpeg volumedetect (mean -10 dB). `becky-vst scan` listed all 309 of his plugins through the chain. **This is his core ask, working.**
+- **VIDEO chain PROVEN:** `becky-video-preview.exe --selftest` renders real frames on the RTX 3070 (Vulkan) -> PNGs (frame + forensic overlay). `becky-nle` (headless build) `--probe` returns correct metadata and `--export-range` cut a real h264_nvenc MP4 — both through the Go->videopreview->sidecar chain.
+- **Native builds:** C++ host via `native/audio-host/scripts/build.ps1` (fetched MIT VST3 SDK + PortAudio; cmake/g++; `--selftest` PASS). Video sidecar via `cargo build --release`.
+- **seam hardened (c46ccb7):** fixed a real send-on-closed-channel race (the pump, sole sender, now closes events) + raised the scan buffer for large `vst.scan` responses.
+- **Binaries staged in `becky-go/bin/`** (NOT committed — built locally): becky-vst, becky-audio-host, becky-video-preview, becky-nle (gui), becky-drummachine (gui), becky-daw-engine (audio), seam-echo. NOTE: the `-tags gui` exes are the WINDOWS Jordan opens; the headless flags (`--probe`/`--export-range`/scan/render) live in the `!gui` builds for scripts/CI.
+- **Left for Jordan ONLY (truly human/hardware):** open the GUI windows (becky-nle, becky-drummachine) + SOUND-CHECK on the UR12; drop the Steinberg ASIO SDK at `BECKY_ASIO_SDK` + rerun build.ps1 for low-latency. Everything headless-verifiable IS verified.
+- **Next (Wave 3, NOT started):** host a VST3 INSTRUMENT inside a GUI — the C++ host's `vst.editor.open` reports the editor exists but ATTACHING its IPlugView needs the Gio window's parent HWND (the one genuinely hard remaining piece); then VST3 tracks in a DAW surface. GUI-RULES Phase 0 (retire WebView2 from becky-clip) still deferred until the `cmd/clip` WIP merges.
+
+---
+
 **GUI-RULES native stack — Phases 1, 2-3, 4 BUILT + on `main` (local, 2026-06-19 autonomous build-out).**
 Jordan: "all of it... build it all... no stubs, no demos... push to github main." Orchestrated via subagents in ISOLATED worktrees, each FF-merged to main; Jordan's `cmd/clip` + `internal/assistant` WIP untouched throughout. The native sidecars build on this machine (g++13.2/clang/cmake3.29/rust1.96/ffmpeg all present).
 - **Phase 1 — seam** (`internal/seam` + `cmd/seam-echo` + `SEAM-PROTOCOL.md`, dac50b3): the NDJSON-over-stdio engine<->sidecar protocol (query/command/event, every command async). 14 tests green. Foundation for ALL native front-ends.
