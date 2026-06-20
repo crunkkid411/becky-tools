@@ -288,6 +288,17 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**GUI-RULES native stack — Phases 1, 2-3, 4 BUILT + on `main` (local, 2026-06-19 autonomous build-out).**
+Jordan: "all of it... build it all... no stubs, no demos... push to github main." Orchestrated via subagents in ISOLATED worktrees, each FF-merged to main; Jordan's `cmd/clip` + `internal/assistant` WIP untouched throughout. The native sidecars build on this machine (g++13.2/clang/cmake3.29/rust1.96/ffmpeg all present).
+- **Phase 1 — seam** (`internal/seam` + `cmd/seam-echo` + `SEAM-PROTOCOL.md`, dac50b3): the NDJSON-over-stdio engine<->sidecar protocol (query/command/event, every command async). 14 tests green. Foundation for ALL native front-ends.
+- **Phase 4 — Rust/wgpu video sidecar** (`native/video-preview/`, 22232c9): real GPU frame-accurate decode+render (ffmpeg -> wgpu -> PNG) + forensic timecode overlay; `--selftest` PASS on the RTX 3070 (Vulkan); 17 tests + clippy clean. The Vegas-fast NLE preview engine. Verbs: video.open/frame/overlay/window. Build: `cd native/video-preview && cargo build --release`.
+- **Phases 2-3 — C++ VST3/audio host** (`native/audio-host/`, 594217d): PortAudio (WASAPI now; ASIO when the SDK is at `BECKY_ASIO_SDK`) + real VST3 hosting (now-MIT SDK). VERIFIED on Jordan's REAL 309-plugin library (crash-isolated `--probe` scan; loaded "808 Studio II" / 512 params; offline `render` non-silent, corroborated by ffmpeg volumedetect + ffprobe; `audio.open` auto-picked "Line (Steinberg UR12)"). Verbs: audio.*, vst.scan/load/param/note, render. Build: `native/audio-host/scripts/build.ps1` (fetches VST3 SDK + PortAudio + nlohmann/json into gitignored `third_party/`).
+- **IN FLIGHT (Wave 2):** `cmd/becky-nle` Gio NLE shell + `internal/videopreview` Go client; `internal/audiohost` Go client + `cmd/becky-vst`.
+- **Left for Jordan ONLY:** download the Steinberg ASIO SDK -> set `BECKY_ASIO_SDK` -> rebuild host for low-latency; SOUND-CHECK the UR12; open the native windows. Build the two sidecar exes (commands above).
+- GUI-RULES.md §7 phase map: Phase 0 (retire WebView2 from becky-clip) DEFERRED until the `cmd/clip` WIP merges (collision avoidance). Phases 1 / 2-3 / 4 = BUILT.
+
+---
+
 **Branch `claude/drummachine-kit-wiring-20260619` (cloud, 2026-06-19) — `cmd/drummachine` Gio window: REAL kit loading + sample browser wired in. READY FOR LOCAL.**
 
 The Gio window (the actual double-clickable drum machine) now loads real kits and
