@@ -23,6 +23,15 @@ type Request struct {
 	JSONSchema string
 	MaxTokens  int
 	Tier       Tier
+
+	// Agentic, when true, asks a capable backend (the claude CLI) to run as a
+	// READ-ONLY file investigator: it may use Read/Glob/Grep/LS over AllowDirs and
+	// take up to MaxTurns steps. This is what lets becky navigate an Obsidian vault +
+	// transcripts and CITE the exact evidence video/timestamp, the way Claude Code
+	// does. Backends that can't do agentic file access ignore these (degrade).
+	Agentic   bool
+	AllowDirs []string // absolute dirs the investigator may read (case folder, vault, …)
+	MaxTurns  int      // tool-use turn cap for the agentic run (0 -> backend default)
 }
 
 // Backend is one model tier's engine.

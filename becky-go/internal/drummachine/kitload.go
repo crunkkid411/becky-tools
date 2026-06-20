@@ -16,8 +16,8 @@ import (
 
 	"becky-go/internal/kitimport"
 	"becky-go/internal/pathx"
-	"becky-go/internal/sampler"
 	"becky-go/internal/samplelib"
+	"becky-go/internal/sampler"
 )
 
 // LoadKitResult is returned by LoadKitFromSFZ and LoadKitFromFolder.

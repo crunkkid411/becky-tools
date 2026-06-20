@@ -69,18 +69,18 @@ var validStepCounts = []int{16, 32, 64}
 // and for simple one-sample pads that don't need full SFZ modelling. When both are
 // set, Sound wins for playback; SamplePath stays as a human-readable hint.
 type Pad struct {
-	Index          int            `json:"index"`          // 0..15, fixed position in the 4x4 grid
-	Name           string         `json:"name"`           // human label ("Kick", "Snare", …)
-	SamplePath     string         `json:"samplePath"`     // path to the sample WAV ("" = use synth/none)
+	Index          int            `json:"index"`           // 0..15, fixed position in the 4x4 grid
+	Name           string         `json:"name"`            // human label ("Kick", "Snare", …)
+	SamplePath     string         `json:"samplePath"`      // path to the sample WAV ("" = use synth/none)
 	Sound          *sampler.Sound `json:"sound,omitempty"` // rich multisampling model; nil = simple/none
-	Level          float64        `json:"level"`          // linear gain 0..1 (1 = unity)
-	Pan            float64        `json:"pan"`            // -1 (hard left) .. +1 (hard right)
-	PitchSemitones float64        `json:"pitchSemitones"` // playback transpose in semitones
-	Decay          float64        `json:"decay"`          // amp decay in seconds; 0 = one-shot / full length
-	ChokeGroup     int            `json:"chokeGroup"`     // 0 = none; pads sharing a non-zero group cut each other
-	Mute           bool           `json:"mute"`           // this pad is silenced
-	Solo           bool           `json:"solo"`           // this pad is soloed (any solo -> only soloed pads sound)
-	MidiNote       int            `json:"midiNote"`       // GM percussion note for channel-9 mapping
+	Level          float64        `json:"level"`           // linear gain 0..1 (1 = unity)
+	Pan            float64        `json:"pan"`             // -1 (hard left) .. +1 (hard right)
+	PitchSemitones float64        `json:"pitchSemitones"`  // playback transpose in semitones
+	Decay          float64        `json:"decay"`           // amp decay in seconds; 0 = one-shot / full length
+	ChokeGroup     int            `json:"chokeGroup"`      // 0 = none; pads sharing a non-zero group cut each other
+	Mute           bool           `json:"mute"`            // this pad is silenced
+	Solo           bool           `json:"solo"`            // this pad is soloed (any solo -> only soloed pads sound)
+	MidiNote       int            `json:"midiNote"`        // GM percussion note for channel-9 mapping
 }
 
 // Kit is the sound set: exactly 16 pads. The slice is always length PadCount; Pads

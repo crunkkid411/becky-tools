@@ -33,8 +33,8 @@ import (
 
 	"becky-go/internal/audioengine"
 	"becky-go/internal/drummachine"
-	"becky-go/internal/sampler"
 	"becky-go/internal/sampledecode"
+	"becky-go/internal/sampler"
 )
 
 // machineFlagNames are the drummachine subcommand flags this seam owns.
@@ -139,8 +139,8 @@ func runRenderMachine(path, kitDirFlag, outPath string, rngSeed int64) int {
 	// variantPCM: padIdx -> samplePath -> []float32 (mono, native sample rate).
 	// srcRate: samplePath -> source rate (we track per-path to resample correctly).
 	type pcmEntry struct {
-		mono   []float32
-		srcSR  int
+		mono  []float32
+		srcSR int
 	}
 	decoded := make(map[string]pcmEntry) // path → decoded (memoize; same file may appear on multiple pads)
 

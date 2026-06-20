@@ -1,0 +1,68 @@
+{
+  "file": "E:/TakingBack2007/render/untitled-compilation_reel.mp4",
+  "validated_at": "2026-06-19T09:01:20Z",
+  "backend": "gemma4-local",
+  "model": "gemma-4-E4B-it-Q4_K_M",
+  "disclaimer": "AI ANALYSIS — candidate, not conclusion. Requires human verification.",
+  "window_start": 0,
+  "window_sec": 13,
+  "fps": 1,
+  "observations": [
+    {
+      "type": "visual",
+      "segment_start": 0,
+      "segment_end": 3,
+      "question": "What is the man doing and what is visible in the background during this period?",
+      "visual": "The man is seated in a dark chair, looking toward the viewer with a neutral expression. The backdrop features text reading \"TAKING BACK 2007\" with changing colors.",
+      "audio_tone": "n/a",
+      "content": "n/a",
+      "finding": "The man is seated in a chair against a backdrop displaying text and colored lights.",
+      "tone_content_match": true,
+      "confidence": 1,
+      "significance": "low",
+      "frames": [],
+      "rationale": "The descriptions detail the man's seated position and the backdrop in the initial frames.",
+      "reviewed": false
+    },
+    {
+      "type": "visual",
+      "segment_start": 4,
+      "segment_end": 6,
+      "question": "How is the man positioned and what is visible in the background?",
+      "visual": "The man is seated in a dark chair, leaning slightly forward with his hands on his lap or thighs. The backdrop shows \"TAKING BACK 2007\" with blue and purple lights.",
+      "audio_tone": "n/a",
+      "content": "n/a",
+      "finding": "The man is seated and leaning forward while looking at the viewer.",
+      "tone_content_match": true,
+      "confidence": 1,
+      "significance": "low",
+      "frames": [],
+      "rationale": "The man's posture and the backdrop are described as he sits and leans forward.",
+      "reviewed": false
+    },
+    {
+      "type": "visual",
+      "segment_start": 7,
+      "segment_end": 12,
+      "question": "What is the man doing and what is visible around him during this period?",
+      "visual": "The man is standing, looking toward the viewer or slightly to his right. In the background, there are partial views of another person wearing a patterned top, a musical instrument, and equipment with screens.",
+      "audio_tone": "somewhat agitated, with a slightly elevated pitch and increased pace during the repetition of \"I want Penguin.\"",
+      "content": "n/a",
+      "finding": "The man is standing in the frame, and there are other people and equipment visible in the background.",
+      "tone_content_match": true,
+      "confidence": 0.9,
+      "significance": "medium",
+      "frames": [
+        "C:\\Users\\only1\\AppData\\Local\\Temp\\becky-validate-frames\\untitled-compilation_reel\\frame_0007.jpg",
+        "C:\\Users\\only1\\AppData\\Local\\Temp\\becky-validate-frames\\untitled-compilation_reel\\frame_0008.jpg",
+        "C:\\Users\\only1\\AppData\\Local\\Temp\\becky-validate-frames\\untitled-compilation_reel\\frame_0009.jpg",
+        "C:\\Users\\only1\\AppData\\Local\\Temp\\becky-validate-frames\\untitled-compilation_reel\\frame_0010.jpg",
+        "C:\\Users\\only1\\AppData\\Local\\Temp\\becky-validate-frames\\untitled-compilation_reel\\frame_0011.jpg",
+        "C:\\Users\\only1\\AppData\\Local\\Temp\\becky-validate-frames\\untitled-compilation_reel\\frame_0012.jpg"
+      ],
+      "rationale": "The descriptions show the man standing and the presence of other people and equipment across these frames.",
+      "reviewed": false
+    }
+  ],
+  "tone_vs_content_flag": false
+}

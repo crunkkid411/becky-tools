@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mlt LC_NUMERIC="C" version="7.37.0" producer="main_bin" root="" xmlns:kdenlive="https://kdenlive.org/projectfile">
+  <profile description="886x1920 30 fps (becky)" width="886" height="1920" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="886" display_aspect_den="1920" frame_rate_num="30000" frame_rate_den="1000" colorspace="709"></profile>
+  <producer id="producer0" in="0" out="1870">
+    <property name="length">1871</property>
+    <property name="eof">pause</property>
+    <property name="resource">E:/TakingBack2007/01-02-reddit.mp4</property>
+    <property name="mlt_service">avformat</property>
+    <property name="kdenlive:clipname">reddit</property>
+  </producer>
+  <playlist id="playlist0">
+    <entry producer="producer0" in="0" out="299"></entry>
+    <entry producer="producer0" in="900" out="1199"></entry>
+  </playlist>
+  <tractor id="tractor0">
+    <track producer="playlist0"></track>
+  </tractor>
+</mlt>

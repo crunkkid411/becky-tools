@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // backend_claude.go is Tier-2a: the `claude` CLI frontier backend running on
@@ -89,10 +92,32 @@ func (b *claudeCLIBackend) Complete(ctx context.Context, req Request) (string, e
 		//     narrating fake tool calls). Keeps OAuth (NOT --bare, which forces a key).
 		// Net: a clean answer in ~15-25s on OAuth, no API key required.
 		"--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
-		"--tools", "",
 		"--system-prompt", req.System, // becky's role + forensic + action rules (replaces default)
 		"--model", model, // opus (deep) / haiku (mid) alias
-		"--max-turns", "1", // one shot, no agentic loop
+	}
+	if req.Agentic {
+		// INVESTIGATOR mode: let becky navigate the granted folders READ-ONLY (an
+		// Obsidian vault, transcripts, notes) and cite the evidence — exactly what
+		// the user begged for ("if it was claude code you could navigate to the
+		// folder and look this up"). --allowedTools whitelists ONLY read tools (no
+		// Bash/Write/Edit -> safe, can't modify originals); --add-dir grants each
+		// folder; the turn cap bounds the loop. NOT --tools "" here (that disables
+		// tools, which is the whole point of this mode).
+		args = append(args, "--allowedTools", "Read Glob Grep LS")
+		for _, d := range req.AllowDirs {
+			if strings.TrimSpace(d) != "" {
+				args = append(args, "--add-dir", d)
+			}
+		}
+		turns := req.MaxTurns
+		if turns <= 0 {
+			turns = 16
+		}
+		args = append(args, "--max-turns", strconv.Itoa(turns))
+	} else {
+		// Fast ANSWER engine: NO tools (else opus burns the turn trying to use them
+		// and returns no text), one shot. See the comment above.
+		args = append(args, "--tools", "", "--max-turns", "1")
 	}
 	if req.JSONSchema != "" {
 		args = append(args, "--json-schema", req.JSONSchema)
@@ -101,11 +126,49 @@ func (b *claudeCLIBackend) Complete(ctx context.Context, req Request) (string, e
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = strings.NewReader(req.User) // candidate block + ask via stdin
 	cmd.Env = nonInteractiveEnv()           // strip inherited Claude Code session vars
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
 	out, err := cmd.Output()
+	claudeDebugLog(bin, args, out, errBuf.String(), err) // no-op unless BECKY_CLIP_DEBUG set
 	if err != nil {
-		return "", fmt.Errorf("claude -p: %w", err)
+		return "", fmt.Errorf("claude -p: %w%s", err, claudeErrTail(errBuf.String()))
 	}
 	return parseCLIEnvelope(out), nil
+}
+
+// claudeDebugLog appends the exact argv + truncated stdout/stderr to a temp file
+// when BECKY_CLIP_DEBUG is set. The GUI exe has no console, so this is the only way
+// to see what `claude -p` actually received/returned. Best-effort; never fails.
+func claudeDebugLog(bin string, args []string, out []byte, stderr string, runErr error) {
+	if os.Getenv("BECKY_CLIP_DEBUG") == "" {
+		return
+	}
+	f, e := os.OpenFile(filepath.Join(os.TempDir(), "becky-claude-debug.log"),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if e != nil {
+		return
+	}
+	defer f.Close()
+	trunc := func(s string, n int) string {
+		if len(s) > n {
+			return s[:n] + "…(truncated)"
+		}
+		return s
+	}
+	fmt.Fprintf(f, "\n=== %s ===\nbin: %s\nargs: %q\nrunErr: %v\nstderr: %s\nstdout: %s\n",
+		time.Now().Format(time.RFC3339), bin, args, runErr, trunc(stderr, 2000), trunc(string(out), 2000))
+}
+
+// claudeErrTail returns a compact tail of claude's stderr for the error message.
+func claudeErrTail(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s) > 300 {
+		s = s[len(s)-300:]
+	}
+	return " — " + s
 }
 
 // parseCLIEnvelope reads the {type,result,…} envelope --output-format json emits,

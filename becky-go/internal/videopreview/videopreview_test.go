@@ -4,12 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"becky-go/internal/seam"
 )
+
+// testTmpDir is a fixed, host-neutral scratch dir so framePath output is
+// assertable on any OS. The real client uses an OS temp dir; only the join
+// behaviour matters here, so expectations are built with filepath.Join too
+// (a hard-coded Windows `\` path made these tests fail on the Linux CI runner).
+var testTmpDir = filepath.Join("nle-test-tmp")
 
 // recordingFake wraps a seam.FakeSidecar and records every (type,name,args) it
 // receives, so tests can assert the client sent the right verbs/args. The handler
@@ -40,7 +47,7 @@ func newRecordingFake(t *testing.T, handler seam.Handler) (*recordingFake, *Clie
 	rf.fake.EmitReady("video-preview-fake", "0.1.0")
 	t.Cleanup(rf.fake.Close)
 	// tmpDir is fixed so framePath is assertable.
-	return rf, NewWithController(rf.fake.Controller(), `C:\nle-tmp`)
+	return rf, NewWithController(rf.fake.Controller(), testTmpDir)
 }
 
 func (rf *recordingFake) last() recordedCall {
@@ -179,7 +186,7 @@ func TestFrame_SendsQueryWithOutPathAndReturnsIt(t *testing.T) {
 		t.Errorf("Frame timeSec arg = %v, want 1.5", got)
 	}
 	// The out path is chosen by the client under tmpDir; the returned PNG matches it.
-	wantOut := `C:\nle-tmp\becky-nle-frame-1500.png`
+	wantOut := filepath.Join(testTmpDir, "becky-nle-frame-1500.png")
 	if got := argField(t, call.Args, "out"); got != wantOut {
 		t.Errorf("Frame out arg = %v, want %q", got, wantOut)
 	}
@@ -220,7 +227,7 @@ func TestOverlay_SendsTextAndOverlayVerb(t *testing.T) {
 	if got := argField(t, call.Args, "text"); got != "I want Penguin" {
 		t.Errorf("Overlay text arg = %v, want the caption", got)
 	}
-	wantOut := `C:\nle-tmp\becky-nle-overlay-2000.png`
+	wantOut := filepath.Join(testTmpDir, "becky-nle-overlay-2000.png")
 	if png != wantOut {
 		t.Errorf("Overlay returned %q, want %q", png, wantOut)
 	}
@@ -260,8 +267,8 @@ func TestFrame_NoOutInResponse_FallsBackToRequested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if png != `C:\nle-tmp\becky-nle-frame-250.png` {
-		t.Errorf("fallback out = %q", png)
+	if want := filepath.Join(testTmpDir, "becky-nle-frame-250.png"); png != want {
+		t.Errorf("fallback out = %q, want %q", png, want)
 	}
 }
 
@@ -321,16 +328,16 @@ func TestNilController_Degrades(t *testing.T) {
 // --- framePath determinism -------------------------------------------------------
 
 func TestFramePath_DeterministicPerKindAndTime(t *testing.T) {
-	c := NewWithController(nil, `C:\t`)
+	c := NewWithController(nil, testTmpDir)
 	cases := []struct {
 		kind string
 		time float64
 		want string
 	}{
-		{"frame", 0, `C:\t\becky-nle-frame-0.png`},
-		{"frame", 1.5, `C:\t\becky-nle-frame-1500.png`},
-		{"overlay", 2.0, `C:\t\becky-nle-overlay-2000.png`},
-		{"frame", 0.2505, `C:\t\becky-nle-frame-251.png`}, // rounds to nearest ms
+		{"frame", 0, filepath.Join(testTmpDir, "becky-nle-frame-0.png")},
+		{"frame", 1.5, filepath.Join(testTmpDir, "becky-nle-frame-1500.png")},
+		{"overlay", 2.0, filepath.Join(testTmpDir, "becky-nle-overlay-2000.png")},
+		{"frame", 0.2505, filepath.Join(testTmpDir, "becky-nle-frame-251.png")}, // rounds to nearest ms
 	}
 	for _, tc := range cases {
 		got := c.framePath(tc.kind, tc.time)

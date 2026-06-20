@@ -1,0 +1,131 @@
+Cloning into 'X:\AI-2\becky-tools\native\audio-host\third_party\vst3sdk'...
+Submodule 'base' (https://github.com/steinbergmedia/vst3_base) registered for path 'base'
+Submodule 'cmake' (https://github.com/steinbergmedia/vst3_cmake) registered for path 'cmake'
+Submodule 'doc' (https://github.com/steinbergmedia/vst3_doc) registered for path 'doc'
+Submodule 'pluginterfaces' (https://github.com/steinbergmedia/vst3_pluginterfaces) registered for path 'pluginterfaces'
+Submodule 'public.sdk' (https://github.com/steinbergmedia/vst3_public_sdk) registered for path 'public.sdk'
+Submodule 'tutorials' (https://github.com/steinbergmedia/vst3_tutorials) registered for path 'tutorials'
+Submodule 'vstgui4' (https://github.com/steinbergmedia/vstgui) registered for path 'vstgui4'
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/base'...
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/cmake'...
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/doc'...
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/pluginterfaces'...
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/public.sdk'...
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/tutorials'...
+Cloning into 'X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/vstgui4'...
+Submodule path 'base': checked out '3d2e82f8e6bff59c1d8b7a27491a29c2286b5206'
+Submodule path 'cmake': checked out 'de6e54eeaaab35b7145f5c32c279b5e892146e04'
+Submodule path 'doc': checked out '6d4737c9e70750056e731d88d49aa06eefc8a1a4'
+Submodule path 'pluginterfaces': checked out '31d6eeba6daaa3e2a8bfbe3e7a90ca0b7fbfbc1c'
+Submodule path 'public.sdk': checked out 'a3911a4615dabbfdfd9d181ee26b05c70c289a95'
+Submodule path 'tutorials': checked out '33b73dfbb87f3fde3bce8c0a10cae934dc66ad34'
+Submodule path 'vstgui4': checked out '76823bdbe286e4bdb9f79ab8986af5ce7202336c'
+Cloning into 'X:\AI-2\becky-tools\native\audio-host\third_party\portaudio'...
+-- The CXX compiler identification is GNU 15.1.0
+-- The C compiler identification is GNU 15.1.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/msys64/mingw64/bin/g++.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/msys64/mingw64/bin/gcc.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- becky-audio-host: ASIO SDK not found -- using WASAPI (drop the SDK in BECKY_ASIO_SDK for low-latency ASIO to the UR12)
+-- Build using a Portaudio STATIC libary.
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Checking for module 'jack'
+--   Package 'jack' not found
+-- Found Regex: POSIX regex.h
+-- Could NOT find JACK (missing: JACK_INCLUDEDIR) 
+-- becky-audio-host: build type Release, ASIO=OFF
+-- Configuring done (14.8s)
+-- Generating done (0.1s)
+-- Build files have been written to: X:/AI-2/becky-tools/native/audio-host/build
+[1/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_cpuload.c.obj
+[2/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_allocation.c.obj
+[3/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/os/win/pa_win_hostapis.c.obj
+[4/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_debugprint.c.obj
+[5/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_stream.c.obj
+[6/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_trace.c.obj
+[7/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_dither.c.obj
+[8/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_ringbuffer.c.obj
+[9/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_front.c.obj
+[10/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_converters.c.obj
+[11/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/common/pa_process.c.obj
+[12/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/os/win/pa_win_util.c.obj
+[13/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/hostapi/dsound/pa_win_ds_dynlink.c.obj
+[14/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/os/win/pa_win_waveformat.c.obj
+[15/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/os/win/pa_win_version.c.obj
+[16/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/os/win/pa_win_coinitialize.c.obj
+[17/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/os/win/pa_win_wdmks_utils.c.obj
+[18/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/hostapi/dsound/pa_win_ds.c.obj
+[19/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/hostapi/wmme/pa_win_wmme.c.obj
+[20/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/pluginterfaces/base/coreiids.cpp.obj
+[21/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/baseiids.cpp.obj
+[22/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/pluginterfaces/base/ustring.cpp.obj
+[23/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/pluginterfaces/base/conststringtable.cpp.obj
+[24/58] Building CXX object CMakeFiles/becky-audio-host.dir/src/protocol.cpp.obj
+[25/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/fbuffer.cpp.obj
+[26/58] Building CXX object CMakeFiles/becky-audio-host.dir/src/audio_device.cpp.obj
+[27/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/hostapi/wasapi/pa_win_wasapi.c.obj
+[28/58] Building C object portaudio/CMakeFiles/portaudio.dir/src/hostapi/wdmks/pa_win_wdmks.c.obj
+[29/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/fobject.cpp.obj
+[30/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/fstreamer.cpp.obj
+[31/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/common/commoniids.cpp.obj
+[32/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/common/pluginview.cpp.obj
+[33/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/common/memorystream.cpp.obj
+[34/58] Building CXX object CMakeFiles/becky-audio-host.dir/src/main.cpp.obj
+[35/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/connectionproxy.cpp.obj
+[36/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/eventlist.cpp.obj
+[37/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/fdebug.cpp.obj
+[38/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/pluginterfaces/base/funknown.cpp.obj
+[39/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/updatehandler.cpp.obj
+[40/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/common/commonstringconvert.cpp.obj
+X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/public.sdk/source/common/commonstringconvert.cpp:46:24: warning: 'template<class _Codecvt, class _Elem, class _Wide_alloc, class _Byte_alloc> class std::__cxx11::wstring_convert' is deprecated [-Wdeprecated-declarations]
+   46 | using Converter = std::wstring_convert<std::codecvt_utf8_utf16<UTF16Type>, UTF16Type>;
+      |                        ^~~~~~~~~~~~~~~
+In file included from C:/msys64/mingw64/include/c++/15.1.0/locale:47,
+                 from X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/public.sdk/source/common/commonstringconvert.cpp:22:
+C:/msys64/mingw64/include/c++/15.1.0/bits/locale_conv.h:262:33: note: declared here
+  262 |     class _GLIBCXX17_DEPRECATED wstring_convert
+      |                                 ^~~~~~~~~~~~~~~
+[41/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/processdata.cpp.obj
+[42/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/fdynlib.cpp.obj
+[43/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/vstinitiids.cpp.obj
+[44/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/hostclasses.cpp.obj
+[45/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/parameterchanges.cpp.obj
+[46/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/thread/source/fcondition.cpp.obj
+[47/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/thread/source/flock.cpp.obj
+[48/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/pluginterfacesupport.cpp.obj
+[49/58] Linking C static library portaudio\libportaudio.a
+[50/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/utility/stringconvert.cpp.obj
+X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/public.sdk/source/vst/utility/stringconvert.cpp:54:24: warning: 'template<class _Codecvt, class _Elem, class _Wide_alloc, class _Byte_alloc> class std::__cxx11::wstring_convert' is deprecated [-Wdeprecated-declarations]
+   54 | using Converter = std::wstring_convert<std::codecvt_utf8_utf16<UTF16Type>, UTF16Type>;
+      |                        ^~~~~~~~~~~~~~~
+In file included from C:/msys64/mingw64/include/c++/15.1.0/locale:47,
+                 from X:/AI-2/becky-tools/native/audio-host/third_party/vst3sdk/public.sdk/source/vst/utility/stringconvert.cpp:30:
+C:/msys64/mingw64/include/c++/15.1.0/bits/locale_conv.h:262:33: note: declared here
+  262 |     class _GLIBCXX17_DEPRECATED wstring_convert
+      |                                 ^~~~~~~~~~~~~~~
+[51/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/plugprovider.cpp.obj
+[52/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/module.cpp.obj
+[53/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/common/threadchecker_win32.cpp.obj
+[54/58] Building CXX object CMakeFiles/becky-audio-host.dir/src/vst_host.cpp.obj
+[55/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/base/source/fstring.cpp.obj
+[56/58] Building CXX object CMakeFiles/becky-audio-host.dir/third_party/vst3sdk/public.sdk/source/vst/hosting/module_win32.cpp.obj
+[57/58] Building CXX object CMakeFiles/becky-audio-host.dir/src/plugin_probe.cpp.obj
+[58/58] Linking CXX executable becky-audio-host.exe
+[selftest] becky-audio-host 0.1.0
+[selftest] PortAudio init: ok
+[selftest] output devices: 22  default_host_api=MME  asio_available=no
+[audio-host] scan: 2 plugin(s) faulted on load and were skipped
+[selftest] scanned C:\Program Files\Common Files\VST3: 309 .vst3 (2 faulted on load, skipped)
+[selftest] loading + rendering: C:\Program Files\Common Files\VST3\808 Studio II.vst3
+[audio-host] render Initial 808 Studio II -> selftest_render.wav  frames=96000 peak=-5.999998dB rms=-10.013058dB nonSilent=yes
+[selftest] rendered Initial 808 Studio II -> selftest_render.wav  frames=96000 ch=2 peakDb=-6 rmsDb=-10.0131 nonSilent=yes
+[selftest] RESULT: PASS (real VST3 loaded + rendered non-silent audio)

@@ -47,6 +47,23 @@ The friendly entry point is **`becky.exe`** (the orchestrator).
 | Index/report | `embed` (Qwen3 vectors), `search` (hybrid FTS5+vec+OCR RRF), `ocr` (text off frames), `consolidate`, `review` (LLM annotate), `export` | searchable corpus + reports |
 | Orchestration | `becky` (plain-language op runner), `enroll` (wiki→KB + `becky "this is X" <clip>`), `cluster` (recurring-unknown "Person A"), `ask` (TUI front-door, saves output next to source) | drive the toolset; build/grow the KB |
 | Utility/meta | `web2md`, `deslop`, `debt-scan`, `eval` (recall harness), `pipeline` (chains the above), `new-tool` (AI-assisted tool scaffolding) | |
+| Music / DAW | `compose` (genre→MIDI stems), `hum`, `vox`, `mix`, `drum`, `wire`, `reaper` (**AI-first DAW: authors REAPER `.rpp` sessions + drives REAPER, which hosts all his VSTs**) | becky as the AI brain over a real DAW |
+
+## AI-first DAW (REAPER)
+
+The functional AI-first DAW is **becky driving REAPER** (already installed, fully scriptable
+via ReaScript/Lua, plain-text `.rpp`, hosts every VST). `becky-reaper` deterministically
+authors a real REAPER session from `dawmodel.Arrangement` (tracks, Cubase-style bus folders,
+MIDI, render config) — proven: REAPER rendered an audible 24-bit/48k WAV and a generated
+17-track session opens with the full bus tree. One-click: **`Open Becky DAW.bat`**. Full
+detail: `SPEC-BECKY-REAPER.md`.
+
+> **Local LLM = llama.cpp, ALWAYS (NOT Ollama).** Every becky local-model path uses
+> llama.cpp's `llama-server` (OpenAI-compatible `/v1/chat/completions`), per `internal/llmlocal`.
+> The in-REAPER "REAPER Chat" extension expects a server on `http://localhost:11435/v1/chat/completions`.
+> **`becky-reaper brain --start`** boots that server for you (resolves a chat GGUF + `llama-server`
+> and binds them to :11435); **`Start Becky REAPER Brain.bat`** is the one-click launcher, and
+> **`Open Becky DAW.bat`** auto-starts the brain if the port isn't already serving. Do **not** use Ollama.
 
 ## Non-obvious decisions
 

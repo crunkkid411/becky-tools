@@ -121,6 +121,69 @@ func TestAssistRespectsOfflineToggle(t *testing.T) {
 	}
 }
 
+// TestInvestigateRouting: an "investigate my notes/vault" ask routes to the
+// agentic claude CLI (read-only file investigator), NOT the keyword floor — and a
+// plain chat / clip command does NOT.
+func TestInvestigateRouting(t *testing.T) {
+	dir := t.TempDir() // a real folder so investigateDirs keeps it
+	cli := &fakeBackend{name: "claude-cli", available: true,
+		reply: "The $10,000 Penguin bounty is in 2026-05-19_..._[BaTnp3Jy0vc].mp4 at 00:09:03 (cited the .en.srt)."}
+	r := NewRouter(Options{ClaudeCLI: cli, Log: func(string, ...any) {}})
+
+	cx := Context{FolderRoot: dir, Online: true, Budget: &Budget{MaxTurns: 40}}
+	p, err := r.Assist(context.Background(), "look in my notes and tell me which video the penguin bounty is documented in", cx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cli.callCount() != 1 {
+		t.Fatalf("investigate should call the claude CLI once, got %d", cli.callCount())
+	}
+	// The agentic request must enable read tools over the case folder.
+	req := cli.calls[0]
+	if !req.Agentic {
+		t.Fatal("investigate must send an Agentic request")
+	}
+	if len(req.AllowDirs) == 0 || req.AllowDirs[0] != dir {
+		t.Fatalf("investigate must grant the case folder, got AllowDirs=%v", req.AllowDirs)
+	}
+	if !strings.Contains(p.PreviewText, "BaTnp3Jy0vc") {
+		t.Fatalf("investigate answer should carry the model's cited finding, got %q", p.PreviewText)
+	}
+
+	// Offline (use-Claude off) → an honest note, not a silent grep, and no CLI call.
+	cli2 := &fakeBackend{name: "claude-cli", available: true, reply: "x"}
+	r2 := NewRouter(Options{ClaudeCLI: cli2})
+	cxOff := Context{FolderRoot: dir, Online: false, Budget: &Budget{MaxTurns: 40}}
+	p2, _ := r2.Assist(context.Background(), "find the documented evidence in my vault", cxOff, nil)
+	if cli2.callCount() != 0 {
+		t.Fatal("offline investigate must NOT call the CLI")
+	}
+	if !strings.Contains(strings.ToLower(p2.Note), "use claude") {
+		t.Fatalf("offline investigate should explain how to enable it, got note %q", p2.Note)
+	}
+}
+
+func TestInvestigateIntent(t *testing.T) {
+	yes := []string{
+		"which video is the penguin bounty in?",
+		"look it up in my notes",
+		"find the documented evidence in my vault",
+		`search E:\TakingBack2007 for the bounty`,
+		"where was the $10,000 offered",
+	}
+	for _, u := range yes {
+		if !investigateIntent(u) {
+			t.Fatalf("expected investigate intent for %q", u)
+		}
+	}
+	no := []string{"add clip 3", "turn on the lower third", "what does export do?"}
+	for _, u := range no {
+		if investigateIntent(u) {
+			t.Fatalf("did NOT expect investigate intent for %q", u)
+		}
+	}
+}
+
 // TestSplitProseAndActions covers the conservative splitter directly.
 func TestSplitProseAndActions(t *testing.T) {
 	// pure prose → no actions
