@@ -5,7 +5,7 @@
 // This package is a thin, typed, concurrency-safe wrapper that maps 1:1 to the
 // host's verbs (audio.devices / audio.open / audio.start / audio.stop /
 // vst.scan / vst.load / vst.param.list / vst.param.set / note.on / note.off /
-// render).
+// vst.state.save / vst.state.load / render).
 //
 // Audio samples NEVER cross this seam: it is a control plane only. The host
 // owns its own realtime thread; offline render() writes a WAV to a path we name.
@@ -118,6 +118,28 @@ type RenderResult struct {
 	NonSilent    bool    `json:"nonSilent"`
 	IsEffect     bool    `json:"isEffect"`
 	IsInstrument bool    `json:"isInstrument"`
+}
+
+// StateSaveResult is the vst.state.save response: where the .vstpreset-format file
+// was written, the plugin name, and its component (processor) class id.
+type StateSaveResult struct {
+	Out     string `json:"out"`
+	Name    string `json:"name"`
+	ClassID string `json:"classId"`
+	Saved   bool   `json:"saved"`
+}
+
+// StateLoadResult is the vst.state.load response. Applied is the host's own
+// confirmation that the plugin accepted the state (setState/setComponentState
+// returned ok). When loaded via a plugin path, InstanceID is the new instance and
+// Params is its post-load parameter snapshot.
+type StateLoadResult struct {
+	InstanceID int     `json:"instanceId"`
+	Name       string  `json:"name"`
+	ClassID    string  `json:"classId"`
+	Loaded     bool    `json:"loaded"`
+	Applied    bool    `json:"applied"`
+	Params     []Param `json:"params"`
 }
 
 // NoteEvent is one timed MIDI event for an offline render. Type is "noteOn" or

@@ -24,6 +24,7 @@
 #include "public.sdk/source/vst/hosting/plugprovider.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
 #include "public.sdk/source/vst/utility/stringconvert.h"
+#include "public.sdk/source/vst/vstpresetfile.h"
 
 #include "plugin_probe.h"
 #include "protocol.h"
@@ -71,6 +72,7 @@ struct VstInstance {
     int id = 0;
     std::string path;
     std::string name;
+    FUID component_uid;  // processor (IComponent) class id, for .vstpreset save/load
     VST3::Hosting::Module::Ptr module;
     IPtr<PlugProvider> provider;
     IPtr<IComponent> component;
@@ -248,6 +250,8 @@ void instantiate(VstInstance& inst, const std::string& path, int sample_rate,
     }
     if (!found) throw std::runtime_error("no audio-effect class in module");
     inst.name = chosen.name();
+    // Component (processor) class id: needed to write/verify a .vstpreset stream.
+    inst.component_uid = FUID::fromTUID(chosen.ID().data());
 
     inst.provider = owned(new PlugProvider(factory, chosen, true));
     if (!inst.provider->initialize()) {
@@ -448,6 +452,170 @@ json VstHost::editor_open(const json& args) {
         {"width", has_size ? (rect.right - rect.left) : 0},
         {"height", has_size ? (rect.bottom - rect.top) : 0},
     };
+}
+
+//------------------------------------------------------------------------
+namespace {
+
+// Format a FUID as the 32-char ASCII class id used in a .vstpreset header, for
+// diagnostics/traceability (matches FUID::toString length).
+std::string fuid_to_string(const FUID& uid) {
+    char buf[64] = {0};
+    uid.toString(buf);
+    return std::string(buf);
+}
+
+// Run one silent process block so any parameter changes queued by vst.param.set
+// (which live in inst.in_params until consumed) are baked into the component's DSP
+// state. Without this, component->getState() in vst.state.save would miss live
+// param edits that a render WOULD reflect. Safe no-op if nothing is queued.
+void flush_pending_params(VstInstance& inst) {
+    if (!inst.processor || !inst.processing) return;
+    const int32 block = std::min<int32>(64, inst.block_size);
+    inst.process_data.numSamples = block;
+    inst.event_list.clear();
+    inst.process_data.inputEvents = &inst.event_list;
+    // Zero inputs (effects) + outputs so the block is silent.
+    for (int32 b = 0; b < inst.process_data.numInputs; ++b) {
+        AudioBusBuffers& ib = inst.process_data.inputs[b];
+        for (int32 c = 0; c < ib.numChannels; ++c)
+            if (ib.channelBuffers32[c])
+                std::memset(ib.channelBuffers32[c], 0, sizeof(float) * block);
+    }
+    for (int32 b = 0; b < inst.process_data.numOutputs; ++b) {
+        AudioBusBuffers& ob = inst.process_data.outputs[b];
+        for (int32 c = 0; c < ob.numChannels; ++c)
+            if (ob.channelBuffers32[c])
+                std::memset(ob.channelBuffers32[c], 0, sizeof(float) * block);
+    }
+    inst.processor->process(inst.process_data);  // best-effort; consumes in_params
+    inst.in_params.clearQueue();
+}
+
+}  // namespace
+
+//------------------------------------------------------------------------
+// verb vst.state.save: write the loaded plugin's component + controller state to a
+// .vstpreset-format file via the SDK PresetFile helper. Works for ANY VST3.
+json VstHost::state_save(const json& args) {
+    if (!args.contains("out") || !args.at("out").is_string()) {
+        throw std::runtime_error("vst.state.save requires a string 'out' path");
+    }
+    const std::string out_path = args.at("out").get<std::string>();
+
+    std::unique_ptr<VstInstance> temp;
+    VstInstance* inst = nullptr;
+    if (args.contains("instanceId")) {
+        inst = require(args.at("instanceId").get<int>());
+    } else if (args.contains("path") && args.at("path").is_string()) {
+        temp = std::make_unique<VstInstance>();
+        temp->id = -1;
+        instantiate(*temp, args.at("path").get<std::string>(),
+                    args.value("samplerate", 48000), args.value("buffer", 512));
+        inst = temp.get();
+    } else {
+        throw std::runtime_error("vst.state.save requires 'instanceId' or 'path'");
+    }
+    if (!inst->component) throw std::runtime_error("instance has no component");
+
+    // Bake any queued param edits into the component before snapshotting its state.
+    flush_pending_params(*inst);
+
+    IBStream* stream = FileStream::open(out_path.c_str(), "wb");
+    if (!stream) {
+        throw std::runtime_error("cannot open '" + out_path + "' for writing");
+    }
+    const bool ok = PresetFile::savePreset(stream, inst->component_uid,
+                                           inst->component, inst->controller);
+    stream->release();
+    if (!ok) {
+        throw std::runtime_error(
+            "PresetFile::savePreset failed (plugin refused to serialize state)");
+    }
+
+    return json{
+        {"out", out_path},
+        {"name", inst->name},
+        {"classId", fuid_to_string(inst->component_uid)},
+        {"saved", true},
+    };
+}
+
+//------------------------------------------------------------------------
+// verb vst.state.load: read a .vstpreset-format file and apply it via
+// setComponentState (-> processor) + the controller's setState, BEFORE the next
+// render. setState must run while the component is inactive, so we deactivate,
+// apply, then reactivate. Accepts 'instanceId' (apply to an existing instance) or
+// 'path' (instantiate a NEW persistent instance, apply, return its id).
+json VstHost::state_load(const json& args) {
+    if (!args.contains("file") || !args.at("file").is_string()) {
+        throw std::runtime_error("vst.state.load requires a string 'file' path");
+    }
+    const std::string file = args.at("file").get<std::string>();
+
+    std::unique_ptr<VstInstance> created;
+    VstInstance* inst = nullptr;
+    bool is_new = false;
+    if (args.contains("instanceId")) {
+        inst = require(args.at("instanceId").get<int>());
+    } else if (args.contains("path") && args.at("path").is_string()) {
+        created = std::make_unique<VstInstance>();
+        created->id = next_id_++;
+        instantiate(*created, args.at("path").get<std::string>(),
+                    args.value("samplerate", 48000), args.value("buffer", 512));
+        inst = created.get();
+        is_new = true;
+    } else {
+        throw std::runtime_error("vst.state.load requires 'instanceId' or 'path'");
+    }
+    if (!inst->component) throw std::runtime_error("instance has no component");
+
+    IBStream* stream = FileStream::open(file.c_str(), "rb");
+    if (!stream) {
+        throw std::runtime_error("cannot open '" + file + "' for reading");
+    }
+
+    // setState/setComponentState must be applied in an inactive state.
+    const bool was_processing = inst->processing;
+    if (inst->processor && was_processing) inst->processor->setProcessing(false);
+    inst->component->setActive(false);
+    inst->processing = false;
+
+    // loadPreset verifies the stream's class id matches inst->component_uid, then
+    // calls component->setState (reaches the processor — same object) and the
+    // controller's setState (kComponentState applied to the controller too).
+    const bool ok = PresetFile::loadPreset(stream, inst->component_uid,
+                                           inst->component, inst->controller);
+    stream->release();
+
+    // Reactivate regardless, so a load failure leaves a usable instance.
+    if (inst->component->setActive(true) != kResultOk) {
+        throw std::runtime_error("setActive(true) failed after state load");
+    }
+    if (inst->processor) inst->processor->setProcessing(true);
+    inst->processing = true;
+
+    if (!ok) {
+        throw std::runtime_error(
+            "PresetFile::loadPreset failed: the file's class id does not match '" +
+            inst->name + "' (" + fuid_to_string(inst->component_uid) +
+            "), or the plugin refused the state");
+    }
+
+    json out{
+        {"name", inst->name},
+        {"classId", fuid_to_string(inst->component_uid)},
+        {"loaded", true},
+        {"applied", true},
+    };
+    if (is_new) {
+        out["instanceId"] = inst->id;
+        out["params"] = param_info_array(inst->controller);
+        instances_[inst->id] = std::move(created);
+    } else {
+        out["instanceId"] = inst->id;
+    }
+    return out;
 }
 
 //------------------------------------------------------------------------

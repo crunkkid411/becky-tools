@@ -508,6 +508,131 @@ func TestRenderPathEmpty(t *testing.T) {
 	}
 }
 
+func TestSaveState(t *testing.T) {
+	rec := newRecorder()
+	rec.responses["vst.state.save"] = map[string]interface{}{
+		"out": `C:\presets\sound.vstpreset`, "name": "808 Studio II",
+		"classId": "ABCDEF019182FAEB4961756458363879", "saved": true,
+	}
+	c, fake := newTestClient(t, rec)
+	defer fake.Close()
+
+	res, err := c.SaveState(ctx(), 3, `C:\presets\sound.vstpreset`)
+	if err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if !res.Saved || res.Name != "808 Studio II" || res.ClassID == "" {
+		t.Errorf("save decode wrong: %+v", res)
+	}
+	call := rec.last(t)
+	if call.name != "vst.state.save" || call.typ != seam.TypeCommand {
+		t.Errorf("call = %+v, want command vst.state.save", call)
+	}
+	if got := call.args["instanceId"]; got != float64(3) {
+		t.Errorf("instanceId arg = %v, want 3", got)
+	}
+	if got := call.args["out"]; got != `C:\presets\sound.vstpreset` {
+		t.Errorf("out arg = %v", got)
+	}
+}
+
+func TestSaveStateEmptyOut(t *testing.T) {
+	rec := newRecorder()
+	c, fake := newTestClient(t, rec)
+	defer fake.Close()
+	if _, err := c.SaveState(ctx(), 3, ""); err == nil {
+		t.Fatal("expected error on empty out path")
+	}
+}
+
+func TestLoadState(t *testing.T) {
+	rec := newRecorder()
+	rec.responses["vst.state.load"] = map[string]interface{}{
+		"instanceId": 2, "name": "808 Studio II",
+		"classId": "ABCDEF019182FAEB4961756458363879", "loaded": true, "applied": true,
+	}
+	c, fake := newTestClient(t, rec)
+	defer fake.Close()
+
+	res, err := c.LoadState(ctx(), 2, `C:\presets\sound.vstpreset`)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if !res.Applied || !res.Loaded || res.InstanceID != 2 {
+		t.Errorf("load decode wrong: %+v", res)
+	}
+	call := rec.last(t)
+	if call.name != "vst.state.load" || call.typ != seam.TypeCommand {
+		t.Errorf("call = %+v, want command vst.state.load", call)
+	}
+	if got := call.args["instanceId"]; got != float64(2) {
+		t.Errorf("instanceId arg = %v, want 2", got)
+	}
+	if got := call.args["file"]; got != `C:\presets\sound.vstpreset` {
+		t.Errorf("file arg = %v", got)
+	}
+	if _, ok := call.args["path"]; ok {
+		t.Errorf("LoadState should NOT send path, got %v", call.args)
+	}
+}
+
+func TestLoadStateEmptyFile(t *testing.T) {
+	rec := newRecorder()
+	c, fake := newTestClient(t, rec)
+	defer fake.Close()
+	if _, err := c.LoadState(ctx(), 2, ""); err == nil {
+		t.Fatal("expected error on empty state file path")
+	}
+}
+
+func TestLoadStatePath(t *testing.T) {
+	rec := newRecorder()
+	rec.responses["vst.state.load"] = map[string]interface{}{
+		"instanceId": 5, "name": "Serum", "loaded": true, "applied": true,
+		"params": []map[string]interface{}{
+			{"id": 0, "title": "MasterLevel", "current": 0.42},
+		},
+	}
+	c, fake := newTestClient(t, rec)
+	defer fake.Close()
+
+	res, err := c.LoadStatePath(ctx(), `C:\VST3\Serum.vst3`, `C:\p.vstpreset`, RenderOptions{SampleRate: 44100})
+	if err != nil {
+		t.Fatalf("LoadStatePath: %v", err)
+	}
+	if res.InstanceID != 5 || !res.Applied || len(res.Params) != 1 {
+		t.Errorf("loadpath decode wrong: %+v", res)
+	}
+	call := rec.last(t)
+	if call.name != "vst.state.load" || call.typ != seam.TypeCommand {
+		t.Errorf("call = %+v", call)
+	}
+	if got := call.args["path"]; got != `C:\VST3\Serum.vst3` {
+		t.Errorf("path arg = %v", got)
+	}
+	if got := call.args["file"]; got != `C:\p.vstpreset` {
+		t.Errorf("file arg = %v", got)
+	}
+	if got := call.args["samplerate"]; got != float64(44100) {
+		t.Errorf("samplerate arg = %v, want 44100", got)
+	}
+	if _, ok := call.args["instanceId"]; ok {
+		t.Errorf("LoadStatePath should NOT send instanceId, got %v", call.args)
+	}
+}
+
+func TestLoadStatePathEmpty(t *testing.T) {
+	rec := newRecorder()
+	c, fake := newTestClient(t, rec)
+	defer fake.Close()
+	if _, err := c.LoadStatePath(ctx(), "", `C:\p.vstpreset`, RenderOptions{}); err == nil {
+		t.Fatal("expected error on empty plugin path")
+	}
+	if _, err := c.LoadStatePath(ctx(), `C:\p.vst3`, "", RenderOptions{}); err == nil {
+		t.Fatal("expected error on empty state file path")
+	}
+}
+
 func TestShutdown(t *testing.T) {
 	rec := newRecorder()
 	rec.responses["shutdown"] = map[string]interface{}{"bye": true}
