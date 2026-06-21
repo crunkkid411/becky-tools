@@ -89,6 +89,7 @@ type iconSet struct {
 	piano    *widget.Icon // note   — piano-roll mode
 	drum     *widget.Icon // grid   — drum machine
 	mixer    *widget.Icon // eq     — mixer / DAW routing mode
+	audio    *widget.Icon // wave   — audio / vocal tracks mode
 	video    *widget.Icon // movie  — video mode
 	folder   *widget.Icon // open   — load a file/folder
 	clear    *widget.Icon // X      — clear output
@@ -114,6 +115,7 @@ func loadIcons() iconSet {
 		piano:    mk(icons.ImageMusicNote),
 		drum:     mk(icons.ImageGridOn),
 		mixer:    mk(icons.AVEqualizer),
+		audio:    mk(icons.AVQueueMusic),
 		video:    mk(icons.AVMovie),
 		folder:   mk(icons.FileFolderOpen),
 		clear:    mk(icons.ContentClear),

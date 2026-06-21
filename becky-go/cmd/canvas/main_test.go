@@ -68,7 +68,7 @@ func TestRun_missingProjectDegrades(t *testing.T) {
 
 func TestJoinModes_listsAllPlannedModes(t *testing.T) {
 	got := joinModes()
-	want := "ask|video|daw|midi|drum"
+	want := "ask|video|daw|midi|drum|audio"
 	if got != want {
 		t.Errorf("joinModes()=%q want %q", got, want)
 	}

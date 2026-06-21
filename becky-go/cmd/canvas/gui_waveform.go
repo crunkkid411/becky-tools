@@ -149,6 +149,8 @@ func (a *App) layoutVisual(gtx layout.Context, th *material.Theme) layout.Dimens
 		a.pianoPanel.layout(gtx, a)
 	case canvas.ModeDAW:
 		a.mixerPanel.layout(gtx, a)
+	case canvas.ModeAudio:
+		a.audioPanel.layout(gtx, a)
 	default:
 		a.drawTargetSurface(gtx, th)
 	}
