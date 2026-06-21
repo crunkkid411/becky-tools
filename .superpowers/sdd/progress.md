@@ -17,3 +17,13 @@ internal/* + gui_*.go panels via subagents.
 
 ## Ledger
 (append "Task X: complete (commits a..b, review clean)" as each lands)
+Task 1 (SPINE): complete (commit 83265d7, build+test green)
+
+## Dispatched (parallel, worktree-isolated, sonnet) — awaiting completion
+- Task 2a DRUM  -> agent af74924fe28ffcac6 (owns cmd/canvas/gui_drumpanel.go)
+- Task 2b PIANO -> agent a2364ae2f81b40b79 (owns cmd/canvas/gui_pianopanel.go)
+- Task 2c MIXER -> agent af415bf9e50b83d43 (owns cmd/canvas/gui_mixerpanel.go)
+- Task 3  CTLEDIT -> agent a97257c8734312b2d (owns internal/ctledit/)
+Mixer dock button (reach ModeDAW) committed 662c569 (single-owner, disjoint from panels).
+Integration plan after merges: wire ctledit into the select->ask->transform overlay
+(gui.go + gui_overlay), clean dead toy drum code, build -tags gui, launch-verify, push.
