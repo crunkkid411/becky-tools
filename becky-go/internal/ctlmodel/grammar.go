@@ -37,6 +37,7 @@ var grammarOps = []string{
 	ctledit.OpMute,
 	ctledit.OpSolo,
 	ctledit.OpRouteTo,
+	ctledit.OpRoute,
 	ctledit.OpAddSidechain,
 	ctledit.OpSetTempo,
 }

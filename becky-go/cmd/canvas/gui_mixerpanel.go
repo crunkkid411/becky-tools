@@ -28,6 +28,9 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	"becky-go/internal/autoroute"
+	"becky-go/internal/fxchain"
 )
 
 // stripState holds widget state for ONE channel strip. Created on first use, keyed by
@@ -45,6 +48,7 @@ type stripState struct {
 type mixerPanel struct {
 	strips    map[string]*stripState
 	stripList layout.List
+	route     widget.Clickable // "Route" button: runs autoroute.Apply in one shot
 }
 
 func newMixerPanel() *mixerPanel {
@@ -59,12 +63,15 @@ func (m *mixerPanel) layout(gtx layout.Context, a *App) layout.Dimensions {
 		return panelPlaceholder(gtx, a, "mixer — drop a project.json to see channel strips")
 	}
 
+	// Load FX chains once per frame so every strip can query its bus chain cheaply.
+	chains := fxchain.Load()
+
 	// Process widget events before drawing so edits take effect this frame.
 	m.handleStripEvents(gtx, a)
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return mixerHeader(gtx, a.th)
+			return m.mixerHeader(gtx, a)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -72,7 +79,7 @@ func (m *mixerPanel) layout(gtx layout.Context, a *App) layout.Dimensions {
 			return m.stripList.Layout(gtx, len(tracks), func(gtx layout.Context, i int) layout.Dimensions {
 				t := tracks[i]
 				st := m.stripFor(t.ID)
-				return m.layoutStrip(gtx, a, t.ID,
+				return m.layoutStrip(gtx, a, chains, t.ID,
 					t.Strip.Gain, t.Strip.Pan,
 					t.Strip.Mute, t.Strip.Solo, t.Strip.Bus, st)
 			})
@@ -90,6 +97,14 @@ func (m *mixerPanel) handleStripEvents(gtx layout.Context, a *App) {
 	if a.arr == nil {
 		return
 	}
+
+	// Route button: apply the deterministic label→bus ruleset in one shot.
+	if m.route.Clicked(gtx) && a.arr != nil {
+		next, _ := autoroute.Apply(a.arr, autoroute.Load())
+		a.applyArr(next)
+		return
+	}
+
 	for _, t := range a.arr.Tracks {
 		st := m.stripFor(t.ID)
 
@@ -149,6 +164,7 @@ func (m *mixerPanel) handleStripEvents(gtx layout.Context, a *App) {
 // layoutStrip renders one vertical channel strip.
 func (m *mixerPanel) layoutStrip(
 	gtx layout.Context, a *App,
+	chains fxchain.Chains,
 	id string, gain, pan float64,
 	muted, soloed bool, bus string,
 	st *stripState,
@@ -213,6 +229,11 @@ func (m *mixerPanel) layoutStrip(
 		// bus cycle button
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return m.layoutBusCycle(gtx, a.th, &st.busCycle, bus)
+		}),
+		// per-bus FX chain: small plugin-name chips (read-only view).
+		// TODO: add plugins via fxchain.Add when an insert UI is available.
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return m.layoutFXChips(gtx, a.th, chains.Get(bus))
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 	)
@@ -366,6 +387,30 @@ func (m *mixerPanel) layoutBusCycle(
 		})
 }
 
+// layoutFXChips renders the ordered plugin names from ch as small read-only caption
+// chips under the bus-cycle button. If the chain is empty, a quiet "no chain" hint
+// is shown in colTextDim. Uses the same colDeepPurple text as layoutBusCycle.
+func (m *mixerPanel) layoutFXChips(gtx layout.Context, th *material.Theme, ch fxchain.Chain) layout.Dimensions {
+	return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			if len(ch.Plugins) == 0 {
+				lbl := material.Caption(th, "no chain")
+				lbl.Color = colTextDim
+				return lbl.Layout(gtx)
+			}
+			items := make([]layout.FlexChild, 0, len(ch.Plugins))
+			for _, p := range ch.Plugins {
+				name := p.Name
+				items = append(items, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, truncateID(name, 7))
+					lbl.Color = colDeepPurple
+					return lbl.Layout(gtx)
+				}))
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, items...)
+		})
+}
+
 // layoutRoutingSummary draws a compact bus → out routing summary at the panel bottom.
 func (m *mixerPanel) layoutRoutingSummary(gtx layout.Context, a *App) layout.Dimensions {
 	if a.arr == nil || len(a.arr.Buses) == 0 {
@@ -425,13 +470,22 @@ func nextBus(ids []string, current string) string {
 	return ids[0]
 }
 
-// mixerHeader draws a small "MIXER" section label.
-func mixerHeader(gtx layout.Context, th *material.Theme) layout.Dimensions {
+// mixerHeader draws the "MIXER" section label and the one-shot "Route" button.
+// The Route button runs autoroute.Apply(a.arr, autoroute.Load()) via handleStripEvents.
+func (m *mixerPanel) mixerHeader(gtx layout.Context, a *App) layout.Dimensions {
 	return layout.Inset{Left: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "MIXER")
-			lbl.Color = colNeonGreen
-			return lbl.Layout(gtx)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(a.th, "MIXER")
+					lbl.Color = colNeonGreen
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return m.layoutBusCycle(gtx, a.th, &m.route, "Route")
+				}),
+			)
 		})
 }
 

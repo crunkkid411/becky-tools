@@ -147,7 +147,11 @@ func (a *App) execPlay(target string, mode canvas.Mode, d *drumGrid) error {
 	// standalone becky-drummachine uses — instead of the weak 4-sample synth path.
 	// This is the wire that connects the canvas drum panel to the real drum engine.
 	if mode == canvas.ModeDrum && hasDrumClip(a.arr) {
-		m := drummachine.MachineFromArrangement(a.arr).WithDefaultKitSamples(defaultKitDir())
+		kitDir := defaultKitDir()
+		if a.drumPanel != nil && a.drumPanel.kitDir != "" {
+			kitDir = a.drumPanel.kitDir // [Load Kit] override → baked into the machine JSON for --play-machine
+		}
+		m := drummachine.MachineFromArrangement(a.arr).WithDefaultKitSamples(kitDir)
 		data, merr := json.Marshal(m)
 		if merr != nil {
 			return fmt.Errorf("couldn't build the machine: %w", merr)

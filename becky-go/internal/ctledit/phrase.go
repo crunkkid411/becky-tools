@@ -46,6 +46,12 @@ func ParsePhrase(text string, a *dawmodel.Arrangement) (BeckyEditBatch, bool) {
 		return single(sum, ed), true
 	}
 
+	// Whole-arrangement routing (no drum clip needed): "route the tracks",
+	// "route everything", "auto route", "set up the buses", "route to buses".
+	if strings.Contains(t, "route") || containsAny(t, "set up the buses", "set up buses") {
+		return single("routed all tracks to their buses", BeckyEdit{Op: OpRoute}), true
+	}
+
 	trackID, _ := findDrumClipRef(a)
 	if trackID == "" {
 		return BeckyEditBatch{}, false // no drum clip to act on

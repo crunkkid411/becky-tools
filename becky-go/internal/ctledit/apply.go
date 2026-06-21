@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"becky-go/internal/autoroute"
 	"becky-go/internal/dawmodel"
 	"becky-go/internal/habits"
 )
@@ -341,6 +342,13 @@ func applyOne(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, str
 		next, err := a.RouteTo(trackID, ed.BusID)
 		if err != nil {
 			return a, fmt.Sprintf("route_to: %v", err)
+		}
+		return next, ""
+
+	case OpRoute:
+		next, assignments := autoroute.Apply(a, autoroute.Load())
+		if len(assignments) == 0 {
+			return a, "route: no tracks to route"
 		}
 		return next, ""
 

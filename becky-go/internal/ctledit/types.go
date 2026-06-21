@@ -130,6 +130,7 @@ const (
 	OpMute         = "mute"          // set/clear a track's mute flag
 	OpSolo         = "solo"          // set/clear a track's solo flag
 	OpRouteTo      = "route_to"      // change which bus a track routes to
+	OpRoute        = "route"         // route the WHOLE arrangement to buses by track label (autoroute)
 	OpAddSidechain = "add_sidechain" // declare a sidechain edge on a bus
 
 	// Transport operations
@@ -163,6 +164,7 @@ var knownOps = map[string]bool{
 	OpMute:           true,
 	OpSolo:           true,
 	OpRouteTo:        true,
+	OpRoute:          true,
 	OpAddSidechain:   true,
 	OpSetTempo:       true,
 	OpGenerateBeat:   true,

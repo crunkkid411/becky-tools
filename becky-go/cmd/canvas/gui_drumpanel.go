@@ -37,6 +37,10 @@ type drumPanelState struct {
 	buttons   []dpButton // clickable buttons (generative + bar nav) from the last frame
 	genCount  int        // bumps the seed so repeated [Random] clicks vary
 	barOffset int        // first visible bar when a beat is too wide to show at once
+
+	// kitDir is the folder chosen via [Load Kit]; empty = use the built-in default.
+	// TODO: per-pad sample assignment (drag a sample onto a pad) is a follow-up slice.
+	kitDir string
 }
 
 // dpButton is one clickable button in the drum panel's top strip: a generative
@@ -308,6 +312,11 @@ func (d *drumPanelState) layoutButtons(gtx layout.Context, a *App, trackID, clip
 			d.genBatch(a, ctledit.BeckyEditBatch{Summary: "kick: four on the floor", Edits: []ctledit.BeckyEdit{
 				{Op: ctledit.OpEuclidLane, Track: trackID, Clip: clipName, Lane: "kick", Pulses: 4},
 			}})
+		}},
+		// Load Kit: opens a folder picker (Windows) and stores the chosen path in
+		// d.kitDir. execPlay bakes that kit into the --play-machine JSON (WithDefaultKitSamples).
+		{"Load Kit", colTextDim, func() {
+			a.startDrumKitLoad(d)
 		}},
 	}
 	if paged {

@@ -124,6 +124,13 @@ type App struct {
 	// playBtn / stopBtn are the ▶ / ■ icon buttons shown in drum+piano modes.
 	playBtn widget.Clickable
 	stopBtn widget.Clickable
+
+	// Toolbar: Save / Load / Undo / Redo — visible buttons so a creative never has
+	// to TYPE "save"/"undo"; they call the existing spine methods (gui_toolbar.go).
+	saveBtn widget.Clickable
+	loadBtn widget.Clickable
+	undoBtn widget.Clickable
+	redoBtn widget.Clickable
 	// playing is true while a becky-daw-engine --play-pattern-audio run is live.
 	playing bool
 	// playProc is the live becky-daw-engine process (guarded by mu) so ■ Stop can
@@ -325,6 +332,20 @@ func (a *App) handleInput(gtx layout.Context) {
 	}
 	if a.stopBtn.Clicked(gtx) {
 		a.stopPlay()
+	}
+
+	// Toolbar: Save / Load / Undo / Redo — call the existing spine methods.
+	if a.saveBtn.Clicked(gtx) {
+		a.saveSession("")
+	}
+	if a.loadBtn.Clicked(gtx) {
+		a.startExplorerAwareImport()
+	}
+	if a.undoBtn.Clicked(gtx) {
+		a.undo()
+	}
+	if a.redoBtn.Clicked(gtx) {
+		a.redo()
 	}
 
 	// Overlay keyboard: Esc = reject, handled here before the agent box consumes it.
@@ -719,6 +740,7 @@ func (a *App) layoutWorkColumn(gtx layout.Context) layout.Dimensions {
 	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Flexed(1, a.layoutCanvas),
+			layout.Rigid(a.layoutToolbar),   // Save / Load / Undo / Redo row
 			layout.Rigid(a.layoutTransport), // ▶ / ■ for drum + piano — zero height otherwise
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 			layout.Rigid(a.layoutOverlay), // "show me, don't do it" — zero height when idle
