@@ -4,7 +4,7 @@ import "testing"
 
 func TestModes_fixedOrder(t *testing.T) {
 	got := Modes()
-	want := []Mode{ModeAsk, ModeVideo, ModeDAW, ModeMIDI, ModeDrum}
+	want := []Mode{ModeAsk, ModeVideo, ModeDAW, ModeMIDI, ModeDrum, ModeAudio}
 	if len(got) != len(want) {
 		t.Fatalf("got %d modes, want %d", len(got), len(want))
 	}

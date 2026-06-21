@@ -29,12 +29,13 @@ const (
 	ModeDAW   Mode = "daw"   // mixer + deterministic sidechain routing (SPEC §5)
 	ModeMIDI  Mode = "midi"  // piano-roll editor (SPEC Phase 2)
 	ModeDrum  Mode = "drum"  // step-sequencer / drum machine (SPEC §6 MVP mode #2)
+	ModeAudio Mode = "audio" // audio/vocal waveform tracks (CANVAS-BLUEPRINT panel 2d)
 )
 
 // Modes returns the planned modes in a fixed, deterministic order. The order is the
 // tab order the GUI renders and never depends on map iteration.
 func Modes() []Mode {
-	return []Mode{ModeAsk, ModeVideo, ModeDAW, ModeMIDI, ModeDrum}
+	return []Mode{ModeAsk, ModeVideo, ModeDAW, ModeMIDI, ModeDrum, ModeAudio}
 }
 
 // ValidMode reports whether s names a planned mode.

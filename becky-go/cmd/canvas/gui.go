@@ -69,6 +69,7 @@ type App struct {
 	dockPiano  widget.Clickable
 	dockDrum   widget.Clickable
 	dockMixer  widget.Clickable
+	dockAudio  widget.Clickable
 	dockVideo  widget.Clickable
 	dockOpen   widget.Clickable
 
@@ -291,6 +292,9 @@ func (a *App) handleInput(gtx layout.Context) {
 	if a.dockMixer.Clicked(gtx) {
 		a.activeMode = canvas.ModeDAW
 	}
+	if a.dockAudio.Clicked(gtx) {
+		a.activeMode = canvas.ModeAudio
+	}
 	if a.dockVideo.Clicked(gtx) {
 		a.activeMode = canvas.ModeVideo
 	}
@@ -446,6 +450,13 @@ func (a *App) runCommand(phrase string) {
 			a.command.SetText("")
 			return
 		}
+	}
+	// Plain-English generative beat phrases (deterministic; no model needed):
+	// "randomize the beat", "make a house beat", "four on the floor", etc. apply
+	// to the loaded drum clip. Falls through to tool routing when unrecognised.
+	if a.applyPhrase(phrase) {
+		a.command.SetText("")
+		return
 	}
 	t, ok := matchTool(phrase)
 	if !ok {
