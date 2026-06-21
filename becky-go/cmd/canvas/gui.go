@@ -49,6 +49,7 @@ import (
 	"gioui.org/widget/material"
 
 	"becky-go/internal/canvas"
+	"becky-go/internal/dawmodel"
 	"becky-go/internal/winctx"
 )
 
@@ -132,9 +133,22 @@ type App struct {
 
 	// ── Select→Ask→Transform loop state (§6 item #2) ──────────────────────
 	//
-	// scene is the CURRENT deterministic canvas scene (the source of truth the
-	// overlay Apply/Reject path mutates immutably). It starts as an empty scene
-	// and is replaced on every approved proposal or project load.
+	// arr is the SINGLE SOURCE OF MUSICAL TRUTH (CANVAS-BLUEPRINT.md spine): the
+	// rich editable dawmodel.Arrangement the panels (piano/drum/mixer/audio) read
+	// and edit via the immutable dawmodel verbs. The panels never own state; they
+	// produce a new Arrangement and hand it to applyArr.
+	arr *dawmodel.Arrangement
+
+	// Panels — each owns its own file + state struct (gui_*panel.go); layoutVisual
+	// dispatches to the active one by mode. They read a.arr and emit via applyArr.
+	pianoPanel *pianoPanel
+	drumPanel  *drumPanelState
+	mixerPanel *mixerPanel
+	audioPanel *audioPanel
+
+	// scene is the DERIVED render-cache rebuilt from arr after every edit
+	// (canvasbridge.SceneFromArrangement) — never edited directly. It feeds the
+	// lane-overview surface + the overlay Apply/Reject path.
 	scene canvas.Scene
 
 	// selection is what Jordan has currently selected on the canvas. The zero
@@ -191,6 +205,11 @@ func newApp(w *app.Window) *App {
 		scene:       canvas.NewScene(canvas.ModeAsk),
 		transformer: canvas.PickTransformer(), // real model when present, stub otherwise
 		hub:         newHubLauncher(),
+		arr:         dawmodel.New(), // empty editable session; load fills it
+		pianoPanel:  newPianoPanel(),
+		drumPanel:   newDrumPanelState(),
+		mixerPanel:  newMixerPanel(),
+		audioPanel:  newAudioPanel(),
 	}
 	a.outputList.Axis = layout.Vertical
 	a.command.SingleLine = true
@@ -341,13 +360,24 @@ func (a *App) setTarget(path string) {
 	if path == "" {
 		return
 	}
+	a.appendLine("Target: " + path)
+
+	// Load a session into the editable arrangement (the spine) when it's a
+	// becky-compose project.json or a .mid, and show it in the DAW view so the
+	// panels (mixer/piano/drum) work on the real model.
+	if a.maybeLoadArrangement(path) {
+		a.activeMode = canvas.ModeDAW
+		a.refreshVisual()
+		a.window.Invalidate()
+		return
+	}
+
 	lower := strings.ToLower(path)
 	if strings.HasSuffix(lower, ".wav") || strings.HasSuffix(lower, ".json") {
 		if a.activeMode == canvas.ModeDrum || a.activeMode == canvas.ModeMIDI {
 			a.activeMode = canvas.ModeAsk
 		}
 	}
-	a.appendLine("Target: " + path)
 	a.refreshVisual()
 	a.window.Invalidate()
 }

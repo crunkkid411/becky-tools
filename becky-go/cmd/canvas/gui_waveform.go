@@ -144,11 +144,11 @@ func (a *App) layoutVisual(gtx layout.Context, th *material.Theme) layout.Dimens
 
 	switch a.activeMode {
 	case canvas.ModeDrum:
-		a.drawDrumGrid(gtx)
-		a.drawCanvasCaption(gtx, th, "drum machine  •  click the squares")
+		a.drumPanel.layout(gtx, a)
 	case canvas.ModeMIDI:
-		a.drawPianoRoll(gtx)
-		a.drawCanvasCaption(gtx, th, "piano roll")
+		a.pianoPanel.layout(gtx, a)
+	case canvas.ModeDAW:
+		a.mixerPanel.layout(gtx, a)
 	default:
 		a.drawTargetSurface(gtx, th)
 	}

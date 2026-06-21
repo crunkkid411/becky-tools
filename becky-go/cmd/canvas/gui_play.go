@@ -94,10 +94,25 @@ func arrangementFromDrum(d *drumGrid) *dawmodel.Arrangement {
 // resolvePlayJSON returns the project.json path to play. A .json target is played
 // directly; otherwise the in-canvas drum grid is serialised to a temp file (returned
 // as toClean for the caller to remove). Returns an error when there's nothing to play.
-func resolvePlayJSON(target string, d *drumGrid) (path, toClean string, err error) {
+func (a *App) resolvePlayJSON(target string, d *drumGrid) (path, toClean string, err error) {
 	t := strings.TrimSpace(target)
 	if strings.HasSuffix(strings.ToLower(t), ".json") && fileExists(t) {
 		return t, "", nil
+	}
+	// Prefer the editable arrangement (the spine) when it has tracks, so what the
+	// piano/drum/mixer panels edit is what plays. It serialises to the same
+	// dawmodel.Arrangement JSON the engine already accepts (--play-pattern-audio).
+	if a.arr != nil && len(a.arr.Tracks) > 0 {
+		if data, merr := json.Marshal(a.arr); merr == nil {
+			if f, ferr := os.CreateTemp("", "becky-canvas-arr-*.json"); ferr == nil {
+				_, werr := f.Write(data)
+				f.Close()
+				if werr == nil {
+					return f.Name(), f.Name(), nil
+				}
+				os.Remove(f.Name())
+			}
+		}
 	}
 	if d != nil && d.hasActiveCells() {
 		data, merr := json.Marshal(arrangementFromDrum(d))
@@ -126,7 +141,7 @@ func resolvePlayJSON(target string, d *drumGrid) (path, toClean string, err erro
 // error. Degrade-never-crash: every other failure is a returned error the caller
 // surfaces as a quiet neon line.
 func (a *App) execPlay(target string, _ canvas.Mode, d *drumGrid) error {
-	jsonPath, toClean, err := resolvePlayJSON(target, d)
+	jsonPath, toClean, err := a.resolvePlayJSON(target, d)
 	if err != nil {
 		return err
 	}
