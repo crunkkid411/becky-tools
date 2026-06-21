@@ -18,6 +18,16 @@
 
 ---
 
+> **STATUS UPDATE 2026-06-21 — Steps 1-3 BUILT (branch `local/canvas-convergence-2026-06-21`).**
+> The convergence below is DONE for piano/drum/mixer: the window now holds the editable
+> `dawmodel.Arrangement` spine (`internal/canvasbridge`), and the real panels
+> (`cmd/canvas/gui_{piano,drum,mixer}panel.go`) edit it via the immutable verbs through
+> `applyArr` — verified rendering a real 7-track session on hardware
+> (`becky-reaper-work/canvas-{daw,piano,drum}.png`). `internal/ctledit` (43 tests) is the
+> deterministic AI-edit applier, wired to the agent box. The §0 "current state" below is the
+> PRE-convergence baseline (kept for the record). Still open: drum bar-paging, the audio panel
+> (2d, still a stub), the NL→model→batch half of the AI loop, and retiring the dormant toy drum.
+
 ## 0. BRUTALLY HONEST CURRENT STATE (evidence-backed)
 
 **Does the Canvas window open today?** Yes. `cmd/canvas/gui.go` (`//go:build gui`) opens a real

@@ -80,10 +80,15 @@ hunting through folders:
 | **NLE** | `becky-nle` — AI video editor |
 | **Ask** | `becky-ask` — the natural-language chat front-door |
 
-Open it with **`Open Becky Canvas.bat`** or the Desktop **"Becky Canvas"** shortcut. The deeper
-convergence (drum/piano/mixer/VST panels wired *inside* the canvas window over one
-`dawmodel.Arrangement` spine) is tracked in `CANVAS-BLUEPRINT.md`. All GUI windows build as
-`-tags gui -ldflags "-H windowsgui"` (no console flash) via `build-all-tools.bat`.
+Open it with **`Open Becky Canvas.bat`** or the Desktop **"Becky Canvas"** shortcut. Drop a
+becky-compose `project.json` (or a `.mid`) on it and the **in-window panels** work on the real
+session over ONE `dawmodel.Arrangement` spine: a **piano roll** (add/move/resize/velocity), a
+**drum machine** (lanes×steps), and a **mixer** (fader/pan/mute/solo/route) — all editing the
+arrangement by hand via the immutable dawmodel verbs, with `internal/ctledit` as the deterministic
+AI-edit applier behind the agent box. The remaining convergence (audio/vocal panel, VST rack,
+drum bar-paging, the model→batch half of select→ask→transform) is tracked in `CANVAS-BLUEPRINT.md`.
+All GUI windows build as `-tags gui -ldflags "-H windowsgui"` (no console flash) via
+`build-all-tools.bat`.
 
 ## Non-obvious decisions
 

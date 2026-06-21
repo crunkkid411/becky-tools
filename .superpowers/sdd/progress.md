@@ -28,3 +28,4 @@ Mixer dock button (reach ModeDAW) committed 662c569 (single-owner, disjoint from
 Integration plan after merges: wire ctledit into the select->ask->transform overlay
 (gui.go + gui_overlay), clean dead toy drum code, build -tags gui, launch-verify, push.
 Task 2c MIXER: complete (merged 94c6b93, gui build green; loop-guard reviewed OK)
+Task 2a DRUM + 2b PIANO + 3 CTLEDIT: complete (this commit, build+test green)
