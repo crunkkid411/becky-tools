@@ -23,6 +23,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
+	"becky-go/internal/ctledit"
 	"becky-go/internal/dawmodel"
 )
 
@@ -32,6 +33,47 @@ type drumPanelState struct {
 	tag                           int // own pointer event tag — never shares canvasTag
 	gx, gy, cellW, cellH, cellGap int // geometry from the last drawn frame
 	lastTrackID, lastClipName     string
+
+	buttons  []dpButton // generative action buttons from the last drawn frame
+	genCount int        // bumps the seed so repeated [Random] clicks vary
+}
+
+// dpButton is one generative action button in the drum panel's top strip. action
+// builds the BeckyEditBatch to apply (using the resolved track/clip).
+type dpButton struct {
+	label  string
+	rect   image.Rectangle
+	accent color.NRGBA
+	action func(d *drumPanelState, trackID, clipName string) ctledit.BeckyEditBatch
+}
+
+// dpGenerativeButtons is the fixed set of Playbeat-style actions: a full
+// randomize, two genre generators, and a four-on-the-floor euclid kick. Each
+// returns a BeckyEditBatch the panel applies through the deterministic engine.
+var dpGenerativeButtons = []dpButton{
+	{label: "Random", accent: colNeonGreen, action: func(d *drumPanelState, tr, cl string) ctledit.BeckyEditBatch {
+		d.genCount++
+		return ctledit.BeckyEditBatch{Summary: "randomized the beat", Edits: []ctledit.BeckyEdit{
+			{Op: ctledit.OpGenerateBeat, Track: tr, Clip: cl, Seed: int64(d.genCount)*2654435761 + 1},
+		}}
+	}},
+	{label: "House", accent: colElecBlue, action: func(d *drumPanelState, tr, cl string) ctledit.BeckyEditBatch {
+		d.genCount++
+		return ctledit.BeckyEditBatch{Summary: "generated a house beat", Edits: []ctledit.BeckyEdit{
+			{Op: ctledit.OpGenerateBeat, Track: tr, Clip: cl, Genre: "house", Seed: int64(d.genCount)},
+		}}
+	}},
+	{label: "Trap", accent: colYellow, action: func(d *drumPanelState, tr, cl string) ctledit.BeckyEditBatch {
+		d.genCount++
+		return ctledit.BeckyEditBatch{Summary: "generated a trap beat", Edits: []ctledit.BeckyEdit{
+			{Op: ctledit.OpGenerateBeat, Track: tr, Clip: cl, Genre: "trap", Seed: int64(d.genCount)},
+		}}
+	}},
+	{label: "4-Floor", accent: colNeonPink, action: func(d *drumPanelState, tr, cl string) ctledit.BeckyEditBatch {
+		return ctledit.BeckyEditBatch{Summary: "kick: four on the floor", Edits: []ctledit.BeckyEdit{
+			{Op: ctledit.OpEuclidLane, Track: tr, Clip: cl, Lane: "kick", Pulses: 4},
+		}}
+	}},
 }
 
 func newDrumPanelState() *drumPanelState { return &drumPanelState{} }
@@ -61,8 +103,13 @@ func (d *drumPanelState) layout(gtx layout.Context, a *App) layout.Dimensions {
 	}
 	a.drawCanvasCaption(gtx, a.th, caption)
 
-	// Grid occupies the area below the header.
-	gridAreaH := size.Y - capH
+	// Generative button strip (Playbeat-style): Random / House / Trap / 4-Floor.
+	btnH := gtx.Dp(unit.Dp(26))
+	d.layoutGenerativeButtons(gtx, a, capH, btnH, size.X)
+	gridTop := capH + btnH
+
+	// Grid occupies the area below the header + button strip.
+	gridAreaH := size.Y - gridTop
 	if gridAreaH <= 0 || nSteps <= 0 || nLanes <= 0 {
 		return layout.Dimensions{Size: size}
 	}
@@ -86,11 +133,11 @@ func (d *drumPanelState) layout(gtx layout.Context, a *App) layout.Dimensions {
 	gridW := nSteps*cw + (nSteps-1)*gap
 	gridH := nLanes*ch + (nLanes-1)*gap
 
-	// Vertically centre the grid within the area below the header.
+	// Vertically centre the grid within the area below the header + button strip.
 	ox := labelW + margin
-	oy := capH + (gridAreaH-gridH)/2
-	if oy < capH+margin {
-		oy = capH + margin
+	oy := gridTop + (gridAreaH-gridH)/2
+	if oy < gridTop+margin {
+		oy = gridTop + margin
 	}
 
 	// Cache geometry for hit-testing in pointer events.
@@ -154,6 +201,10 @@ func (d *drumPanelState) layout(gtx layout.Context, a *App) layout.Dimensions {
 		if !ok || pe.Kind != pointer.Press {
 			continue
 		}
+		// Generative buttons take priority over the grid cells beneath the strip.
+		if d.handleButtonClick(a, pe.Position, trackID, clipName) {
+			continue
+		}
 		if laneIdx, step, hit := d.hitTest(pe.Position, nLanes, nSteps); hit {
 			d.toggleStep(a, grid, trackID, clipName, laneIdx, step)
 		}
@@ -211,6 +262,54 @@ func (d *drumPanelState) resolveGrid(a *App) (trackID, clipName string, grid *da
 		}
 	}
 	return "", "", nil
+}
+
+// layoutGenerativeButtons draws the Random/House/Trap/4-Floor strip just below
+// the header and records each button's rect for hit-testing. Buttons are evenly
+// spaced across the panel width.
+func (d *drumPanelState) layoutGenerativeButtons(gtx layout.Context, a *App, top, h, width int) {
+	d.buttons = d.buttons[:0]
+	n := len(dpGenerativeButtons)
+	if n == 0 || width <= 0 || h <= 0 {
+		return
+	}
+	margin := gtx.Dp(unit.Dp(8))
+	gap := gtx.Dp(unit.Dp(6))
+	avail := width - 2*margin - (n-1)*gap
+	bw := avail / n
+	if bw < gtx.Dp(unit.Dp(40)) {
+		bw = gtx.Dp(unit.Dp(40))
+	}
+	y0 := top + gtx.Dp(unit.Dp(3))
+	y1 := top + h - gtx.Dp(unit.Dp(3))
+	for i, proto := range dpGenerativeButtons {
+		x0 := margin + i*(bw+gap)
+		x1 := x0 + bw
+		if x1 > width-margin {
+			x1 = width - margin
+		}
+		r := image.Rect(x0, y0, x1, y1)
+		fillRRect(gtx.Ops, r, 5, colHeaderBg)
+		strokeRect(gtx.Ops, r, proto.accent)
+		drawLabelAt(gtx, a.th, proto.label, x0+gtx.Dp(unit.Dp(7)), y0+gtx.Dp(unit.Dp(3)))
+		b := proto
+		b.rect = r
+		d.buttons = append(d.buttons, b)
+	}
+}
+
+// handleButtonClick applies a generative button's batch when p lands on one.
+// Returns true when a button was hit (so the caller skips cell hit-testing).
+func (d *drumPanelState) handleButtonClick(a *App, p f32.Point, trackID, clipName string) bool {
+	pt := image.Pt(int(p.X), int(p.Y))
+	for _, b := range d.buttons {
+		if pt.In(b.rect) && b.action != nil {
+			a.outExpanded = true
+			a.applyBatch(b.action(d, trackID, clipName))
+			return true
+		}
+	}
+	return false
 }
 
 // hitTest maps a pointer position to (laneIdx, step) using the cached geometry.
