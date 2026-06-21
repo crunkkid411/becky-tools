@@ -68,16 +68,24 @@ func (a *App) layoutDock(gtx layout.Context) layout.Dimensions {
 	gtx.Constraints.Max.X = gtx.Constraints.Min.X
 	return widgetBg(gtx, colPanelBg, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			items := a.dockItems()
-			children := make([]layout.FlexChild, 0, len(items)*2+2)
+			modes := a.dockItems()
+			hub := a.hubItems()
+			children := make([]layout.FlexChild, 0, (len(modes)+len(hub))*2+4)
 			children = append(children, layout.Rigid(a.layoutBrandDiamond)) // scene-kid mark
 			children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout))
-			for i := range items {
-				it := items[i]
+			addButton := func(it dockItem) {
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return a.layoutDockButton(gtx, it)
 				}))
 				children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout))
+			}
+			for _, it := range modes {
+				addButton(it)
+			}
+			// Divider, then the HUB: buttons that open real standalone tool windows.
+			children = append(children, layout.Rigid(a.layoutDockDivider))
+			for _, it := range hub {
+				addButton(it)
 			}
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
 		})
@@ -142,6 +150,17 @@ func (a *App) layoutBrandDiamond(gtx layout.Context) layout.Dimensions {
 	p.Close()
 	paint.FillShape(gtx.Ops, colNeonGreen, clip.Stroke{Path: p.End(), Width: 2.5}.Op())
 	return layout.Dimensions{Size: image.Pt(side, side)}
+}
+
+// layoutDockDivider draws a thin horizontal rule separating the mode buttons (top)
+// from the hub launch buttons (bottom) — a quiet visual cue that the lower group
+// opens real standalone tool windows.
+func (a *App) layoutDockDivider(gtx layout.Context) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(36))
+	h := gtx.Dp(unit.Dp(2))
+	padV := gtx.Dp(unit.Dp(5))
+	fillRRect(gtx.Ops, image.Rect(0, padV, w, padV+h), 1, colGlow)
+	return layout.Dimensions{Size: image.Pt(w, h+padV*2)}
 }
 
 // drawTooltip paints a small floating tooltip just to the right of a dock button. It

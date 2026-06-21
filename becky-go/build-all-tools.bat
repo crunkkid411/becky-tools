@@ -45,8 +45,14 @@ REM scene-dumper. becky-daw-engine ships with the real miniaudio backend (build 
 REM audio, needs a C compiler). Both are best-effort: if a variant fails to build, the
 REM plain build from the loop above is kept and a WARN is printed (never blocks).
 echo Building becky-canvas.exe ^(GUI window, -tags gui^)...
-go build -tags gui -o bin\becky-canvas.exe .\cmd\canvas
+set "BECKY_OLDCGO=%CGO_ENABLED%"
+set "CGO_ENABLED=0"
+REM -H windowsgui = no console window flashes alongside the Gio window when the hub
+REM is double-clicked. Without it becky-canvas is a console subsystem exe and shows a
+REM black cmd box. Pure Go (Gio, no cgo) so force CGO off, matching clip/nle.
+go build -tags gui -ldflags "-H windowsgui" -o bin\becky-canvas.exe .\cmd\canvas
 if errorlevel 1 echo WARN: GUI canvas build failed - headless becky-canvas.exe kept.
+set "CGO_ENABLED=%BECKY_OLDCGO%"
 
 REM becky-clip ships as the real WebView2 GUI window (build tag: gui), not the
 REM headless stub. Pure Go (go-webview2, no cgo), so force CGO off for this build.
@@ -66,6 +72,18 @@ set "BECKY_OLDCGO=%CGO_ENABLED%"
 set "CGO_ENABLED=0"
 go build -tags gui -ldflags "-H windowsgui" -o bin\becky-nle.exe .\cmd\becky-nle
 if errorlevel 1 echo WARN: GUI nle build failed - headless becky-nle.exe kept.
+set "CGO_ENABLED=%BECKY_OLDCGO%"
+
+REM becky-drummachine ships as the real Gio GUI window (build tag: gui) - the 16-pad
+REM Maschine-class drum machine with kit loading + sample browser. Pure Go (Gio, no
+REM cgo), so force CGO off; -H windowsgui = no console flash. WITHOUT this it would
+REM build as the headless !gui stub (the loop above) and the desktop shortcut would
+REM just flash a cmd window and die. Keep this gui variant.
+echo Building becky-drummachine.exe ^(GUI window, -tags gui^)...
+set "BECKY_OLDCGO=%CGO_ENABLED%"
+set "CGO_ENABLED=0"
+go build -tags gui -ldflags "-H windowsgui" -o bin\becky-drummachine.exe .\cmd\drummachine
+if errorlevel 1 echo WARN: GUI drummachine build failed - headless becky-drummachine.exe kept.
 set "CGO_ENABLED=%BECKY_OLDCGO%"
 
 set "BECKY_OLDCC=%CC%"

@@ -65,6 +65,26 @@ detail: `SPEC-BECKY-REAPER.md`.
 > and binds them to :11435); **`Start Becky REAPER Brain.bat`** is the one-click launcher, and
 > **`Open Becky DAW.bat`** auto-starts the brain if the port isn't already serving. Do **not** use Ollama.
 
+## Becky Canvas (the central hub)
+
+**`becky-canvas` is the one window Jordan opens** — a native Gio app (no browser; `GUI-RULES.md`).
+Its left dock has the canvas modes (draw / piano / drum / video / record) plus, below a divider, a
+**HUB** of launch buttons that open the real standalone tools in their own windows, so there's no
+hunting through folders:
+
+| Hub button | Opens |
+|---|---|
+| **Drum Machine** | `becky-drummachine` — the 16-pad Maschine-class groovebox (real kit loading + sample browser) |
+| **REAPER DAW** | `becky-reaper open` — authors a Cubase-style session and opens it in REAPER |
+| **Clip** | `becky-clip` — forensic transcript video editor |
+| **NLE** | `becky-nle` — AI video editor |
+| **Ask** | `becky-ask` — the natural-language chat front-door |
+
+Open it with **`Open Becky Canvas.bat`** or the Desktop **"Becky Canvas"** shortcut. The deeper
+convergence (drum/piano/mixer/VST panels wired *inside* the canvas window over one
+`dawmodel.Arrangement` spine) is tracked in `CANVAS-BLUEPRINT.md`. All GUI windows build as
+`-tags gui -ldflags "-H windowsgui"` (no console flash) via `build-all-tools.bat`.
+
 ## Non-obvious decisions
 
 **Each item below was a real bug or measured failure — not an opinion.**

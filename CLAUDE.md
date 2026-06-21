@@ -222,6 +222,13 @@ load-bearing rules, in brief:
   build/verification rules, interaction patterns, and the phased path. No embedded browsers
   (WebView2 retired). Supersedes the audio-licensing conclusion in `research/gui-toolkit.md`
   (the VST3→MIT / ASIO→GPL relicensing of 2025-11-04 changed it).
+- `CANVAS-BLUEPRINT.md` — **the integration spine for Becky Canvas (Jordan's Cubase/Maschine
+  replacement + central HUB).** Read with `GUI-RULES.md` before ANY becky-canvas work. Names the
+  ONE session model (`dawmodel.Arrangement`), the disjoint per-panel contracts (drum/piano/mixer/
+  vst/audio), and the convergence order so panels wire to the EXISTING rich models instead of
+  spawning a 5th toy. becky-canvas is the app Jordan opens; it now has HUB launch buttons that open
+  the real tool windows (Drum Machine / REAPER DAW / Clip / NLE / Ask) — `Open Becky Canvas.bat` +
+  Desktop "Becky Canvas". The in-window panel convergence (Steps 1-5) is the ongoing arc.
 - `SPEC-BECKY-REAPER.md` — **the WORKING AI-first DAW (BUILT + PROVEN 2026-06-20).** becky
   authors/drives **REAPER** (already installed, fully scriptable, hosts all his VSTs) via a
   deterministic `.rpp` writer (`internal/reaper` + `cmd/becky-reaper`) + ReaScript; REAPER is the

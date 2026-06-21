@@ -70,6 +70,10 @@ type App struct {
 	dockVideo  widget.Clickable
 	dockOpen   widget.Clickable
 
+	// hub holds the "open a real tool" launch buttons (becky-canvas is the central
+	// hub: Drum Machine / REAPER DAW / Clip / NLE / Ask, each its own window).
+	hub *hubLauncher
+
 	// Catalog kept for command routing (the agent box matches a phrase to a tool).
 	tools []toolItem
 
@@ -186,6 +190,7 @@ func newApp(w *app.Window) *App {
 		tools:       catalog(),
 		scene:       canvas.NewScene(canvas.ModeAsk),
 		transformer: canvas.PickTransformer(), // real model when present, stub otherwise
+		hub:         newHubLauncher(),
 	}
 	a.outputList.Axis = layout.Vertical
 	a.command.SingleLine = true
@@ -269,6 +274,9 @@ func (a *App) handleInput(gtx layout.Context) {
 	if a.dockOpen.Clicked(gtx) {
 		a.startExplorerAwareImport()
 	}
+
+	// Hub launch buttons (open a real standalone tool window).
+	a.handleHubInput(gtx)
 
 	// Play / Stop buttons (drum + piano modes).
 	if a.playBtn.Clicked(gtx) {

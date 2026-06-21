@@ -42,6 +42,8 @@ func main() {
 		err = cmdBuild(os.Args[2:])
 	case "compose":
 		err = cmdCompose(os.Args[2:])
+	case "open":
+		err = cmdOpen(os.Args[2:])
 	case "render":
 		err = cmdRender(os.Args[2:])
 	case "brain":
@@ -67,6 +69,7 @@ func usage() {
   demo     --out demo.rpp [--render]      tiny audible synth-bass riff
   build    --in arr.json --out song.rpp [--render]   from a becky arrangement
   compose  --in project.json --out song.rpp [--render]  from a becky-compose project (+stems)
+  open     [--rpp song.rpp]                 author a session + open it in REAPER's GUI
   render   --rpp song.rpp [--out out.wav] render an existing .rpp via REAPER
   brain    [--start|--check]               serve REAPER Chat's llama backend on :11435
 
