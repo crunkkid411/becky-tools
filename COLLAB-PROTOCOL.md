@@ -110,6 +110,7 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | drum-machine REBUILD: kit import | cloud 2026-06-19 | BUILT + TESTED (pure-Go) | `internal/kitimport` | ParseSFZ + ParseDecentSampler -> sampler.Sound (loads his REAL kits); proprietary NI/Kontakt = do-not-attempt (read the WAVs); Left for local: nothing |
 | drum-machine REBUILD: sample library | cloud 2026-06-19 | BUILT + TESTED (pure-Go) | `internal/samplelib` | scans his drives -> role/bpm/loop index + search (corroborate-then-conclude); Left for local: run on real drives + tune |
 | drum-machine REBUILD: research + spec | cloud 2026-06-19 | DONE | `SPEC-BECKY-DRUM.md` + `research/*.md` (10 cited) | exhaustive Maschine/piano-roll/FX/groove/arrangement/agent-control/timing/DSP/GUI research; Left for local: build Phases 2-4 (audio oto/v3, Gio GUI, Qwen tool-call model) per CLAUDE.md §6 |
+| canvas NL→edit (`internal/ctlmodel`) | cloud 2026-06-21 | BUILT + TESTED (deterministic; model exec stubbed; 39 tests) | `internal/ctlmodel` | NL→`ctledit.BeckyEditBatch` — the missing half of select→ask→transform. Keyword core (tempo/mute/solo/pan/gain/transpose, grounded in the live arrangement, every edit applies via ctledit) + GBNF `Grammar()`/`WriteGrammarFile` + `BuildPrompt`/`Snapshot`/`DecodeBatch` + `PickProposer` (model→keyword degrade). Left for local: wire `execRunner.run` (BECKY_CTL_BIN/_MODEL) like canvas.execModelRunner, and one fallthrough call in cmd/canvas agent box (snippet in CLAUDE.md §6) |
 
 ---
 

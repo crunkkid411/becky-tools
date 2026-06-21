@@ -300,6 +300,29 @@ load-bearing rules, in brief:
 
 ## 6. Live handoff — current branch status
 
+**Branch `claude/becky-tool-continue-f7m0yq` (cloud, 2026-06-21) — `internal/ctlmodel`: the NL→BeckyEditBatch half of select→ask→transform. READY FOR LOCAL.**
+Picks up "Left for next" item 3 from the canvas-convergence entry below ("the NL→local-model→BeckyEditBatch half … GBNF + the model emit; ctledit + the overlay are ready"). ctledit APPLIES a batch; this new package PRODUCES one from plain English, completing the deterministic half. Whole module `go build/vet/test ./...` + `gofmt -l` green; 39 new tests; pure-Go, offline, no new deps.
+- **`internal/ctlmodel` (NEW):** `Propose(instruction, *dawmodel.Arrangement) ctledit.BeckyEditBatch`, two strategies in cost order (the becky-wire/becky-drum pattern):
+  - **KeywordProposer** (`keyword.go`) — deterministic, offline core. Handles the common UNAMBIGUOUS phrasings: `set tempo to 140`, `mute/unmute the bass`, `solo/unsolo the drums`, `pan the lead left|right|center|hard left`, `make the bass louder|quieter`, `set the lead gain to 0.8`, `transpose the lead up an octave`/`transpose down 3 semitones`. GROUNDED in the live arrangement — track refs resolve against real track IDs (`findTrackID`, word-boundary), relative gain reads the track's current strip gain. Every recognized edit is proven to apply via `ctledit.Apply` (Applied=1/Skipped=0) in the tests. Unrecognized input → empty-edits batch + a helpful Summary (never guesses).
+  - **ModelProposer** (`ctlmodel.go`) — GBNF-constrained local model first, keyword fallback on ANY failure (binary/model absent, bad JSON, zero edits). `PickProposer()` returns it when `BECKY_CTL_BIN`+`BECKY_CTL_MODEL` resolve on disk, else the keyword proposer.
+  - **GBNF** (`grammar.go`): `Grammar()` locks a model to a `{summary, edits[]}` object whose `op` is the closed ctledit enum and whose keys are the known BeckyEdit fields (op enum + key set generated FROM `ctledit.Op*` so they can't drift — a test asserts every op appears). `WriteGrammarFile(dir)` drops `becky-edit.gbnf` for llama.cpp `--grammar-file`.
+  - **Prompt/decode** (`prompt.go`): `Snapshot(arr)` (compact transport+per-track-strip+bus summary), `BuildPrompt(instr, snapshot)` (op cheat-sheet + snapshot + request), `DecodeBatch(stdout)` (balanced-brace JSON extractor that respects strings/escapes → `ctledit.ParseBatch`).
+- **Left for local (2 small wirings — both the documented model/GUI boundary the cloud can't run):**
+  1. **Model exec:** fill `execRunner.run` in `internal/ctlmodel/ctlmodel.go` exactly like `internal/canvas.execModelRunner` — `exec.Command(bin, "-m", model, "-p", prompt, "--grammar-file", <WriteGrammarFile path>, "--temp","0","--seed","42","-n","512","--no-display-prompt")`, return `string(out), err`. Until then ModelProposer degrades to keywords (works offline today).
+  2. **GUI fallthrough (one call):** in `cmd/canvas/gui.go` agent box, where `applyEditBatch(phrase)` returns false (not raw JSON) and `a.arr` is loaded, call the proposer and route its batch through the existing apply/overlay path. Suggested helper in `gui_spine.go`:
+     ```go
+     // applyNL turns a plain-English instruction into a BeckyEditBatch via ctlmodel and
+     // applies it through the same ctledit seam. Returns true when an edit was produced.
+     func (a *App) applyNL(phrase string) bool {
+         if a.arr == nil || len(a.arr.Tracks) == 0 { return false }
+         b := ctlmodel.PickProposer().Propose(phrase, a.arr)
+         if len(b.Edits) == 0 { if b.Summary != "" { a.appendLine("becky: " + b.Summary) }; return false }
+         data, _ := json.Marshal(b)            // reuse applyEditBatch (overlay-ready)
+         return a.applyEditBatch(string(data))
+     }
+     ```
+     then in the agent-box branch: `if a.applyEditBatch(phrase) { ... } else if a.applyNL(phrase) { ... }`. (Cloud can't compile `-tags gui` here — no X11/Wayland — so this one call is left for local to add + launch-verify.)
+
 **THE LONG GAME: becky-canvas in-window CONVERGENCE — real piano/drum/mixer panels on ONE Arrangement spine (local, 2026-06-21). Branch `local/canvas-convergence-2026-06-21`; VERIFIED rendering real sessions on hardware.**
 CANVAS-BLUEPRINT.md Steps 1-3, orchestrated via 4 parallel worktree subagents (subagent-driven-development) over a spine I built solo first. The Canvas window is no longer wired to the weakest model — it holds the RICH editable `dawmodel.Arrangement` and the panels edit it by hand via the existing immutable verbs.
 - **Step 1 SPINE (me, single-owner):** `internal/canvasbridge` (`SceneFromArrangement` render adapter with REAL note-derived clips/pitch-lanes + `ArrangementFromProjectFile`; 6 tests). `cmd/canvas` App holds `arr *dawmodel.Arrangement`; `applyArr` (swap+rebuild scene+repaint) is the ONLY edit-commit path; `setTarget` loads a project.json/.mid into the spine and shows the DAW view; `layoutVisual` dispatches midi/drum/daw to panels; ▶ Play plays the arrangement. Added the Mixer dock button (reaches ModeDAW).
