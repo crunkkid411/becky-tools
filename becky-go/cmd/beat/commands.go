@@ -110,6 +110,9 @@ func runTransform(args []string, kind string) int {
 	case "mutate":
 		p = p.Mutate(clamp01(*amount), *seed)
 		summary = fmt.Sprintf("mutated by %.0f%% (seed %d)", clamp01(*amount)*100, *seed)
+	case "remix":
+		p = p.Remix(clamp01(*amount), *seed)
+		summary = fmt.Sprintf("remixed (kept the vibe, %.0f%% nudge, seed %d)", clamp01(*amount)*100, *seed)
 	case "euclid":
 		if strings.TrimSpace(*lane) == "" || *pulses <= 0 {
 			fmt.Fprintln(os.Stderr, "becky-beat euclid: --lane and --pulses are required")
@@ -138,6 +141,93 @@ func runTransform(args []string, kind string) int {
 	}
 	fmt.Printf("✓ %s — %d hits — wrote %s\n", summary, patched.NoteCount(), pathx.Base(outPath))
 	return exitOK
+}
+
+// runVary writes N Remix variations of a beat (Playbeat's "give me variations"):
+// each is a vibe-preserving nudge of the SAME source pattern at a distinct seed,
+// so they're siblings rather than a drift. Files land as <base>.varN.json.
+func runVary(args []string) int {
+	fs := flag.NewFlagSet("vary", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	project := fs.String("project", "", "input arrangement project.json (required)")
+	outdir := fs.String("outdir", "", "directory for the variations (default: next to the source)")
+	count := fs.Int("count", 3, "how many variations to write (1..24)")
+	seed := fs.Int64("seed", 7, "base RNG seed (deterministic)")
+	amount := fs.Float64("amount", 0.25, "remix nudge amount (0..1)")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if strings.TrimSpace(*project) == "" {
+		fmt.Fprintln(os.Stderr, "becky-beat vary: --project is required")
+		return exitUsage
+	}
+	n := *count
+	if n < 1 {
+		n = 1
+	}
+	if n > 24 {
+		n = 24 // Playbeat maps 24 variations to 24 keys; cap to match
+	}
+
+	arr, err := loadArrangement(*project)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "becky-beat:", err)
+		return exitErr
+	}
+	base, trackID, clipName, err := patternFromArrangement(arr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "becky-beat:", err)
+		return exitErr
+	}
+
+	dir := strings.TrimSpace(*outdir)
+	if dir == "" {
+		dir = pathx.Dir(*project)
+	}
+	if dir != "" && dir != "." {
+		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+			fmt.Fprintln(os.Stderr, "becky-beat vary: create outdir:", mkErr)
+			return exitErr
+		}
+	}
+	stem := pathx.Base(*project)
+	if i := strings.LastIndex(stem, "."); i > 0 {
+		stem = stem[:i]
+	}
+
+	written := 0
+	for i := 1; i <= n; i++ {
+		// Each variation remixes the ORIGINAL pattern at a distinct seed so the
+		// set is a fan of siblings, not a cumulative drift.
+		v := base.Remix(clamp01(*amount), *seed+int64(i))
+		grid := gridWithStepTicks(beatgen.ToDrumGrid(v))
+		patched, aerr := arr.ApplyDrumGrid(trackID, clipName, grid)
+		if aerr != nil {
+			fmt.Fprintf(os.Stderr, "becky-beat vary: variation %d: %v\n", i, aerr)
+			continue
+		}
+		outPath := joinPath(dir, fmt.Sprintf("%s.var%d.json", stem, i))
+		if werr := writeArrangement(outPath, patched); werr != nil {
+			fmt.Fprintln(os.Stderr, "becky-beat vary:", werr)
+			continue
+		}
+		written++
+		fmt.Printf("  var%d → %s (%d hits)\n", i, pathx.Base(outPath), patched.NoteCount())
+	}
+	if written == 0 {
+		fmt.Fprintln(os.Stderr, "becky-beat vary: no variations written")
+		return exitErr
+	}
+	fmt.Printf("✓ wrote %d variations of %s\n", written, pathx.Base(*project))
+	return exitOK
+}
+
+// joinPath joins a directory and filename, tolerating an empty/"." directory.
+func joinPath(dir, name string) string {
+	if dir == "" || dir == "." {
+		return name
+	}
+	return dir + "/" + name
 }
 
 func clampBars(b int) int {

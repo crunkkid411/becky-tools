@@ -59,6 +59,10 @@ func run(args []string) int {
 		return runTransform(args[1:], "euclid")
 	case "mutate":
 		return runTransform(args[1:], "mutate")
+	case "remix":
+		return runTransform(args[1:], "remix")
+	case "vary", "variations":
+		return runVary(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return exitOK
@@ -76,6 +80,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  becky-beat randomize --project beat.json [--seed 9] [--density 0.5] [--out out.json]")
 	fmt.Fprintln(os.Stderr, "  becky-beat euclid    --project beat.json --lane kick --pulses 4 --steps 16 [--rotate 0]")
 	fmt.Fprintln(os.Stderr, "  becky-beat mutate    --project beat.json [--amount 0.2] [--seed 3]")
+	fmt.Fprintln(os.Stderr, "  becky-beat remix     --project beat.json [--amount 0.2] [--seed 3]   (keep the vibe, nudge it)")
+	fmt.Fprintln(os.Stderr, "  becky-beat vary      --project beat.json [--count 3] [--seed 7] [--outdir dir]")
 	fmt.Fprintln(os.Stderr, "output is a dawmodel arrangement: feed it to becky-drum / becky-daw-engine / becky-canvas.")
 }
 

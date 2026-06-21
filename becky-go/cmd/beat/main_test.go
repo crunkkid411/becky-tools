@@ -172,6 +172,82 @@ func TestTransform_requiresProject(t *testing.T) {
 	}
 }
 
+func TestRemix_writesAndNonDestructive(t *testing.T) {
+	dir := t.TempDir()
+	beat := filepath.Join(dir, "beat.json")
+	run([]string{"new", "--out", beat, "--genre", "house", "--seed", "5"})
+	before, _ := os.ReadFile(beat)
+	out := filepath.Join(dir, "remix.json")
+	if code := run([]string{"remix", "--project", beat, "--amount", "0.3", "--seed", "2", "--out", out}); code != exitOK {
+		t.Fatalf("remix exit = %d", code)
+	}
+	ra := readArr(t, out)
+	if ra.NoteCount() == 0 {
+		t.Error("remix produced an empty beat")
+	}
+	after, _ := os.ReadFile(beat)
+	if string(before) != string(after) {
+		t.Error("remix must not modify the input")
+	}
+}
+
+func TestVary_writesNDistinctDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	beat := filepath.Join(dir, "beat.json")
+	run([]string{"new", "--out", beat, "--genre", "trap", "--seed", "5"})
+	od := filepath.Join(dir, "vars")
+	if code := run([]string{"vary", "--project", beat, "--count", "3", "--seed", "7", "--outdir", od}); code != exitOK {
+		t.Fatalf("vary exit = %d", code)
+	}
+	var contents []string
+	for i := 1; i <= 3; i++ {
+		p := filepath.Join(od, "beat.var"+itoa(i)+".json")
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("expected variation %d at %s: %v", i, p, err)
+		}
+		contents = append(contents, string(b))
+	}
+	// At least two of the three must differ (they're distinct seeds).
+	if contents[0] == contents[1] && contents[1] == contents[2] {
+		t.Error("variations are all identical — expected distinct beats")
+	}
+	// Determinism: a second run into a new dir reproduces var1 byte-for-byte.
+	od2 := filepath.Join(dir, "vars2")
+	run([]string{"vary", "--project", beat, "--count", "3", "--seed", "7", "--outdir", od2})
+	a, _ := os.ReadFile(filepath.Join(od, "beat.var1.json"))
+	b, _ := os.ReadFile(filepath.Join(od2, "beat.var1.json"))
+	if string(a) != string(b) {
+		t.Error("vary must be deterministic for the same seed")
+	}
+}
+
+func TestVary_requiresProject(t *testing.T) {
+	if code := run([]string{"vary"}); code != exitUsage {
+		t.Errorf("vary without --project = usage, got %d", code)
+	}
+}
+
+// itoa is a tiny strconv.Itoa shim so the test file needs no extra import.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	if neg {
+		b = append([]byte{'-'}, b...)
+	}
+	return string(b)
+}
+
 func TestDefaultOut(t *testing.T) {
 	cases := map[string]string{
 		"/x/song.json": filepath.FromSlash("/x/song.beat.json"),
