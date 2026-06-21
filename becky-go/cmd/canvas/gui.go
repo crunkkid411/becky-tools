@@ -447,6 +447,13 @@ func (a *App) runCommand(phrase string) {
 			return
 		}
 	}
+	// Plain-English generative beat phrases (deterministic; no model needed):
+	// "randomize the beat", "make a house beat", "four on the floor", etc. apply
+	// to the loaded drum clip. Falls through to tool routing when unrecognised.
+	if a.applyPhrase(phrase) {
+		a.command.SetText("")
+		return
+	}
 	t, ok := matchTool(phrase)
 	if !ok {
 		a.outExpanded = true

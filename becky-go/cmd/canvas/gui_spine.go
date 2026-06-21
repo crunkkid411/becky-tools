@@ -38,17 +38,43 @@ func (a *App) applyEditBatch(jsonText string) bool {
 		a.appendLine("open a session first (drop a project.json), then apply an edit batch")
 		return true
 	}
+	a.applyBatch(batch)
+	return true
+}
+
+// applyPhrase is the deterministic plain-English fallback for the agent box: it
+// turns a generative instruction ("randomize the beat", "make a house beat",
+// "four on the floor") into a BeckyEditBatch via ctledit.ParsePhrase and applies
+// it to the loaded drum clip — so generative beats work in the window with NO
+// model. Returns true when the phrase WAS a recognised beat instruction (handled);
+// false otherwise so the caller falls through to tool routing.
+func (a *App) applyPhrase(text string) bool {
+	if a.arr == nil || len(a.arr.Tracks) == 0 {
+		return false
+	}
+	batch, ok := ctledit.ParsePhrase(text, a.arr)
+	if !ok {
+		return false
+	}
+	a.outExpanded = true
+	a.applyBatch(batch)
+	return true
+}
+
+// applyBatch applies a parsed BeckyEditBatch to the arrangement, swaps in the
+// result, and reports the outcome. Shared by applyEditBatch (JSON) and
+// applyPhrase (keyword fallback).
+func (a *App) applyBatch(batch ctledit.BeckyEditBatch) {
 	next, res, aerr := ctledit.Apply(a.arr, batch, nil)
 	if aerr != nil {
 		a.appendLine("edit batch error: " + firstLine(aerr.Error()))
-		return true
+		return
 	}
 	a.applyArr(next)
 	if batch.Summary != "" {
 		a.appendLine("becky: " + batch.Summary)
 	}
 	a.appendLine(fmt.Sprintf("applied %d edit(s), skipped %d", res.Applied, res.Skipped))
-	return true
 }
 
 // applyArr swaps in a new arrangement as the source of truth and rebuilds the
