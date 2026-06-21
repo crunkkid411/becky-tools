@@ -17,8 +17,11 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
+	"encoding/json"
+
 	"becky-go/internal/canvasbridge"
 	"becky-go/internal/ctledit"
+	"becky-go/internal/ctlmodel"
 	"becky-go/internal/dawmodel"
 )
 
@@ -59,6 +62,29 @@ func (a *App) applyPhrase(text string) bool {
 	a.outExpanded = true
 	a.applyBatch(batch)
 	return true
+}
+
+// applyNL turns a plain-English instruction into a BeckyEditBatch via ctlmodel
+// and applies it through the same ctledit seam as applyEditBatch. Returns true
+// when the proposer produced at least one edit (handled); false otherwise so the
+// caller can fall through to tool routing. When the model is not wired, ctlmodel
+// degrades to its deterministic keyword proposer — so the seam works offline.
+func (a *App) applyNL(phrase string) bool {
+	if a.arr == nil || len(a.arr.Tracks) == 0 {
+		return false
+	}
+	batch := ctlmodel.PickProposer().Propose(phrase, a.arr)
+	if len(batch.Edits) == 0 {
+		if batch.Summary != "" {
+			a.appendLine("becky: " + batch.Summary)
+		}
+		return false
+	}
+	data, err := json.Marshal(batch)
+	if err != nil {
+		return false
+	}
+	return a.applyEditBatch(string(data))
 }
 
 // applyBatch applies a parsed BeckyEditBatch to the arrangement, swaps in the

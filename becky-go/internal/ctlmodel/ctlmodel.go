@@ -25,7 +25,11 @@
 package ctlmodel
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"becky-go/internal/ctledit"
 	"becky-go/internal/dawmodel"
@@ -137,19 +141,40 @@ func resolvePaths() (bin, model string) {
 //	    "--temp", "0", "--seed", "42", "-n", "512", "--no-display-prompt")
 //	out, err := cmd.Output() // return string(out), err
 //
-// Until then it returns errModelStub so ModelProposer degrades to the keyword path.
 type execRunner struct{}
 
 func (execRunner) run(bin, model, prompt, grammar string) (string, error) {
-	return "", errModelStub
+	tmpDir, err := os.MkdirTemp("", "ctlmodel-*")
+	if err != nil {
+		return "", fmt.Errorf("ctlmodel: temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	gbnfPath := filepath.Join(tmpDir, "becky-edit.gbnf")
+	if err := os.WriteFile(gbnfPath, []byte(grammar), 0o644); err != nil {
+		return "", fmt.Errorf("ctlmodel: write grammar: %w", err)
+	}
+
+	cmd := exec.Command(bin,
+		"-m", model,
+		"-p", prompt,
+		"--grammar-file", gbnfPath,
+		"--temp", "0",
+		"--seed", "42",
+		"-n", "512",
+		"--no-display-prompt")
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		msg := errBuf.String()
+		if len(msg) > 500 {
+			msg = msg[len(msg)-500:]
+		}
+		return outBuf.String(), fmt.Errorf("ctlmodel: llama exec: %w: %s", err, strings.TrimSpace(msg))
+	}
+	return outBuf.String(), nil
 }
-
-// errModelStub signals the unwired model so callers degrade silently.
-var errModelStub = errStub("ctlmodel: exec stub not wired (local-agent task)")
-
-type errStub string
-
-func (e errStub) Error() string { return string(e) }
 
 // ─── small helpers ─────────────────────────────────────────────────────────────
 

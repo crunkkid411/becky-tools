@@ -458,6 +458,13 @@ func (a *App) runCommand(phrase string) {
 		a.command.SetText("")
 		return
 	}
+	// NL arrangement edits via ctlmodel (keyword proposer offline; model proposer
+	// when BECKY_CTL_BIN + BECKY_CTL_MODEL are set): "mute the bass", "set tempo
+	// to 140", "pan the lead right", etc. Falls through when no edits produced.
+	if a.applyNL(phrase) {
+		a.command.SetText("")
+		return
+	}
 	t, ok := matchTool(phrase)
 	if !ok {
 		a.outExpanded = true
