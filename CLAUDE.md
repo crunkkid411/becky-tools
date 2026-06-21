@@ -74,6 +74,15 @@ These are settled and each was a real bug or measured failure. Full reasoning in
 - **Paths may be Windows paths even when running on Linux/CI.** Use
   `internal/pathx` (separator-agnostic Base/Dir), not `filepath.Base` on a value
   that originated as a `C:\...` path. (This is why CI is green on Linux.)
+- **becky-canvas is THE app; REAPER is at most an export button — never a substitute.**
+  This direction is PINNED. It ping-ponged for weeks (native drum machine → fork Hydrogen
+  → drive REAPER → back to canvas) and confused Jordan every time. The native Go+Gio
+  window is the product; everything lives **inside it**. Do NOT swap a REAPER chatbot /
+  automation in for a native panel because the native thing is hard — build a smaller
+  native thing. And **"compiles" is not "done"**: a canvas feature is done only when the
+  window opens, **▶ Play makes sound**, every button works, and it doesn't freeze. Full
+  directive + the mandatory Definition-of-Done checklist are in **`CANVAS-NORTH-STAR.md`**
+  — read it before ANY canvas/DAW/drum/piano/mixer/audio work.
 
 ---
 
@@ -216,6 +225,13 @@ load-bearing rules, in brief:
   starred-repo mining + reference apps (infinite-kanvas, ACE-Step-DAW, DAW-Copilot,
   cate, jsoncrack, blocksuite, the "show me, don't do it" overlay). Read before any
   becky-canvas GUI/agent-UX work — the research is done, don't redo it.
+- `CANVAS-NORTH-STAR.md` — **THE pinned direction + Definition-of-Done for becky-canvas
+  (read FIRST before any canvas/DAW/drum/piano/mixer/audio work).** Settles the
+  re-litigated question once: becky-canvas (native Go+Gio) is the tool Jordan opens;
+  REAPER is at most an export button, never a substitute for a native panel. Carries the
+  mandatory hardware checklist (window opens, ▶ Play makes sound, every button works, no
+  freeze) that "it compiles" kept skipping, and the cloud↔local split. Outranks a single
+  session's instinct; if it seems wrong, ask Jordan — don't pivot.
 - `GUI-RULES.md` — **CANONICAL GUI + audio architecture standard (ratified 2026-06-19).**
   Read before ANY GUI/audio/DAW/NLE work. The stack (Go engine + Gio GUI + C++ VST3/ASIO
   audio-host sidecar + Rust/wgpu video sidecar), the deterministic NDJSON engine↔GUI seam,
@@ -309,7 +325,7 @@ Jordan: stop stopping early; becky-canvas needs these tools WITHOUT REAPER; orch
 - **`internal/audiotrack`:** completed the headless audio-panel engine (`BuildPeaks` + injectable-source `Mixdown`; 18 tests).
 - **Fixed two SILENT bugs:** compose→drum ("no MIDI drum clip found" — becky-drum now resolves a becky-compose manifest's `.mid` stems via `composearr`); and `beatgen.ToDrumGrid` left `StepTicks=0` so every hit collapsed onto tick 0 (now pinned to a 1/16). Both regression-tested.
 - **Drum panel BAR-PAGING done:** a long (>1 bar) beat now shows a window of whole bars with `<`/`>` nav (was one off-screen row); the windowing math is a pure `barWindow()` with 6 unit tests (cloud-verified).
-- **LEFT FOR LOCAL (the genuine hardware step):** open becky-canvas, click the drum-panel [Random]/[House]/[Trap]/[4-Floor] + `<`/`>` buttons + the Audio dock button, and ▶ Play — confirm the panels RENDER and the generated beat SOUNDS right (cloud has no display/GPU/audio, so this is the one thing I could not verify). Optional next: wire WAV import → `audiotrack.BuildPeaks` → `clip.Peaks` so the audio panel shows real takes; expose Remix/Infinity/vary on the drum panel. NOT yet merged to master.
+- **LEFT FOR LOCAL — run the `CANVAS-NORTH-STAR.md` §2 Definition-of-Done checklist** (window opens / ▶ Play makes sound / every button works / no freeze / screenshot). Concretely: open becky-canvas, click the drum-panel [Random]/[House]/[Trap]/[4-Floor] + `<`/`>` buttons + the Audio dock button, and ▶ Play — confirm the panels RENDER and the generated beat SOUNDS right (cloud has no display/GPU/audio, so this is the one thing I could not verify). REAPER is NOT part of this — the canvas is the tool. Optional next: wire WAV import → `audiotrack.BuildPeaks` → `clip.Peaks` so the audio panel shows real takes; expose Remix/Infinity/vary on the drum panel. NOT yet merged to master.
 
 **THE LONG GAME: becky-canvas in-window CONVERGENCE — real piano/drum/mixer panels on ONE Arrangement spine (local, 2026-06-21). Branch `local/canvas-convergence-2026-06-21`; VERIFIED rendering real sessions on hardware.**
 CANVAS-BLUEPRINT.md Steps 1-3, orchestrated via 4 parallel worktree subagents (subagent-driven-development) over a spine I built solo first. The Canvas window is no longer wired to the weakest model — it holds the RICH editable `dawmodel.Arrangement` and the panels edit it by hand via the existing immutable verbs.
