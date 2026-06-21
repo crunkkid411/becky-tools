@@ -18,8 +18,38 @@ import (
 	"gioui.org/widget/material"
 
 	"becky-go/internal/canvasbridge"
+	"becky-go/internal/ctledit"
 	"becky-go/internal/dawmodel"
 )
+
+// applyEditBatch applies a BeckyEditBatch (the AI-control action list) to the loaded
+// arrangement via the deterministic ctledit applier — the select→ask→transform seam
+// (CANVAS-BLUEPRINT.md Step 3). The natural-language→model→batch step is the local
+// model boundary; this is the deterministic apply half, reachable now by feeding a
+// JSON batch into the agent box. Returns true when the text WAS a batch (handled),
+// false when it isn't JSON (so the caller falls through to keyword tool routing).
+func (a *App) applyEditBatch(jsonText string) bool {
+	batch, err := ctledit.ParseBatch([]byte(jsonText))
+	if err != nil {
+		return false // not an edit batch — let keyword routing try it
+	}
+	a.outExpanded = true
+	if a.arr == nil || len(a.arr.Tracks) == 0 {
+		a.appendLine("open a session first (drop a project.json), then apply an edit batch")
+		return true
+	}
+	next, res, aerr := ctledit.Apply(a.arr, batch, nil)
+	if aerr != nil {
+		a.appendLine("edit batch error: " + firstLine(aerr.Error()))
+		return true
+	}
+	a.applyArr(next)
+	if batch.Summary != "" {
+		a.appendLine("becky: " + batch.Summary)
+	}
+	a.appendLine(fmt.Sprintf("applied %d edit(s), skipped %d", res.Applied, res.Skipped))
+	return true
+}
 
 // applyArr swaps in a new arrangement as the source of truth and rebuilds the
 // derived scene cache, then repaints. Every panel edit calls this. A nil next is

@@ -438,6 +438,15 @@ func (a *App) runCommand(phrase string) {
 	if phrase == "" {
 		return
 	}
+	// AI edit batch: a JSON BeckyEditBatch (emitted by a model, or pasted) applies to
+	// the loaded session through the deterministic ctledit applier — the
+	// select→ask→transform seam. Falls through to keyword routing when it isn't JSON.
+	if strings.HasPrefix(phrase, "{") {
+		if a.applyEditBatch(phrase) {
+			a.command.SetText("")
+			return
+		}
+	}
 	t, ok := matchTool(phrase)
 	if !ok {
 		a.outExpanded = true
