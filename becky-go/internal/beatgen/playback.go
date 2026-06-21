@@ -111,6 +111,11 @@ type Hit struct {
 //     (seed, globalStep) decides if it fires this cycle. 100 always fires, 0 never.
 //   - Ratchet (1..8) subdivides the step into evenly-spaced sub-hits at offsets
 //     0, 1/r, 2/r, ... (r-1)/r, each carrying the step's velocity.
+//   - Flam (0..8) adds a SINGLE quieter grace hit just AHEAD of the main hit
+//     (and ahead of each ratchet sub-hit) — see flamHits. Flam and Ratchet are
+//     distinct: ratchet = N evenly-spaced full-velocity repeats, flam = one soft
+//     grace note. A zero Flam adds nothing, so the output is byte-identical to
+//     the pre-flam engine.
 //
 // The probability draw is per (seed, globalStep) so the same beat plays back
 // identically every time, and two different steps at the same global position
@@ -138,8 +143,12 @@ func ExpandStep(s Step, seed int64, globalStep int) []Hit {
 	}
 	hits := make([]Hit, 0, r)
 	for i := 0; i < r; i++ {
+		base := float64(i) / float64(r)
+		// Grace hit (if any) is emitted just before the main sub-hit so a player
+		// sounds it first; it carries a reduced, deterministic velocity.
+		hits = append(hits, flamHits(s, base, 1.0/float64(r))...)
 		hits = append(hits, Hit{
-			Offset:   float64(i) / float64(r),
+			Offset:   base,
 			Velocity: s.Velocity,
 		})
 	}
@@ -173,4 +182,27 @@ func SwingOffset(stepIndex int, swing float64) float64 {
 		return 0 // on-beat, no delay
 	}
 	return 0.5 * swing
+}
+
+// LaneStepOffset returns the total timing offset (in fractions of a step) to
+// apply to the lane's step at stepIndex, honoring the lane's OWN swing override
+// (Lane.Swing, falling back to globalSwing when zero) plus its constant
+// TrackDelay micro-offset. This is the per-lane timing the playback side should
+// use instead of the bare SwingOffset when lanes carry their own feel.
+//
+// A lane with zero Swing and zero TrackDelay returns exactly SwingOffset(
+// stepIndex, globalSwing) — i.e. existing patterns are unaffected.
+func (l Lane) LaneStepOffset(stepIndex int, globalSwing float64) float64 {
+	return SwingOffset(stepIndex, l.effSwing(globalSwing)) + l.effTrackDelay()
+}
+
+// StepOffset is the Pattern-level convenience: the timing offset for the named
+// lane's step, combining the lane's swing override (or the pattern's global
+// Swing) with the lane's TrackDelay. An unknown lane falls back to the pattern's
+// global swing with no track delay.
+func (p *Pattern) StepOffset(lane string, stepIndex int) float64 {
+	if i := p.laneIndex(lane); i >= 0 {
+		return p.Lanes[i].LaneStepOffset(stepIndex, p.Swing)
+	}
+	return SwingOffset(stepIndex, p.Swing)
 }

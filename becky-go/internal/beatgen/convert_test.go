@@ -63,6 +63,26 @@ func TestToDrumGrid(t *testing.T) {
 	}
 }
 
+// TestToDrumGrid_stepTicksPositive guards the bug where StepTicks was 0, so
+// dawmodel's Compile placed every note at tick 0 (the whole beat collapsed onto
+// the downbeat). The euclidean kick must compile to four distinct start ticks.
+func TestToDrumGrid_stepTicksPositive(t *testing.T) {
+	p := NewPattern(16, Lane{Name: "kick", Role: "kick"}).ApplyEuclidean("kick", 4, 0)
+	g := ToDrumGrid(p)
+	if g.StepTicks <= 0 {
+		t.Fatalf("StepTicks = %d, must be positive or notes collapse onto tick 0", g.StepTicks)
+	}
+	var n uint64
+	notes := g.Compile(func() uint64 { n++; return n })
+	starts := map[int]bool{}
+	for _, note := range notes {
+		starts[note.Start] = true
+	}
+	if len(starts) != 4 {
+		t.Errorf("E(4,16) kick should compile to 4 distinct start ticks, got %d (%v)", len(starts), starts)
+	}
+}
+
 func TestRoundTrip_grid(t *testing.T) {
 	// grid -> pattern -> grid should preserve the on/off + velocities for a
 	// simple forward pattern.

@@ -13,27 +13,12 @@ import (
 	"becky-go/internal/pathx"
 )
 
-// genreDensity holds a per-role onset density (0..1) for a few genres. These are
-// honest, simple priors — not a trained model — that bias how busy each voice is
-// at generation time. An unknown genre falls back to "default".
-var genreDensity = map[string]map[string]float64{
-	"default": {"kick": 0.30, "snare": 0.20, "clap": 0.12, "hat": 0.55, "ohat": 0.15, "rim": 0.05, "tom": 0.05, "ride": 0.05},
-	"trap":    {"kick": 0.28, "snare": 0.13, "clap": 0.13, "hat": 0.80, "ohat": 0.12, "rim": 0.06, "tom": 0.06, "ride": 0.04},
-	"house":   {"kick": 1.00, "snare": 0.00, "clap": 0.25, "hat": 0.50, "ohat": 0.50, "rim": 0.04, "tom": 0.04, "ride": 0.10},
-	"techno":  {"kick": 1.00, "snare": 0.00, "clap": 0.13, "hat": 0.60, "ohat": 0.30, "rim": 0.10, "tom": 0.06, "ride": 0.06},
-	"dnb":     {"kick": 0.22, "snare": 0.16, "clap": 0.06, "hat": 0.70, "ohat": 0.20, "rim": 0.10, "tom": 0.08, "ride": 0.10},
-	"rock":    {"kick": 0.30, "snare": 0.25, "clap": 0.00, "hat": 0.50, "ohat": 0.05, "rim": 0.05, "tom": 0.08, "ride": 0.20},
-}
-
-// genreNames lists the known genres in stable order for the usage hint.
-var genreNames = []string{"default", "trap", "house", "techno", "dnb", "rock"}
-
 // runNew generates a fresh beat over the standard kit and writes it.
 func runNew(args []string) int {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	out := fs.String("out", "", "output arrangement project.json (required)")
-	genre := fs.String("genre", "default", "genre prior ("+strings.Join(genreNames, "/")+")")
+	genre := fs.String("genre", "straight", "genre prior ("+strings.Join(beatgen.GenreNames(), "/")+")")
 	bars := fs.Int("bars", 1, "number of bars (each 16 steps)")
 	seed := fs.Int64("seed", 7, "RNG seed (deterministic)")
 	density := fs.Float64("density", 0, "override every lane's density (0..1); 0 = use the genre priors")
@@ -47,19 +32,22 @@ func runNew(args []string) int {
 	}
 
 	steps := 16 * clampBars(*bars)
-	priors := genreDensity[strings.ToLower(strings.TrimSpace(*genre))]
-	if priors == nil {
-		priors = genreDensity["default"]
-	}
 	lanes := make([]beatgen.Lane, 0, len(standardKit))
 	for _, role := range standardKit {
-		d := priors[role]
-		if *density > 0 {
-			d = clamp01(*density)
-		}
-		lanes = append(lanes, beatgen.Lane{Name: role, Role: role, Density: d})
+		lanes = append(lanes, beatgen.Lane{Name: role, Role: role})
 	}
-	p := beatgen.NewPattern(steps, lanes...).Generate(beatgen.DefaultGenerateOptions(), *seed)
+	pat := beatgen.NewPattern(steps, lanes...)
+	var p *beatgen.Pattern
+	if *density > 0 {
+		// Explicit density override: set every lane and role-aware generate.
+		for _, role := range standardKit {
+			pat = pat.SetDensity(role, clamp01(*density))
+		}
+		p = pat.Generate(beatgen.DefaultGenerateOptions(), *seed)
+	} else {
+		// Genre priors drive per-lane density + onset placement.
+		p = pat.GenerateGenre(strings.ToLower(strings.TrimSpace(*genre)), *seed)
+	}
 
 	arr, err := arrangementFromPattern(p, *bpm)
 	if err != nil {
@@ -172,10 +160,15 @@ func clamp01(f float64) float64 {
 	return f
 }
 
+// normGenre lowercases a genre and falls back to the default ("straight") when
+// beatgen does not recognise it — matching GenerateGenre's own degrade behavior so
+// the printed summary never claims a genre the engine didn't actually use.
 func normGenre(g string) string {
 	g = strings.ToLower(strings.TrimSpace(g))
-	if _, ok := genreDensity[g]; ok {
-		return g
+	for _, known := range beatgen.GenreNames() {
+		if known == g {
+			return g
+		}
 	}
-	return "default"
+	return "straight"
 }

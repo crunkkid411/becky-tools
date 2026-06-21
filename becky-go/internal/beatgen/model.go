@@ -22,6 +22,7 @@
 //	Pan         -100..100 stereo position
 //	Probability 0..100 chance % the step actually fires on a given cycle
 //	Ratchet     1..8 sub-hits (repeats) within the step
+//	Flam        0..N a single delayed grace hit (distinct from Ratchet)
 //	Locked      protected from Generate/Mutate/Density edits
 //
 // Conditional probability and ratcheting are DATA on the Step. The engine sets
@@ -83,6 +84,13 @@ const (
 	MinRatchet = 1
 	MaxRatchet = 8
 
+	// MinFlam / MaxFlam bound a step's flam strength. 0 = no flam (no grace
+	// hit). 1..MaxFlam selects how far the single grace hit sits ahead of the
+	// main hit; larger = closer to the main hit (a tighter flam). See flam.go
+	// for the offset mapping used by ExpandStep.
+	MinFlam = 0
+	MaxFlam = 8
+
 	// MinProbability / MaxProbability bound the per-step fire chance.
 	MinProbability = 0
 	MaxProbability = 100
@@ -105,6 +113,7 @@ type Step struct {
 	Pan         int  `json:"pan"`         // -100..100
 	Probability int  `json:"probability"` // 0..100 chance %
 	Ratchet     int  `json:"ratchet"`     // 1..8 sub-hits
+	Flam        int  `json:"flam"`        // 0 = none; 1..8 = single grace hit ahead of the main hit
 	Locked      bool `json:"locked"`
 }
 
@@ -148,6 +157,12 @@ func (s Step) normalize() Step {
 	if s.Ratchet > MaxRatchet {
 		s.Ratchet = MaxRatchet
 	}
+	if s.Flam < MinFlam {
+		s.Flam = MinFlam
+	}
+	if s.Flam > MaxFlam {
+		s.Flam = MaxFlam
+	}
 	return s
 }
 
@@ -163,6 +178,53 @@ type Lane struct {
 	Solo      bool      `json:"solo"`
 	Locked    bool      `json:"locked"`
 	Density   float64   `json:"density"` // 0..1 generative fill probability
+
+	// Rate is a per-lane subdivision multiplier relative to the global step
+	// rate: 1.0 (or 0, meaning "default") = the lane runs at the global rate,
+	// 2.0 = double-time, 0.5 = half-time. It is a timing hint consumed by the
+	// playback helpers; it does not change how many Steps the lane stores.
+	Rate float64 `json:"rate"`
+	// Swing is a per-lane swing override in [0,1]. When 0 the pattern's global
+	// Swing applies to this lane; when >0 it overrides the global value for this
+	// lane only. Same convention as SwingOffset (odd steps delayed up to 0.5).
+	Swing float64 `json:"swing"`
+	// TrackDelay is a constant per-lane micro-timing offset in fractions of a
+	// step (e.g. 0.02 nudges the whole lane slightly late; -0.02 slightly early).
+	// Applied on top of swing by the playback helpers. Clamped to [-1,1].
+	TrackDelay float64 `json:"track_delay"`
+}
+
+// effRate returns the lane's effective subdivision multiplier: Rate when it is
+// positive, otherwise 1.0 (the global step rate). A zero or negative Rate is the
+// degrade default so existing zero-valued lanes behave exactly as before.
+func (l Lane) effRate() float64 {
+	if l.Rate > 0 {
+		return l.Rate
+	}
+	return 1.0
+}
+
+// effSwing returns the swing this lane should use given the pattern's global
+// swing: the lane's own Swing when it is set (>0), otherwise the global value.
+// A zero lane Swing means "inherit", so a freshly constructed lane is unchanged.
+func (l Lane) effSwing(global float64) float64 {
+	if l.Swing > 0 {
+		return l.Swing
+	}
+	return global
+}
+
+// effTrackDelay returns the lane's TrackDelay clamped to [-1,1] (a step's worth
+// either side). Zero stays zero, preserving the prior no-offset behavior.
+func (l Lane) effTrackDelay() float64 {
+	d := l.TrackDelay
+	if d < -1 {
+		return -1
+	}
+	if d > 1 {
+		return 1
+	}
+	return d
 }
 
 // effLength returns the effective loop length of the lane: its Length clamped to

@@ -1,6 +1,9 @@
 package beatgen
 
-import "becky-go/internal/dawmodel"
+import (
+	"becky-go/internal/dawmodel"
+	"becky-go/internal/music"
+)
 
 // convert.go bridges beatgen's rich Pattern to the canvas spine's
 // dawmodel.DrumGrid (a thinner steps x lanes/velocity grid). The richer per-step
@@ -128,10 +131,14 @@ func laneCellSpan(g *dawmodel.DrumGrid) []bool {
 // velocity. The grid is sized to one global cell per step with sensible defaults
 // (16 steps/bar, GM channel 9). A nil pattern yields an empty 1-bar grid.
 func ToDrumGrid(p *Pattern) *dawmodel.DrumGrid {
+	// StepTicks must be positive: dawmodel's DrumGrid.Compile multiplies the step
+	// index by StepTicks to place each note, so a zero would collapse every hit
+	// onto tick 0. Pin a 1/16 at the standard PPQ — the resolution DrumGridOf and
+	// the arrangement both assume.
 	g := &dawmodel.DrumGrid{
 		Steps:     dawmodel.DefaultSteps,
 		Bars:      1,
-		StepTicks: 0,
+		StepTicks: music.StepTicks,
 		Channel:   9,
 	}
 	if p == nil || p.Steps <= 0 {
