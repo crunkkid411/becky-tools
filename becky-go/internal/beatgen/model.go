@@ -157,7 +157,7 @@ type Lane struct {
 	Name      string    `json:"name"`
 	Role      string    `json:"role"` // kick/snare/hat/... (drives generative weighting)
 	Steps     []Step    `json:"steps"`
-	Length    int        `json:"length"` // cycle length; <=0 or >len(Steps) means len(Steps)
+	Length    int       `json:"length"` // cycle length; <=0 or >len(Steps) means len(Steps)
 	Direction Direction `json:"direction"`
 	Mute      bool      `json:"mute"`
 	Solo      bool      `json:"solo"`

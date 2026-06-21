@@ -61,11 +61,11 @@ func TestEffLength(t *testing.T) {
 		length int
 		want   int
 	}{
-		{8, 0, 8},   // unset => full
-		{8, -3, 8},  // negative => full
-		{8, 5, 5},   // valid polymeter
-		{8, 99, 8},  // oversized => full
-		{0, 4, 0},   // no steps => 0
+		{8, 0, 8},  // unset => full
+		{8, -3, 8}, // negative => full
+		{8, 5, 5},  // valid polymeter
+		{8, 99, 8}, // oversized => full
+		{0, 4, 0},  // no steps => 0
 	}
 	for _, c := range cases {
 		ln := Lane{Steps: make([]Step, c.steps), Length: c.length}

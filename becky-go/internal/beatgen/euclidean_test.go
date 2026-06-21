@@ -23,8 +23,8 @@ func TestEuclidean_canonical(t *testing.T) {
 		steps, pulses, rot int
 		want               string
 	}{
-		{8, 3, 0, "x..x..x."},  // the textbook E(3,8)
-		{8, 5, 0, "x.xx.xx."},  // E(5,8)
+		{8, 3, 0, "x..x..x."},          // the textbook E(3,8)
+		{8, 5, 0, "x.xx.xx."},          // E(5,8)
 		{16, 4, 0, "x...x...x...x..."}, // evenly spaced
 		{5, 2, 0, "x.x.."},
 		{4, 1, 0, "x..."},
