@@ -375,6 +375,14 @@ func applyOne(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, str
 		next.BPM = ed.BPM
 		return next, ""
 
+	// ---- generative drum ops (internal/beatgen) -------------------------------
+
+	case OpGenerateBeat:
+		return applyGenerateBeat(a, ed)
+
+	case OpEuclidLane:
+		return applyEuclidLane(a, ed)
+
 	default:
 		// Should not be reached because knownOps guards above, but be defensive.
 		return a, fmt.Sprintf("unhandled op %q", ed.Op)

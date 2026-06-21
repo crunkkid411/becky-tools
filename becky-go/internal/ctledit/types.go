@@ -88,6 +88,22 @@ type BeckyEdit struct {
 
 	// BPM is the new tempo in beats-per-minute for set_tempo.
 	BPM int `json:"bpm,omitempty"`
+
+	// ---- generative drum ops (internal/beatgen) ----
+
+	// Genre biases generate_beat's onset density + placement (trap/house/dnb/…);
+	// empty or unknown falls back to the neutral "straight" profile.
+	Genre string `json:"genre,omitempty"`
+	// Density (0..1) overrides every lane's fill for generate_beat when > 0.
+	Density float64 `json:"density,omitempty"`
+	// Seed makes generate_beat deterministic (same seed => same beat).
+	Seed int64 `json:"seed,omitempty"`
+	// Lane is the drum lane (by name, e.g. "kick") targeted by euclid_lane.
+	Lane string `json:"lane,omitempty"`
+	// Pulses is the number of euclidean onsets to spread for euclid_lane.
+	Pulses int `json:"pulses,omitempty"`
+	// Rotation rotates the euclidean pattern for euclid_lane (signed).
+	Rotation int `json:"rotation,omitempty"`
 }
 
 // Op constants — the closed enum of supported edit operations.
@@ -114,6 +130,10 @@ const (
 
 	// Transport operations
 	OpSetTempo = "set_tempo" // change the arrangement's BPM
+
+	// Generative drum operations (powered by internal/beatgen)
+	OpGenerateBeat = "generate_beat" // regenerate a drum clip's pattern (genre/density/seed)
+	OpEuclidLane   = "euclid_lane"   // set one drum lane to a euclidean rhythm
 )
 
 // knownOps is the set of valid op values for fast membership checks.
@@ -132,6 +152,8 @@ var knownOps = map[string]bool{
 	OpRouteTo:      true,
 	OpAddSidechain: true,
 	OpSetTempo:     true,
+	OpGenerateBeat: true,
+	OpEuclidLane:   true,
 }
 
 // EditOutcome reports what happened to one BeckyEdit during Apply.
