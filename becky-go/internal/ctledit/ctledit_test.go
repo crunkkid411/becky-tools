@@ -640,7 +640,7 @@ func TestApply_SetStep_StepOutOfRange_Skipped(t *testing.T) {
 func TestApply_SetGain_OK(t *testing.T) {
 	a := makeArrangement(t)
 	batch := BeckyEditBatch{
-		Edits: []BeckyEdit{{Op: OpSetGain, Target: "bass", Gain: 0.8}},
+		Edits: []BeckyEdit{{Op: OpSetGain, Target: "bass", Gain: gp(0.8)}},
 	}
 	out, res, _ := Apply(a, batch, nil)
 	if res.Applied != 1 {
@@ -655,10 +655,25 @@ func TestApply_SetGain_OK(t *testing.T) {
 	}
 }
 
+// gp returns a pointer to a float64. set_gain's Gain is a pointer so an omitted JSON
+// "gain" (nil) is distinguishable from an explicit 0.0.
+func gp(v float64) *float64 { return &v }
+
+func TestApply_SetGain_OmittedIsRejected(t *testing.T) {
+	a := makeArrangement(t)
+	// A model that forgets "gain" must NOT silence the track — the edit is skipped
+	// with a reason, not applied as gain 0.
+	batch := BeckyEditBatch{Edits: []BeckyEdit{{Op: OpSetGain, Target: "bass"}}}
+	_, res, _ := Apply(a, batch, nil)
+	if res.Applied != 0 || res.Skipped != 1 {
+		t.Fatalf("omitted gain must be skipped, not applied: applied=%d skipped=%d", res.Applied, res.Skipped)
+	}
+}
+
 func TestApply_SetGain_CaseInsensitive(t *testing.T) {
 	a := makeArrangement(t)
 	batch := BeckyEditBatch{
-		Edits: []BeckyEdit{{Op: OpSetGain, Target: "BASS", Gain: 1.2}},
+		Edits: []BeckyEdit{{Op: OpSetGain, Target: "BASS", Gain: gp(1.2)}},
 	}
 	_, res, _ := Apply(a, batch, nil)
 	if res.Applied != 1 {
@@ -669,7 +684,7 @@ func TestApply_SetGain_CaseInsensitive(t *testing.T) {
 func TestApply_SetGain_OutOfRange_Skipped(t *testing.T) {
 	a := makeArrangement(t)
 	batch := BeckyEditBatch{
-		Edits: []BeckyEdit{{Op: OpSetGain, Target: "bass", Gain: 3.0}},
+		Edits: []BeckyEdit{{Op: OpSetGain, Target: "bass", Gain: gp(3.0)}},
 	}
 	_, res, _ := Apply(a, batch, nil)
 	if res.Skipped != 1 {
@@ -829,8 +844,8 @@ func TestApply_MixedBatch_GoodAndBadEdits(t *testing.T) {
 		Edits: []BeckyEdit{
 			{Op: OpSetTempo, BPM: 132},                                                   // good
 			{Op: "unknown_op"},                                                           // bad — unknown
-			{Op: OpSetGain, Target: "bass", Gain: 0.9},                                   // good
-			{Op: OpSetGain, Target: "nonexistent", Gain: 1.0},                            // bad — no track
+			{Op: OpSetGain, Target: "bass", Gain: gp(0.9)},                               // good
+			{Op: OpSetGain, Target: "nonexistent", Gain: gp(1.0)},                        // bad — no track
 			{Op: OpDeleteNotes, Track: "bass", Clip: "clip1", NoteIDs: []uint64{ids[0]}}, // good
 			{Op: OpSetVelocity, Track: "bass", Clip: "clip1", NoteIDs: ids, Velocity: 0}, // bad — vel 0
 		},
@@ -869,7 +884,7 @@ func TestApply_Determinism(t *testing.T) {
 		Summary: "determinism test",
 		Edits: []BeckyEdit{
 			{Op: OpSetTempo, BPM: 150},
-			{Op: OpSetGain, Target: "lead", Gain: 1.5},
+			{Op: OpSetGain, Target: "lead", Gain: gp(1.5)},
 			{Op: OpTranspose, Track: "bass", Clip: "clip1", Semitones: -2},
 			{Op: OpSetVelocity, Track: "bass", Clip: "clip1", NoteIDs: ids, Velocity: 70},
 		},
@@ -902,7 +917,7 @@ func TestApply_OriginalUnchanged(t *testing.T) {
 		Edits: []BeckyEdit{
 			{Op: OpSetTempo, BPM: 200},
 			{Op: OpAddNotes, Track: "lead", Notes: [][]float64{{60, 0, 1, 100}}},
-			{Op: OpSetGain, Target: "bass", Gain: 0.1},
+			{Op: OpSetGain, Target: "bass", Gain: gp(0.1)},
 		},
 	}
 	_, _, err := Apply(a, batch, nil)
@@ -922,7 +937,7 @@ func TestApply_OriginalUnchanged(t *testing.T) {
 func TestApply_EmptyTargetRef_Skipped(t *testing.T) {
 	a := makeArrangement(t)
 	batch := BeckyEditBatch{
-		Edits: []BeckyEdit{{Op: OpSetGain, Target: "", Gain: 1.0}},
+		Edits: []BeckyEdit{{Op: OpSetGain, Target: "", Gain: gp(1.0)}},
 	}
 	_, res, _ := Apply(a, batch, nil)
 	if res.Skipped != 1 {

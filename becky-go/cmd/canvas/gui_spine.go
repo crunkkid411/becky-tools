@@ -78,6 +78,9 @@ func (a *App) maybeLoadArrangement(path string) bool {
 			return false
 		}
 		a.applyArr(arr)
+		if a.pianoPanel != nil {
+			a.pianoPanel.pitchSet = false // re-fit the piano pitch range to the new clip
+		}
 		a.appendLine(fmt.Sprintf("loaded session: %s (%d tracks)", filepath.Base(p), len(arr.Tracks)))
 		return true
 	case strings.HasSuffix(low, ".mid"), strings.HasSuffix(low, ".midi"):
@@ -90,6 +93,9 @@ func (a *App) maybeLoadArrangement(path string) bool {
 			return false
 		}
 		a.applyArr(arr)
+		if a.pianoPanel != nil {
+			a.pianoPanel.pitchSet = false // re-fit the piano pitch range to the new clip
+		}
 		note := ""
 		if perr != nil {
 			note = " (partial)"

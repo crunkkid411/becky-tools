@@ -282,10 +282,13 @@ func applyOne(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, str
 		if reason != "" {
 			return a, reason
 		}
-		if ed.Gain < 0 || ed.Gain > 2 {
-			return a, fmt.Sprintf("set_gain: gain %.4f out of range 0..2", ed.Gain)
+		if ed.Gain == nil {
+			return a, "set_gain: gain field required (omitting it would silence the track)"
 		}
-		next, err := a.SetGain(trackID, ed.Gain)
+		if *ed.Gain < 0 || *ed.Gain > 2 {
+			return a, fmt.Sprintf("set_gain: gain %.4f out of range 0..2", *ed.Gain)
+		}
+		next, err := a.SetGain(trackID, *ed.Gain)
 		if err != nil {
 			return a, fmt.Sprintf("set_gain: %v", err)
 		}

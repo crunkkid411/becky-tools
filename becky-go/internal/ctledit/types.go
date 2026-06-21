@@ -69,8 +69,10 @@ type BeckyEdit struct {
 
 	// Target identifies a track for mixer ops (by ID or name).
 	Target string `json:"target,omitempty"`
-	// Gain is the linear gain (0..2, 1 = unity) for set_gain.
-	Gain float64 `json:"gain,omitempty"`
+	// Gain is the linear gain (0..2, 1 = unity) for set_gain. It is a POINTER so an
+	// omitted JSON "gain" is distinguishable from an explicit 0.0 — otherwise a model
+	// that forgets the field would silently silence the track (gain 0). nil = omitted.
+	Gain *float64 `json:"gain,omitempty"`
 	// Pan is -1 (L) .. 0 (C) .. 1 (R) for set_pan.
 	Pan float64 `json:"pan,omitempty"`
 	// Muted is the mute flag for mute.

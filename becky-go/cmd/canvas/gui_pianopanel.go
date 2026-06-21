@@ -89,6 +89,7 @@ type pianoPanel struct {
 	dragLast    f32.Point
 	dragEdgeID  uint64
 	dragBaseDur int
+	dragRowH    int // row height (px) captured at drag start, for pitch delta on release
 
 	pressCount  int
 	lastPressPt f32.Point
@@ -442,6 +443,7 @@ func (p *pianoPanel) handlePress(
 		p.dragKind = prDragBody
 		p.dragStart = pt
 		p.dragLast = pt
+		p.dragRowH = rowH
 		return
 	}
 
@@ -481,8 +483,13 @@ func (p *pianoPanel) handleRelease(
 		if pxPerStep > 0 {
 			dTicks = int(dx/pxPerStep) * step
 		}
-		// rowH not available; approximate 12px per row (matches prRowHDp default)
-		dPitch := -int(dy / 12.0)
+		// Use the row height captured at drag start so pitch moves are correct at any
+		// DPI / panel size (not the hardcoded default).
+		rh := p.dragRowH
+		if rh < 1 {
+			rh = 1
+		}
+		dPitch := -int(dy / float32(rh))
 		if dTicks != 0 || dPitch != 0 {
 			if next, err := a.arr.MoveNotes(trackID, clipName, p.selectedIDSlice(), dTicks, dPitch); err == nil {
 				a.applyArr(next)
