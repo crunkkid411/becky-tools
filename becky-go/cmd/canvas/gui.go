@@ -68,6 +68,7 @@ type App struct {
 	dockDraw   widget.Clickable
 	dockPiano  widget.Clickable
 	dockDrum   widget.Clickable
+	dockMixer  widget.Clickable
 	dockVideo  widget.Clickable
 	dockOpen   widget.Clickable
 
@@ -286,6 +287,9 @@ func (a *App) handleInput(gtx layout.Context) {
 	}
 	if a.dockDrum.Clicked(gtx) {
 		a.activeMode = canvas.ModeDrum
+	}
+	if a.dockMixer.Clicked(gtx) {
+		a.activeMode = canvas.ModeDAW
 	}
 	if a.dockVideo.Clicked(gtx) {
 		a.activeMode = canvas.ModeVideo

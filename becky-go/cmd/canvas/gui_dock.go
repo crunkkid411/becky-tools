@@ -56,6 +56,7 @@ func (a *App) dockItems() []dockItem {
 		{icon: a.icons.draw, tip: "Draw on the canvas", accent: colNeonGreen, clicker: &a.dockDraw, active: a.drawMode},
 		{icon: a.icons.piano, tip: "Piano roll", accent: colDeepPurple, clicker: &a.dockPiano, active: a.activeMode == canvas.ModeMIDI},
 		{icon: a.icons.drum, tip: "Drum machine", accent: colYellow, clicker: &a.dockDrum, active: a.activeMode == canvas.ModeDrum},
+		{icon: a.icons.mixer, tip: "Mixer / routing", accent: colElecBlue, clicker: &a.dockMixer, active: a.activeMode == canvas.ModeDAW},
 		{icon: a.icons.video, tip: "Video", accent: colNeonPink, clicker: &a.dockVideo, active: a.activeMode == canvas.ModeVideo},
 		{icon: a.icons.folder, tip: "Open a file or folder", accent: colElecBlue, clicker: &a.dockOpen},
 	}
