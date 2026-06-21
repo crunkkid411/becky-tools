@@ -27,3 +27,4 @@ Task 1 (SPINE): complete (commit 83265d7, build+test green)
 Mixer dock button (reach ModeDAW) committed 662c569 (single-owner, disjoint from panels).
 Integration plan after merges: wire ctledit into the select->ask->transform overlay
 (gui.go + gui_overlay), clean dead toy drum code, build -tags gui, launch-verify, push.
+Task 2c MIXER: complete (merged 94c6b93, gui build green; loop-guard reviewed OK)
