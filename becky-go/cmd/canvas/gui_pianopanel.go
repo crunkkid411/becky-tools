@@ -582,8 +582,5 @@ func (p *pianoPanel) doDelete(a *App, trackID, clipName string) {
 	}
 }
 
-// dragBaseDur is stored for future use (e.g. min-dur clamping during live drag preview).
-var _ = (*pianoPanel)(nil).dragBaseDur
-
 // ensure op import is used
 var _ *op.Ops
