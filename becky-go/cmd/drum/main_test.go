@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"becky-go/internal/dawmodel"
+	"becky-go/internal/music"
 )
 
 // writeFixtureProject builds a minimal project.json with one percussion clip and
@@ -135,6 +136,107 @@ func TestRun_determinismByteIdentical(t *testing.T) {
 	b, _ := os.ReadFile(out2)
 	if string(a) != string(b) {
 		t.Error("same project + instruction + seed must yield byte-identical output")
+	}
+}
+
+// writeComposeManifest writes a becky-compose ROUTING MANIFEST (tracks that
+// reference external .mid stems, no inline notes) plus its drum stem, into dir.
+// Returns the project.json path. This is the shape becky-compose actually emits —
+// distinct from the inline-note dawmodel.Arrangement writeFixtureProject builds.
+func writeComposeManifest(t *testing.T, dir string) string {
+	t.Helper()
+	// A drum stem on channel 9 (GM percussion): kick on 1, snare on 2.
+	f := music.NewFile(480)
+	tr := f.AddTrack()
+	tr.Note(0, 120, 9, 36, 100)   // kick beat 1
+	tr.Note(480, 120, 9, 38, 100) // snare beat 2
+	tr.Note(960, 120, 9, 36, 100) // kick beat 3
+	if err := os.WriteFile(filepath.Join(dir, "drums.mid"), f.Bytes(), 0o644); err != nil {
+		t.Fatalf("write drum stem: %v", err)
+	}
+	proj := music.Project{
+		SchemaVersion: 1,
+		Tool:          "becky-compose",
+		Genre:         "crunkcore",
+		Tempo:         140,
+		TimeSignature: []int{4, 4},
+		Key:           music.ProjKey{Root: "F", Scale: "minor"},
+		PPQ:           480,
+		Tracks: []music.ProjTrack{
+			{ID: "drums", Midi: "drums.mid", Channel: 9, Kind: "percussion", Node: "src.drums", Out: "bus.drums"},
+		},
+		Buses: []music.ProjBus{
+			{ID: "bus.drums", Out: "bus.master"},
+			{ID: "bus.master", Out: "out.main"},
+		},
+	}
+	raw, err := json.MarshalIndent(proj, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	path := filepath.Join(dir, "project.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write project.json: %v", err)
+	}
+	return path
+}
+
+// TestRun_composeManifestIsEditable proves the seam that was silently broken:
+// becky-drum must accept a becky-compose routing manifest (resolving its .mid
+// stems via composearr) so "compose a beat, then tweak it in plain English"
+// works end to end. Before the fix, this returned "no MIDI drum clip found".
+func TestRun_composeManifestIsEditable(t *testing.T) {
+	dir := t.TempDir()
+	proj := writeComposeManifest(t, dir)
+	out := filepath.Join(dir, "edited.json")
+	if code := run([]string{"--project", proj, "--instruction", "make it half-time", "--output", out}); code != exitOK {
+		t.Fatalf("compose manifest should be editable, exit = %d", code)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected an output arrangement: %v", err)
+	}
+	var arr dawmodel.Arrangement
+	if err := json.Unmarshal(data, &arr); err != nil {
+		t.Fatalf("output is not a valid arrangement: %v", err)
+	}
+	// The percussion stem must have been loaded into inline notes (proof the
+	// stem was actually resolved, not an empty arrangement).
+	var notes int
+	for _, tr := range arr.Tracks {
+		for _, c := range tr.Clips {
+			notes += len(c.Notes)
+		}
+	}
+	if notes == 0 {
+		t.Error("compose manifest produced an arrangement with no notes — stem was not resolved")
+	}
+	// The original manifest must be untouched (non-destructive).
+	orig, _ := os.ReadFile(proj)
+	if !json.Valid(orig) {
+		t.Error("original compose manifest was corrupted")
+	}
+}
+
+// TestIsComposeManifest covers the detection heuristic directly.
+func TestIsComposeManifest(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want bool
+	}{
+		{"tool stamp", `{"tool":"becky-compose","tracks":[]}`, true},
+		{"midi ref", `{"tracks":[{"midi":"drums.mid"}]}`, true},
+		{"inline arrangement", `{"bpm":140,"tracks":[{"id":"d","clips":[{"notes":[{"pitch":36}]}]}]}`, false},
+		{"empty", `{}`, false},
+		{"garbage", `not json`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isComposeManifest([]byte(tc.json)); got != tc.want {
+				t.Errorf("isComposeManifest(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
 

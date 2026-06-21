@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"becky-go/internal/composearr"
 	"becky-go/internal/dawmodel"
 	"becky-go/internal/drumcmd"
 	"becky-go/internal/habits"
@@ -158,16 +159,64 @@ func usage(fs *flag.FlagSet) {
 
 // loadProject reads a project.json into a dawmodel.Arrangement. A bad file or bad
 // JSON degrades to a wrapped error (never a panic).
+//
+// It transparently accepts TWO shapes:
+//   - a dawmodel.Arrangement with inline notes (what becky-daw writes), and
+//   - a becky-compose ROUTING MANIFEST (tracks that reference external .mid
+//     stems). A compose manifest has no inline notes, so it is routed through
+//     internal/composearr, which loads each stem into a real Arrangement. This is
+//     what makes "compose a beat, then tweak it in plain English" actually work.
 func loadProject(path string) (*dawmodel.Arrangement, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", pathx.Base(path), err)
+	}
+	if isComposeManifest(data) {
+		proj, baseDir, perr := composearr.LoadProject(path)
+		if perr != nil {
+			return nil, fmt.Errorf("parse %s: not a valid compose project (%w)", pathx.Base(path), perr)
+		}
+		// FromProject degrades on missing stems (partial arrangement + wrapped
+		// error). A drum tweak only needs the percussion stem, so a missing
+		// melodic stem must not be fatal — we keep the arrangement and ignore the
+		// partial-load note here; deriveDrumGrid reports if the drum clip is gone.
+		arr, _ := composearr.FromProject(proj, baseDir)
+		if arr == nil {
+			return nil, fmt.Errorf("parse %s: compose project produced no arrangement", pathx.Base(path))
+		}
+		return arr, nil
 	}
 	var arr dawmodel.Arrangement
 	if err := json.Unmarshal(data, &arr); err != nil {
 		return nil, fmt.Errorf("parse %s: not a valid project.json (%w)", pathx.Base(path), err)
 	}
 	return &arr, nil
+}
+
+// isComposeManifest reports whether raw JSON is a becky-compose routing manifest
+// (as opposed to a dawmodel.Arrangement). The tell is the "becky-compose" tool
+// stamp or tracks that reference an external .mid stem — a dawmodel arrangement
+// carries inline notes instead. Best-effort: unparseable JSON returns false so
+// the caller falls through to the normal arrangement decode + its error.
+func isComposeManifest(data []byte) bool {
+	var probe struct {
+		Tool   string `json:"tool"`
+		Tracks []struct {
+			Midi string `json:"midi"`
+		} `json:"tracks"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(probe.Tool), "becky-compose") {
+		return true
+	}
+	for _, t := range probe.Tracks {
+		if strings.TrimSpace(t.Midi) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveDrumGrid finds the drum clip in the arrangement and derives its grid.
