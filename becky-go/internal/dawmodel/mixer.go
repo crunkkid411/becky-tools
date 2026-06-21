@@ -16,6 +16,22 @@ type Strip struct {
 	Mute bool    `json:"mute"`
 	Solo bool    `json:"solo"`
 	Bus  string  `json:"bus"` // destination bus id
+
+	// FX is the ordered insert chain on this track (FX[0] first in the signal path).
+	// Filled when Jordan finalizes / loads his plugin chain; the actual plugin state
+	// is loaded by the C++ VST3 host from PresetRef. Empty during lightweight writing.
+	FX []FXSlot `json:"fx,omitempty"`
+}
+
+// FXSlot is one VST insert on a strip or bus: the plugin name, its VST3 class id, a
+// reference to its saved state (a .vstpreset / state file the C++ host loads via
+// IComponent::setState), and a bypass flag. Mirrors internal/fxchain.Plugin — this is
+// the in-arrangement state; fxchain is the user's saved library of reusable chains.
+type FXSlot struct {
+	Name      string `json:"name"`
+	ClassID   string `json:"class_id,omitempty"`
+	PresetRef string `json:"preset_ref,omitempty"`
+	Bypass    bool   `json:"bypass,omitempty"`
 }
 
 // Bus is a mix bus with its own routing + optional sidechain sources. Matches the
@@ -24,6 +40,7 @@ type Bus struct {
 	ID        string   `json:"id"`
 	Out       string   `json:"out"`                 // where this bus routes (another bus / master)
 	Sidechain []string `json:"sidechain,omitempty"` // source node ids ducking this bus
+	FX        []FXSlot `json:"fx,omitempty"`        // the bus's insert chain (comp/EQ/etc.)
 }
 
 // defaultStrip returns a unity strip routed to a bus chosen by the track's role.

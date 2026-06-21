@@ -19,10 +19,13 @@ import (
 
 	"encoding/json"
 
+	"becky-go/internal/canvas"
 	"becky-go/internal/canvasbridge"
 	"becky-go/internal/ctledit"
 	"becky-go/internal/ctlmodel"
 	"becky-go/internal/dawmodel"
+	"becky-go/internal/songbuild"
+	"becky-go/internal/undo"
 )
 
 // applyEditBatch applies a BeckyEditBatch (the AI-control action list) to the loaded
@@ -52,6 +55,29 @@ func (a *App) applyEditBatch(jsonText string) bool {
 // model. Returns true when the phrase WAS a recognised beat instruction (handled);
 // false otherwise so the caller falls through to tool routing.
 func (a *App) applyPhrase(text string) bool {
+	// Undo/redo + save via the agent box (the proven text path — no Gio key-focus risk).
+	low := strings.ToLower(strings.TrimSpace(text))
+	switch {
+	case low == "undo":
+		a.undo()
+		return true
+	case low == "redo":
+		a.redo()
+		return true
+	case low == "save":
+		a.saveSession("")
+		return true
+	case strings.HasPrefix(low, "save as "):
+		a.saveSession(strings.TrimSpace(text[len("save as "):]))
+		return true
+	}
+
+	// "make a dark trap song" / "generate a house beat" / "new lofi song" — build a
+	// whole arrangement from the phrase via the shared pipe core, and load it. This
+	// is the canvas front-end to becky-song.
+	if a.maybeBuildSong(text) {
+		return true
+	}
 	if a.arr == nil || len(a.arr.Tracks) == 0 {
 		return false
 	}
@@ -87,6 +113,66 @@ func (a *App) applyNL(phrase string) bool {
 	return a.applyEditBatch(string(data))
 }
 
+// maybeBuildSong detects a "make/generate a <genre> song/beat" request and builds a
+// whole arrangement from the phrase (songbuild = the same pipe becky-song uses), then
+// loads it into the canvas. Conservative: it only fires on an explicit "song", or on
+// a make/new/generate intent when no session is loaded yet — so it never hijacks the
+// edit phrases ParsePhrase handles on an existing clip. Returns true when it built.
+func (a *App) maybeBuildSong(text string) bool {
+	t := strings.ToLower(text)
+	hasArr := a.arr != nil && len(a.arr.Tracks) > 0
+	wantsSong := strings.Contains(t, "song") ||
+		(!hasArr && containsWord(t, "make", "create", "generate", "new", "build", "give me"))
+	if !wantsSong {
+		return false
+	}
+	built, spec, err := songbuild.BuildPhrase(text)
+	if err != nil || built == nil || len(built.Tracks) == 0 {
+		return false
+	}
+	if spec.Genre == "" && hasArr {
+		return false // nothing concrete to go on + already editing → let ParsePhrase try
+	}
+	a.applyArr(built)
+	if a.pianoPanel != nil {
+		a.pianoPanel.pitchSet = false
+	}
+	a.activeMode = canvas.ModeDrum
+	if len(spec.Understood) > 0 {
+		a.appendLine("becky heard: " + strings.Join(spec.Understood, ", "))
+	}
+	a.appendLine(fmt.Sprintf("becky: built a song (%d tracks, %d notes) — ▶ to hear it",
+		len(built.Tracks), built.NoteCount()))
+	return true
+}
+
+// containsWord reports whether any of the words appears in t.
+func containsWord(t string, words ...string) bool {
+	for _, w := range words {
+		if strings.Contains(t, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// saveSession writes the working arrangement to disk (closing GAP #2). "save" writes
+// back to the loaded session (or becky-session.json); "save as <name>" writes a named
+// file beside it. Reports where it landed; degrade-never-crash on a write error.
+func (a *App) saveSession(asName string) {
+	if a.arr == nil || len(a.arr.Tracks) == 0 {
+		a.appendLine("nothing to save yet — load or build a session first")
+		return
+	}
+	path := deriveSavePath(a.sessionPath, a.target, asName)
+	if err := saveArrangementJSON(a.arr, path); err != nil {
+		a.appendLine("couldn't save: " + firstLine(err.Error()))
+		return
+	}
+	a.sessionPath = path
+	a.appendLine("becky: saved → " + filepath.Base(path))
+}
+
 // applyBatch applies a parsed BeckyEditBatch to the arrangement, swaps in the
 // result, and reports the outcome. Shared by applyEditBatch (JSON) and
 // applyPhrase (keyword fallback).
@@ -110,11 +196,51 @@ func (a *App) applyArr(next *dawmodel.Arrangement) {
 	if next == nil {
 		return
 	}
+	a.setArrNoPush(next)
+	if a.hist == nil {
+		a.hist = undo.New(0)
+	}
+	a.hist.Push(next) // every commit is undoable (dup-pointer pushes are no-ops)
+}
+
+// setArrNoPush swaps in the arrangement + rebuilds the scene WITHOUT recording it in
+// history — used by undo/redo so stepping through history doesn't itself create new
+// history entries.
+func (a *App) setArrNoPush(next *dawmodel.Arrangement) {
 	a.arr = next
 	a.scene = canvasbridge.SceneFromArrangement(next)
 	if a.window != nil {
 		a.window.Invalidate()
 	}
+}
+
+// undo / redo step the arrangement back/forward through the edit history (reachable
+// by typing "undo"/"redo" in the agent box; a Ctrl+Z key binding is the local GUI
+// step). Each reports the result on the output line.
+func (a *App) undo() {
+	if a.hist == nil {
+		a.appendLine("nothing to undo")
+		return
+	}
+	if prev, ok := a.hist.Undo(); ok && prev != nil {
+		a.setArrNoPush(prev)
+		a.appendLine("becky: undid the last edit")
+		return
+	}
+	a.appendLine("nothing to undo")
+}
+
+func (a *App) redo() {
+	if a.hist == nil {
+		a.appendLine("nothing to redo")
+		return
+	}
+	if next, ok := a.hist.Redo(); ok && next != nil {
+		a.setArrNoPush(next)
+		a.appendLine("becky: redid the edit")
+		return
+	}
+	a.appendLine("nothing to redo")
 }
 
 // maybeLoadArrangement loads a dropped/opened target into the editable arrangement
@@ -130,6 +256,7 @@ func (a *App) maybeLoadArrangement(path string) bool {
 			return false
 		}
 		a.applyArr(arr)
+		a.sessionPath = p // "save" writes back here
 		if a.pianoPanel != nil {
 			a.pianoPanel.pitchSet = false // re-fit the piano pitch range to the new clip
 		}
@@ -145,6 +272,7 @@ func (a *App) maybeLoadArrangement(path string) bool {
 			return false
 		}
 		a.applyArr(arr)
+		a.sessionPath = strings.TrimSuffix(p, filepath.Ext(p)) + ".json" // save → a .json beside the .mid
 		if a.pianoPanel != nil {
 			a.pianoPanel.pitchSet = false // re-fit the piano pitch range to the new clip
 		}

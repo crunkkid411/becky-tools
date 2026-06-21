@@ -383,6 +383,15 @@ func applyOne(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, str
 	case OpEuclidLane:
 		return applyEuclidLane(a, ed)
 
+	case OpAddLayer:
+		return applyAddLayer(a, ed)
+
+	case OpAddTrack:
+		return applyAddTrack(a, ed)
+
+	case OpDuplicateNotes:
+		return applyDuplicateNotes(a, ed)
+
 	default:
 		// Should not be reached because knownOps guards above, but be defensive.
 		return a, fmt.Sprintf("unhandled op %q", ed.Op)

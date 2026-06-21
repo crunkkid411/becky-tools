@@ -2,7 +2,9 @@ package ctledit
 
 import (
 	"fmt"
+	"strings"
 
+	"becky-go/internal/arrange"
 	"becky-go/internal/beatgen"
 	"becky-go/internal/dawmodel"
 	"becky-go/internal/music"
@@ -88,6 +90,129 @@ func applyEuclidLane(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangeme
 		return a, reason
 	}
 	return next, ""
+}
+
+// applyAddLayer adds a stem-aware complementary layer (bass/chords/melody) via
+// internal/arrange — the deterministic LEGO engine. The layer reads the existing
+// stems (the kick, the key) and fits them; no model, no tokens.
+func applyAddLayer(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, string) {
+	if ed.Layer == "" {
+		return a, "add_layer: which layer? (bass, chords, or melody)"
+	}
+	next, err := arrange.AddLayer(a, ed.Layer, arrange.Options{Genre: ed.Genre, Seed: ed.Seed})
+	if err != nil {
+		return a, fmt.Sprintf("add_layer: %v", err)
+	}
+	return next, ""
+}
+
+// applyDuplicateNotes copies notes forward in time — copy/paste/duplicate in one op
+// (GAP-ANALYSIS #8). With note_ids it duplicates that selection; with none it
+// duplicates the whole clip. d_ticks sets the offset; 0 defaults to the clip's
+// bar-rounded length, so "duplicate" on a 1-bar loop appends a copy at bar 2 (doubles
+// it). New notes get fresh IDs; immutable.
+func applyDuplicateNotes(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, string) {
+	trackID, reason := resolveTrack(a, ed.Track)
+	if reason != "" {
+		return a, reason
+	}
+	clipName, reason := resolveClip(a, trackID, ed.Clip)
+	if reason != "" {
+		return a, reason
+	}
+	src := clipNotesOf(a, trackID, clipName)
+	if len(src) == 0 {
+		return a, "duplicate_notes: the clip has no notes to copy"
+	}
+	notes := src
+	if len(ed.NoteIDs) > 0 {
+		want := map[uint64]bool{}
+		for _, id := range ed.NoteIDs {
+			want[id] = true
+		}
+		notes = nil
+		for _, n := range src {
+			if want[n.ID] {
+				notes = append(notes, n)
+			}
+		}
+		if len(notes) == 0 {
+			return a, "duplicate_notes: none of the note_ids are in the clip"
+		}
+	}
+	delta := ed.DeltaTicks
+	if delta == 0 {
+		delta = barRoundedSpan(notes)
+	}
+	if delta <= 0 {
+		delta = music.BarTicks
+	}
+	out := a
+	for _, n := range notes {
+		cp := dawmodel.Note{Start: n.Start + delta, Dur: n.Dur, Pitch: n.Pitch, Vel: n.Vel, Ch: n.Ch}
+		var err error
+		out, _, err = out.AddNote(trackID, clipName, cp)
+		if err != nil {
+			return a, fmt.Sprintf("duplicate_notes: %v", err)
+		}
+	}
+	return out, ""
+}
+
+func clipNotesOf(a *dawmodel.Arrangement, trackID, clipName string) []dawmodel.Note {
+	for _, t := range a.Tracks {
+		if t.ID != trackID {
+			continue
+		}
+		for _, c := range t.Clips {
+			if c.Name == clipName {
+				return c.Notes
+			}
+		}
+	}
+	return nil
+}
+
+// barRoundedSpan returns the notes' end span rounded UP to a whole bar.
+func barRoundedSpan(notes []dawmodel.Note) int {
+	maxEnd := 0
+	for _, n := range notes {
+		if e := n.Start + n.Dur; e > maxEnd {
+			maxEnd = e
+		}
+	}
+	if maxEnd <= 0 {
+		return music.BarTicks
+	}
+	bars := (maxEnd + music.BarTicks - 1) / music.BarTicks
+	return bars * music.BarTicks
+}
+
+// applyAddTrack creates a new (empty) track so anything a panel can add, an agent
+// can add too (the dual-operability rule). Kind defaults to MIDI; an optional Clip
+// name seeds an empty clip. Refuses a duplicate id.
+func applyAddTrack(a *dawmodel.Arrangement, ed BeckyEdit) (*dawmodel.Arrangement, string) {
+	id := strings.TrimSpace(ed.Track)
+	if id == "" {
+		return a, "add_track: a track id/name is required"
+	}
+	if _, ok := a.TrackByID(id); ok {
+		return a, fmt.Sprintf("add_track: a track %q already exists", id)
+	}
+	kind := dawmodel.KindMIDI
+	if strings.EqualFold(ed.Kind, "audio") {
+		kind = dawmodel.KindAudio
+	}
+	out := a.AddTrack(id, kind)
+	if clip := strings.TrimSpace(ed.Clip); clip != "" {
+		li := len(out.Tracks) - 1
+		ch := 0
+		if strings.EqualFold(id, "drums") {
+			ch = 9
+		}
+		out.Tracks[li].Clips = append(out.Tracks[li].Clips, dawmodel.Clip{Name: clip, Channel: ch})
+	}
+	return out, ""
 }
 
 // applyPatternToClip compiles a beatgen pattern back into the clip's notes. It

@@ -100,6 +100,10 @@ type BeckyEdit struct {
 	Seed int64 `json:"seed,omitempty"`
 	// Lane is the drum lane (by name, e.g. "kick") targeted by euclid_lane.
 	Lane string `json:"lane,omitempty"`
+	// Layer is the arrangement layer to add for add_layer (bass/chords/melody).
+	Layer string `json:"layer,omitempty"`
+	// Kind is the track kind for add_track ("midi" default, or "audio").
+	Kind string `json:"kind,omitempty"`
 	// Pulses is the number of euclidean onsets to spread for euclid_lane.
 	Pulses int `json:"pulses,omitempty"`
 	// Rotation rotates the euclidean pattern for euclid_lane (signed).
@@ -134,26 +138,38 @@ const (
 	// Generative drum operations (powered by internal/beatgen)
 	OpGenerateBeat = "generate_beat" // regenerate a drum clip's pattern (genre/density/seed)
 	OpEuclidLane   = "euclid_lane"   // set one drum lane to a euclidean rhythm
+
+	// Stem-aware arrangement operations (powered by internal/arrange)
+	OpAddLayer = "add_layer" // add a complementary layer (bass/chords/melody) that fits the existing stems
+
+	// Structural operations
+	OpAddTrack = "add_track" // create a new (empty) track so anything a panel can add, an agent can too
+
+	// Clipboard operations
+	OpDuplicateNotes = "duplicate_notes" // copy notes (by id, or the whole clip) forward by d_ticks (default: double the loop)
 )
 
 // knownOps is the set of valid op values for fast membership checks.
 var knownOps = map[string]bool{
-	OpAddNotes:     true,
-	OpDeleteNotes:  true,
-	OpMoveNotes:    true,
-	OpResizeNotes:  true,
-	OpTranspose:    true,
-	OpSetVelocity:  true,
-	OpSetStep:      true,
-	OpSetGain:      true,
-	OpSetPan:       true,
-	OpMute:         true,
-	OpSolo:         true,
-	OpRouteTo:      true,
-	OpAddSidechain: true,
-	OpSetTempo:     true,
-	OpGenerateBeat: true,
-	OpEuclidLane:   true,
+	OpAddNotes:       true,
+	OpDeleteNotes:    true,
+	OpMoveNotes:      true,
+	OpResizeNotes:    true,
+	OpTranspose:      true,
+	OpSetVelocity:    true,
+	OpSetStep:        true,
+	OpSetGain:        true,
+	OpSetPan:         true,
+	OpMute:           true,
+	OpSolo:           true,
+	OpRouteTo:        true,
+	OpAddSidechain:   true,
+	OpSetTempo:       true,
+	OpGenerateBeat:   true,
+	OpEuclidLane:     true,
+	OpAddLayer:       true,
+	OpAddTrack:       true,
+	OpDuplicateNotes: true,
 }
 
 // EditOutcome reports what happened to one BeckyEdit during Apply.

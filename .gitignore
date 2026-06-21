@@ -136,3 +136,11 @@ becky-go/eval/*.json
 
 # Go test cache
 .cache/
+
+# stray binaries from `go build ./cmd/<x>` run inside becky-go/ (use -o /tmp/...)
+/becky-go/song
+/becky-go/canvas
+/becky-go/beat
+/becky-go/arrange
+/becky-go/library
+/becky-go/genre

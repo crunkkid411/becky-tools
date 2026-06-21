@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# becky-tools quality gate (STANDARDS-ENGINEERING.md §1). Blocks a commit unless the
+# deterministic Go layer is green. Install with scripts/install-hooks.sh.
+# Windows note: a gofmt complaint that is ONLY CRLF line-endings is cosmetic (see
+# CLAUDE.md §4) — set BECKY_SKIP_GOFMT=1 to bypass just that check on Windows.
+set -e
+cd "$(git rev-parse --show-toplevel)/becky-go"
+echo "becky pre-commit: go build ./..."; go build ./...
+echo "becky pre-commit: go vet ./...";   go vet ./...
+echo "becky pre-commit: go test ./...";  go test ./...
+if [ "${BECKY_SKIP_GOFMT:-0}" != "1" ]; then
+  unformatted="$(gofmt -l .)"
+  if [ -n "$unformatted" ]; then
+    echo "becky pre-commit: gofmt needs these files:"; echo "$unformatted"
+    echo "run: gofmt -w . (or BECKY_SKIP_GOFMT=1 git commit ... if it's only CRLF on Windows)"
+    exit 1
+  fi
+fi
+echo "becky pre-commit: GREEN"

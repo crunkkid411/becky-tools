@@ -50,6 +50,7 @@ import (
 
 	"becky-go/internal/canvas"
 	"becky-go/internal/dawmodel"
+	"becky-go/internal/undo"
 	"becky-go/internal/winctx"
 )
 
@@ -140,6 +141,14 @@ type App struct {
 	// and edit via the immutable dawmodel verbs. The panels never own state; they
 	// produce a new Arrangement and hand it to applyArr.
 	arr *dawmodel.Arrangement
+
+	// hist is the undo/redo history of arrangement snapshots; applyArr pushes every
+	// commit, so any edit (panel or agent) is undoable ("undo"/"redo" in the box).
+	hist *undo.History
+
+	// sessionPath is where "save" writes the working arrangement (set when a .json/
+	// .mid session is loaded; "" until then → save falls back to becky-session.json).
+	sessionPath string
 
 	// Panels — each owns its own file + state struct (gui_*panel.go); layoutVisual
 	// dispatches to the active one by mode. They read a.arr and emit via applyArr.
@@ -288,6 +297,11 @@ func (a *App) handleInput(gtx layout.Context) {
 	}
 	if a.dockDrum.Clicked(gtx) {
 		a.activeMode = canvas.ModeDrum
+		// Opening the Drum machine must OPEN A DRUM MACHINE, not show a "load a
+		// file" placeholder: drop in a default starter beat when none exists.
+		if next := ensureDrumMachineArr(a.arr); next != a.arr {
+			a.applyArr(next)
+		}
 	}
 	if a.dockMixer.Clicked(gtx) {
 		a.activeMode = canvas.ModeDAW

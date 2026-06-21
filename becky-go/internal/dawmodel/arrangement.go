@@ -59,18 +59,20 @@ type Peak struct {
 type Clip struct {
 	Name    string `json:"name"`
 	Channel int    `json:"channel"`
-	Program int    `json:"program"` // GM program, -1 = percussion/none
-	Offset  int    `json:"offset"`  // lane offset in ticks (clip start on the timeline)
+	Program int    `json:"program"`        // GM program, -1 = percussion/none
+	Offset  int    `json:"offset"`         // lane offset in ticks (clip start on the timeline)
+	File    string `json:"file,omitempty"` // audio source path for an audio / bounced clip
 	Notes   []Note `json:"notes,omitempty"`
 	Peaks   []Peak `json:"peaks,omitempty"`
 }
 
 // Track is one lane of the arrangement: MIDI or audio, with a mixer strip.
 type Track struct {
-	ID    string `json:"id"`
-	Kind  string `json:"kind"` // KindMIDI | KindAudio
-	Clips []Clip `json:"clips"`
-	Strip Strip  `json:"strip"`
+	ID      string `json:"id"`
+	Kind    string `json:"kind"` // KindMIDI | KindAudio
+	Clips   []Clip `json:"clips"`
+	Strip   Strip  `json:"strip"`
+	Bounced bool   `json:"bounced,omitempty"` // MIDI+FX baked to the audio clip; heavy VSTs can be bypassed
 }
 
 // Arrangement is the whole editable session: tracks, transport, mixer buses, and
@@ -103,7 +105,12 @@ func (a *Arrangement) clone() *Arrangement {
 	for i, t := range a.Tracks {
 		out.Tracks[i] = cloneTrack(t)
 	}
-	out.Buses = append([]Bus(nil), a.Buses...)
+	out.Buses = make([]Bus, len(a.Buses))
+	for i, b := range a.Buses {
+		b.Sidechain = append([]string(nil), b.Sidechain...)
+		b.FX = append([]FXSlot(nil), b.FX...)
+		out.Buses[i] = b
+	}
 	out.Corrections = append([]Correction(nil), a.Corrections...)
 	return &out
 }
@@ -114,6 +121,7 @@ func cloneTrack(t Track) Track {
 		clips[i] = cloneClip(c)
 	}
 	t.Clips = clips
+	t.Strip.FX = append([]FXSlot(nil), t.Strip.FX...) // deep-copy the insert chain
 	return t
 }
 

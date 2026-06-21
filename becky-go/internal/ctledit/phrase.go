@@ -1,6 +1,8 @@
 package ctledit
 
 import (
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -24,6 +26,24 @@ func ParsePhrase(text string, a *dawmodel.Arrangement) (BeckyEditBatch, bool) {
 	t := strings.ToLower(strings.TrimSpace(text))
 	if t == "" {
 		return BeckyEditBatch{}, false
+	}
+
+	// Stem-aware layering: "add bass" / "add some chords" / "add a melody" / "lay
+	// down a bassline". Works whenever an arrangement is loaded (the layer reads
+	// whatever stems exist), so it's checked before the drum-clip requirement.
+	if layer := addLayerWord(t); layer != "" {
+		return single("add "+layer, BeckyEdit{
+			Op: OpAddLayer, Layer: layer, Genre: firstGenreWord(t), Seed: seedFromText(t),
+		}), true
+	}
+
+	// Transport + mixer phrases (don't need a drum clip): "set bpm to 128",
+	// "mute the bass", "unmute the lead", "solo the drums".
+	if bpm, ok := parseBPMPhrase(t); ok {
+		return single(fmt.Sprintf("set tempo to %d", bpm), BeckyEdit{Op: OpSetTempo, BPM: bpm}), true
+	}
+	if ed, sum, ok := parseMuteSoloPhrase(t, a); ok {
+		return single(sum, ed), true
 	}
 
 	trackID, _ := findDrumClipRef(a)
@@ -67,6 +87,89 @@ func ParsePhrase(text string, a *dawmodel.Arrangement) (BeckyEditBatch, bool) {
 	}
 
 	return BeckyEditBatch{}, false
+}
+
+// addLayerWord detects an "add a <layer>" request and returns the canonical layer
+// role (bass/chords/melody), or "". It only fires when the instruction is about
+// ADDING (so "make the bass louder" doesn't match). "bassline" → bass, "guitar"/
+// "lead" → melody (the melodic top line).
+func addLayerWord(t string) string {
+	if !containsAny(t, "add", "lay down", "put in", "give me a", "give it a", "write a", "write some") {
+		return ""
+	}
+	switch {
+	case containsAny(t, "bassline", "bass line", "bass"):
+		return "bass"
+	case containsAny(t, "chord", "harmony", "pad"):
+		return "chords"
+	case containsAny(t, "melody", "lead", "guitar", "riff", "topline", "top line"):
+		return "melody"
+	}
+	return ""
+}
+
+var bpmRe = regexp.MustCompile(`(\d{2,3})\s*bpm|(?:bpm|tempo)\s*(?:to|=|:|of)?\s*(\d{2,3})`)
+
+// parseBPMPhrase detects "set bpm to 128" / "tempo 140" / "128 bpm" → a tempo in
+// the sane 40..250 range.
+func parseBPMPhrase(t string) (int, bool) {
+	if !strings.Contains(t, "bpm") && !strings.Contains(t, "tempo") {
+		return 0, false
+	}
+	m := bpmRe.FindStringSubmatch(t)
+	if m == nil {
+		return 0, false
+	}
+	num := m[1]
+	if num == "" {
+		num = m[2]
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n < 40 || n > 250 {
+		return 0, false
+	}
+	return n, true
+}
+
+// parseMuteSoloPhrase detects "mute/unmute/solo/unsolo the <track>" and resolves the
+// track by id/name mentioned in the text.
+func parseMuteSoloPhrase(t string, a *dawmodel.Arrangement) (BeckyEdit, string, bool) {
+	var op string
+	var flag bool
+	switch {
+	case strings.Contains(t, "unmute"):
+		op, flag = OpMute, false
+	case strings.Contains(t, "mute"):
+		op, flag = OpMute, true
+	case strings.Contains(t, "unsolo"), strings.Contains(t, "un-solo"):
+		op, flag = OpSolo, false
+	case strings.Contains(t, "solo"):
+		op, flag = OpSolo, true
+	default:
+		return BeckyEdit{}, "", false
+	}
+	target := trackMentioned(t, a)
+	if target == "" {
+		return BeckyEdit{}, "", false
+	}
+	verb := strings.SplitN(strings.TrimSpace(t), " ", 2)[0]
+	ed := BeckyEdit{Op: op, Target: target}
+	if op == OpMute {
+		ed.Muted = flag
+	} else {
+		ed.Soloed = flag
+	}
+	return ed, fmt.Sprintf("%s %s", verb, target), true
+}
+
+// trackMentioned returns the id of the first existing track named in the text.
+func trackMentioned(t string, a *dawmodel.Arrangement) string {
+	for _, tr := range a.Tracks {
+		if id := strings.ToLower(tr.ID); id != "" && strings.Contains(t, id) {
+			return tr.ID
+		}
+	}
+	return ""
 }
 
 // single wraps one edit in a summarized batch.

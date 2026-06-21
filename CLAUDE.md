@@ -74,6 +74,13 @@ These are settled and each was a real bug or measured failure. Full reasoning in
 - **Paths may be Windows paths even when running on Linux/CI.** Use
   `internal/pathx` (separator-agnostic Base/Dir), not `filepath.Base` on a value
   that originated as a `C:\...` path. (This is why CI is green on Linux.)
+- **THE drum machine is becky's own pure-Go SAMPLER engine — not Hydrogen, not REAPER.**
+  `internal/drummachine` (model) + `internal/audioengine` sampler (real multi-sample kits,
+  velocity/envelope/choke). becky-canvas's drum ▶ plays through it via
+  `drummachine.MachineFromArrangement` → `becky-daw-engine --play-machine` (the SAME engine
+  the standalone `becky-drummachine` uses). Hydrogen (`internal/hydrogen`/`becky-groove`) is
+  an OPTIONAL export for its FOSS FX, NOT the core (it was orphaned — that was the confusion).
+  REAPER is the full-DAW path, separate. Full rationale + what's left: **`DRUM-MACHINE-DECISION.md`**.
 - **becky-canvas is THE app; REAPER is at most an export button — never a substitute.**
   This direction is PINNED. It ping-ponged for weeks (native drum machine → fork Hydrogen
   → drive REAPER → back to canvas) and confused Jordan every time. The native Go+Gio
@@ -83,6 +90,28 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   window opens, **▶ Play makes sound**, every button works, and it doesn't freeze. Full
   directive + the mandatory Definition-of-Done checklist are in **`CANVAS-NORTH-STAR.md`**
   — read it before ANY canvas/DAW/drum/piano/mixer/audio work.
+- **Music is deterministic — generate it with math, not tokens.** The arrangement build
+  order and the rules that make each layer fit are SETTLED and live in code
+  (`internal/arrange`): `key+progression → drums → bass → chords → melody → texture`,
+  each layer aware of the stems before it (bass LOCKS to the actual kick, chords/melody
+  stay in key, minor-key V is major, velocity is never flat), 8 bars max per chunk.
+  "Four-on-the-floor house with my kick" must be instant + token-free, never a model
+  call. A model is only for fuzzy plain-English intent, never the musical result. The
+  canon is **`ARRANGEMENT-RULES.md`** — read it before any composition/layering work; it
+  exists so these rules stop getting re-researched and lost every session.
+- **The PROVABLE HANDOFF (from `STANDARDS-WORKFLOW.md` §7 + `HANDOFF-TEMPLATE.md`).** Any cloud→local
+  handoff of work needing hardware cloud can't touch (audio/GUI/GPU/device/media) is NOT "ready"
+  until it ships (1) a **one-command, no-hardware proof cloud already RAN and pasted evidence for**
+  (a `--render`/`--selftest`/`--dry-run` that exercises the real code path + is measurable), and (2)
+  an **ordered, checkboxed work order of commands** (not prose) the local agent drives to completion.
+  "It compiles" is not proof. If you can't hand over a one-command proof, you haven't finished your
+  half. This is the standing fix for "I researched it and none of it got wired up."
+- **The five gates + the circuit breakers (from `STANDARDS-ENGINEERING.md`).** A branch is
+  not "ready" until `go build/vet/test ./...` + `gofmt -l` + `build-all-tools.bat` are green
+  (a cloud agent hands #5 to local but still passes 1–4). Every fixed bug ships a regression
+  test; tests assert VALUES, not truthiness. **Max 3 auto-fix rounds on one failure, then
+  stop and flag**; after 2 failed attempts at an error, stop guessing and research it.
+  `scripts/install-hooks.sh` wires a pre-commit gate so this can't be skipped.
 
 ---
 
@@ -143,6 +172,13 @@ The two agents split the work along the **model boundary**:
    model call.
 3. The **live status of the current branch** lives in section 6 below. The cloud
    agent updates it before ending a session; the local agent reads it first.
+4. **THE PROVABLE HANDOFF (mandatory for runtime work — audio/GUI/GPU/device/media).**
+   The branch is not "ready" until cloud ships, and has RUN, a **one-command offline
+   proof** of the real code path (a `--render`/`--selftest`/`--dry-run` whose output is
+   measurable — ffprobe/byte-count/hash), AND an **ordered, checkboxed work order of
+   commands** (`LOCAL-WORK-ORDER.md` / `HANDOFF-<topic>.md`, from `HANDOFF-TEMPLATE.md`)
+   the local agent drives to completion — NOT prose, NOT "wire it up". §6 points local at
+   it with a "do not merge-and-stop" banner. Full rule: `STANDARDS-WORKFLOW.md` §7.
 
 ### Copy-paste prompt for the local agent
 
@@ -217,7 +253,51 @@ load-bearing rules, in brief:
 - `COLLAB-PROTOCOL.md` — how the two agents (cloud + local) share this repo without
   clobbering: lane rules, the work registry (claim before you build), and the async
   inbox between us. Read before committing.
+- **The STANDARDS-\*.md set (MANDATORY, adapted from the ACE-Step-DAW `.claude` rules —
+  re-expressed in becky's terms, not AGPL-copied):** `STANDARDS-ENGINEERING.md` (the five
+  quality gates, TDD, regression-test-per-bug, assert-values-not-truthiness, the
+  max-3-fix / stop-and-research circuit breakers, research-depth); `STANDARDS-WORKFLOW.md`
+  (propose→preview→apply, spec-first for 3+ files, the two-reviewer rule, named review/
+  test stances, the quality-gate hook); `STANDARDS-CANVAS-UX.md` (visual language, the
+  interaction grammar, and the headline **dual human+agent operability** rule — a canvas
+  feature isn't done until it's operable from BOTH a panel AND a `ctledit` op, undoable);
+  `STANDARDS-MUSIC-RESEARCH.md` (how becky researches a genre's theory before composing:
+  the 5 elements, the search-query templates, named-references-are-gold, the 2–4 principles,
+  and the `becky-research → distill → profiles/<genre>.json` pipeline). The deterministic
+  halves execute in `internal/arrange` + `internal/musictheory`; these docs are the canon
+  so the rules never get re-researched and lost.
 - `README.md` — project overview, tool catalog, non-obvious decisions.
+- `FEATURE-INVENTORY.md` — **the canonical "definition of functional": the exhaustive
+  checklist (187 items) of every basic feature a DAW / drum machine / piano roll / mixer /
+  video-NLE / audio editor must have.** This is the bar becky measures against; a separate
+  gap analysis (CLAUDE.md §6 / DRUM-MACHINE-DECISION) compares becky's real state to it.
+  When in doubt about whether a tool is "done", check it here.
+- `GAP-ANALYSIS.md` — **becky's REAL state vs FEATURE-INVENTORY, item by item with file:symbol
+  citations + a prioritized punch-list.** The honest pattern it found: strong tested model layer
+  almost everywhere, thin/absent RUNTIME (audible/visible) layer. Read it to pick the next
+  highest-impact gap; update it as gaps close.
+- `DRUM-MACHINE-DECISION.md` — **the PINNED answer to "Hydrogen or REAPER or what?"**: becky's
+  own sampler engine is THE drum machine; the canvas plays through it; Hydrogen is an optional
+  export. Read before any drum/canvas-audio work so it stops flip-flopping.
+- `LOCAL-WORK-ORDER.md` — **THE current local task: an ordered, command-by-command, checkboxed
+  work order to make the becky-canvas drum machine SOUND, with the exact verify command for each
+  step.** Built because vague "LEFT FOR LOCAL" prose kept getting merged-and-skipped. The local
+  agent drives this to completion and pastes evidence into §6; cloud already proved Step 1's audio.
+- `HANDOFF-TEMPLATE.md` — **the STANDARD skeleton every cloud→local runtime handoff copies** (the
+  "provable handoff": a one-command offline proof cloud already ran + an ordered checkboxed work
+  order). Mandatory per `STANDARDS-WORKFLOW.md` §7 + CLAUDE.md §2/§4. Copy it; don't hand off prose.
+- `HANDOFF-ROUTING-CANVAS.md` — **how to wire the deterministic label→bus routing (`internal/autoroute`,
+  `becky-route`) into becky-canvas + REAPER**, and the Hydrogen-can't-host-VSTs fact. Jordan's
+  workflow: lightweight WRITING, then apply his routing/plugins at the END (or a routed default), so
+  he never re-routes 16 channels by hand. Cloud proved the routing offline; local does the VST/bounce.
+- `HANDOFF-CANVAS-GUI.md` — **THE panel-by-panel work order for the local agent to wire becky-canvas's
+  GUI** (song-from-a-phrase, the Route action, per-bus FX-chain view, Bounce, save/undo buttons) onto
+  the already-proven engines (`songbuild`/`autoroute`/`fxchain`/`audioengine` render), each step with a
+  one-command offline proof + a window Definition-of-Done. Written because GUI handoffs kept being vague.
+- `HANDOFF-VST-CANVAS.md` — **the C++ VST3-host work order**: host an effect on a bus, apply a saved
+  state chunk (dialed-in plugin settings), and render-through for bounce-in-place. The host already does
+  effect-render + `vst.state.load`; the gaps (a WAV reader, a `render.chain` verb, a `Bus.FX` field) are
+  spelled out with proofs. VST3 SDK is MIT (v3.8, Oct 2025) so this path is license-clean.
 - `SKILL.md` — how to *use* the tools (human + agent usage guide).
 - `FORENSIC-OUTPUT-PHILOSOPHY.md` — how findings must be reported. Governs every
   human-facing output.
@@ -232,6 +312,13 @@ load-bearing rules, in brief:
   mandatory hardware checklist (window opens, ▶ Play makes sound, every button works, no
   freeze) that "it compiles" kept skipping, and the cloud↔local split. Outranks a single
   session's instinct; if it seems wrong, ask Jordan — don't pivot.
+- `ARRANGEMENT-RULES.md` — **the deterministic music-theory canon (read before any
+  composition/layering/`becky-compose`/`becky-arrange`/canvas-music work).** The build
+  order (`drums → bass → chords → melody → texture`), how each layer fits the ones before
+  it, the universal constraints (in-key, bass register, never-flat velocity, minor-V
+  major), per-genre progressions, and the 8-bar chunk rule. Ported from ACE-Step-DAW's
+  `.claude` skills into EXECUTING Go (`internal/arrange`) so the rules never get
+  re-researched and lost. The code is the source of truth; this is its human-readable canon.
 - `GUI-RULES.md` — **CANONICAL GUI + audio architecture standard (ratified 2026-06-19).**
   Read before ANY GUI/audio/DAW/NLE work. The stack (Go engine + Gio GUI + C++ VST3/ASIO
   audio-host sidecar + Rust/wgpu video sidecar), the deterministic NDJSON engine↔GUI seam,
@@ -338,6 +425,30 @@ Picks up "Left for next" item 3 from the canvas-convergence entry below ("the NL
      }
      ```
      then in the agent-box branch: `if a.applyEditBatch(phrase) { ... } else if a.applyNL(phrase) { ... }`. (Cloud can't compile `-tags gui` here — no X11/Wayland — so this one call is left for local to add + launch-verify.)
+**>>> LOCAL: THE TASK FOR THIS BRANCH IS `LOCAL-WORK-ORDER.md` — drive it to completion, in
+order, and paste the evidence into §6. <<<** It is an ordered, command-by-command checklist to
+make the becky-canvas drum machine SOUND on real hardware. The deterministic chain is already
+built AND cloud-proven (Step 1 renders real audio offline: `becky-daw-engine --render-arrangement`
+→ peak −2.1 dBFS on a synth kit). Do NOT just merge + run tests + stop — that is the exact failure
+this work order exists to end. Steps: (0) build/vet/test green, (1) prove drum audio offline with
+ffprobe, (2) build the `-tags audio`/`-tags gui` exes (the step that keeps getting skipped — needs
+`CC=C:\msys64\mingw64\bin\gcc.exe`), (3) open becky-canvas → Drum → ▶ and HEAR it, (4) port the kit
+browser from `cmd/drummachine/gui_kit.go` into the canvas drum panel. Report each box with evidence.
+
+
+**Branch `claude/project-completion-9jvjwj` (cloud, 2026-06-21, overnight run) — PORTED THE WHOLE ACE-Step-DAW `.claude` FOLDER into mandatory becky standards + executing Go, fixed the Drum Machine button, built the deterministic stem-aware arranger, and shipped favorites/templates + the genre-research pipeline + agent-parity + jam. Draft PR #19; all cloud-verifiable; GUI render/audio = the one hardware step.**
+Jordan (paraphrased): the Drum Machine button was a dead end; the ACE-Step `.claude` folder (13 skills + rules/references/commands/agents) is golden and ALL of it should be MANDATORY baseline; favorites/templates are basic functionality or it isn't real software; "orchestrate it all while I sleep." Done across ~7 subagents (5 to extract every `.claude` folder) + integration here. Whole module `go build/vet/test ./...` + `gofmt` GREEN; `-tags gui` canvas + drummachine compile.
+- **Drum Machine button FIXED** (`cmd/canvas/drummachine_default.go`): clicking it now drops in a playable starter beat (4-on-floor kick + backbeat + hats) instead of "open a project.json". A loaded melodic session GAINS a drums track; existing drums untouched. Pure logic, 5 tests.
+- **`internal/arrange` (NEW) — the deterministic stem-aware layering engine** (the ACE-Step LEGO, in Go): build order `key+progression → drums → bass → chords → melody → texture`; **AddBass LOCKS to the actual kick** + chord roots on strong beats (register 36-55, in-key, never-flat vel); AddChords (minor-V is major); AddMelody (chord-tones + rests); `SuggestNext`/`NextLayer`; **Analyze** + **Jam** (one-command fill); 8-bar chunk cap. `becky-arrange` CLI (add/next/status/analyze/jam). 20+ tests; PROVEN: bass steps == kick steps.
+- **`internal/musictheory` (NEW)**: ClassifyFunction, VoiceFromIntervals, Transpose, InScale, and **Evaluate(arr)** — becky checks its OWN output (key/velocity/register/space) before shipping; wired into becky-arrange. 9 tests.
+- **`internal/library` + `becky-library` (NEW) — favorites + templates** (Jordan's "basic functionality" bar): star kits/sounds/samples/genres/progressions; save/recall/list named arrangement starters (~/.becky/library). UI-agnostic. 9 tests. PROVEN end-to-end.
+- **`internal/genreprofile` + `becky-genre` (NEW) — genre-research → permanent profile pipeline**: research query templates + Elements (the 5 elements) → a valid embeddable `profiles/<id>.json` (joins the DB on next `go build`). Only research/distillation is the model/network 5%. 5 tests.
+- **`internal/ctledit` parity (dual-operability)**: OpAddTrack + `Describe(arr)` introspection (the ARIA analog, via `becky-arrange status --json`) + NL phrases (`set bpm`, `mute/solo`, `add a bassline/chords/melody`) — so "add bass" etc. work in the canvas agent box with NO model. The mixer/transport mutators already existed.
+- **The MANDATORY STANDARDS (the `.claude` knowledge, re-expressed — AGPL-safe, not copied; pinned in CLAUDE.md §2+§5):** `STANDARDS-ENGINEERING.md` (5 gates, TDD, regression-per-bug, assert-values, max-3-fix / stop-and-research circuit breakers), `STANDARDS-WORKFLOW.md` (propose→preview→apply, spec-first, two-reviewer rule), `STANDARDS-CANVAS-UX.md` (visual language + dual human+agent operability), `STANDARDS-MUSIC-RESEARCH.md` (the genre-research methodology), `ARRANGEMENT-RULES.md` (the music build-order canon). Plus `scripts/git-hooks/pre-commit` + `install-hooks.sh` (the quality gate, opt-in install).
+- **LEFT FOR LOCAL:** (1) run the `CANVAS-NORTH-STAR.md` §2 Definition-of-Done — open becky-canvas, click Drum Machine (confirm the starter beat RENDERS + SOUNDS), type "add a bassline"/"set bpm to 128"/"mute the bass" in the agent box (confirm they apply), ▶ Play; (2) `build-all-tools.bat` (auto-discovers the new `cmd/arrange`, `cmd/beat`, `cmd/library`, `cmd/genre`); (3) optional: surface favorites/templates + the jam button in the canvas UI (the engine + CLIs are done; this is the GUI step); install the pre-commit hook (`scripts/install-hooks.sh`). NOT yet merged to master.
+
+---
+
 **Branch `claude/project-completion-9jvjwj` (cloud, 2026-06-21) — GENERATIVE BEAT ENGINE for becky-canvas (Playbeat-class, NO REAPER) + fixed broken seams. Draft PR #19; READY FOR LOCAL (GUI render/audio = the one hardware step).**
 Jordan: stop stopping early; becky-canvas needs these tools WITHOUT REAPER; orchestrate subagents. Reference: Audiomodern **Playbeat 4** (researched — see the PR; the YouTube short 403'd, unverified). Built the deterministic engine layer (fully cloud-verified) + wired it into the canvas window (compile-gated here — I installed the Gio/Vulkan dev libs so `go build -tags gui ./cmd/canvas` compiles; it caught nothing new but is now a real gate). `go build/vet/test ./...` + `gofmt` GREEN; CI green on Ubuntu+Windows.
 - **`internal/beatgen` (NEW, 88 tests):** a Playbeat-class generative rhythm engine — Generate/Mutate/**Remix**/Euclidean/Density/Rotate/**Infinity**, per-step velocity/pitch/pan/**flam**/ratchet, per-lane polymeter length+direction+**rate/swing/track-delay**, per-parameter **Limits**, and **genre profiles** (`GenerateGenre`: straight/trap/hiphop/house/techno/dnb/breakbeat). Seeded, immutable, degrade-never-crash. Built across 2 cloud subagents + a research subagent.

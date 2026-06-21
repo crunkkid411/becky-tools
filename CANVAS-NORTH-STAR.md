@@ -34,6 +34,51 @@ Jordan — do not quietly pivot.
 > inside the becky-canvas window?"* If the answer is "no, it happens in REAPER," you
 > took the wrong turn — stop and come back into the window.
 
+### 1.1 What the creative engine actually IS — deterministic MIDI "LEGO", NOT random patterns
+
+Jordan is a professional. The goal is **saving time on the deterministic, mechanical
+parts of music** — not generating random patterns a human would never choose. Build to
+this, exactly:
+
+- **Layered + context-aware ("LEGO").** becky composes the way Jordan builds a track:
+  one layer at a time, where **each new layer is aware of the stems already there.**
+  Drums first → the bassline is written to complement **the kick's rhythm** *and* the
+  harmony → "add an emo guitar riff" over a trap beat writes a guitar part that follows
+  **emo-guitar idiom** *and* locks to the existing trap groove/key. This is the principle
+  he likes in **ACE-Step-DAW** (each layer aware of prior stems) — borrow the *principle*,
+  not the generative-audio implementation.
+- **MIDI-FIRST, always.** MIDI is math, it's deterministic, and Jordan can hand-edit it
+  fast. **AI-generated *audio* is rejected** — "you get what you get," no control. Audio
+  in becky = **his own samples** playing the MIDI. (His favorited kick on a
+  four-on-the-floor, not a synthesized render.)
+- **Deterministic + instant + token-free.** "Give me a four-on-the-floor house beat with
+  my favorite kick" must be a **template + a sample assignment**, computed instantly — it
+  must NOT burn model tokens, and it must NOT make him click every kick by hand. Music
+  theory is math; treat it that way. A local model is only for genuinely fuzzy
+  natural-language intent, never for the deterministic musical result.
+- **Per-genre theory rules.** The conventions for each instrument live in per-genre
+  profiles (we already have 13 in `internal/music/profiles/`). "emo guitar," "trap hats,"
+  "house kick" each follow documented, deterministic idioms — extend these, don't invent a
+  model for them.
+- **What this is NOT:** Playbeat-style **random** pattern spraying (random hi-hats nobody
+  would pick) is **not** the goal. Seeded randomness is fine as an *optional* spice, never
+  the point. The genuinely useful part of the generative engine (`internal/beatgen`) is
+  its **deterministic genre templates** (house = four-on-the-floor) and euclidean math —
+  lean on those; the dice are background, not the feature.
+- **Inspirations (principle, not implementation):** ACE-Step-DAW (LEGO stem-awareness),
+  **Strudel** (lightweight, deterministic, math/CLI pattern language). becky stays
+  MIDI + his samples.
+- **Standard DAW features are expected, built WITHOUT asking** — if Maschine / Cubase /
+  Playbeat has it (waveform display, Play/Pause, piano roll, mixer), it's table stakes.
+  Don't ask whether to build the obvious; build it and report.
+
+> The unbuilt centerpiece this implies: a deterministic **"add a complementary layer"**
+> engine — `add <genre> <instrument>` reads the current `dawmodel.Arrangement` (key,
+> tempo, chords, the kick/groove), then writes a new MIDI track that obeys that
+> instrument's per-genre idiom **and** fits the existing stems. `becky-compose` is the
+> seed of this (per-genre profiles + shared harmony); the gap is making it
+> **incremental** and **cross-stem / cross-genre aware**.
+
 ---
 
 ## 2. Definition of DONE for canvas work (this is the part that keeps getting skipped)

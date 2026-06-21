@@ -23,6 +23,7 @@ import (
 
 	"becky-go/internal/canvas"
 	"becky-go/internal/dawmodel"
+	"becky-go/internal/drummachine"
 	"becky-go/internal/habits"
 )
 
@@ -140,7 +141,31 @@ func (a *App) resolvePlayJSON(target string, d *drumGrid) (path, toClean string,
 // ■ Stop can kill it immediately — a killed process is treated as a clean stop, not an
 // error. Degrade-never-crash: every other failure is a returned error the caller
 // surfaces as a quiet neon line.
-func (a *App) execPlay(target string, _ canvas.Mode, d *drumGrid) error {
+func (a *App) execPlay(target string, mode canvas.Mode, d *drumGrid) error {
+	// In Drum mode, route the beat through the SAMPLER engine (real multi-sample
+	// kits, velocity, choke groups) via --play-machine — the SAME engine the
+	// standalone becky-drummachine uses — instead of the weak 4-sample synth path.
+	// This is the wire that connects the canvas drum panel to the real drum engine.
+	if mode == canvas.ModeDrum && hasDrumClip(a.arr) {
+		m := drummachine.MachineFromArrangement(a.arr).WithDefaultKitSamples(defaultKitDir())
+		data, merr := json.Marshal(m)
+		if merr != nil {
+			return fmt.Errorf("couldn't build the machine: %w", merr)
+		}
+		f, ferr := os.CreateTemp("", "becky-canvas-machine-*.json")
+		if ferr != nil {
+			return fmt.Errorf("couldn't stage the machine: %w", ferr)
+		}
+		if _, werr := f.Write(data); werr != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return werr
+		}
+		f.Close()
+		defer os.Remove(f.Name())
+		return a.runEngine([]string{"--play-machine", f.Name(), "--loops", strconv.Itoa(playLoops)})
+	}
+
 	jsonPath, toClean, err := a.resolvePlayJSON(target, d)
 	if err != nil {
 		return err
@@ -148,7 +173,22 @@ func (a *App) execPlay(target string, _ canvas.Mode, d *drumGrid) error {
 	if toClean != "" {
 		defer os.Remove(toClean)
 	}
+	return a.runEngine([]string{"--play-pattern-audio", jsonPath, "--loops", strconv.Itoa(playLoops)})
+}
 
+// defaultKitDir resolves the becky-owned default drum kit folder (kick/snare/hat/
+// clap.wav), overridable via BECKY_DRUM_KIT — the same convention the engine's synth
+// path uses, so the canvas sampler path finds the same samples.
+func defaultKitDir() string {
+	if d := strings.TrimSpace(os.Getenv("BECKY_DRUM_KIT")); d != "" {
+		return d
+	}
+	return `X:/AI-2/becky-tools/samples/kit`
+}
+
+// runEngine execs becky-daw-engine with the given args, storing the process handle so
+// ■ Stop can kill it (a killed process is a clean stop, not an error). Blocking.
+func (a *App) runEngine(args []string) error {
 	exeName := "becky-daw-engine"
 	if isWindows() {
 		exeName += ".exe"
@@ -157,8 +197,7 @@ func (a *App) execPlay(target string, _ canvas.Mode, d *drumGrid) error {
 	if err != nil {
 		return fmt.Errorf("audio engine not found next to becky-canvas — build with build-all-tools.bat")
 	}
-
-	cmd := exec.Command(exePath, "--play-pattern-audio", jsonPath, "--loops", strconv.Itoa(playLoops))
+	cmd := exec.Command(exePath, args...)
 	var outBuf strings.Builder
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &outBuf

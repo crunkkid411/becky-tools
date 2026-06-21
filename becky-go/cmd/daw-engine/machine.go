@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"becky-go/internal/audioengine"
+	"becky-go/internal/dawmodel"
 	"becky-go/internal/drummachine"
 	"becky-go/internal/sampledecode"
 	"becky-go/internal/sampler"
@@ -42,6 +43,8 @@ var machineFlagNames = []string{
 	"-play-machine", "--play-machine",
 	"-play-pad", "--play-pad",
 	"-render-machine", "--render-machine",
+	"-render-arrangement", "--render-arrangement",
+	"-render-song", "--render-song",
 }
 
 // hasMachineFlag reports whether args contain one of our subcommand flags (also
@@ -76,6 +79,8 @@ func machineModeRun(args []string) int {
 	playMachine := fs.String("play-machine", "", "render and play a machine.json drum pattern")
 	playPad := fs.String("play-pad", "", "audition a single pad of a machine.json")
 	renderMachine := fs.String("render-machine", "", "offline bounce: render a machine.json pattern to a WAV file (pure Go, no audio build needed)")
+	renderArr := fs.String("render-arrangement", "", "offline bounce: render a dawmodel project.json's drum clip to a WAV — the SAME chain the canvas drum ▶ uses (MachineFromArrangement + default kit), pure Go")
+	renderSong := fs.String("render-song", "", "offline bounce: render a WHOLE project.json (drums + bass + chords + melody) to a WAV via the synth + drum kit, pure Go")
 	pad := fs.Int("pad", 0, "with --play-pad: the pad index 0..15 to audition")
 	vel := fs.Int("vel", 100, "with --play-pad: velocity 1..127")
 	loops := fs.Int("loops", 1, "with --play-machine: tile the pattern N times for a seamless loop")
@@ -89,6 +94,10 @@ func machineModeRun(args []string) int {
 	}
 
 	switch {
+	case *renderSong != "":
+		return runRenderSong(*renderSong, *outWAV)
+	case *renderArr != "":
+		return runRenderArrangement(*renderArr, *kitDir, *outWAV, *rngSeed)
 	case *renderMachine != "":
 		return runRenderMachine(*renderMachine, *kitDir, *outWAV, *rngSeed)
 	case *playPad != "":
@@ -99,6 +108,80 @@ func machineModeRun(args []string) int {
 		fmt.Fprintln(os.Stderr, "machine: no subcommand value (use --play-machine <file>, --play-pad <file> --pad N, or --render-machine <file>)")
 		return 2
 	}
+}
+
+// runRenderSong is the --render-song offline bounce: it renders a WHOLE project.json
+// (every track — drums via the kit, bass/chords/melody via the synth) to a WAV, pure
+// Go. This is the reusable pipe stage so anything that emits a dawmodel project.json
+// (becky-canvas, becky-compose, becky-arrange) can be turned into an audible file with
+// one command — the same renderer becky-song uses.
+func runRenderSong(path, outPath string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "render-song: read:", err)
+		return 1
+	}
+	var arr dawmodel.Arrangement
+	if err := json.Unmarshal(data, &arr); err != nil {
+		fmt.Fprintln(os.Stderr, "render-song: parse project.json:", err)
+		return 1
+	}
+	if outPath == "" {
+		outPath = strings.TrimSuffix(path, filepath.Ext(path)) + ".wav"
+	}
+	if err := audioengine.RenderArrangementWAV(&arr, outPath, 48000, 1); err != nil {
+		fmt.Fprintln(os.Stderr, "render-song:", err)
+		return 2
+	}
+	fmt.Printf("render-song: wrote %s\n", outPath)
+	return 0
+}
+
+// runRenderArrangement is the --render-arrangement offline bounce: it loads a
+// dawmodel project.json, converts its drum clip to a Machine with EXACTLY the chain
+// becky-canvas's drum ▶ uses (drummachine.MachineFromArrangement +
+// WithDefaultKitSamples), then renders it to a WAV via the pure-Go sampler. This is
+// the one command that PROVES the canvas drum audio works (ffprobe the WAV) without a
+// GUI, an audio device, or a GPU — so the cloud→local handoff has a concrete,
+// skippable-by-nobody verification step.
+func runRenderArrangement(path, kitDirFlag, outPath string, seed int64) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "render-arrangement: read:", err)
+		return 1
+	}
+	var arr dawmodel.Arrangement
+	if err := json.Unmarshal(data, &arr); err != nil {
+		fmt.Fprintln(os.Stderr, "render-arrangement: parse project.json:", err)
+		return 1
+	}
+	kitDir := kitDirFlag
+	if kitDir == "" {
+		kitDir = os.Getenv("BECKY_DRUM_KIT")
+	}
+	if kitDir == "" {
+		kitDir = `X:/AI-2/becky-tools/samples/kit`
+	}
+	m := drummachine.MachineFromArrangement(&arr).WithDefaultKitSamples(kitDir)
+
+	tmp, err := os.CreateTemp("", "becky-render-machine-*.json")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "render-arrangement: temp:", err)
+		return 1
+	}
+	defer os.Remove(tmp.Name())
+	body, _ := json.MarshalIndent(m, "", "  ")
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		fmt.Fprintln(os.Stderr, "render-arrangement: stage machine:", err)
+		return 1
+	}
+	tmp.Close()
+
+	if outPath == "" {
+		outPath = strings.TrimSuffix(path, filepath.Ext(path)) + ".wav"
+	}
+	return runRenderMachine(tmp.Name(), kitDir, outPath, seed)
 }
 
 // runRenderMachine is the --render-machine offline bounce. It renders one pattern bar
