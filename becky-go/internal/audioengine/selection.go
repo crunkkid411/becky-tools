@@ -1,6 +1,10 @@
 package audioengine
 
-import "sort"
+import (
+	"os"
+	"sort"
+	"strings"
+)
 
 // The device-default rule (SPEC-BECKY-DAW-ENGINE.md): when Jordan's pro AUDIO
 // INTERFACE is plugged in, DEFAULT to it for BOTH input and output; fall back to
@@ -59,19 +63,66 @@ func pickPreferred(devices []Device) *Device {
 	if len(devices) == 0 {
 		return nil
 	}
-	interfaces := make([]Device, 0, len(devices))
-	builtins := make([]Device, 0, len(devices))
+	// Explicit override wins: BECKY_AUDIO_DEVICE=<name substring> pins a device, so
+	// Jordan can force "UR12"/"Steinberg" regardless of the heuristic below.
+	if forced := forcedDevice(devices); forced != nil {
+		return forced
+	}
+	// Three tiers, best first: a REAL pro interface, then the built-in, then a
+	// VIRTUAL device (Voicemod / VB-Cable / Voicemeeter …) only as a last resort.
+	// Auto-picking a virtual device (as happened — "Voicemod Virtual Audio Device")
+	// means nothing comes out of Jordan's real speakers/interface = the "no sound" bug.
+	var realIfaces, builtins, virtuals []Device
 	for _, d := range devices {
-		if d.IsInterface {
-			interfaces = append(interfaces, d)
-		} else {
+		switch {
+		case looksVirtual(d.Name):
+			virtuals = append(virtuals, d)
+		case d.IsInterface:
+			realIfaces = append(realIfaces, d)
+		default:
 			builtins = append(builtins, d)
 		}
 	}
-	if len(interfaces) > 0 {
-		return tiebreak(interfaces)
+	for _, tier := range [][]Device{realIfaces, builtins, virtuals} {
+		if len(tier) > 0 {
+			return tiebreak(tier)
+		}
 	}
-	return tiebreak(builtins)
+	return nil
+}
+
+// looksVirtual reports whether a device name is a known VIRTUAL audio endpoint (not
+// real hardware): Voicemod, VB-Audio/Cable, Voicemeeter, NVIDIA Broadcast, Wave Link,
+// etc. These must never be auto-selected over real hardware or the engine plays into
+// the void (the "I hear no sound" bug). Case-insensitive substring match.
+func looksVirtual(name string) bool {
+	n := strings.ToLower(name)
+	for _, v := range []string{
+		"voicemod", "vb-audio", "vb audio", "vb-cable", "cable output", "cable input",
+		"voicemeeter", "virtual", "wave link", "nvidia broadcast", "steam streaming",
+	} {
+		if strings.Contains(n, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// forcedDevice returns the device whose Name contains BECKY_AUDIO_DEVICE (a
+// case-insensitive substring), or nil when the env var is unset / no match — the
+// manual override for "always use my UR12".
+func forcedDevice(devices []Device) *Device {
+	want := strings.ToLower(strings.TrimSpace(os.Getenv("BECKY_AUDIO_DEVICE")))
+	if want == "" {
+		return nil
+	}
+	for _, d := range devices {
+		if strings.Contains(strings.ToLower(d.Name), want) {
+			dd := d
+			return &dd
+		}
+	}
+	return nil
 }
 
 // tiebreak deterministically selects one device from a non-empty, same-tier list:
