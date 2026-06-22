@@ -1,6 +1,8 @@
 # SPEC — becky-tts — a tiny, intelligent local voice (NeuTTS Air) so becky can read results aloud
 
-> **Status: design-only, awaiting Jordan's go/no-go (§9). No code yet.**
+> **Status: decisions LOCKED by Jordan 2026-06-22 (§9) — ready for the build swarm. No code yet.**
+> Build to: NeuTTS Air, GGUF (Path A), a universal standalone `becky-tts` (never auto-speaks),
+> stock preset voice for v1.
 >
 > **Research note (corrected twice, 2026-06-22).** v1 picked Orpheus-3B off a stale article.
 > v2 swapped to Qwen3-TTS-1.7B off HF adoption — still not real research, just a safer default.
@@ -41,6 +43,12 @@ they don't make it (the arena #1 was Kokoro, which he hates).
   **license:other** (more restrictive than Air's Apache; verify terms before shipping).
 - **Qwen3-TTS-12Hz (0.6B / 1.7B, Apache, GGUF)** — heavier (1.7B ~1.9B), solid, multilingual; keep
   as a fallback if a different voice/timbre or non-English is wanted. The 0.6B is the lighter option.
+- **IndexTTS-2 (`IndexTeam/IndexTTS-2`)** — evaluated at Jordan's request and REJECTED for becky's
+  profile despite being excellent: SOTA WER/speaker-similarity, emotion + duration control (Qwen3
+  emotion module). But it is the **heavy class** (~5.9 GB multi-component PyTorch), has **no GGUF**,
+  and its license is Apache-2.0 **encumbered by bilibili's Model Use License Agreement** (usage
+  restrictions). Fails the tiny + fast + GGUF + clean-license bar. Record only as a "max-quality,
+  size-no-object" option if priorities ever flip.
 
 ### 1.3 Rejected (settled — do NOT re-propose)
 - **Microsoft SAPI / Narrator** — hard no, not even a fallback.
@@ -71,8 +79,10 @@ becky-tts --selftest --out s.wav                 # offline proof path, no model 
          --model <path>, --bin <path> (override resolution), --json (machine status)
 ```
 - `--out` mandatory unless `--play`. Never overwrites a non-WAV file (sidecar rule).
-- Other tools (`becky-ask`, `becky-report`) call `becky-tts` as a sibling to speak a short summary —
-  single-tool principle (no TTS baked into them).
+- **becky-tts is a UNIVERSAL standalone tool, never auto-invoked.** Other tools (`becky-ask`,
+  `becky-report`) MAY call it as a sibling to speak something, but ONLY on an explicit user opt-in
+  (e.g. a `--speak` flag). Nothing speaks by default — becky-ask stays its normal colored TUI unless
+  the user asks for voice. (Jordan's call: a tool you reach for, not a thing that always talks.)
 
 ## 4. The local-helper contract (text → WAV) — two backends; §9 picks one
 The Go `becky-tts` is identical either way: build argv, run the helper, validate the WAV.
@@ -136,12 +146,16 @@ ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -of csv=p=
 - [ ] `becky-tts "..." --play` → **HEAR it.** Judge quality. If off, try Chatterbox-Turbo, then NeuTTS Nano.
 - [ ] Report to Jordan: which model/voice, did it sound good + fast, any degrade notes.
 
-## 9. Open decisions for Jordan (go/no-go — short)
-1. **Engine:** NeuTTS **Air** (0.75B, Apache — recommended) as primary? Want Chatterbox-Turbo (350M, MIT) tried alongside?
-2. **Backend:** Path A **GGUF runtime** (offline-first, recommended) or Path B **Python**?
-3. **Voice:** a built-in preset, or clone from a short reference sample you provide (Air does instant cloning)?
-4. **Lighter option:** keep NeuTTS **Nano** (228M) on the bench for max speed (note: license:other)?
-5. **Where becky speaks first:** `becky-ask` answers + `becky-report` summaries (recommended), or standalone `becky-tts` only?
+## 9. Decisions — LOCKED by Jordan 2026-06-22 (build to these)
+1. **Engine: NeuTTS Air** (0.75B, Apache) — default. ✔ Locked. (Chatterbox-Turbo / Nano stay as
+   by-ear alternates only; IndexTTS-2 rejected — §1.2.)
+2. **Backend: Path A — GGUF** (`neutts-air-q4`/`q8` + NeuCodec). ✔ Locked ("GGUF preferred if possible").
+3. **Scope: a UNIVERSAL standalone `becky-tts` tool, NOT auto-wired into becky-ask.** ✔ Locked —
+   becky-ask must NOT always speak; voice is opt-in per call.
+4. **Voice: the stock NeuTTS Air preset for now.** ✔ Locked ("neutts default for now"). Custom-voice
+   cloning is a later add, not v1.
+5. Remaining nicety (not blocking): which other tools grow an opt-in `--speak` later — defer until the
+   tool exists and Jordan has heard the voice.
 
 ## 10. Sources (live HF + web re-check, 2026-06-22)
 - `hf.co/neuphonic/neutts-air` (Apache-2.0, 747.9M, qwen2 backbone, GGUF) + `…-q4-gguf` / `…-q8-gguf`;
