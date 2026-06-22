@@ -179,6 +179,32 @@
         "ref": "steinbergmedia/vst3sdk"
       },
       "note": "VST3 host SDK. RELICENSED to MIT on 2025-10-29 (was dual GPLv3/proprietary) — in-canvas VST hosting is now license-clean. Pin a 3.8.x tag in native/audio-host/scripts/build.ps1. ASIO SDK is separate (dual GPLv3/proprietary, manual at BECKY_ASIO_SDK; WASAPI is the license-clean default)."
+    },
+    {
+      "id": "neutts-air",
+      "name": "NeuTTS Air (Neuphonic) — on-device expressive TTS",
+      "used_by": [
+        "becky-tts"
+      ],
+      "pinned": "neutts-air-q4-gguf (neutts-air-Q4_0.gguf, Apache-2.0)",
+      "upstream": {
+        "type": "hf-model",
+        "ref": "neuphonic/neutts-air"
+      },
+      "note": "0.75B qwen2-backbone TTS, GGUF LM via llama-cpp-python + NeuCodec decoder. Installed to X:\\AI-2\\becky-tools\\models\\tts (GGUF + venv + samples). Runtime = the neutts-air.exe launcher -> isolated venv -> internal/pyhelpers/tts_neutts.py. Watch the q4/q8 GGUF + the neuphonic/neutts package (github.com/neuphonic/neutts). Alternates: Chatterbox-Turbo (MIT), NeuTTS Nano (license:other)."
+    },
+    {
+      "id": "neucodec",
+      "name": "NeuCodec (Neuphonic) — neural audio codec decoder",
+      "used_by": [
+        "becky-tts"
+      ],
+      "pinned": "neucodec pytorch_model.bin (Apache-2.0)",
+      "upstream": {
+        "type": "hf-model",
+        "ref": "neuphonic/neucodec"
+      },
+      "note": "Decodes NeuTTS Air's tokens to a 24 kHz WAV. Installed to X:\\AI-2\\becky-tools\\models\\tts\\neucodec; resolved via BECKY_TTS_NEUCODEC. Runs on CPU (set BECKY_TTS_CODEC_DEVICE=cuda for GPU)."
     }
   ]
 }
