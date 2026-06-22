@@ -26,7 +26,9 @@ step, say that.
 4. STOP ONLY AT REAL BOUNDARIES. Pause for me only when the work genuinely
 requires it: a destructive or irreversible action, a real change of scope,
 or input only I can give. Otherwise, proceed. Don't end on a promise -
-do the thing.
+do the thing. ALWAYS push finished, green work to GitHub master without asking
+(standing authorization, set 2026-06-21) - pushing is NOT a boundary; never end
+with "not yet pushed" or a request for permission to push.
 5. ASSESS, DON'T ACT UNINVITED. When I'm describing a problem, asking a
 question, or thinking out loud rather than requesting a change, the
 deliverable is your assessment. Report findings and stop. Don't apply a
