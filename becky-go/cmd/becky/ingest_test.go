@@ -174,8 +174,13 @@ func TestIngest_NoPipeline_GoldenProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read golden (run with UPDATE_GOLDEN=1 to create): %v", err)
 	}
-	if got != string(wantBytes) {
-		t.Errorf("DIGEST.md != golden.\n--- got ---\n%s\n--- want ---\n%s", got, string(wantBytes))
+	// Normalize line endings: on Windows the golden file may be checked out with
+	// CRLF (git autocrlf), while the generated digest always uses \n. Compare on
+	// content, not on the platform's newline convention.
+	gotN := strings.ReplaceAll(got, "\r\n", "\n")
+	wantN := strings.ReplaceAll(string(wantBytes), "\r\n", "\n")
+	if gotN != wantN {
+		t.Errorf("DIGEST.md != golden.\n--- got ---\n%s\n--- want ---\n%s", gotN, wantN)
 	}
 
 	// Also assert the load-bearing content directly (so the golden can't be
