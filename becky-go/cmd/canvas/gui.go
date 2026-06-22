@@ -201,6 +201,7 @@ func main() {
 		w.Option(app.Title("becky-canvas"), app.Size(unit.Dp(1180), unit.Dp(760)))
 		a := newApp(w)
 		a.adoptArgv(os.Args[1:]) // drag-onto-exe: argv paths become the target
+		a.applyStartupMode()     // BECKY_CANVAS_MODE=drum opens straight into the drum machine
 		if err := a.loop(); err != nil {
 			os.Exit(1)
 		}
@@ -249,6 +250,24 @@ func (a *App) adoptArgv(args []string) {
 			a.setTarget(arg)
 			return
 		}
+	}
+}
+
+// applyStartupMode lets BECKY_CANVAS_MODE pick the opening panel — "drum" opens
+// straight into the drum machine with a starter beat, "piano"/"mixer" select those.
+// Handy for jumping right in, and for deterministic GUI screenshots in verification.
+// Empty/unknown leaves the default (Ask). Never crashes on a bad value.
+func (a *App) applyStartupMode() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("BECKY_CANVAS_MODE"))) {
+	case "drum":
+		a.applyArr(ensureDrumMachineArr(a.arr))
+		a.activeMode = canvas.ModeDrum
+	case "piano", "midi":
+		a.activeMode = canvas.ModeMIDI
+	case "mixer", "daw":
+		a.activeMode = canvas.ModeDAW
+	case "audio":
+		a.activeMode = canvas.ModeAudio
 	}
 }
 

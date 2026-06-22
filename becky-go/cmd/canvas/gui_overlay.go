@@ -304,6 +304,39 @@ func (a *App) overlayBtn(gtx layout.Context, btn *widget.Clickable, symbol strin
 	})
 }
 
+// shapeBtn is a transport button that DRAWS its icon as a vector shape — a
+// right-pointing PLAY triangle or a STOP square — instead of a font glyph. The
+// theme font lacks ▶/■ (U+25B6 / U+25A0), so those rendered as empty tofu boxes
+// (why "play" looked like a square). shape is "play" or "stop".
+func (a *App) shapeBtn(gtx layout.Context, btn *widget.Clickable, shape string, accent color.NRGBA) layout.Dimensions {
+	side := gtx.Dp(unit.Dp(44))
+	gtx.Constraints = layout.Exact(image.Pt(side, side))
+	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		bg, border, fg := colCanvasBg, accent, accent
+		if btn.Hovered() {
+			bg, border, fg = colHeaderBg, colNeonGreen, colNeonGreen
+		}
+		fillRRect(gtx.Ops, image.Rect(0, 0, side, side), 8, bg)
+		strokeRect(gtx.Ops, image.Rect(0, 0, side, side), border)
+		s := float32(side)
+		switch shape {
+		case "play": // right-pointing triangle (the universal play icon)
+			m := s * 0.30
+			var p clip.Path
+			p.Begin(gtx.Ops)
+			p.MoveTo(f32.Pt(m, m))
+			p.LineTo(f32.Pt(s-m*0.8, s/2))
+			p.LineTo(f32.Pt(m, s-m))
+			p.Close()
+			paint.FillShape(gtx.Ops, fg, clip.Outline{Path: p.End()}.Op())
+		case "stop": // filled square
+			m := int(s * 0.32)
+			fillRRect(gtx.Ops, image.Rect(m, m, side-m, side-m), 3, fg)
+		}
+		return layout.Dimensions{Size: image.Pt(side, side)}
+	})
+}
+
 // ─── drawing helpers ──────────────────────────────────────────────────────────
 
 // overlayAccent maps a ChangeKind to the overlay accent colour so each change

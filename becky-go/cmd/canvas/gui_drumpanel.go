@@ -73,6 +73,64 @@ func itoaPanel(n int) string {
 
 func newDrumPanelState() *drumPanelState { return &drumPanelState{} }
 
+// kitInstrument is one row of the standard drum kit shown in the panel.
+type kitInstrument struct {
+	name string
+	note int // GM percussion note number (channel-9 key)
+}
+
+// standardKit is the fixed 16-channel kit the panel ALWAYS shows (Hydrogen-style:
+// the whole kit is visible as named rows, lit where the clip has hits, empty
+// otherwise — so the machine reads like a real drum machine, not "however many
+// notes happen to exist"). Order is the conventional top-to-bottom kit layout.
+var standardKit = []kitInstrument{
+	{"Kick", 36}, {"Rim", 37}, {"Snare", 38}, {"Clap", 39},
+	{"HiHat", 42}, {"OpenHat", 46}, {"LoTom", 45}, {"MidTom", 47},
+	{"HiTom", 50}, {"Crash", 49}, {"Ride", 51}, {"Cowbell", 56},
+	{"Tamb", 54}, {"Shaker", 70}, {"CongaHi", 62}, {"CongaLo", 63},
+}
+
+// mergeStandardKit returns a grid that always contains the 16 standard kit lanes
+// (in kit order), with the clip's existing hits merged in by note number. Any
+// non-standard percussion already in the clip is preserved after the kit rows.
+// Display-only: the clip still stores just the real hits; toggling an empty row
+// writes a note at that instrument's GM pitch via the normal SetStep/ApplyDrumGrid.
+func mergeStandardKit(g *dawmodel.DrumGrid) *dawmodel.DrumGrid {
+	cells := g.Steps * g.Bars
+	if cells <= 0 {
+		cells = dawmodel.DefaultSteps
+	}
+	have := map[int]dawmodel.Lane{}
+	for _, ln := range g.Lanes {
+		have[ln.Note] = ln
+	}
+	out := *g
+	if out.Steps <= 0 {
+		out.Steps = dawmodel.DefaultSteps
+	}
+	if out.Bars <= 0 {
+		out.Bars = 1
+	}
+	std := map[int]bool{}
+	out.Lanes = make([]dawmodel.Lane, 0, len(standardKit)+len(g.Lanes))
+	for _, ins := range standardKit {
+		std[ins.note] = true
+		if ex, ok := have[ins.note]; ok {
+			ex.Name = ins.name // friendlier display name
+			out.Lanes = append(out.Lanes, ex)
+		} else {
+			out.Lanes = append(out.Lanes, dawmodel.Lane{Name: ins.name, Note: ins.note, On: make([]bool, cells), Vel: make([]int, cells)})
+		}
+	}
+	// Preserve any non-standard lanes the clip already had (g.Lanes is note-sorted).
+	for _, ln := range g.Lanes {
+		if !std[ln.Note] {
+			out.Lanes = append(out.Lanes, ln)
+		}
+	}
+	return &out
+}
+
 // layout renders the drum machine panel for the active frame and handles its pointer
 // events. It degrades to a placeholder when there is no arrangement or no drum clip.
 func (d *drumPanelState) layout(gtx layout.Context, a *App) layout.Dimensions {
@@ -80,6 +138,7 @@ func (d *drumPanelState) layout(gtx layout.Context, a *App) layout.Dimensions {
 	if grid == nil {
 		return panelPlaceholder(gtx, a, "drum machine — open a project.json or .mid with drum notes (channel 9)")
 	}
+	grid = mergeStandardKit(grid) // always show the full named 16-channel kit (Hydrogen-style)
 
 	size := gtx.Constraints.Max
 	if size.X <= 0 || size.Y <= 0 {
@@ -94,7 +153,7 @@ func (d *drumPanelState) layout(gtx layout.Context, a *App) layout.Dimensions {
 	nSteps := grid.Steps * grid.Bars
 
 	// Geometry: narrow label column on the left, step cells fill the rest.
-	const labelWDp = 52
+	const labelWDp = 66
 	labelW := gtx.Dp(unit.Dp(labelWDp))
 	const margin = 12
 	const minCell = 6
@@ -438,18 +497,17 @@ func dpDimColor(c color.NRGBA) color.NRGBA {
 	return color.NRGBA{R: c.R / 8, G: c.G / 8, B: c.B / 8, A: 0xff}
 }
 
-// dpDrawLaneLabel renders a small lane name inside the label strip.
-// For cells below 12dp height the text would be unreadable so we skip it.
-func dpDrawLaneLabel(gtx layout.Context, a *App, name string, _ int, _ int, cellH int) {
-	if cellH < gtx.Dp(unit.Dp(12)) || name == "" {
+// dpDrawLaneLabel renders the lane's instrument name (kick/snare/…) inside the
+// label strip, vertically centered in the row. drawLabelAt positions text at an
+// absolute (x,y) in the panel's op space, so each row gets its own label. Skipped
+// only when the row is too short to read.
+func dpDrawLaneLabel(gtx layout.Context, a *App, name string, x, y, cellH int) {
+	if name == "" || cellH < gtx.Dp(unit.Dp(11)) {
 		return
 	}
-	// The caption helper renders at inset (10,10) from the current clip origin.
-	// Since we can't cheaply offset a sub-context here without a layout.Stack,
-	// we call drawCanvasCaption which renders at the top-left of the active ops.
-	// The visible result: a dim lane name appears at the panel's top-left.
-	// TODO(follow-up): wrap each label row in a layout.Stack + op.Offset for
-	// per-row positioning. For the MVP the accent bar color identifies the lane.
-	_ = a
-	_ = name
+	ty := y + (cellH-gtx.Dp(unit.Dp(13)))/2
+	if ty < y {
+		ty = y
+	}
+	drawLabelAt(gtx, a.th, name, x, ty)
 }

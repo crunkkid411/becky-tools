@@ -265,11 +265,11 @@ func (a *App) layoutTransport(gtx layout.Context) layout.Dimensions {
 	return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.overlayBtn(gtx, &a.playBtn, "▶", colNeonGreen)
+				return a.shapeBtn(gtx, &a.playBtn, "play", colNeonGreen)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.overlayBtn(gtx, &a.stopBtn, "■", colCrimson)
+				return a.shapeBtn(gtx, &a.stopBtn, "stop", colCrimson)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
