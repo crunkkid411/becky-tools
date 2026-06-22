@@ -32,7 +32,7 @@ var imageExts = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".bmp
 // into outDir/frames-<label>/. It returns the source facts and the per-frame
 // records.
 func sampleSource(cfg config.Config, srcPath, label, outDir string,
-	interval, fps float64, verbose bool) (SourceInfo, []Frame, error) {
+	interval, fps float64, roiCfg roiConfig, verbose bool) (SourceInfo, []Frame, error) {
 
 	fi, err := os.Stat(srcPath)
 	if err != nil {
@@ -44,15 +44,15 @@ func sampleSource(cfg config.Config, srcPath, label, outDir string,
 	}
 
 	if fi.IsDir() {
-		return sampleImageFolder(srcPath, label, frameDir, verbose)
+		return sampleImageFolder(srcPath, label, frameDir, roiCfg, verbose)
 	}
-	return sampleVideo(cfg, srcPath, label, frameDir, interval, fps, verbose)
+	return sampleVideo(cfg, srcPath, label, frameDir, interval, fps, roiCfg, verbose)
 }
 
 // sampleVideo extracts one full-resolution frame every `step` seconds across the
 // clip, hashing each. interval (seconds) wins if set; otherwise fps (samples/s).
 func sampleVideo(cfg config.Config, video, label, frameDir string,
-	interval, fps float64, verbose bool) (SourceInfo, []Frame, error) {
+	interval, fps float64, roiCfg roiConfig, verbose bool) (SourceInfo, []Frame, error) {
 
 	info, err := mediainfo.Probe(cfg.FFprobe, video)
 	if err != nil {
@@ -101,7 +101,7 @@ func sampleVideo(cfg config.Config, video, label, frameDir string,
 			idx++
 			continue
 		}
-		hash, herr := perceptualHash(framePath)
+		hash, roiHash, kp, herr := hashFrameROI(framePath, roiCfg)
 		if herr != nil {
 			logf(verbose, "  [%s] hash %d @ %.3fs skipped: %v", label, idx, ts, herr)
 			idx++
@@ -131,8 +131,11 @@ func sampleVideo(cfg config.Config, video, label, frameDir string,
 			Path:        filepath.ToSlash(framePath),
 			Sidecar:     filepath.ToSlash(sidecarPath),
 			Hash:        hash,
+			ROIHash:     roiHash,
+			ROIUsed:     roiCfg.spec(),
+			Keypoints:   kp,
 		})
-		logf(verbose, "  [%s] sampled frame %d @ %.3fs (phash %s)", label, idx, ts, hash)
+		logf(verbose, "  [%s] sampled frame %d @ %.3fs (phash %s roi %s)", label, idx, ts, hash, roiHash)
 		idx++
 	}
 	src.FrameCount = len(frames)
@@ -143,7 +146,7 @@ func sampleVideo(cfg config.Config, video, label, frameDir string,
 // The images are not re-extracted (they ARE the frames); we copy them into the
 // frame dir as byte-for-byte passthrough so the exhibit references local copies
 // and the originals stay untouched, plus a provenance sidecar per image.
-func sampleImageFolder(dir, label, frameDir string, verbose bool) (SourceInfo, []Frame, error) {
+func sampleImageFolder(dir, label, frameDir string, roiCfg roiConfig, verbose bool) (SourceInfo, []Frame, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return SourceInfo{}, nil, fmt.Errorf("read image folder %s: %w", label, err)
@@ -170,7 +173,7 @@ func sampleImageFolder(dir, label, frameDir string, verbose bool) (SourceInfo, [
 	var frames []Frame
 	for i, name := range names {
 		origPath := filepath.Join(dir, name)
-		hash, w, h, herr := hashImageFile(origPath)
+		hash, roiHash, kp, w, h, herr := hashImageFileROI(origPath, roiCfg)
 		if herr != nil {
 			logf(verbose, "  [%s] image %s skipped: %v", label, name, herr)
 			continue
@@ -210,32 +213,41 @@ func sampleImageFolder(dir, label, frameDir string, verbose bool) (SourceInfo, [
 			Path:        filepath.ToSlash(framePath),
 			Sidecar:     filepath.ToSlash(sidecarPath),
 			Hash:        hash,
+			ROIHash:     roiHash,
+			ROIUsed:     roiCfg.spec(),
+			Keypoints:   kp,
 		})
-		logf(verbose, "  [%s] reference image %s (phash %s)", label, name, hash)
+		logf(verbose, "  [%s] reference image %s (phash %s roi %s)", label, name, hash, roiHash)
 	}
 	src.FrameCount = len(frames)
 	return src, frames, nil
 }
 
-// perceptualHash decodes an extracted frame and returns its 16-char hex aHash.
-func perceptualHash(path string) (string, error) {
-	h, _, _, err := hashImageFile(path)
-	return h, err
+// hashFrameROI decodes a frame once and returns (whole-frame aHash hex, ROI
+// hash hex, keypoint count). The ROI hash is the primary same-room signal; the
+// whole-frame hash is kept for provenance and as a weak signal.
+func hashFrameROI(path string, roiCfg roiConfig) (whole, roi string, keypoints int, err error) {
+	whole, roi, keypoints, _, _, err = hashImageFileROI(path, roiCfg)
+	return whole, roi, keypoints, err
 }
 
-// hashImageFile decodes an image, returns its aHash hex plus pixel dimensions.
-func hashImageFile(path string) (string, int, int, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("open image: %w", err)
+// hashImageFileROI decodes an image and returns its whole-frame aHash, its ROI
+// hash, the static-decor keypoint count (0 if disabled), and pixel dimensions.
+func hashImageFileROI(path string, roiCfg roiConfig) (whole, roi string, keypoints, w, h int, err error) {
+	f, oerr := os.Open(path)
+	if oerr != nil {
+		return "", "", 0, 0, 0, fmt.Errorf("open image: %w", oerr)
 	}
 	defer f.Close()
-	img, _, err := image.Decode(f)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("decode image: %w", err)
+	img, _, derr := image.Decode(f)
+	if derr != nil {
+		return "", "", 0, 0, 0, fmt.Errorf("decode image: %w", derr)
 	}
 	b := img.Bounds()
-	return osintexport.HashHex(osintexport.AHashFromImage(img)), b.Dx(), b.Dy(), nil
+	whole = osintexport.HashHex(osintexport.AHashFromImage(img))
+	roi = roiCfg.roiHashHex(img)
+	keypoints = roiCfg.keypointCount(img)
+	return whole, roi, keypoints, b.Dx(), b.Dy(), nil
 }
 
 // copyFile copies src to dst byte-for-byte (no transform). Used to localize a

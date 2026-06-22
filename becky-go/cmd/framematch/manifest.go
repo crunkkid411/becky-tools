@@ -33,26 +33,35 @@ type SourceInfo struct {
 // position in the (sorted) list expressed as an index-second so the exhibit
 // still has a stable label.
 type Frame struct {
-	SourceLabel string  `json:"source_label"` // "A" or "B"
-	Index       int     `json:"index"`        // 0-based sample index within its source
-	Timestamp   float64 `json:"timestamp"`    // seconds into the source video (or image index)
-	TimeLabel   string  `json:"time_label"`   // human "M:SS.s" (video) or the image file name
-	Path        string  `json:"path"`         // extracted frame copy on disk (slash path)
-	Sidecar     string  `json:"sidecar"`      // provenance JSON sidecar for this frame
-	Hash        string  `json:"hash"`         // 16-char hex aHash
+	SourceLabel string  `json:"source_label"`        // "A" or "B"
+	Index       int     `json:"index"`               // 0-based sample index within its source
+	Timestamp   float64 `json:"timestamp"`           // seconds into the source video (or image index)
+	TimeLabel   string  `json:"time_label"`          // human "M:SS.s" (video) or the image file name
+	Path        string  `json:"path"`                // extracted frame copy on disk (slash path)
+	Sidecar     string  `json:"sidecar"`             // provenance JSON sidecar for this frame
+	Hash        string  `json:"hash"`                // 16-char hex whole-frame aHash (legacy/provenance)
+	ROIHash     string  `json:"roi_hash"`            // hex aHash of the ROI band (primary signal; 32 chars for corners)
+	ROIUsed     string  `json:"roi_used"`            // exactly what region was hashed (e.g. "band top=0.00 h=0.35")
+	Keypoints   int     `json:"keypoints,omitempty"` // static-decor keypoints detected in the ROI (0 if off)
 }
 
 // Pair is one candidate cross-source match: a frame from A and a frame from B
 // that are within --threshold Hamming bits of each other.
 type Pair struct {
-	Rank          int       `json:"rank"`             // 1-based, lowest Hamming first
-	Hamming       int       `json:"hamming"`          // perceptual-hash distance (0 = identical hash)
-	Similarity    float64   `json:"similarity"`       // 1 - hamming/64, a [0,1] readability score
-	WhatToLookFor string    `json:"what_to_look_for"` // one-line reviewer hint (the matching region)
-	A             Frame     `json:"frame_a"`          // the A-source frame
-	B             Frame     `json:"frame_b"`          // the B-source frame
-	Comparison    string    `json:"comparison_image"` // side-by-side labeled PNG for this pair (slash path)
-	Enhancements  []Enhance `json:"enhancements"`     // every honest edit applied to a COPY for this pair
+	Rank            int       `json:"rank"`                       // 1-based, lowest Hamming first
+	Hamming         int       `json:"hamming"`                    // perceptual-hash distance (0 = identical hash)
+	Similarity      float64   `json:"similarity"`                 // 1 - hamming/64, a [0,1] readability score
+	WhatToLookFor   string    `json:"what_to_look_for"`           // one-line reviewer hint (names the firing signals + ROI)
+	RoomCall        string    `json:"room_call"`                  // "same_room" | "different_room" | "candidate" | "unknown"
+	RoomCallText    string    `json:"room_call_text"`             // the call stated in words (accessibility: never color alone)
+	Confidence      float64   `json:"confidence"`                 // [0,1] readability score from agreeing-signal margins
+	ROIHamming      int       `json:"roi_hamming"`                // ROI-aHash distance (the primary signal); -1 if unknown
+	KeypointInliers int       `json:"keypoint_inliers,omitempty"` // geometrically-consistent static-decor matches
+	SignalsUsed     []string  `json:"signals_used"`               // which independent signals voted (e.g. ["roi_ahash","keypoints"])
+	A               Frame     `json:"frame_a"`                    // the A-source frame
+	B               Frame     `json:"frame_b"`                    // the B-source frame
+	Comparison      string    `json:"comparison_image"`           // side-by-side labeled PNG for this pair (slash path)
+	Enhancements    []Enhance `json:"enhancements"`               // every honest edit applied to a COPY for this pair
 }
 
 // Enhance is one logged, honest image adjustment applied to a COPY of a frame.
@@ -80,7 +89,12 @@ type Manifest struct {
 	ExhibitHTML    string     `json:"exhibit_html"`    // the self-contained HTML exhibit (slash path)
 	Interval       float64    `json:"interval"`        // seconds between samples (0 if --fps used)
 	FPS            float64    `json:"fps"`             // samples per second (0 if --interval used)
-	Threshold      int        `json:"threshold"`       // max Hamming distance for a candidate pair
+	Threshold      int        `json:"threshold"`       // max whole-frame Hamming for a candidate pair (weak signal)
+	ROIMode        string     `json:"roi_mode"`        // "band" | "corners" | "full"
+	ROISpec        string     `json:"roi_spec"`        // exact region hashed (re-runnability)
+	ROIThreshold   int        `json:"roi_threshold"`   // max ROI-aHash Hamming for an "agree"
+	KeypointsOn    bool       `json:"keypoints_on"`    // whether static-decor keypoint corroboration ran
+	MinInliers     int        `json:"min_inliers"`     // keypoint inliers required for an "agree"
 	MaxPairs       int        `json:"max_pairs"`       // cap on emitted pairs
 	EnhanceApplied bool       `json:"enhance_applied"` // whether any honest enhancement ran
 	SourceA        SourceInfo `json:"source_a"`

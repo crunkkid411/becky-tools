@@ -1,10 +1,11 @@
 # SPEC-FRAMEMATCH-HARDENING.md — make becky-framematch's room-matching reliable on talking-head footage
 
-> **SPEC — NOT BUILT, AWAITING JORDAN'S GO/NO-GO.**
-> Design only. No Go code has been written; nothing in `becky-go/` is changed yet.
-> This hardens the EXISTING `becky-framematch` tool (`becky-go/cmd/framematch`) — it
-> does not add a new binary. Authored 2026-06-22 against the real code in the repo
-> (every file/symbol cited below was read, not assumed).
+> **SPEC + BUILT (cloud, 2026-06-22, branch `claude/subagent-deployment-scaling-4hptv9`).**
+> Phases 1–5 are implemented in `becky-go/` (additive; no new binary — it hardens the
+> EXISTING `becky-framematch`). The deterministic ROI hashing + scoring + room call are
+> verified on synthetic images (§6 checkboxes + the end-to-end proof). Only the optional
+> gocv ORB matcher + real-footage threshold tuning are LEFT FOR LOCAL (§8). Authored
+> against the real code (every file/symbol cited below was read, not assumed).
 >
 > **Scope guard.** A sibling spec, `SPEC-BECKY-LOCATION.md`, is being written that
 > *consumes* framematch to produce a dwelling-level location report. This spec stays
@@ -241,56 +242,70 @@ chosen, is left as a documented local wiring step behind the keypoint interface.
 A regression test accompanies each failure mode. Tests assert VALUES (specific room
 calls, specific hashes/distances), not truthiness, per `STANDARDS-ENGINEERING.md`.
 
-### Phase 1 — ROI pre-crop (pure Go, cloud-complete)
-- [ ] Add `ROI` fractional-rect type + `AHashFromImageROI(img, roi)` in
-      `internal/osintexport/phash.go` (reuse the center-of-cell sampling; restrict `b`).
-- [ ] Test `TestROIHashIgnoresCenteredSubject`: build two synthetic frames with an
-      IDENTICAL top band (a fixed pattern = "ceiling/trim") and a DIFFERENT centered
-      block ("the subject/body"). Assert `AHashFromImageROI(band)` Hamming **== 0**
-      while whole-frame `AHashFromImage` Hamming **> roiThreshold** — proves the ROI hash
-      keys on background, not body. (FALSE-NEGATIVE regression.)
-- [ ] Test `TestROIHashDistinguishesDifferentDecor`: two frames with the SAME global
-      tone (same mean brightness, same centered block) but a DIFFERENT top band.
-      Assert ROI Hamming **> roiThreshold** (different room) even though whole-frame
-      Hamming is small. (FALSE-POSITIVE regression.)
-- [ ] Test `TestROIGeometryClampAndValidate`: out-of-range fractions clamp/reject as
-      specified; `--roi full` reproduces the exact legacy `AHashFromImage` value
-      (assert byte-equal hash).
+> **STATUS 2026-06-22 (cloud, branch `claude/subagent-deployment-scaling-4hptv9`):**
+> Phases 1–5 BUILT + verified on synthetic images. Only the gocv keypoint upgrade +
+> real-footage tuning are LEFT FOR LOCAL (§8). Files changed (additive only):
+> `internal/osintexport/phash.go` (+ROI helpers), `cmd/framematch/{roi,decor,roomcall}.go`
+> (new), and edits to `cmd/framematch/{main,frames,pairing,manifest,layout}.go`.
 
-### Phase 2 — wire ROI into framematch + new flags/schema
-- [ ] Compute + store `ROIHash`/`ROIUsed` per frame in `frames.go` (both video +
-      image-folder paths) and in the `Sidecar`.
-- [ ] Add `--roi*` flags + validation in `main.go`; add `ROIMode`/`ROISpec` to `Manifest`.
-- [ ] Re-point `pairFrames` (`pairing.go`) to rank on ROI-aHash as the primary signal,
-      keeping whole-frame as the weak/provenance signal.
-- [ ] Test `TestPairFramesUsesROIHash`: a pair that fails on whole-frame Hamming but
-      passes on ROI Hamming is surfaced as a candidate; assert `pairs[0].ROIHamming`
-      and that it appears (regression for the missed same-room case end-to-end).
+### Phase 1 — ROI pre-crop (pure Go, cloud-complete) — DONE
+- [x] Added `ROI` fractional-rect type (+ `Clamp`, `FullROI`) + `AHashFromImageROI(img, roi)`
+      and a gray variant `GrayROI(img, roi)` in `internal/osintexport/phash.go` (reuses the
+      center-of-cell sampling; restricts `b`; existing funcs untouched).
+- [x] `TestROIHashIgnoresCenteredSubject`: identical ceiling band, different centered subject
+      → **ROI Hamming == 0** while **whole-frame Hamming == 40** (> roiThreshold 8). FALSE-NEGATIVE regression.
+- [x] `TestROIHashDistinguishesDifferentDecor`: same global tone + same subject, different
+      ceiling → **ROI Hamming == 64** (> roiThreshold). FALSE-POSITIVE regression.
+- [x] `TestROIFullEqualsLegacy` + `TestROIGeometryClampAndValidate`: `FullROI` reproduces the
+      exact legacy `AHashFromImage` value (byte-equal); out-of-range fractions clamp, never empty.
 
-### Phase 3 — keypoint second signal (pure-Go default behind an interface)
-- [ ] Define a `DecorMatcher` interface (`Match(roiA, roiB image.Image) (inliers, keypoints int)`)
-      with a deterministic pure-Go default; gocv impl left as a local build step (§7).
-- [ ] Test `TestDecorMatcherCountsSharedFeatures`: synthetic ROI with N planted corners
-      shared → inliers ≈ N; disjoint corners → inliers ≈ 0. Assert the counts.
+### Phase 2 — wire ROI into framematch + new flags/schema — DONE
+- [x] Compute + store `ROIHash`/`ROIUsed`/`Keypoints` per frame in `frames.go` (video +
+      image-folder paths). NOTE: the shared `osintexport.Sidecar` struct was NOT modified
+      (out of the allowed edit scope — other tools read it); the ROI hash lives on the
+      framematch `Frame` + manifest, the sidecar keeps the whole-frame hash as today.
+- [x] Added `--roi`, `--roi-top/height/left/width`, `--roi-threshold`, `--keypoints`,
+      `--min-inliers` flags + validation (`buildROIConfig`) in `main.go`; added
+      `ROIMode`/`ROISpec`/`ROIThreshold`/`KeypointsOn`/`MinInliers` to `Manifest`.
+- [x] `pairFrames` (`pairing.go`) now ranks on ROI-aHash as the primary signal, keeping
+      whole-frame as the weak/provenance signal; a pair surfaces if EITHER signal passes.
+- [x] `TestPairFramesUsesROIHash`: pair fails on whole-frame (ham 64) but passes on ROI (ham 0)
+      → surfaced, `ROIHamming == 0`, `Hamming == 64`. End-to-end false-negative regression.
 
-### Phase 4 — corroborate-then-conclude room call
-- [ ] Implement the signal-combination table (§2.3) → `RoomCall` + `Confidence` +
-      `SignalsUsed` on each `Pair`; rewrite `whatToLookFor` to name the firing signals.
-- [ ] Test `TestRoomCall_TwoSignalsAgree_SameRoom`: ROI agree + keypoints agree →
-      `room_call == "same_room"`, `len(SignalsUsed) == 2`, confidence in expected range.
-- [ ] Test `TestRoomCall_LoneWeakSignal_NeverConcludes`: ONLY whole-frame aHash agrees
-      (ROI disagrees, keypoints off) → `room_call == "candidate"` (NOT `same_room`).
-      (Directly enforces the ≥2-signal invariant — the headline regression.)
-- [ ] Test `TestRoomCall_SignalsConflict_DifferentRoom`: ROI disagrees + keypoints
-      disagree → `room_call == "different_room"`.
-- [ ] Test `TestRoomCall_KeypointsOff_CappedAtCandidate`: keypoints disabled, ROI agrees
-      alone → `room_call == "candidate"` (degrade path can't reach a conclusion).
-- [ ] Test `TestRoomCall_FeaturelessROI_Unknown`: a blank/uniform ROI → `unknown`, no guess.
+### Phase 3 — keypoint second signal (pure-Go default behind an interface) — DONE
+- [x] `DecorMatcher` interface (`Keypoints` + `Match(roiA, roiB) (inliers, keypoints int)`)
+      with a deterministic pure-Go default (`PureGoDecorMatcher`: FAST-style corner detect +
+      8-neighbour census descriptor + translation-vote inliers). gocv impl left for local (§8).
+- [x] `TestDecorMatcherCountsSharedFeatures`: shared planted corners → **inliers 35** (== pop,
+      ≥ planted); disjoint corners → **inliers 5** (< shared/2 and below the agree threshold 12).
+      `TestDecorMatcherDeterministic` asserts identical counts on re-run.
 
-### Phase 5 — gates
-- [ ] `go build ./... && go vet ./... && go test ./...` + `gofmt -l .` all green (cloud
-      passes gates 1–4; `build-all-tools.bat` is the local completion step — it
-      auto-discovers, no edit needed since `cmd/framematch` already exists).
+### Phase 4 — corroborate-then-conclude room call — DONE
+- [x] Signal-combination table (§2.3) → `RoomCall` + `RoomCallText` (words, accessibility) +
+      `Confidence` + `SignalsUsed` per `Pair`; `whatToLookForCall` names the firing signals + ROI.
+- [x] `TestRoomCall_TwoSignalsAgree_SameRoom`: ROI + keypoints agree → `same_room`,
+      `len(SignalsUsed)==2`, confidence in [0.6,1.0].
+- [x] `TestRoomCall_LoneWeakSignal_NeverConcludes`: only whole-frame agrees, ROI disagrees →
+      `candidate`, NEVER `same_room` (the ≥2-signal invariant; headline regression).
+- [x] `TestRoomCall_SignalsConflict_DifferentRoom`: ROI + keypoints disagree → `different_room`.
+- [x] `TestRoomCall_KeypointsOff_CappedAtCandidate`: ROI agrees alone → `candidate`.
+- [x] `TestRoomCall_FeaturelessROI_Unknown`: blank/uniform ROI → `unknown`, confidence 0.0.
+
+### Phase 5 — gates — DONE (cloud passes 1–4; build-all-tools is the local step)
+- [x] `go build` + `go vet` + `go test` + `gofmt -l` all GREEN on `./cmd/framematch/...`
+      and `./internal/osintexport/...`; whole-module `go build ./...` green (no consumer broke).
+      `build-all-tools.bat` is the local completion step (auto-discovers `cmd/framematch`).
+
+### End-to-end proof on the real binary (cloud-run, synthetic images)
+Ran `becky-framematch <folderA> <folderB>` on synthetic talking-head fixtures:
+- **False-negative fix:** identical ceiling, different subject body → `--roi band` surfaced the
+  pair with `roi_hamming=0` while `whole_frame_hamming=40`; `--roi full` (legacy) MISSED it at the
+  default threshold — proving the ROI fix is what catches it. The pair was correctly `candidate`
+  (one signal, keypoints off) — a lone signal never concludes.
+- **Two-signal conclusion:** same ceiling decor + different subject, `--keypoints --min-inliers 4`
+  → `room_call=same_room`, `signals_used=["roi_ahash","keypoints"]`, `keypoint_inliers=62`,
+  `confidence=0.978`, and the words "SAME ROOM — 2 signals agree". The exhibit footer + badge state
+  the call in words with a high-contrast color accent (kept per `ACCESSIBILITY.md`).
 
 ---
 
@@ -312,3 +327,32 @@ calls, specific hashes/distances), not truthiness, per `STANDARDS-ENGINEERING.md
 3. **Should `--roi band` be the DEFAULT, or keep `--roi full` default for back-compat?**
    Recommendation: make **`band` the default** (it is the fix) and keep `full` available;
    any existing scripts can pass `--roi full` to get identical old behavior.
+   **DECIDED IN CODE (default `--roi band`, height 0.35);** pass `--roi full` for legacy.
+
+---
+
+## 8. Handoff — DONE (cloud) vs LEFT FOR LOCAL
+
+**DONE on the cloud (deterministic, verified on synthetic images — see §6 + the end-to-end proof):**
+- ROI geometry (`AHashFromImageROI`/`GrayROI`/`ROI`/`Clamp`/`FullROI`) — additive in
+  `internal/osintexport/phash.go`; existing `AHashFromImage`/`AHashFromGray64`/`hamming64` untouched.
+- The `--roi*`/`--keypoints`/`--min-inliers`/`--roi-threshold` flags + validation, the per-frame
+  ROI hash + keypoint count, the ROI-primary ranking, and the corroborate-then-conclude room call
+  (`same_room`/`different_room`/`candidate`/`unknown` + confidence + signals_used), all in
+  `cmd/framematch/{roi,decor,roomcall}.go` + edits to `{main,frames,pairing,manifest,layout}.go`.
+- The pure-Go `DecorMatcher` default (ships now; offline; deterministic).
+- The colored exhibit states the call in WORDS with a high-contrast accent (accessibility kept).
+- All value-asserting tests + a regression per failure mode; all gates green.
+
+**LEFT FOR LOCAL (the genuine hardware/native + footage-tuning boundary):**
+- [ ] **gocv/OpenCV ORB matcher (opt-in upgrade).** Implement a second `DecorMatcher`
+      (ORB keypoints + BFMatcher + RANSAC homography) behind the SAME interface and select it
+      when a build tag / env is set. It pulls cgo + native OpenCV — the cloud CANNOT build or run
+      it. The pure-Go default ships today, so this is only needed if real-footage accuracy is short
+      (Open Decision §7.2 — Jordan chooses whether to build it at all).
+- [ ] **Tune the ROI fraction on real portrait/talking-head footage.** Default is the top-35% band;
+      on very tight head-and-shoulders the head may intrude (try `--roi-height 0.25` or `--roi corners`).
+      Tune `--roi-threshold` (default 8) and `--min-inliers` (default 12) against ground-truth same/
+      different-room clips. The fractions are all flag-driven, no rebuild needed to experiment.
+- [ ] **`build-all-tools.bat`** — auto-discovers `cmd/framematch`; no script edit needed.
+- [ ] Run on a real same-room/different-room pair and confirm the room call + the exhibit read right.
