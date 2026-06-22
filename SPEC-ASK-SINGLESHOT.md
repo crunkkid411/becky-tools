@@ -325,65 +325,77 @@ at a stub `becky-vision` (or by abstracting the vision call behind a small
 
 ### Build plan (checkboxed)
 
-- [ ] **B1 — Add the flags + mode switch in `cmd/ask/main.go`.** Parse `--question`,
-      `--ask`, `--image`, `--target`, `--run`, `--json` BEFORE the TTY check. If a
-      single-shot flag is present, call `runSingleShot(...)` and `os.Exit` its code.
-      Otherwise fall through to the EXISTING `term.IsTerminal` branch — TUI default and
-      the `BECKY_ASK_RUN`/`printNoTTY` paths untouched.
-- [ ] **B2 — `cmd/ask/singleshot.go` (new): the text path.** `runSingleShot` resolves
-      the target (`resolveTarget` + `--target`/positional), builds the model client
-      (`resolveIntentModel` + cfg, nil-safe), calls `route(ctx, cli, q, t)`, and hands
-      `routed` to the formatter. Honor `--run` (call `runCommand`) vs show-only.
-- [ ] **B3 — `cmd/ask/singleshot.go`: the image path.** When `--image` is set, validate
-      it exists (else exit 2), resolve sibling `becky-vision` via `binPathFor("vision")`,
-      run `becky-vision --image <f> --prompt <q> --json`, parse `vision.Result`,
-      surface description or degrade note. Behind a `visionAsker` interface for tests.
-- [ ] **B4 — `cmd/ask/ssformat.go` (new): output.** `formatPlain(result)` (answer only,
-      NO ANSI styling) and `formatJSON(result)` (the §4.2 object). A single
-      `singleShotResult` struct carries question/image/answer/kind/command/ran/source/
-      degraded/error.
-- [ ] **B5 — Exit-code mapping** per §4.3, in one helper so it is asserted once.
-- [ ] **B6 — Tests** (§ below). All green: `go build ./... && go vet ./... &&
-      go test ./... && gofmt -l .` clean.
-- [ ] **B7 — Docs:** flip the README "Medium" entry from "Fix pending" to done; add a
-      one-line usage note to `SKILL.md`. (Do NOT edit CLAUDE.md/COLLAB/README in the
-      cloud branch beyond the single Medium-issue line if the workflow permits; else
-      leave it for local.) `build-all-tools.bat` auto-discovers — no edit; the binary is
-      still `cmd/ask`.
-- [ ] **B8 — LOCAL (hardware):** run `becky-ask --image <real frame> --question "..."`
-      against the real LFM2.5-VL; confirm the answer + exit 0; confirm `--question`
-      with the live Qwen refinement; **confirm the colored TUI still opens on a normal
-      double-click / `becky-ask` in a console** (the accessibility invariant). Paste
-      evidence.
+- [x] **B1 — DONE (cloud).** Flags + mode switch added in `cmd/ask/main.go`. Single-shot
+      flags are parsed (`parseSingleShotFlags`) BEFORE the TTY check; `decideMode(...)` (a
+      pure, unit-tested function) returns `modeSingleShot` only on an explicit
+      `--question`/`--image`, else `modeTUI` (terminal) / `modeHeadlessRun`
+      (`BECKY_ASK_RUN`) / `modeNoTTY` — all the existing paths untouched. The TUI launch
+      is split behind a `launchTUI` seam (body byte-for-byte the original
+      `WithAltScreen`+`WithMouseCellMotion`) so the guard test can spy on it.
+- [x] **B2 — DONE (cloud).** `cmd/ask/singleshot.go` text path: `buildSingleShot` resolves
+      the target (`resolveSingleShotTarget` = `--target` + positionals via `resolveTarget`),
+      builds the nil-safe `newLlamaClient(resolveIntentModel(), resolveLlamaServer(), nil)`,
+      calls the EXISTING `route(ctx, cli, q, t)` (no forked routing), and honors `--run`
+      (`runCommand`) vs show-only. Verified headless (catalog + action).
+- [x] **B3 — DONE (cloud).** `cmd/ask/vision.go` image path behind a `visionAsker`
+      interface (`siblingVisionAsker`). When `--image` is set: validate it exists (else
+      exit 2), resolve sibling via `binPathFor("vision")`, run
+      `becky-vision --image <f> --prompt <q> --json`, parse the result, surface
+      description or the plain degrade note (exit 0). Inherits becky-vision's
+      degrade-never-crash. (The real VLM ANSWER is the one local-model step — see B8.)
+- [x] **B4 — DONE (cloud).** `cmd/ask/ssformat.go`: `formatPlain` (answer only, ANSI
+      stripped via `plainAnswer`) + JSON emit in `emitSingleShot` (the §4.2 object). The
+      single `singleShotResult` struct carries question/image/answer/kind/command/ran/
+      source/degraded/error.
+- [x] **B5 — DONE (cloud).** Exit-code mapping per §4.3 carried on `singleShotResult.exitCode`
+      (0 answered/degraded, 1 `--run` failure propagated, 2 usage) and asserted in tests.
+- [x] **B6 — DONE (cloud).** All `cmd/ask` tests green: `go build ./cmd/ask/...`,
+      `go vet ./cmd/ask/...`, `gofmt -l cmd/ask/` (empty) all clean; full
+      `go test ./cmd/ask/...` ok. (Whole-module `go build ./...` has ONE unrelated
+      failure in `cmd/dates` — a parallel agent's in-flight `"sort" imported and not
+      used` — outside this task's scope/`cmd/ask`.)
+- [ ] **B7 — Docs (LEFT FOR LOCAL/integrator).** Flip the README "Medium" entry from "Fix
+      pending" to done + add a one-line usage note to `SKILL.md`. NOT done here: this
+      agent is scoped to `cmd/ask/` only, so README/SKILL.md were intentionally not
+      edited. `build-all-tools.bat` auto-discovers — no edit; the binary is still `cmd/ask`.
+- [ ] **B8 — LOCAL (hardware / real models):** run `becky-ask --image <real frame>
+      --question "..."` against the real LFM2.5-VL (needs `becky-vision.exe` + the model);
+      confirm the answer + exit 0; confirm `--question` with the live Qwen intent
+      refinement; **confirm the colored TUI still opens on a normal double-click /
+      `becky-ask` in a console** (the accessibility invariant). Paste evidence.
 
 ### Unit tests (assert VALUES, not truthiness)
 
-- [ ] `TestFlags_QuestionSelectsSingleShot` — `--question "x"` sets single-shot;
-      no flags + (faked) TTY does NOT.
-- [ ] `TestSingleShot_DoesNotLaunchTUI` — the single-shot path never calls
-      `tea.NewProgram` (inject a TUI-launcher seam / spy; assert it is not invoked when
-      `--question` is set). **The accessibility guard.**
-- [ ] `TestInteractiveDefaultPreserved` — with no single-shot flag and a terminal, the
-      code selects the bubbletea launch branch (assert the chosen mode == `modeTUI`).
-- [ ] `TestSingleShot_TextQuestion_Catalog` — `--question "can becky transcribe?"`
-      (nil model) → plain answer names `becky-transcribe`; exit 0.
-- [ ] `TestSingleShot_Action_ShowOnly` — `--question "transcribe this" --target f` →
-      prints `becky-transcribe "f"`, `ran=false`, exit 0; does NOT execute.
-- [ ] `TestSingleShot_Action_Run` — same with `--run` and a faked runner → `ran=true`,
-      exit code propagated.
-- [ ] `TestSingleShot_JSON_Shape` — `--json` emits exactly one object with the §4.2
-      keys and correct `kind`/`command`/`source` values.
-- [ ] `TestSingleShot_Image_FakeVision` — `--image f.png --question "..."` with a fake
-      `visionAsker` returning a known description → that description is the answer;
-      `kind=="image"`, `source=="lfm2.5-vl"`.
-- [ ] `TestSingleShot_Image_Degrades` — fake vision returns `Degraded:true` → plain
-      degrade note + exit 0 (and `{"degraded":true}` in `--json`).
-- [ ] `TestSingleShot_ImageWithoutQuestion_Usage` — `--image f.png` alone → exit 2.
-- [ ] `TestSingleShot_MissingImage_Usage` — `--image nope.png` → exit 2.
-- [ ] `TestSingleShot_PlainOutput_NoANSI` — plain mode output contains no ESC `\x1b`
-      sequences (scripts must get clean text).
-- [ ] `TestNoTTYPathsUnchanged` — `BECKY_ASK_RUN` and `printNoTTY` behavior unchanged
-      when no single-shot flag is set (regression guard for §3.4).
+All in `cmd/ask/singleshot_test.go`; all PASS (cloud-verified):
+
+- [x] `TestFlags_QuestionSelectsSingleShot` — `--question "x"` sets single-shot;
+      a bare positional does NOT.
+- [x] `TestSingleShot_DoesNotLaunchTUI` — **the accessibility guard:** `decideMode`
+      with `--question` never returns `modeTUI`, and the `launchTUI` seam (spied) is not
+      invoked on the single-shot branch.
+- [x] `TestInteractiveDefaultPreserved` — no single-shot flag + a terminal selects
+      `modeTUI` (also with a dropped path that passes through as a target).
+- [x] `TestSingleShot_TextQuestion_Catalog` — `--question "can becky transcribe?"`
+      (absent model) → plain answer names `becky-transcribe`; exit 0.
+- [x] `TestSingleShot_Action_ShowOnly` — `transcribe this` + `--target f` → command
+      `[becky-transcribe …]`, `ran=false`, exit 0; does NOT execute.
+- [x] `TestSingleShot_Action_Run` — same with `--run` + a faked sibling tool → `ran=true`,
+      exit 0; a failing tool propagates exit 1.
+- [x] `TestSingleShot_JSON_Shape` — one object with the §4.2 keys; `kind=action`,
+      `command` array; a pure question → `command:null`.
+- [x] `TestSingleShot_Image_FakeVision` — fake `visionAsker` description is the answer;
+      `kind="image"`, `source="lfm2.5-vl"`.
+- [x] `TestSingleShot_Image_Degrades` — fake vision `Degraded:true` → plain degrade note
+      + exit 0 + `degraded:true`.
+- [x] `TestSingleShot_ImageWithoutQuestion_Usage` — `--image f.png` alone → exit 2.
+- [x] `TestSingleShot_MissingImage_Usage` — `--image nope.png` → exit 2.
+- [x] `TestSingleShot_EmptyQuestion_Usage` — empty `--question` → exit 2.
+- [x] `TestSingleShot_PlainOutput_NoANSI` — plain output carries no `\x1b` sequences;
+      `plainAnswer` strips a styled string.
+- [x] `TestNoTTYPathsUnchanged` — `BECKY_ASK_RUN`→`modeHeadlessRun`, else `modeNoTTY`,
+      when no single-shot flag is set; a single-shot flag wins over `BECKY_ASK_RUN`.
+- [x] `TestParseSingleShotFlags_Forms` — `--flag value` / `--flag=value` / `--ask`
+      alias / `--run=false` all parse; leftover args become `rest`.
 
 ---
 
