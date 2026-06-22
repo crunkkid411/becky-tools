@@ -1,8 +1,8 @@
 # SPEC-BECKY-INGEST.md — `becky ingest`: one-command corpus ingest + a human/LLM-readable DIGEST.md
 
-> **SPEC — NOT BUILT, AWAITING JORDAN'S GO/NO-GO.** Design only. No Go code has been
-> written; nothing in `becky-go/` is changed by this document. Authored 2026-06-22.
-> Grounded in the real code that exists today (every claim cites `file:symbol`).
+> **BUILT 2026-06-22 (cloud) — the digest formatter + `ingest` op are DONE and cloud-verified via
+> `--no-pipeline`; only the REAL-model pipeline run is left for local. See §7 STATUS + the DONE/LEFT-FOR-LOCAL
+> split.** Authored 2026-06-22; grounded in the real code (every design claim cites `file:symbol`).
 
 ---
 
@@ -319,61 +319,80 @@ command list the local agent drives to completion.
 
 ## 7. Checkboxed build plan + the unit tests
 
+> **STATUS 2026-06-22 (cloud, branch `claude/subagent-deployment-scaling-4hptv9`): BUILT + cloud-verified
+> via `--no-pipeline`.** The digest formatter + the `ingest` op + the golden offline proof are DONE; the one
+> thing left is running the REAL pipeline (Parakeet/ffmpeg/InsightFace/GPU) on a real folder, which needs
+> Jordan's models. Files changed: `cmd/becky/ingest.go` (new), `cmd/becky/ingest_test.go` (new),
+> `cmd/becky/testdata/DIGEST.golden.md` (new), `cmd/becky/main.go` (switch + usage + header — the only
+> edit to an existing cmd/becky file), `internal/digest/{digest,types,markdown,digest_test}.go` (new pkg).
+
 **Build plan (cloud, in order):**
 
-- [ ] **Create `internal/digest`** — the corpus formatter. Types: `Digest`, `ClipDigest`,
-      `CorpusSummary` (mirroring the `digest.json` shape in §4). No new analysis — it
-      consumes `report.Report` (`internal/report/types.go`) + a small `CaptureMeta` struct
-      decoded from `osint-manifest.json`'s `metadata` block (reuse `exifmeta.Metadata`
-      field tags; do NOT call exiftool/ffprobe — read the already-written JSON).
-- [ ] `digest.Build(reports []report.Report, captures map[string]CaptureMeta, m PipelineManifest, clock func() time.Time) Digest`
-      — deterministic assembly; clip order = manifest order; corpus people = union of
-      concluded entity names; earliest/latest capture from the trusted capture times.
-- [ ] `digest.Markdown(Digest) string` — the §3 linear layout. **No tables, no emoji-as-
-      data** (a deliberate departure from `internal/report/markdown.go`, justified in §2).
-- [ ] `digest.JSON(Digest) ([]byte, error)` — the `digest.json` encoder (`[]` not null,
-      RFC3339).
-- [ ] **Add the `ingest` op to `cmd/becky`**: a new `runIngest(rest)` in a new
-      `cmd/becky/ingest.go`, wired into the `switch op` in `cmd/becky/main.go:67`
-      (`case "ingest": err = runIngest(rest)`), and a usage line added to the `usage`
-      const (`main.go:29`). Parse flags via the existing `runner.go` helpers
-      (`extractCommon`, `flagValue`, `hasFlag`).
-- [ ] `runIngest`: build the `becky-pipeline` argv and run it via `runTool(cf, "pipeline", args)`
-      unless `--no-pipeline`; load `<out>/manifest.json`; per clip load `report.json` (or
-      `report.Build` fallback) + `osint-manifest.json`; call `digest.Build` → write
-      `DIGEST.md` + `digest.json`; print headline + stdout JSON.
-- [ ] Wire `report` into the forwarded `--steps` (force-append if absent).
-- [ ] Document the op in `cmd/becky/main.go`'s header comment + `usage`.
-- [ ] `go build ./... && go vet ./... && go test ./... && gofmt -l .` all green (gate 1–4).
-      `build-all-tools.bat` is the local completion step (gate 5) — note it in the handoff.
+- [x] **Create `internal/digest`** — the corpus formatter. Consumes `report.Report` + a `CaptureMeta`
+      decoded from `osint-manifest.json`'s `metadata` block (mirrors `exifmeta.Metadata` field tags; does
+      NOT import exifmeta — no probe call). Types `Digest`/`ClipDigest`/`CorpusSummary`/`CaptureMeta`.
+- [x] `digest.Build(clips []ClipInput, info CorpusInfo, clock func() time.Time) Digest` — deterministic;
+      clip order = manifest order; corpus people = de-duped union of concluded names; earliest/latest from
+      TRUSTED captures only. (Signature note: I bundled per-clip report+capture+status into one `ClipInput`
+      rather than the spec's three parallel collections — it keeps the manifest status, report, and capture
+      for one clip together and avoids a fragile stem→map join. Same data, cleaner call site.)
+- [x] `digest.Markdown(Digest) string` — the §3 linear layout. **No tables, no emoji, no box-drawing**
+      (a test asserts the output contains none of them).
+- [x] `digest.JSON(Digest) ([]byte, error)` — `[]` not null, RFC3339, trailing newline.
+- [x] **Added the `ingest` op to `cmd/becky`**: `runIngest` in new `cmd/becky/ingest.go`, wired into the
+      `switch op` (`case "ingest"`) + a usage line + the header comment in `main.go`. Flags parsed via the
+      existing `runner.go` helpers (`extractCommon`/`flagValue`/`hasFlag`/`dropFlag`).
+- [x] `runIngest`: builds the `becky-pipeline` argv + runs it via `runTool(cf, "pipeline", args)` unless
+      `--no-pipeline`; loads `<out>/manifest.json` (falls back to scanning `<out>/*/` when absent); per clip
+      loads `report.json` or rebuilds via `report.Build` over the on-disk sidecars; reads
+      `osint-manifest.json` for capture; writes `<out>/DIGEST.md` + `<out>/digest.json`; headline + stdout JSON.
+- [x] Wire `report` into the forwarded `--steps` (force-appended; `--kb` also appends `identify`; deduped).
+- [x] Documented the op in `cmd/becky/main.go`'s header comment + `usage`.
+- [x] `go build ./...`, `go vet ./cmd/becky/... ./internal/digest/...`, `go test ./...`, `gofmt -l` on the
+      touched dirs — ALL GREEN (gates 1–4). **Gate 5 (`build-all-tools.bat`) is the LOCAL completion step**
+      — no new `cmd/*` (ingest is a new op on the existing `cmd/becky`), so the existing auto-discover
+      rebuilds `becky.exe` with no script change.
 
-**Unit tests to write (assert VALUES from fixture sidecars, never truthiness):**
+**Unit tests (assert VALUES from fixture sidecars — all PASSING):**
 
-- [ ] `internal/digest`: a committed fixture set — a hand-authored `report.Report` (one
-      DOCUMENTED person via voice+face, one CANDIDATE single-signal unknown, one sub-second
-      motion burst) + a `CaptureMeta` with a real `quicktime` capture time. Assert
-      `Markdown` **contains** the person's name on the `Who:` line, the literal
-      `capture_time_source` and the trusted/untrusted word, the CANDIDATE's "not concluded"
-      basis, and the `Unknowns` section listing the unknown. Assert a clip with **only** an
-      `mtime(untrusted)` capture emits the literal **`UNTRUSTED`** word.
-- [ ] **Degrade test:** a clip whose `report.Report.Degraded==true` → renders a stub
-      section with a note, the corpus still renders, no panic, `Markdown` non-empty.
-- [ ] **Empty-unknowns test:** a clip with zero review items → the `Unknowns` line reads
+- [x] `internal/digest` content test: DOCUMENTED person named plainly on `Who:`, the literal
+      `capture_time_source` + "trusted", the CANDIDATE "not concluded" basis, GPS, device, the
+      conclusion line; and a separate test that an `mtime(untrusted)`-only clip emits the literal
+      **`UNTRUSTED`** word + lands in `unverified_dates`.
+- [x] **Accessibility test:** asserts the Markdown contains NO table-pipe rows, NO box-drawing chars,
+      NO emoji-as-meaning (`✅/⚫/❌/...`).
+- [x] **Degrade test:** a `Degraded==true` clip renders a stub section + a PARTIAL note, no panic.
+- [x] **Empty-unknowns test:** a clip with zero review items → the per-clip `Unknowns` block reads
       `none flagged` (never omitted).
-- [ ] **Determinism test:** `Build`+`Markdown` over the fixture twice (fixed clock) →
-      byte-identical (the regression guard).
-- [ ] **Corpus roll-up test:** two clips, overlapping concluded people → `people_concluded`
-      is the de-duplicated union; earliest/latest capture computed from trusted times only;
-      a clip with an untrusted date appears in `unverified_dates`.
-- [ ] **JSON shape test:** empty corpus → `clips: []` (not null), `degraded: true`, exit 0.
-- [ ] `cmd/becky`: a `runIngest` flag/argv test (mirror `cmd/ask/plan_test.go` /
-      `cmd/pipeline/steps_test.go` style) — assert the `becky-pipeline` argv built for a
-      given flag set (e.g. `--kb` present → `identify` in `--steps`; `report` always
-      appended), and that `--no-pipeline` skips the pipeline exec. Use a fake runner so no
-      real binary is spawned.
-- [ ] **Golden-file proof:** the `--no-pipeline` run over the committed fixture `out/` dir
-      produces a DIGEST.md byte-identical to a checked-in `testdata/DIGEST.golden.md` (this
-      doubles as the §6 one-command offline proof the local agent re-runs).
+- [x] **Determinism test:** `Build`+`Markdown` over the fixture twice (fixed clock) → byte-identical.
+- [x] **Corpus roll-up test:** overlapping people → de-duped union; earliest/latest from trusted only;
+      untrusted-date clip → `unverified_dates`.
+- [x] **JSON shape test:** empty corpus → `clips: []` (not null), `degraded: true`, exit 0.
+- [x] `cmd/becky` `ingestSteps` flag test: `--kb` ⇒ `identify` present; `report` always appended exactly
+      once; explicit minimal set keeps only what was asked + report.
+- [x] **Golden-file proof:** `TestIngest_NoPipeline_GoldenProof` builds a fixture `pipeline-out/` and runs
+      `runIngest(... --no-pipeline ...)`, asserting the DIGEST.md matches `cmd/becky/testdata/DIGEST.golden.md`
+      (paths/timestamp normalized) + the load-bearing lines. **This is the §6 one-command offline proof.**
+
+### DONE (cloud) vs LEFT FOR LOCAL
+
+**DONE (cloud, fully verified with no hardware):**
+- The whole `internal/digest` package + the `cmd/becky ingest` op + `--no-pipeline`.
+- The offline proof, RUN: `go test ./cmd/becky/... -run TestIngest_NoPipeline_GoldenProof` is green, and the
+  built binary was driven live — `becky ingest <fixture-out> --no-pipeline --kb kb-final` produced a correct
+  2-clip DIGEST.md (trusted capture labelled "trusted"; the mtime-only clip labelled **UNTRUSTED** and listed
+  under corpus unknowns + `unverified_dates`; the partial clip noted; DOCUMENTED person named, CANDIDATE
+  flagged, sub-second motion routed to REVIEW; linear, no tables/emoji). The formatter is fully cloud-proven.
+
+**LEFT FOR LOCAL (needs Jordan's models — cloud cannot run these):**
+- [ ] Run the REAL pipeline end-to-end: `becky ingest <real folder> --kb kb-final` (drives becky-pipeline →
+      Parakeet ASR + ffmpeg + InsightFace + the report step), then read the generated `<out>/DIGEST.md`.
+- [ ] Confirm capture-time/GPS/device render correctly from a REAL `osint-manifest.json` (exiftool/ffprobe
+      present locally) — the cloud only exercised hand-authored fixtures.
+- [ ] `build-all-tools.bat` (rebuilds `becky.exe`; no new `cmd/*`).
+- [ ] Verify `--resume` over a partially-ingested corpus (forwarded straight to becky-pipeline).
+- [ ] Eyes-check that the DIGEST reads well for a real case; tune the "key moment" cap (§8 decision 2) if 5
+      is too few/many.
 
 ---
 

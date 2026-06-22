@@ -9,6 +9,7 @@
 //	becky appearances "<name>" [--corpus <dir>] [--kb]   where a person appears
 //	becky find "<query>" [--db <path>]                   hybrid search the corpus
 //	becky corroborate "<claim>" [--db] [--corpus] [--kb] cross-reference a claim
+//	becky ingest <folder> [--kb <dir>] [--no-pipeline]   run the pipeline + write DIGEST.md
 //
 // Each op prints a plain-English summary to stderr (the headline) AND a structured
 // JSON result to stdout (the underlying data + paths to the actual clips/frames).
@@ -37,6 +38,7 @@ Usage:
   becky appearances "<name>" [--corpus <dir>] [--kb]    which videos a person appears in
   becky find "<query>" [--db <path>]                    natural-language search of the corpus
   becky corroborate "<claim>" [--db] [--corpus] [--kb]  cross-reference a claim for review
+  becky ingest <folder> [--kb <dir>] [--no-pipeline]    run the forensic pipeline over a folder + write one DIGEST.md
 
 Common flags: --bin <dir> (becky-*.exe location), --verbose, --json (JSON only, no headline)
 
@@ -79,6 +81,8 @@ func main() {
 		err = runFind(rest)
 	case "corroborate":
 		err = runCorroborate(rest)
+	case "ingest":
+		err = runIngest(rest)
 	case "help", "-h", "--help":
 		fmt.Fprintln(os.Stderr, usage)
 		return
