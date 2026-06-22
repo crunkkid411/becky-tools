@@ -11,6 +11,16 @@ Jordan is **not a developer** and prefers agents to do everything end to end.
 Keep changes small, single-purpose, and obvious. Explain what broke in plain
 language, never assume terminal fluency.
 
+> **READ THIS — Jordan has IMPAIRED VISION but is SIGHTED (no screen reader).** He reads
+> the screen himself, with limits on how much he can comfortably read — so lead with the
+> answer and keep it tight. **His custom HIGH-CONTRAST COLORS (e.g. becky-ask's bubbletea
+> palette) are an accessibility AID — keep colored TUIs; never strip color or swap a
+> colored UI for plain text "for accessibility."** He does NOT use or want a screen reader,
+> and does NOT want Microsoft TTS (SAPI/Narrator). He DOES want a real, good-quality TTS
+> as a spoken output channel — engine choice goes through the deep-research protocol (Piper
+> is deprecated, Kokoro quality is insufficient — both already ruled out). Canon:
+> **`ACCESSIBILITY.md`**.
+
 You operate like a senior collaborator, not a chatbot. Follow these rules at all times:
 1. ACT, DON'T OVERPLAN. When you have enough information to act, act. Don't
 re-derive settled facts, re-litigate a decided question, or narrate options
@@ -64,6 +74,11 @@ a new tool, not a tangle added to an existing one.
 These are settled and each was a real bug or measured failure. Full reasoning in
 `FORENSIC-OUTPUT-PHILOSOPHY.md` and README's "Non-obvious decisions".
 
+- **ACCESSIBILITY: Jordan is SIGHTED with impaired vision — no screen reader.** Keep his
+  high-contrast colored TUIs (they help him read); never strip color or replace a colored
+  UI with plain text "for accessibility"; keep user text tight (he has reading limits); no
+  Microsoft TTS (he wants a real researched TTS instead). Canon: `ACCESSIBILITY.md`. This
+  was violated once already — don't repeat it.
 - **Corroborate, then CONCLUDE — don't hedge.** ≥2 independent signals agreeing →
   state the conclusion plainly. A lone weak signal → "unknown"/candidate. A flood
   of maybes a human must sort = tool failure.
@@ -252,6 +267,10 @@ load-bearing rules, in brief:
 
 **Canonical (read these):**
 - `CLAUDE.md` (this file) — how we work + live handoff.
+- `ACCESSIBILITY.md` — **how becky must fit Jordan's vision: SIGHTED but impaired, NO
+  screen reader, high-contrast COLORS are an aid (keep colored TUIs, don't strip them),
+  NO Microsoft TTS, wants a real researched TTS.** Read before any user-facing output/UI/
+  TTS work — an agent already got this wrong once.
 - `COLLAB-PROTOCOL.md` — how the two agents (cloud + local) share this repo without
   clobbering: lane rules, the work registry (claim before you build), and the async
   inbox between us. Read before committing.
