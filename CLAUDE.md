@@ -365,6 +365,25 @@ load-bearing rules, in brief:
   already ruled out). **Read the HANDOFF before touching becky-clip.**
 
 **Specs (read the one for the tool you're building):**
+- **SPEC FACTORY — 2026-06-22 (cloud, design-only, NOT built; each ships a checkboxed build
+  plan + value-asserting tests; await Jordan's go/no-go). Built by a parallel subagent swarm
+  to clear the discussed-but-never-spec'd backlog:**
+  - `SPEC-BECKY-TTS.md` (+ `research/tts.md`) — a real local TTS (Orpheus-3B GGUF on the
+    existing llama-server; Chatterbox fallback). NOT Microsoft TTS; Piper/Kokoro ruled out.
+    Final gate = Jordan HEARS it (the arena leaderboard is the wrong question).
+  - `SPEC-IDENTIFY-HARDENING.md` — fixes the Critical wrong-person voice-ID (name bar ~0.75,
+    top-2 margin, `--cast` guard). The highest-value forensic-accuracy fix.
+  - `SPEC-BECKY-INGEST.md` — `becky ingest <folder>` → runs the pipeline + a LINEAR `DIGEST.md`.
+  - `SPEC-BECKY-DATES.md` — `becky dates` forensic date triangulation (exifmeta + mtime + OCR).
+  - `SPEC-BECKY-LOCATION.md` — `becky location` room/dwelling fingerprint (consumes framematch).
+  - `SPEC-FRAMEMATCH-HARDENING.md` — ROI ceiling-crop + decor keypoint match (fixes the
+    body-silhouette false neg/pos; pure-Go default, gocv opt-in).
+  - `SPEC-FACE-CROP-DB.md` — tight face-crop artifact + write embeddings to the already-built
+    unused `appearance_embeddings` table; feeds enroll + cluster.
+  - `SPEC-ASK-SINGLESHOT.md` — `becky-ask --question/--image` scriptable mode ADDED BESIDE the
+    colored TUI (TUI stays the default — do not demote it).
+  - `SPEC-FACE-NAMING-LOOP.md` — `becky-cluster → becky-name` (high-contrast review card) →
+    enroll the cluster, + inline "teach me" remedy in identify's unnamed output.
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
@@ -423,6 +442,12 @@ load-bearing rules, in brief:
 ---
 
 ## 6. Live handoff — current branch status
+
+**Branch `claude/subagent-deployment-scaling-4hptv9` (cloud, 2026-06-22) — fixed a wrong accessibility assumption, then ran a SPEC-FACTORY swarm to clear the discussed-but-never-spec'd backlog. Draft PR #20. NO code shipped — all design-only, awaiting Jordan's go/no-go.**
+Context: Jordan corrected a load-bearing fact — he is SIGHTED with impaired vision, does NOT use a screen reader, his high-contrast colored TUIs (becky-ask bubbletea) are an AID, and he does NOT want Microsoft TTS. An earlier pass this session wrongly assumed a screen reader (stripped color, added SAPI TTS); that was reverted. His real point: the bottleneck isn't missing ideas, it's many *discussed* features that never got a spec. So one comprehension subagent read the whole repo, then a parallel swarm wrote a proper spec per gap.
+- **Accessibility corrected (on this branch):** `ACCESSIBILITY.md` rewritten + CLAUDE.md banner/invariant/doc-map to the TRUE facts (sighted/low-vision, keep colored TUIs, no screen reader, no MS TTS, wants a real researched TTS). becky-ask is back to its colored bubbletea default; the SAPI `internal/a11y` package was removed.
+- **9 new specs written (design-only, each with a checkboxed build plan + value-asserting tests):** `SPEC-BECKY-TTS.md` (+`research/tts.md`; Orpheus-3B GGUF primary, Chatterbox fallback — Jordan must HEAR it before commit), `SPEC-IDENTIFY-HARDENING.md` (the Critical wrong-person voice-ID fix), `SPEC-BECKY-INGEST.md`, `SPEC-BECKY-DATES.md`, `SPEC-BECKY-LOCATION.md`, `SPEC-FRAMEMATCH-HARDENING.md`, `SPEC-FACE-CROP-DB.md`, `SPEC-ASK-SINGLESHOT.md`, `SPEC-FACE-NAMING-LOOP.md`. All in the §5 doc map.
+- **Honest state:** these are SPECS, not code (the thing Jordan named: "subagents researching and building proper specs"). Each is grounded in real `file:symbol` citations and carries a build plan so the next swarm can EXECUTE rather than re-research. `go build ./...` + `gofmt -l` green (only the unrelated ctlmodel gofmt fix touches code). **LEFT FOR JORDAN:** read/greenlight the specs (esp. the Open-Decisions in each: TTS engine+voice, the identify thresholds 0.75/0.06, ROI fractions, crop margins), then I fan out a BUILD swarm one tool per spec. The TTS voice + any audible/visual result is the hardware-only gate.
 
 **Branch `local/finish-cloud-integration-2026-06-21` (local, 2026-06-21) — FIXED the stalled "Get Becky Updates" button + REBUILT every .exe + wired 4 proven engines into becky-canvas (4 subagents). On master (fast-forwarded).**
 Jordan ran the update button; it had stalled mid-merge and no .exes rebuilt. Root cause: the button was merging `origin/claude/project-completion-9jvjwj` and hit ONE conflict (`cmd/canvas/gui_spine.go`); a prior session resolved the file but never `git add`+committed it, so the merge never finished and `build-all-tools.bat` never ran. Completed the merge, rebuilt all 69 tools + GUI/audio variants, then ran 4 parallel subagents to wire proven engines into the window.
