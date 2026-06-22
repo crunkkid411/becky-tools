@@ -10,9 +10,11 @@ emits one line of JSON to stdout:
 
 Long files (multi-hour livestreams) are decoded in fixed TIME WINDOWS so that
 RAM and GPU VRAM stay bounded regardless of duration. This is the DEFAULT
-(--chunk-seconds 900 = 15 min); a clip shorter than one window is processed as a
-single pass with byte-for-byte the same output as before. The recognizer is
-built ONCE per provider, not per window.
+(--chunk-seconds 30); each window is ONE forward pass, so the window length (not
+the file length) is what must fit in memory and under the model's positional
+limit -- 15-min windows OOM'd and broke attention. A clip shorter than one window
+is processed as a single pass. The recognizer is built ONCE per provider, not per
+window.
 
 Device selection (--device):
   * auto (default) -> try CUDA first, and if a window fails for ANY reason
@@ -210,9 +212,11 @@ def main():
     ap.add_argument("--num-threads", type=int, default=4)
     ap.add_argument("--device", default="auto")  # auto | cuda | cpu
     ap.add_argument("--lang", default="en")
-    # Windowed decoding keeps RAM/VRAM bounded on long files. Defaults chunk a
-    # 15-minute window with a 2 s overlap so boundary words are fully decoded.
-    ap.add_argument("--chunk-seconds", type=float, default=900.0)
+    # Windowed decoding keeps RAM/VRAM bounded on long files. Each window is ONE
+    # forward pass, so the window length (not the file length) drives memory and
+    # the model's positional-attention limit; default 30s windows with a 2 s
+    # overlap so boundary words are fully decoded. (900s OOM'd / broke attention.)
+    ap.add_argument("--chunk-seconds", type=float, default=30.0)
     ap.add_argument("--chunk-overlap", type=float, default=2.0)
     args = ap.parse_args()
 

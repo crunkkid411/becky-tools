@@ -36,9 +36,10 @@ and hit four real issues; all fixed + verified by driving the live window on tha
 - **becky-transcribe choked on long videos** (multi-hour livestreams OOM'd the GPU; CPU re-ran the
   WHOLE clip = "ridiculous wait"). Root cause: the Python helper loaded the ENTIRE wav + decoded it
   in ONE pass (VRAM scales with length). Fix: **windowed decoding inside the helper** — model loaded
-  ONCE, audio processed in time-windows (`--chunk-seconds`, default 900), per-window GPU→CPU fallback
-  that keeps already-done windows. Default behavior, deterministic; a file under one window is
-  byte-identical to before. Now handles 4 min or 4 hours. (`cmd/transcribe/main.go` + `internal/pyhelpers/transcribe_parakeet.py`.)
+  ONCE, audio processed in time-windows (`--chunk-seconds`, default 30 — 900s was too large and itself
+  OOM'd on long files; fixed 2026-06-21), per-window GPU→CPU fallback that keeps already-done windows.
+  Default behavior, deterministic; a file under one window is byte-identical to before. Now handles
+  4 min or 4 hours. (`cmd/transcribe/main.go` + `internal/pyhelpers/transcribe_parakeet.py`.)
 - **The cmd/console window on launch** — fixed by building the gui exe with `-ldflags "-H windowsgui"`
   (PE subsystem 2). No console box pops up. (`build-becky-clip.ps1` + `build-all-tools.bat`.)
 - **"Search only shows full videos, not quotes."** The engine+GUI quote-search was actually fine
@@ -204,8 +205,8 @@ moment → double-clicks to drop the clip on a timeline → burns an unobtrusive
     search is slow; there's an in-memory parse cache (path+modtime) so re-searches are fast. Results
     are capped per-group (200 playable / 200 transcript-only) so a flood never buries playable hits.
 24. **becky-transcribe is now length-agnostic by default (windowed decoding).** See ROUND-2.5. The
-    `runTranscribe` exec in `cmd/clip/transcribe.go` uses the helper default window (900s) — long
-    videos chunk automatically. ROUND-3 UPDATE: local ASR now writes `<stem>_LOCAL.srt` (NOT
+    `runTranscribe` exec in `cmd/clip/transcribe.go` uses the helper default window (30s, was 900s —
+    fixed 2026-06-21) — long videos chunk automatically. ROUND-3 UPDATE: local ASR now writes `<stem>_LOCAL.srt` (NOT
     `<stem>.srt`) so it never collides with / overwrites an official transcript (see #25).
 
 ## ROUND-3 (later 2026-06-18 — caption pipeline, forensic non-overwrite, real NLE timeline)

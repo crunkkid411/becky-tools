@@ -11,7 +11,7 @@ func TestResolveChunkSeconds(t *testing.T) {
 		noChunk bool
 		want    float64
 	}{
-		{"default windowing", 900, false, 900},
+		{"default windowing", defaultChunkSeconds, false, defaultChunkSeconds},
 		{"no-chunk overrides default", 900, true, 0},
 		{"no-chunk overrides custom", 10, true, 0},
 		{"explicit zero stays zero", 0, false, 0},
@@ -23,6 +23,26 @@ func TestResolveChunkSeconds(t *testing.T) {
 				t.Fatalf("resolveChunkSeconds(%v, %v) = %v; want %v", tt.chunk, tt.noChunk, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDefaultChunkSecondsIsSafe is the regression guard for the long-video OOM.
+// The old 900s default decoded a 15-MINUTE window in ONE forward pass, which
+// OOM'd (~3 GB single allocation) and overran the Parakeet int8 export's
+// positional attention ("broadcast 6275 by 11275") on the FIRST window — so
+// becky-ask drag-and-drop transcription never worked on long videos. The default
+// must stay a small, bounded window. (Bug fixed 2026-06-21.)
+func TestDefaultChunkSecondsIsSafe(t *testing.T) {
+	if defaultChunkSeconds != 30 {
+		t.Fatalf("defaultChunkSeconds = %v; want 30 (the proven-safe Parakeet window)", defaultChunkSeconds)
+	}
+	// Hard ceiling: anything near the old 900s regime re-introduces the OOM.
+	if defaultChunkSeconds > 120 {
+		t.Fatalf("defaultChunkSeconds = %v exceeds the 120s safety ceiling (long-window OOM risk)", defaultChunkSeconds)
+	}
+	// A 3-hour stream must split into many small bounded passes, not a few huge ones.
+	if got := windowCount(3*3600, defaultChunkSeconds); got < 100 {
+		t.Fatalf("windowCount(3h, default=%v) = %d; want many small windows (>=100)", defaultChunkSeconds, got)
 	}
 }
 

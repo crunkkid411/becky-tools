@@ -752,9 +752,16 @@ integration; whole module `go build/vet/test ./...` green, gofmt-clean, `node --
 - **becky-transcribe now transcribes ANY length by default** (`cmd/transcribe/main.go` +
   `internal/pyhelpers/transcribe_parakeet.py`): the helper was loading the WHOLE wav + decoding in
   ONE pass (VRAM scales with length → multi-hour OOM; CPU fallback re-ran the whole clip). Now it
-  decodes in time-WINDOWS (`--chunk-seconds`, default 900), model loaded ONCE, per-window GPU→CPU
-  fallback that keeps done windows. Deterministic; a sub-window file is byte-identical to before.
-  Verified: 50s clip one-shot == `--chunk-seconds 10` (6 windows) at the seams; CPU path works.
+  decodes in time-WINDOWS (`--chunk-seconds`, default 30 — see next bullet), model loaded ONCE,
+  per-window GPU→CPU fallback that keeps done windows. Deterministic; a sub-window file is
+  byte-identical to before. Verified: 50s clip one-shot == `--chunk-seconds 10` (6 windows) at the seams.
+- **The window default is 30s, NOT 900s (fixed 2026-06-21).** Each window is ONE forward pass, so the
+  WINDOW length (not the file length) drives RAM + the model's positional limit. The old 900s (15-min)
+  default OOM'd on a ~3 GB single allocation AND overran the Parakeet int8 export's relative-position
+  attention ("broadcast 6275 by 11275") on the FIRST window — so becky-ask / becky-clip drag-and-drop
+  transcription never worked on long videos. 30s is the proven-safe NeMo-Parakeet window. Pinned by a
+  regression test (`cmd/transcribe/chunk_test.go:TestDefaultChunkSecondsIsSafe`); becky-ask and
+  becky-clip pass no `--chunk-seconds`, so the default is the whole fix.
 - **No console window** (`-ldflags "-H windowsgui"` in both build scripts; PE subsystem now 2).
 - **Search returns timestamped QUOTES on his real folder** (was 0): forgiving discovery
   (`internal/footage/discover.go` — boundary-prefix, caption subfolders incl. `transcripts/`,

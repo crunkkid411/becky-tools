@@ -102,6 +102,16 @@ const (
 	segMaxChars   = 80
 )
 
+// defaultChunkSeconds is the default decode window. Each window is ONE forward
+// pass, so the WINDOW length (not the file length) drives RAM and the model's
+// positional-attention limit. The old 15-min (900s) default OOM'd on a ~3 GB
+// single allocation AND overran the Parakeet int8 export's relative-position
+// attention ("broadcast 6275 by 11275") on the very FIRST window of a long file,
+// so becky-ask drag-and-drop transcription never worked on long videos. 30s is
+// the proven-safe window (NeMo's Parakeet chunk regime): long files transcribe
+// in many small bounded passes instead of one giant one. See chunk_test.go.
+const defaultChunkSeconds = 30
+
 func main() {
 	out := flag.String("output", "", "output file (default: stdout)")
 	format := flag.String("format", "json", "output format: json, srt, txt, vtt")
@@ -109,7 +119,7 @@ func main() {
 	lang := flag.String("lang", "en", "language code")
 	device := flag.String("device", "", "device: auto, cuda, cpu (default auto: GPU with automatic CPU fallback on OOM)")
 	numThreads := flag.Int("num-threads", 4, "ONNX inference threads")
-	chunkSeconds := flag.Float64("chunk-seconds", 900, "decode in time windows of this many seconds (keeps RAM/VRAM bounded on long files; 0 = whole file at once)")
+	chunkSeconds := flag.Float64("chunk-seconds", defaultChunkSeconds, "decode in time windows of this many seconds (keeps RAM/VRAM bounded on long files; 0 = whole file at once)")
 	chunkOverlap := flag.Float64("chunk-overlap", 2, "seconds of overlap between windows so boundary words are fully decoded")
 	noChunk := flag.Bool("no-chunk", false, "decode the whole file in one pass (equivalent to --chunk-seconds 0)")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
@@ -155,7 +165,7 @@ func main() {
 	}
 
 	// --no-chunk forces a single whole-file pass (chunk-seconds 0); otherwise the
-	// default (900s) windows long files so RAM/VRAM stay bounded with no user action.
+	// default (30s) windows long files so RAM/VRAM stay bounded with no user action.
 	chunkSecs := resolveChunkSeconds(*chunkSeconds, *noChunk)
 	if n := windowCount(info.Duration, chunkSecs); n > 1 {
 		beckyio.Logf(*verbose, "transcribing in %d windows of %gs (overlap %gs)", n, chunkSecs, *chunkOverlap)
