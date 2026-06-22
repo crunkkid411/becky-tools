@@ -267,22 +267,23 @@ func (a *App) layoutOverlayContent(gtx layout.Context, p *canvas.Proposal, accen
 	)
 }
 
-// layoutOverlayButtons draws the ✓ / ✗ affordances.
+// layoutOverlayButtons draws the ✓ / ✗ affordances using vector icons so no
+// font glyph is needed (the theme font lacks ✓/✗ codepoints → tofu boxes).
 func (a *App) layoutOverlayButtons(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.overlayBtn(gtx, &a.overlay.approveBtn, "✓", colNeonGreen)
+			return a.overlayBtn(gtx, &a.overlay.approveBtn, a.icons.apply, colNeonGreen)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.overlayBtn(gtx, &a.overlay.rejectBtn, "✗", colCrimson)
+			return a.overlayBtn(gtx, &a.overlay.rejectBtn, a.icons.reject, colCrimson)
 		}),
 	)
 }
 
 // overlayBtn draws one 44×44 approve/reject button: a neon-edged square with
-// a symbol. Hover brightens the border.
-func (a *App) overlayBtn(gtx layout.Context, btn *widget.Clickable, symbol string, accent color.NRGBA) layout.Dimensions {
+// a vector icon. Hover brightens the border. ic may be nil (degrade to blank).
+func (a *App) overlayBtn(gtx layout.Context, btn *widget.Clickable, ic *widget.Icon, accent color.NRGBA) layout.Dimensions {
 	side := gtx.Dp(unit.Dp(44))
 	gtx.Constraints = layout.Exact(image.Pt(side, side))
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -293,13 +294,17 @@ func (a *App) overlayBtn(gtx layout.Context, btn *widget.Clickable, symbol strin
 		}
 		fillRRect(gtx.Ops, image.Rect(0, 0, side, side), 8, bg)
 		strokeRect(gtx.Ops, image.Rect(0, 0, side, side), border)
+		if ic == nil {
+			return layout.Dimensions{Size: image.Pt(side, side)}
+		}
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.H6(a.th, symbol)
-			lbl.Color = accent
+			iconColor := accent
 			if btn.Hovered() {
-				lbl.Color = colNeonGreen
+				iconColor = colNeonGreen
 			}
-			return lbl.Layout(gtx)
+			iconPx := gtx.Dp(unit.Dp(22))
+			gtx.Constraints = layout.Exact(image.Pt(iconPx, iconPx))
+			return ic.Layout(gtx, iconColor)
 		})
 	})
 }

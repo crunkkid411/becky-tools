@@ -38,14 +38,13 @@ type hubLauncher struct {
 // placeholder; degrade, never crash).
 func newHubLauncher() *hubLauncher {
 	mk := func(b []byte) *widget.Icon { ic, _ := widget.NewIcon(b); return ic }
-	// Icons reuse the canvas's confirmed material set (gui_theme.go) so the build is
-	// never broken by a renamed glyph; tooltips disambiguate any shared icon.
+	// Icons chosen to be visually distinct; tooltips provide the label.
 	return &hubLauncher{
-		iDrum: mk(icons.ImageGridOn),    // grid → drum machine
-		iDaw:  mk(icons.ImageMusicNote), // note → REAPER DAW
-		iClip: mk(icons.AVMovie),        // movie → forensic clip editor
-		iNle:  mk(icons.AVMovie),        // movie → video editor (NLE)
-		iAsk:  mk(icons.ActionSearch),   // search → ask (chat front-door)
+		iDrum: mk(icons.ImageGridOn),     // grid       → drum machine
+		iDaw:  mk(icons.AVMusicVideo),    // music+film → REAPER DAW (distinct from piano mode)
+		iClip: mk(icons.ActionPermMedia), // perm-media → forensic clip editor
+		iNle:  mk(icons.AVVideocam),      // camera     → video editor (NLE, distinct from iClip)
+		iAsk:  mk(icons.ActionSearch),    // search     → ask (chat front-door)
 	}
 }
 

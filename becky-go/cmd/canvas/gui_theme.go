@@ -108,23 +108,50 @@ func busColor(bus string) color.NRGBA {
 // neon square placeholder instead of crashing.
 
 // iconSet holds the decoded dock + chrome icons. nil entries draw a placeholder.
+// Every control that would otherwise render a unicode glyph (▶ ■ ✓ ✗ etc.)
+// MUST use a field here so the theme font cannot produce tofu boxes.
 type iconSet struct {
-	record   *widget.Icon // mic    — record audio
-	draw     *widget.Icon // brush  — draw/pen mode
-	piano    *widget.Icon // note   — piano-roll mode
-	drum     *widget.Icon // grid   — drum machine
-	mixer    *widget.Icon // eq     — mixer / DAW routing mode
-	audio    *widget.Icon // wave   — audio / vocal tracks mode
-	video    *widget.Icon // movie  — video mode
-	folder   *widget.Icon // open   — load a file/folder
-	clear    *widget.Icon // X      — clear output
-	expand   *widget.Icon // chevron— expand output
-	collapse *widget.Icon // chevron— collapse output
-	run      *widget.Icon // search — run the agent box
+	// Dock / mode icons
+	record   *widget.Icon // AVMic                — record audio
+	draw     *widget.Icon // ImageBrush           — draw/pen mode
+	piano    *widget.Icon // ImageMusicNote       — piano-roll mode
+	drum     *widget.Icon // ImageGridOn          — drum machine
+	mixer    *widget.Icon // AVEqualizer          — mixer / DAW routing mode
+	audio    *widget.Icon // AVQueueMusic         — audio / vocal tracks mode
+	video    *widget.Icon // AVMovie              — video mode
+	folder   *widget.Icon // FileFolderOpen       — load a file/folder
+	clear    *widget.Icon // ContentClear         — clear output
+	expand   *widget.Icon // NavigationExpandLess — expand output
+	collapse *widget.Icon // NavigationExpandMore — collapse output
+	run      *widget.Icon // ActionSearch         — run the agent box
+
+	// Transport controls (replaces ▶ ■ ⏸ glyphs)
+	play   *widget.Icon // AVPlayArrow         — play / start
+	stop   *widget.Icon // AVStop              — stop / halt
+	pause  *widget.Icon // AVPause             — pause
+	recArm *widget.Icon // AVFiberManualRecord — arm record (red dot)
+
+	// File / edit actions
+	save *widget.Icon // ContentSave  — save project
+	load *widget.Icon // FileFolderOpen — open/load (alias of folder)
+	undo *widget.Icon // ContentUndo  — undo
+	redo *widget.Icon // ContentRedo  — redo
+
+	// Mixer / track controls
+	mute *widget.Icon // AVVolumeOff  — mute track
+	solo *widget.Icon // ActionStarRate — solo track
+
+	// Overlay approve / reject (replaces ✓ ✗ glyphs)
+	apply  *widget.Icon // NavigationCheck — approve proposal
+	reject *widget.Icon // NavigationClose — reject proposal
+
+	// Generic add / delete
+	add    *widget.Icon // ContentAddCircle — add track/item
+	delete *widget.Icon // ActionDelete     — delete track/item
 }
 
 // loadIcons decodes every dock/chrome icon. A nil entry (decode failure) is tolerated
-// by the dock renderer, which draws a placeholder glyph in its place — degrade, never
+// by the dock renderer, which draws a placeholder square in its place — degrade, never
 // crash.
 func loadIcons() iconSet {
 	mk := func(b []byte) *widget.Icon {
@@ -135,6 +162,7 @@ func loadIcons() iconSet {
 		return ic
 	}
 	return iconSet{
+		// Dock / mode
 		record:   mk(icons.AVMic),
 		draw:     mk(icons.ImageBrush),
 		piano:    mk(icons.ImageMusicNote),
@@ -147,6 +175,30 @@ func loadIcons() iconSet {
 		expand:   mk(icons.NavigationExpandLess),
 		collapse: mk(icons.NavigationExpandMore),
 		run:      mk(icons.ActionSearch),
+
+		// Transport
+		play:   mk(icons.AVPlayArrow),
+		stop:   mk(icons.AVStop),
+		pause:  mk(icons.AVPause),
+		recArm: mk(icons.AVFiberManualRecord),
+
+		// File / edit
+		save: mk(icons.ContentSave),
+		load: mk(icons.FileFolderOpen),
+		undo: mk(icons.ContentUndo),
+		redo: mk(icons.ContentRedo),
+
+		// Mixer / track
+		mute: mk(icons.AVVolumeOff),
+		solo: mk(icons.ActionStarRate),
+
+		// Overlay
+		apply:  mk(icons.NavigationCheck),
+		reject: mk(icons.NavigationClose),
+
+		// Generic
+		add:    mk(icons.ContentAddCircle),
+		delete: mk(icons.ActionDelete),
 	}
 }
 
