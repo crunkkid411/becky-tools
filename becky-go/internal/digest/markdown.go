@@ -2,6 +2,7 @@ package digest
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"becky-go/internal/report"
@@ -143,7 +144,9 @@ func writeClip(sb *strings.Builder, n int, c ClipDigest) {
 
 	// Sidecars: the audit trail, always present.
 	if c.SidecarDir != "" {
-		fmt.Fprintf(sb, "Sidecars: %s\n", c.SidecarDir)
+		// Emit forward slashes always so DIGEST.md is byte-identical across OSes
+		// (the path is an audit-trail reference, not something to os.Open here).
+		fmt.Fprintf(sb, "Sidecars: %s\n", filepath.ToSlash(c.SidecarDir))
 	} else {
 		sb.WriteString("Sidecars: (none recorded)\n")
 	}

@@ -77,14 +77,17 @@ func writeFixture(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 
+	// Use forward-slash paths in the fixture JSON: a real manifest is json.Marshal'd
+	// (backslashes escaped), but this hand-written JSON would be INVALID on Windows
+	// where root/clipDir contain backslashes (e.g. \U -> "invalid string escape").
 	manifest := `{
   "tool": "becky-pipeline",
-  "out_root": "` + root + `",
+  "out_root": "` + filepath.ToSlash(root) + `",
   "videos": [
     {
       "input": "/cases/reddit/reddit-livestream-2025-08-14.mp4",
       "stem": "reddit-livestream-2025-08-14",
-      "out_dir": "` + clipDir + `",
+      "out_dir": "` + filepath.ToSlash(clipDir) + `",
       "status": "ok",
       "steps": [
         {"name": "transcribe", "status": "ok"},
@@ -207,8 +210,12 @@ func TestIngest_NoPipeline_GoldenProof(t *testing.T) {
 // normalizeForGolden strips the volatile parts (the temp paths + the generated
 // timestamp) so the golden file is stable across runs/machines.
 func normalizeForGolden(s, out, tmp string) string {
-	s = strings.ReplaceAll(s, out, "<OUT>")
-	s = strings.ReplaceAll(s, tmp, "<TMP>")
+	// Slash-agnostic: the digest emits forward slashes, but out/tmp are OS paths
+	// (backslashes on Windows). Normalize everything to forward slashes first so the
+	// placeholder replacement and the golden compare are identical on Linux + Windows.
+	s = filepath.ToSlash(s)
+	s = strings.ReplaceAll(s, filepath.ToSlash(out), "<OUT>")
+	s = strings.ReplaceAll(s, filepath.ToSlash(tmp), "<TMP>")
 	var lines []string
 	for _, l := range strings.Split(s, "\n") {
 		if strings.HasPrefix(l, "Generated: ") {
