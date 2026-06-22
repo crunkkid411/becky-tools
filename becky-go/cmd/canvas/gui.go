@@ -149,6 +149,13 @@ type App struct {
 	kbTag  bool
 	kbInit bool
 
+	// ── becky's VOICE (gui_speak.go) ──────────────────────────────────────────
+	// speakBtn voices the last becky line via the warm NeuTTS Air server; speaking
+	// guards one-utterance-at-a-time; voiceProc is the warm server (killed on close).
+	speakBtn  widget.Clickable
+	speaking  bool
+	voiceProc *os.Process
+
 	// explorerChip holds the folder name pre-filled from winctx on Open, shown as a
 	// small neon chip the user can confirm before the full file picker opens.
 	explorerChip string
@@ -300,6 +307,7 @@ func (a *App) loop() error {
 			if a.disableDrop != nil {
 				a.disableDrop()
 			}
+			a.stopVoiceServer() // free the GPU/VRAM the warm voice server held
 			return ev.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, ev)
@@ -388,6 +396,16 @@ func (a *App) handleInput(gtx layout.Context) {
 	}
 	if a.redoBtn.Clicked(gtx) {
 		a.redo()
+	}
+
+	// Speak: voice the agent-box text if you typed something, else becky's last line.
+	if a.speakBtn.Clicked(gtx) {
+		txt := strings.TrimSpace(a.command.Text())
+		if txt == "" {
+			txt = a.lastSpeakable()
+		}
+		a.startSpeak(txt)
+		a.focusTransport(gtx)
 	}
 
 	// Overlay keyboard: Esc = reject, handled here before the agent box consumes it.
@@ -857,6 +875,29 @@ func (a *App) refreshVisual() {
 		a.mu.Unlock()
 		a.window.Invalidate()
 	}()
+}
+
+// lastSpeakable returns the most recent meaningful becky output line (skipping our
+// own status markers + command echoes) so the Speak button can voice it. "" if none.
+func (a *App) lastSpeakable() string {
+	a.mu.Lock()
+	s := a.logBuf.String()
+	a.mu.Unlock()
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		t := strings.TrimSpace(lines[i])
+		if t == "" {
+			continue
+		}
+		// Skip transport/status markers and command echoes — voice real content only.
+		switch {
+		case strings.HasPrefix(t, "▶"), strings.HasPrefix(t, "■"), strings.HasPrefix(t, "🔊"),
+			strings.HasPrefix(t, ">"), strings.HasPrefix(t, "warming up"):
+			continue
+		}
+		return t
+	}
+	return ""
 }
 
 // appendLine adds a line to the output buffer (thread-safe) and repaints.

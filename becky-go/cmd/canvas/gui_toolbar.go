@@ -24,7 +24,23 @@ func (a *App) layoutToolbar(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return a.toolBtn(gtx, &a.undoBtn, "Undo", colElecBlue) }),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return a.toolBtn(gtx, &a.redoBtn, "Redo", colElecBlue) }),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+		// Speak: becky voices the agent-box text (or her last line) via NeuTTS Air.
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return a.toolBtn(gtx, &a.speakBtn, a.speakLabel(), colNeonPink)
+		}),
 	)
+}
+
+// speakLabel shows "Speaking…" while an utterance is in flight, else "Speak".
+func (a *App) speakLabel() string {
+	a.mu.Lock()
+	sp := a.speaking
+	a.mu.Unlock()
+	if sp {
+		return "Speaking…"
+	}
+	return "Speak"
 }
 
 // toolBtn is a labeled pill sized to its text, with a neon-edged rounded background.
