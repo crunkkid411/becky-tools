@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS appearance_embeddings (
     frame_index   INTEGER DEFAULT 0,-- frame index (face) or speaker ordinal (voice)
     speaker_id    TEXT,             -- diarization label for voice (e.g. SPEAKER_00; "" for face)
     det_score     REAL DEFAULT 0,   -- detector confidence (face det_score; 1.0 for voice)
+    crop_path     TEXT,             -- path to the tight face-crop artifact for this appearance ("" for voice)
     created_at    TEXT              -- RFC3339 timestamp this row was written
 );
 
@@ -79,7 +80,28 @@ func (db *DB) EnsureClusterSchema() error {
 	if err := db.Exec(clusterSchema); err != nil {
 		return fmt.Errorf("ensure cluster schema: %w", err)
 	}
+	// Migrate a PRE-EXISTING appearance_embeddings table (created before crop_path
+	// was added): CREATE TABLE IF NOT EXISTS above is a no-op on such a DB, so the
+	// new column would be missing. An idempotent ALTER adds it; the "duplicate
+	// column" error (column already present — the common case once migrated) is
+	// swallowed, any OTHER error is surfaced (degrade-never-crash, same pattern as
+	// isFTS5Unavailable / isMissingAppearanceTable).
+	if err := db.Exec("ALTER TABLE appearance_embeddings ADD COLUMN crop_path TEXT;"); err != nil {
+		if !isDuplicateColumn(err) {
+			return fmt.Errorf("ensure cluster schema (crop_path migration): %w", err)
+		}
+	}
 	return nil
+}
+
+// isDuplicateColumn matches sqlite's "duplicate column name" error so the
+// idempotent crop_path ALTER is a no-op once the column exists, without masking a
+// real migration failure.
+func isDuplicateColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 // AppearanceRow is one stored appearance embedding (the appearance_embeddings row).
@@ -96,6 +118,7 @@ type AppearanceRow struct {
 	FrameIndex   int     `json:"frame_index"`
 	SpeakerID    string  `json:"speaker_id"`
 	DetScore     float64 `json:"det_score"`
+	CropPath     string  `json:"crop_path"` // path to the tight face-crop artifact ("" for voice)
 	CreatedAt    string  `json:"created_at"`
 }
 
@@ -109,11 +132,11 @@ func (db *DB) UpsertAppearance(a AppearanceRow) error {
 	sql := fmt.Sprintf(
 		"INSERT OR REPLACE INTO appearance_embeddings "+
 			"(appearance_id, source_file, source_sha256, modality, vector_json, dim, "+
-			"timestamp, frame_index, speaker_id, det_score, created_at) "+
-			"VALUES (%s, %s, %s, %s, %s, %d, %s, %d, %s, %s, %s);",
+			"timestamp, frame_index, speaker_id, det_score, crop_path, created_at) "+
+			"VALUES (%s, %s, %s, %s, %s, %d, %s, %d, %s, %s, %s, %s);",
 		q(a.AppearanceID), q(a.SourceFile), nullableStr(a.SourceSHA256), q(a.Modality),
 		q(a.VectorJSON), a.Dim, num(a.Timestamp), a.FrameIndex,
-		nullableStr(a.SpeakerID), num(a.DetScore), q(a.CreatedAt),
+		nullableStr(a.SpeakerID), num(a.DetScore), nullableStr(a.CropPath), q(a.CreatedAt),
 	)
 	return db.Exec(sql)
 }
@@ -130,7 +153,8 @@ func (db *DB) ListAppearances(modality string) ([]AppearanceRow, error) {
 	}
 	sql := "SELECT appearance_id, source_file, COALESCE(source_sha256,'') AS source_sha256, " +
 		"modality, vector_json, dim, timestamp, frame_index, " +
-		"COALESCE(speaker_id,'') AS speaker_id, det_score, COALESCE(created_at,'') AS created_at " +
+		"COALESCE(speaker_id,'') AS speaker_id, det_score, " +
+		"COALESCE(crop_path,'') AS crop_path, COALESCE(created_at,'') AS created_at " +
 		"FROM appearance_embeddings " + where +
 		"ORDER BY modality, source_file, frame_index, appearance_id;"
 	var rows []AppearanceRow

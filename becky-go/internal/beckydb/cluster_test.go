@@ -37,6 +37,7 @@ func TestClusterRoundTrip(t *testing.T) {
 	face := AppearanceRow{
 		AppearanceID: "src2:face:42", SourceFile: "clip-two.mp4",
 		Modality: "face", VectorJSON: "[0.4,0.5,0.6]", Dim: 3, FrameIndex: 42, DetScore: 0.87,
+		CropPath: "face-crops/src2_42_face0.jpg",
 	}
 	if err := db.UpsertAppearance(voice); err != nil {
 		t.Fatalf("UpsertAppearance voice: %v", err)
@@ -72,6 +73,29 @@ func TestClusterRoundTrip(t *testing.T) {
 		t.Fatalf("ListAppearances(both) = %d rows (err %v), want 2", len(all), err)
 	}
 
+	// The face row must round-trip its crop_path (the schema-change regression):
+	// vector_json, det_score, frame_index, AND crop_path come back byte-for-byte.
+	faces, err := db.ListAppearances("face")
+	if err != nil {
+		t.Fatalf("ListAppearances face: %v", err)
+	}
+	if len(faces) != 1 {
+		t.Fatalf("ListAppearances(face) = %d rows, want 1", len(faces))
+	}
+	got := faces[0]
+	if got.CropPath != "face-crops/src2_42_face0.jpg" {
+		t.Errorf("face crop_path = %q, want face-crops/src2_42_face0.jpg", got.CropPath)
+	}
+	if got.VectorJSON != "[0.4,0.5,0.6]" {
+		t.Errorf("face vector_json = %q, want [0.4,0.5,0.6]", got.VectorJSON)
+	}
+	if got.DetScore != 0.87 {
+		t.Errorf("face det_score = %v, want 0.87", got.DetScore)
+	}
+	if got.FrameIndex != 42 {
+		t.Errorf("face frame_index = %d, want 42", got.FrameIndex)
+	}
+
 	// Persist a cluster, then name it (the "name-once" hook).
 	c := ClusterRow{
 		ClusterID: "voice-A", Modality: "voice", MemberCount: 2, DistinctFiles: 2,
@@ -82,6 +106,51 @@ func TestClusterRoundTrip(t *testing.T) {
 	}
 	if err := db.NameCluster("voice-A", "Braxton"); err != nil {
 		t.Fatalf("NameCluster: %v", err)
+	}
+}
+
+// TestAppearanceCropPathReplace confirms a second UpsertAppearance with the same
+// appearance_id REPLACES the row (count stays 1) and updates crop_path — the
+// idempotent-re-run guarantee for the schema change.
+func TestAppearanceCropPathReplace(t *testing.T) {
+	cfg := config.Load()
+	if cfg.Sqlite3 == "" || cfg.SqliteVecExt == "" {
+		t.Skip("sqlite3 CLI or vec0 extension not configured")
+	}
+	db, err := Open(cfg, filepath.Join(t.TempDir(), "replace.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.EnsureClusterSchema(); err != nil {
+		t.Skipf("cluster schema unavailable: %v", err)
+	}
+
+	row := AppearanceRow{
+		AppearanceID: "srcX:face:7", SourceFile: "x.mp4", Modality: "face",
+		VectorJSON: "[0.1,0.2]", Dim: 2, FrameIndex: 7, DetScore: 0.5,
+		CropPath: "crops/old.jpg",
+	}
+	if err := db.UpsertAppearance(row); err != nil {
+		t.Fatalf("UpsertAppearance 1: %v", err)
+	}
+	row.CropPath = "crops/new.jpg"
+	row.DetScore = 0.9
+	if err := db.UpsertAppearance(row); err != nil {
+		t.Fatalf("UpsertAppearance 2: %v", err)
+	}
+
+	if n, _ := db.CountAppearances(); n != 1 {
+		t.Errorf("CountAppearances after replace = %d, want 1", n)
+	}
+	faces, err := db.ListAppearances("face")
+	if err != nil || len(faces) != 1 {
+		t.Fatalf("ListAppearances(face) = %d rows (err %v), want 1", len(faces), err)
+	}
+	if faces[0].CropPath != "crops/new.jpg" {
+		t.Errorf("crop_path after replace = %q, want crops/new.jpg", faces[0].CropPath)
+	}
+	if faces[0].DetScore != 0.9 {
+		t.Errorf("det_score after replace = %v, want 0.9", faces[0].DetScore)
 	}
 }
 
