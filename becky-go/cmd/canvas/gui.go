@@ -787,6 +787,14 @@ func (a *App) captureCanvasPointer(gtx layout.Context, size image.Point) {
 	if size.X <= 0 || size.Y <= 0 {
 		return
 	}
+	// Only the pen/DRAW overlay needs canvas-level pointer capture. The drum, piano,
+	// mixer, and audio panels each register their OWN pointer area inside layoutVisual;
+	// registering a competing canvas area ON TOP of them here STOLE their clicks — that
+	// is exactly why the drum-grid cells didn't toggle. Bail unless we're drawing, so the
+	// active panel owns its pointer events.
+	if !a.drawMode {
+		return
+	}
 	tag := &a.canvasTag
 	area := clip.Rect{Max: size}.Push(gtx.Ops)
 	event.Op(gtx.Ops, tag)
@@ -810,8 +818,11 @@ func (a *App) captureCanvasPointer(gtx layout.Context, size image.Point) {
 
 // onCanvasPointer handles one pointer event over the canvas for the active interaction.
 func (a *App) onCanvasPointer(pe pointer.Event, size image.Point) {
-	switch {
-	case a.drawMode:
+	// Pen/DRAW only. Drum cell toggling lives in the drum PANEL (gui_drumpanel.go) on its
+	// own pointer area — the old a.drum toy path here was superseded and was double-handling
+	// (and stealing) clicks; captureCanvasPointer now bails unless drawMode, so this only
+	// ever runs for the pen.
+	if a.drawMode {
 		switch pe.Kind {
 		case pointer.Press:
 			a.beginStroke(pe.Position)
@@ -821,17 +832,8 @@ func (a *App) onCanvasPointer(pe pointer.Event, size image.Point) {
 			a.endStroke()
 		}
 		a.window.Invalidate()
-	case a.activeMode == canvas.ModeDrum:
-		if pe.Kind == pointer.Press {
-			if lane, step, ok := drumCellAt(pe.Position, size); ok {
-				was := a.drum.cells[lane][step]
-				now := !was
-				a.drum.cells[lane][step] = now
-				a.logDrumEdit(lane, step, was, now) // learn his by-eye beat fixes
-				a.window.Invalidate()
-			}
-		}
 	}
+	_ = size
 }
 
 // layoutAgentBox draws the single, unobtrusive agent input line + a small run icon. It is

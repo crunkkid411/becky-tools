@@ -476,19 +476,13 @@ func (d *drumPanelState) toggleStep(a *App, grid *dawmodel.DrumGrid, trackID, cl
 	a.applyArr(next)
 }
 
-// dpLaneAccent cycles neon colors per lane row (0=green, 1=blue, 2=yellow, 3=pink).
-// Prefixed "dp" to avoid name collision with laneOn in gui_drum.go.
+// dpLaneAccent returns the DRUMS-bus colour for EVERY lane — Jordan's rule: colour
+// follows the BUS, not the lane index. The whole kit is on the drums bus, so all rows
+// share one colour; the instrument NAME (kick/snare/…) distinguishes the rows, not a
+// randomized rainbow. (The mixer colours each track strip by its own bus the same way.)
 func dpLaneAccent(lane int) color.NRGBA {
-	switch lane % 4 {
-	case 0:
-		return colNeonGreen
-	case 1:
-		return colElecBlue
-	case 2:
-		return colYellow
-	default:
-		return colNeonPink
-	}
+	_ = lane
+	return busColor("DRUMS")
 }
 
 // dpDimColor returns the OFF/background variant of a cell color (darkened).

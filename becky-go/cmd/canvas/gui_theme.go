@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image/color"
 	"runtime"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/text"
@@ -73,6 +74,30 @@ func modeAccent(m canvas.Mode) color.NRGBA {
 		return colYellow
 	default:
 		return colNeonGreen
+	}
+}
+
+// busColor maps a mix BUS to its FIXED signature colour — Jordan's rule: every track
+// routed to a bus wears that bus's colour (vocals=green, guitars=red, drums=yellow,
+// bass=blue, synth=purple, fx=pink), NEVER a randomized per-lane colour. The drum panel
+// and mixer both resolve their colours through here so a track's colour == its bus.
+// Unknown/unrouted buses fall back to a neutral dim.
+func busColor(bus string) color.NRGBA {
+	switch strings.ToUpper(strings.TrimSpace(bus)) {
+	case "VOCALS", "VOCAL", "VOX":
+		return colNeonGreen
+	case "GUITARS", "GUITAR", "GTR":
+		return colCrimson
+	case "DRUMS", "DRUM", "PERC", "PERCUSSION":
+		return colYellow
+	case "BASS", "808":
+		return colElecBlue
+	case "SYNTH", "SYNTHS", "KEYS", "MUSIC", "LEAD":
+		return colDeepPurple
+	case "FX", "EFFECTS", "EFFECT", "SENDS":
+		return colNeonPink
+	default:
+		return colTextDim
 	}
 }
 
