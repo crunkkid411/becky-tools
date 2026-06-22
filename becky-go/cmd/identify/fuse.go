@@ -31,10 +31,15 @@ import (
 // and generous on the corroborated path.
 const (
 	// voiceSoloFloor: a LONE voice match must clear this to stand as a named
-	// identification on its own. Voice is the reliable modality, and same-person
-	// CAM++ cosine runs ~0.74-0.84 on real clips while a cross-person hit sits far
-	// lower, so 0.62 keeps genuine solo-voice naming while refusing a borderline one.
-	voiceSoloFloor = 0.62
+	// identification on its own. RAISED to 0.75 (2026-06-22, SPEC-IDENTIFY-HARDENING)
+	// to TRACK the --voice-name-threshold naming floor, closing the second wrong-name
+	// path: same-person CAM++ cosine runs 0.76-0.91 (README) while a cross-person /
+	// next-nearest hit sits below 0.75, so a 0.73 wrong-person voice that previously
+	// cleared the old 0.62 floor is now demoted to a candidate in fusion too. The
+	// corroboration path (corroborateMinPerSignal = 0.45) still lets a weak voice count
+	// when a second modality agrees, so a genuine quiet match is rescued by corroboration
+	// rather than asserted alone.
+	voiceSoloFloor = 0.75
 
 	// corroborateMinPerSignal: when two+ modalities agree, each contributing signal
 	// only needs to clear this lower bar — corroboration IS the precision, so a face

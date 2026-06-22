@@ -83,20 +83,39 @@ func TestFuseStrongSoloFaceStands(t *testing.T) {
 
 // A STRONG lone voice match stands alone (voice is the reliable modality), still
 // carrying its single signal for audit.
+//
+// DELIBERATE BEHAVIOR CHANGE (2026-06-22, SPEC-IDENTIFY-HARDENING §6): voiceSoloFloor was
+// raised from 0.62 to 0.75 to track the naming threshold and close the second wrong-name
+// path. The old test asserted that a 0.74 solo voice is NAMED; under the measured
+// same-person band (0.76-0.91) a 0.74 is below the floor and is now DEMOTED to a candidate
+// on purpose (a borderline lone voice is not a conclusion). A genuine same-person match at
+// >= 0.75 still stands. Both cases are asserted here.
 func TestFuseStrongSoloVoiceStands(t *testing.T) {
-	raw := []Identification{
+	// 0.74 now falls BELOW the raised solo floor -> demoted to a candidate (the fix).
+	borderline := []Identification{
 		{Type: "voice", Name: "Hair Jordan", Confidence: 0.74, SpeakerID: "SPEAKER_00"},
 	}
-	ids, unids := fuseIdentifications(raw, nil)
+	ids, unids := fuseIdentifications(borderline, nil)
+	if len(ids) != 0 {
+		t.Fatalf("a 0.74 solo voice is now below voiceSoloFloor (0.75) and must NOT be named, got %+v", ids)
+	}
+	if len(unids) != 1 || unids[0].Candidate != "Hair Jordan" {
+		t.Fatalf("a 0.74 solo voice should be a candidate, got %+v", unids)
+	}
 
-	if len(ids) != 1 {
-		t.Fatalf("a strong solo voice should be named, got %+v / unids %+v", ids, unids)
+	// A genuine same-person match (>= 0.75) still stands as a named voice identification.
+	strong := []Identification{
+		{Type: "voice", Name: "Hair Jordan", Confidence: 0.80, SpeakerID: "SPEAKER_00"},
 	}
-	if ids[0].Type != "voice" || ids[0].Name != "Hair Jordan" {
-		t.Errorf("got %+v, want a voice identification for Hair Jordan", ids[0])
+	ids2, unids2 := fuseIdentifications(strong, nil)
+	if len(ids2) != 1 {
+		t.Fatalf("a 0.80 solo voice should be named, got %+v / unids %+v", ids2, unids2)
 	}
-	if ids[0].Confidence != 0.74 {
-		t.Errorf("solo voice confidence = %.4f, want 0.74 (unchanged)", ids[0].Confidence)
+	if ids2[0].Type != "voice" || ids2[0].Name != "Hair Jordan" {
+		t.Errorf("got %+v, want a voice identification for Hair Jordan", ids2[0])
+	}
+	if ids2[0].Confidence != 0.80 {
+		t.Errorf("solo voice confidence = %.4f, want 0.80", ids2[0].Confidence)
 	}
 }
 
@@ -134,8 +153,10 @@ func TestFuseNoiseSecondSignalDoesNotCorroborate(t *testing.T) {
 // Existing modality-level unidentified entries pass through fusion untouched, and the
 // fused conclusions sort strongest-first.
 func TestFusePreservesUnidsAndSortsByConfidence(t *testing.T) {
+	// "Lone" is a solo voice that clears the raised solo floor (0.75); "Strong" is a
+	// corroborated voice+face. Both should stand, sorted strongest-first.
 	raw := []Identification{
-		{Type: "voice", Name: "Weak", Confidence: 0.63, SpeakerID: "SPEAKER_09"},
+		{Type: "voice", Name: "Lone", Confidence: 0.77, SpeakerID: "SPEAKER_09"},
 		{Type: "voice", Name: "Strong", Confidence: 0.82, SpeakerID: "SPEAKER_00"},
 		{Type: "face", Name: "Strong", Confidence: 0.70},
 	}
@@ -143,7 +164,7 @@ func TestFusePreservesUnidsAndSortsByConfidence(t *testing.T) {
 	ids, unids := fuseIdentifications(raw, preExisting)
 
 	if len(ids) != 2 {
-		t.Fatalf("expected 2 conclusions (Strong corroborated, Weak solo voice), got %+v", ids)
+		t.Fatalf("expected 2 conclusions (Strong corroborated, Lone solo voice), got %+v", ids)
 	}
 	if ids[0].Name != "Strong" {
 		t.Errorf("strongest conclusion should sort first; got %q first", ids[0].Name)

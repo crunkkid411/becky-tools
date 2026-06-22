@@ -143,18 +143,22 @@ func TestMatchSpeakersThresholdGate(t *testing.T) {
 	}
 	enrolled := []enrolledVoice{{name: "Defendant", embedding: emb}}
 
-	ids := matchSpeakers(speakers, enrolled, 0.5, false)
+	// SPEAKER_00 is a perfect (cosine 1.0) match: clears detection 0.5, naming 0.75, and
+	// the margin (single enrollee -> margin == best == 1.0). SPEAKER_01 is anti-correlated.
+	opts := voiceOptions{threshold: 0.5, nameThreshold: 0.75, nameMargin: 0.06}
+	ids := matchSpeakers(speakers, enrolled, opts)
 	if len(ids) != 1 || ids[0].Name != "Defendant" || ids[0].SpeakerID != "SPEAKER_00" {
 		t.Fatalf("expected SPEAKER_00 -> Defendant, got %+v", ids)
 	}
-	unids := unmatchedDescriptions(speakers, enrolled, 0.5)
+	unids := unmatchedDescriptions(speakers, enrolled, opts)
 	if len(unids) != 1 || unids[0].SpeakerID != "SPEAKER_01" || unids[0].Confidence != 0.0 {
 		t.Fatalf("expected SPEAKER_01 unidentified at conf 0, got %+v", unids)
 	}
 
-	// Raising the threshold above 1.0 should identify nobody (discrimination).
-	if got := matchSpeakers(speakers, enrolled, 1.01, false); len(got) != 0 {
-		t.Errorf("threshold 1.01 should match nobody, got %+v", got)
+	// Raising the DETECTION threshold above 1.0 should identify nobody (discrimination).
+	hi := voiceOptions{threshold: 1.01, nameThreshold: 0.75, nameMargin: 0.06}
+	if got := matchSpeakers(speakers, enrolled, hi); len(got) != 0 {
+		t.Errorf("detection threshold 1.01 should match nobody, got %+v", got)
 	}
 }
 

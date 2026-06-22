@@ -1,12 +1,13 @@
 # SPEC-IDENTIFY-HARDENING.md — kill the confident WRONG-name in becky-identify voice-ID
 
-> **SPEC — design only, AWAITING JORDAN'S APPROVAL on the numbers in §10.**
-> No Go code has been written. Nothing in `becky-go/` has changed. This documents the
-> exact, real code path to be changed and the value-asserting tests to ship with it.
-> The threshold/margin/cast logic is pure-Go, offline, and FULLY cloud-buildable and
-> testable with synthetic similarity scores; the real CAM++ run is Jordan's hardware.
+> **BUILT 2026-06-22 (cloud) — decision logic implemented + value-tested; numbers in §10
+> remain Jordan's to confirm on real audio.** The threshold/margin/cast logic is pure-Go,
+> offline, and FULLY cloud-verified with synthetic similarity scores (see §6 — every box is
+> checked with the test that proves it). The real CAM++ run on the actual small KB is the
+> only LEFT-FOR-LOCAL step. This documents the exact code path and the shipped tests.
 >
-> Authored 2026-06-22. Closes README's single **Critical** known issue.
+> Authored 2026-06-22. Closes README's single **Critical** known issue (pending local
+> real-audio re-validation of the 0.75 / 0.06 defaults).
 
 ---
 
@@ -222,29 +223,36 @@ Tests live in `cmd/identify/` (e.g. `naming_test.go`), table-driven, asserting V
 `STANDARDS-ENGINEERING.md` (assert values, not truthiness; every fixed bug ships a regression
 test). Existing `fuse_test.go` / `identify_test.go` must stay green.
 
+> **STATUS 2026-06-22 (cloud, branch `claude/subagent-deployment-scaling-4hptv9`): BUILT + TESTED.**
+> The entire threshold/margin/cast decision logic is implemented in `becky-go/cmd/identify/`
+> and is fully cloud-verified with value-asserting tests (no model/audio needed — it is pure
+> float math). `go build ./cmd/identify/...` + `go vet` + `gofmt -l cmd/identify/` clean;
+> `go test ./cmd/identify/...` green (existing 17 + 17 new = 34 tests). LEFT FOR LOCAL is only
+> running real CAM++ on a real clip to re-validate the exact numbers — see §6 "Local" boxes.
+
 **Decision logic**
-- [ ] Extend `bestMatch` (`voice.go:188`) → `topTwo(emb, enrolled) (best, runnerUp namedScore)` returning both names + cosines. **Test:** 3 enrollees with cosines {0.73, 0.71, 0.20} → best=0.73/runnerUp=0.71; 1 enrollee → runnerUp empty, margin=best; 0 enrollees → empty/empty.
-- [ ] Add `--voice-name-threshold` (default 0.75) and `--voice-name-margin` (default 0.06) flags in `main.go`; thread into `voiceOptions` (`voice.go:28`).
-- [ ] Rewrite `matchSpeakers` (`voice.go:145`) to name only when `best ≥ nameThreshold && margin ≥ nameMargin`; otherwise hand off to the candidate path. **Test (THE regression):** speaker with best=0.73 for "John", runnerUp=0.74 for "Mike" → **NOT named** (`len(ids)==0`); emitted as candidate, not an Identification.
-- [ ] **Test:** best=0.73 / runnerUp=0.04, naming threshold 0.75 → below-name-threshold → candidate "John", `why_unnamed=="below-name-threshold"`, NOT named.
-- [ ] **Test:** best=0.73 / runnerUp=0.71 (margin 0.02 < 0.06) → `why_unnamed=="ambiguous-margin"`, candidate names both; NOT named.
-- [ ] **Test:** best=0.84 / runnerUp=0.05 → NAMED "Shelby", `voice_margin==0.79`, `runner_up=="John"`, confidence 0.84.
-- [ ] **Test:** best=0.40 (< 0.45 detection) → generic `"unidentified speaker, unknown identity"`, `why_unnamed=="below-detection"`, no candidate name.
+- [x] Extend `bestMatch` (`voice.go`) → `topTwo(emb, enrolled) (best, runnerUp namedScore)` returning both names + cosines (`bestMatch` retained as a top-1 shim). **Tested:** `TestTopTwoThreeEnrollees` {0.73,0.71,0.20}→best 0.73/runnerUp 0.71; `TestTopTwoSingleEnrollee`→runnerUp empty; `TestTopTwoNoEnrollees`→empty/empty, sim 0.
+- [x] Added `--voice-name-threshold` (default 0.75) and `--voice-name-margin` (default 0.06) flags in `main.go`; threaded into `voiceOptions` (`voice.go`).
+- [x] Rewrote `matchSpeakers` (now via `decideSpeaker`) to name only when `best ≥ nameThreshold && margin ≥ nameMargin`; otherwise the candidate path. **Tested (THE regression):** `TestNotNamedWhenAmbiguousNextNearest` best=0.73/John, runnerUp=0.74/Mike → **NOT named** (`len(ids)==0`); emitted as a candidate.
+- [x] **Tested:** `TestNotNamedBelowNameThreshold` best=0.73 / runnerUp=0.04 → candidate "John", `why_unnamed=="below-name-threshold"`, `candidate_confidence==0.73`, NOT named.
+- [x] **Tested:** `TestNotNamedAmbiguousMarginAboveFloor` best=0.80 / runnerUp=0.78 (margin 0.02 < 0.06) → `why_unnamed=="ambiguous-margin"`, candidate "John"+runner "Mike", `voice_margin==0.02`, NOT named. (Note: 0.73/0.71 from the §7 example resolves to `below-name-threshold` because 0.73 < the 0.75 naming floor — `ambiguous-margin` requires `best ≥ name-threshold` per the §3.2 enum; both outcomes are "not named". The 0.80/0.78 case exercises the ambiguous-margin branch exactly.)
+- [x] **Tested:** `TestStrongUnambiguousMatchNamed` best=0.84 / runnerUp=0.05 → NAMED "Shelby", `voice_margin==0.79`, `runner_up=="John"`, `runner_up_confidence==0.05`, confidence 0.84.
+- [x] **Tested:** `TestBelowDetectionGenericUnknown` best=0.40 (< 0.45 detection) → generic `"unidentified speaker, unknown identity"`, `why_unnamed=="below-detection"`, no candidate name.
 
 **Margin + reason emission**
-- [ ] Add `VoiceMargin`, `RunnerUp`, `RunnerUpConfidence` to `Identification`; `CandidateConfidence`, `RunnerUp`, `RunnerUpConfidence`, `VoiceMargin`, `WhyUnnamed` to `Unidentified` (`main.go:47`/`:63`). **Test:** a named match serializes a non-zero `voice_margin`; a demoted one serializes the matching `why_unnamed` enum value.
+- [x] Added `VoiceMargin`, `RunnerUp`, `RunnerUpConfidence` to `Identification`; `CandidateConfidence`, `RunnerUp`, `RunnerUpConfidence`, `VoiceMargin`, `WhyUnnamed` to `Unidentified` (`main.go`). **Tested:** named match serializes non-zero `voice_margin` (`TestStrongUnambiguousMatchNamed`); demoted ones serialize the matching `why_unnamed` enum (every not-named test asserts it). All new fields are `omitempty` for back-compat.
 
 **`--cast` plausibility guard**
-- [ ] Parse `--cast` CSV; resolve each against enrolled display name / dir key / aliases (case-insensitive). Filter the enrolled set used by `topTwo`. **Test (regression):** enrollees {Shelby, John, Mike}, speaker best for "Mike" 0.80 but `--cast "Shelby,John"` → Mike suppressed; result is candidate/unknown with `why_unnamed=="not-in-cast"`, NOT "Mike".
-- [ ] **Test:** `--cast "Shelby"` with a genuine Shelby match 0.84 → still NAMED Shelby (cast doesn't block a present, in-cast enrollee).
-- [ ] **Test:** `--cast "Nobody"` (matches no enrollee) → `notes.cast` records it ignored; run proceeds as if unset.
+- [x] Parse `--cast` CSV (`resolveCast` in `main.go`); resolve each against enrolled display name / dir key / aliases (case-insensitive); `filterCast` restricts the set used by `topTwo`; `castSuppressedWinner` detects a suppressed real winner. **Tested (regression):** `TestCastSuppressesAbsentWinner` {Shelby,John,Mike}, speaker best for Mike 0.80 + `--cast "Shelby,John"` → Mike suppressed; `why_unnamed=="not-in-cast"`, NOT "Mike", no Mike candidate.
+- [x] **Tested:** `TestCastDoesNotBlockPresentEnrollee` `--cast "Shelby"` + genuine Shelby 0.84 → still NAMED Shelby.
+- [x] **Tested:** `TestResolveCastUnknownNameIgnored` `--cast "Nobody"` → ignored (run proceeds as unset) + a `notes.cast` note; partial known/unknown keeps the list + notes the ignored name; `TestResolveCastMatchesKeyNameAlias` resolves key/name/alias.
 
 **Fusion alignment**
-- [ ] Raise `voiceSoloFloor` (`fuse.go:37`) to equal the naming threshold (0.75) and document it. **Test:** a lone voice at 0.73 reaching fusion is demoted to a candidate (today it would be named — this is the second wrong-name path being closed). Keep all existing `fuse_test.go` cases green (update the 0.74 solo-voice expectation in `TestFuseStrongSoloVoiceStands` deliberately, with a comment, since 0.74 now falls below the raised floor — a real behavior change, asserted on purpose).
+- [x] Raised `voiceSoloFloor` (`fuse.go`) from 0.62 to 0.75 to equal the naming threshold, with a documenting comment. **Tested:** `TestFuseStrongSoloVoiceStands` updated deliberately — a 0.74 lone voice is now DEMOTED to a candidate (the second wrong-name path closed), while a 0.80 lone voice still stands. `TestFusePreservesUnidsAndSortsByConfidence` updated (its 0.63 solo voice raised to 0.77 to stay a valid solo case). All other `fuse_test.go` cases green.
 
 **Gates**
-- [ ] `go build ./... && go vet ./... && go test ./... && gofmt -l .` all green (cloud).
-- [ ] `build-all-tools.bat` (local) — auto-discovers `cmd/identify`; spot-check on the real small KB.
+- [x] `go build ./cmd/identify/...` + `go vet ./cmd/identify/...` + `go test ./cmd/identify/...` + `gofmt -l cmd/identify/` all green (cloud). Whole-module `go build ./...` green.
+- [ ] **LEFT FOR LOCAL:** `build-all-tools.bat` (auto-discovers `cmd/identify`) on Jordan's PC; run real CAM++ on the actual 3-person small KB that produced the wrong name — confirm the 0.73 wrong-name case now reports candidate/unknown and a genuine ≥0.76 same-person still names; tune the exact 0.75 / 0.06 numbers on real evidence if needed (the logic + flags are done; only the *values* may want real-audio calibration).
 
 ---
 
