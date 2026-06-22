@@ -79,6 +79,12 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   UI with plain text "for accessibility"; keep user text tight (he has reading limits); no
   Microsoft TTS (he wants a real researched TTS instead). Canon: `ACCESSIBILITY.md`. This
   was violated once already — don't repeat it.
+- **Model choice = research a CLASS, then verify — never one article or the top download.** Pick the
+  right model FAMILY first (e.g. TTS: tiny + LLM-backbone + fast; Kokoro is light-but-flat, 3B is
+  too slow), survey the CURRENT field live (HF hub + the model's real card: params/license/GGUF), use
+  a leaderboard only to VERIFY the shortlist, and end on the human's judgement (Jordan HEARS the TTS).
+  The TTS pick was botched twice (stale-article Orpheus-3B, then most-downloaded Qwen) before this
+  method produced NeuTTS Air — don't repeat the shortcut. Canon: `SPEC-BECKY-TTS.md` / `research/tts.md`.
 - **Corroborate, then CONCLUDE — don't hedge.** ≥2 independent signals agreeing →
   state the conclusion plainly. A lone weak signal → "unknown"/candidate. A flood
   of maybes a human must sort = tool failure.
