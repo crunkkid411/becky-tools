@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"becky-go/internal/proc"
 )
 
 // browseTimeout caps how long we wait on the picker dialog before giving up (the user
@@ -40,6 +42,7 @@ func browseForPath(wantFolder bool) (string, error) {
 	}
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-STA",
 		"-ExecutionPolicy", "Bypass", "-Command", script)
+	proc.NoWindow(cmd) // no console flash when the picker opens
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -102,6 +105,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
 `
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-STA",
 		"-ExecutionPolicy", "Bypass", "-Command", script)
+	proc.NoWindow(cmd) // no console flash when the picker opens
 	cmd.Env = append(os.Environ(), "BECKY_BROWSE_DIR="+folder)
 	out, err := cmd.Output()
 	if err != nil {

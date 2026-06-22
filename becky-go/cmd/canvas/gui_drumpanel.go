@@ -56,6 +56,7 @@ type dpButton struct {
 func (d *drumPanelState) genBatch(a *App, b ctledit.BeckyEditBatch) {
 	a.outExpanded = true
 	a.applyBatch(b)
+	a.markPatternEdited() // if playing, relaunch the loop so the new beat is HEARD live
 }
 
 // itoaPanel renders a non-negative int without importing strconv into this file.
@@ -474,6 +475,7 @@ func (d *drumPanelState) toggleStep(a *App, grid *dawmodel.DrumGrid, trackID, cl
 		return
 	}
 	a.applyArr(next)
+	a.markPatternEdited() // if playing, relaunch the loop so the edit is HEARD live
 }
 
 // dpLaneAccent returns the DRUMS-bus colour for EVERY lane — Jordan's rule: colour

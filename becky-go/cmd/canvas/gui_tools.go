@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"becky-go/internal/pathx"
+	"becky-go/internal/proc"
 )
 
 // toolItem is one clickable becky tool: a binary name (becky-<name>.exe), a plain
@@ -222,6 +223,7 @@ func runTool(t toolItem, target string, out chan<- runResult) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, exePath, args...)
+	proc.NoWindow(cmd) // no console-window flash over the GUI when a tool runs
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		out <- runResult{Line: "Couldn't open the tool's output: " + err.Error()}
@@ -367,6 +369,7 @@ func runRecord(outPath string, seconds int, out chan<- runResult) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, exePath, args...)
+	proc.NoWindow(cmd) // no console-window flash over the GUI while recording
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		out <- runResult{Line: "Couldn't open the recorder's output: " + err.Error()}

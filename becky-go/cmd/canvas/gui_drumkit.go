@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"becky-go/internal/proc"
 )
 
 const drumKitBrowseTimeout = 5 * time.Minute
@@ -58,6 +60,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
 `
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-STA",
 		"-ExecutionPolicy", "Bypass", "-Command", script)
+	proc.NoWindow(cmd) // no console flash when the kit folder picker opens
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

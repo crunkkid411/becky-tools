@@ -25,6 +25,7 @@ import (
 	"becky-go/internal/dawmodel"
 	"becky-go/internal/drummachine"
 	"becky-go/internal/habits"
+	"becky-go/internal/proc"
 )
 
 // playLoops is how many times ▶ tiles the bar for a continuous groove (~32s at
@@ -202,6 +203,7 @@ func (a *App) runEngine(args []string) error {
 		return fmt.Errorf("audio engine not found next to becky-canvas — build with build-all-tools.bat")
 	}
 	cmd := exec.Command(exePath, args...)
+	proc.NoWindow(cmd) // no console-window flash over the GUI on ▶ Play
 	var outBuf strings.Builder
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &outBuf

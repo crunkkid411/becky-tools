@@ -32,6 +32,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
@@ -136,6 +137,17 @@ type App struct {
 	// playProc is the live becky-daw-engine process (guarded by mu) so ■ Stop can
 	// kill it immediately mid-loop. Nil when nothing is playing.
 	playProc *os.Process
+	// playGen retires in-flight play goroutines: each launch bumps it, so a killed
+	// loop's goroutine never clears the `playing` flag of a NEWER loop (the restart race).
+	playGen int
+	// editSeq debounces live restarts: rapid drum edits while playing coalesce into a
+	// single relaunch instead of spawning an engine per click.
+	editSeq int
+	// kbTag is the transport key-focus target (spacebar = play/stop). kbInit guards a
+	// one-time initial focus so we never re-grab focus every frame and fight the agent
+	// text box (the documented Ctrl+Z focus-steal bug). Re-focused on mode/transport clicks.
+	kbTag  bool
+	kbInit bool
 
 	// explorerChip holds the folder name pre-filled from winctx on Open, shown as a
 	// small neon chip the user can confirm before the full file picker opens.
@@ -320,6 +332,7 @@ func (a *App) handleInput(gtx layout.Context) {
 	}
 	if a.dockPiano.Clicked(gtx) {
 		a.activeMode = canvas.ModeMIDI
+		a.focusTransport(gtx) // back to the beat: Space now plays/stops
 	}
 	if a.dockDrum.Clicked(gtx) {
 		a.activeMode = canvas.ModeDrum
@@ -328,12 +341,15 @@ func (a *App) handleInput(gtx layout.Context) {
 		if next := ensureDrumMachineArr(a.arr); next != a.arr {
 			a.applyArr(next)
 		}
+		a.focusTransport(gtx)
 	}
 	if a.dockMixer.Clicked(gtx) {
 		a.activeMode = canvas.ModeDAW
+		a.focusTransport(gtx)
 	}
 	if a.dockAudio.Clicked(gtx) {
 		a.activeMode = canvas.ModeAudio
+		a.focusTransport(gtx)
 	}
 	if a.dockVideo.Clicked(gtx) {
 		a.activeMode = canvas.ModeVideo
@@ -345,13 +361,20 @@ func (a *App) handleInput(gtx layout.Context) {
 	// Hub launch buttons (open a real standalone tool window).
 	a.handleHubInput(gtx)
 
-	// Play / Stop buttons (drum + piano modes).
+	// Play / Stop buttons (drum + piano modes). Spacebar does the same via
+	// handleTransportKeys; re-focus the transport tag so Space keeps working after.
 	if a.playBtn.Clicked(gtx) {
 		a.startPlay()
+		a.focusTransport(gtx)
 	}
 	if a.stopBtn.Clicked(gtx) {
 		a.stopPlay()
+		a.focusTransport(gtx)
 	}
+
+	// Spacebar = play/stop (read after the buttons so a click + a key in one frame
+	// don't double-toggle; focus is managed in handleTransportKeys/focusTransport).
+	a.handleTransportKeys(gtx)
 
 	// Toolbar: Save / Load / Undo / Redo — call the existing spine methods.
 	if a.saveBtn.Clicked(gtx) {
@@ -675,19 +698,32 @@ func (a *App) startPlay() {
 		a.mu.Unlock()
 		return // already playing
 	}
-	a.playing = true
 	a.mu.Unlock()
-
 	a.appendLine("")
 	a.appendLine("▶ Play …")
+	a.spawnPlay()
+}
 
+// spawnPlay launches one play loop off the UI thread under a fresh generation, so
+// a relaunch (restartPlay) or stop can retire this goroutine without it clearing a
+// newer loop's `playing` flag. It sets playing=true itself.
+func (a *App) spawnPlay() {
+	a.mu.Lock()
+	a.playGen++
+	gen := a.playGen
+	a.playing = true
+	a.mu.Unlock()
 	go func() {
-		if err := a.execPlay(a.target, a.activeMode, &a.drum); err != nil {
+		err := a.execPlay(a.target, a.activeMode, &a.drum)
+		a.mu.Lock()
+		mine := a.playGen == gen
+		if mine {
+			a.playing = false
+		}
+		a.mu.Unlock()
+		if err != nil && mine {
 			a.appendLine(err.Error())
 		}
-		a.mu.Lock()
-		a.playing = false
-		a.mu.Unlock()
 		a.window.Invalidate()
 	}()
 }
@@ -700,12 +736,104 @@ func (a *App) stopPlay() {
 	proc := a.playProc
 	a.playProc = nil
 	a.playing = false
+	a.playGen++ // retire the in-flight goroutine so it can't clear a later play
 	a.mu.Unlock()
 	if proc != nil {
 		_ = proc.Kill()
 	}
 	a.appendLine("■ Stopped.")
 	a.window.Invalidate()
+}
+
+// togglePlay is the spacebar action: play if stopped, stop if playing — like every
+// DAW. Read from the transport key handler and bound to no button so it always works.
+func (a *App) togglePlay() {
+	a.mu.Lock()
+	playing := a.playing
+	a.mu.Unlock()
+	if playing {
+		a.stopPlay()
+	} else {
+		a.startPlay()
+	}
+}
+
+// restartPlay relaunches the running loop with the CURRENT pattern (a live edit while
+// playing). It kills the old process and spawns a fresh loop under a new generation,
+// so the old goroutine won't clear the new `playing` flag. Quiet (no log spam) — the
+// point is that editing a beat updates what you hear, like a real drum machine.
+func (a *App) restartPlay() {
+	a.mu.Lock()
+	if !a.playing {
+		a.mu.Unlock()
+		return
+	}
+	proc := a.playProc
+	a.playProc = nil
+	a.mu.Unlock()
+	if proc != nil {
+		_ = proc.Kill()
+	}
+	a.spawnPlay()
+}
+
+// markPatternEdited is called after a drum edit. If a loop is playing it debounces a
+// restart so the change is HEARD without the user stopping + replaying — and so a burst
+// of fast edits coalesces into ONE relaunch instead of spawning an engine per click.
+func (a *App) markPatternEdited() {
+	a.mu.Lock()
+	if !a.playing {
+		a.mu.Unlock()
+		return
+	}
+	a.editSeq++
+	seq := a.editSeq
+	a.mu.Unlock()
+	go func() {
+		time.Sleep(180 * time.Millisecond)
+		a.mu.Lock()
+		latest := a.playing && a.editSeq == seq
+		a.mu.Unlock()
+		if latest {
+			a.restartPlay()
+		}
+	}()
+}
+
+// handleTransportKeys wires the spacebar to play/stop. A dedicated key area is focused
+// ONCE at startup (and re-focused when a mode/transport button is clicked — see
+// handleInput) so Space works on the canvas, while the agent text box still receives
+// Space as a literal space when IT holds focus. We never re-grab focus every frame
+// (that was the Ctrl+Z focus-steal bug). No-op while an overlay owns the keyboard.
+func (a *App) handleTransportKeys(gtx layout.Context) {
+	if a.overlay.hasPending() {
+		return // the overlay (Esc/Enter) owns the keyboard while a proposal is open
+	}
+	// Register a full-window key area (Push+immediate Pop, the proven piano/overlay
+	// pattern) so the tag can receive Space without blocking later pointer ops.
+	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &a.kbTag)
+	area.Pop()
+	if !a.kbInit {
+		gtx.Execute(key.FocusCmd{Tag: &a.kbTag})
+		a.kbInit = true
+	}
+	for {
+		ev, ok := gtx.Event(key.Filter{Focus: &a.kbTag, Name: key.NameSpace})
+		if !ok {
+			break
+		}
+		if ke, ok := ev.(key.Event); ok && ke.State == key.Press {
+			a.togglePlay()
+		}
+	}
+}
+
+// focusTransport returns keyboard focus to the transport tag (so Space plays again
+// after the user was typing in the agent box). Called when a mode/transport button is
+// clicked — the natural "I'm done typing, back to the beat" gesture.
+func (a *App) focusTransport(gtx layout.Context) {
+	gtx.Execute(key.FocusCmd{Tag: &a.kbTag})
 }
 
 // refreshVisual rebuilds the drawable representation when the target changed. The decode
