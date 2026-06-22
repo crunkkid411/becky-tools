@@ -176,11 +176,18 @@ func (m *mixerPanel) layoutStrip(
 
 	macro := op.Record(gtx.Ops)
 	dims := layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-		// track name label
+		// bus-colour accent bar — Jordan's rule: a track WEARS its bus colour.
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			w := gtx.Constraints.Max.X
+			h := gtx.Dp(unit.Dp(4))
+			fillRRect(gtx.Ops, image.Rect(0, 0, w, h), 2, busColor(bus))
+			return layout.Dimensions{Size: image.Pt(w, h)}
+		}),
+		// track name label — coloured by its bus (vocals=green, guitars=red, …)
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(3)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(a.th, truncateID(id, 8))
-				lbl.Color = colTextDim
+				lbl.Color = busColor(bus)
 				return lbl.Layout(gtx)
 			})
 		}),

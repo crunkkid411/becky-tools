@@ -16,7 +16,9 @@
 package canvasbridge
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 
 	"becky-go/internal/canvas"
@@ -144,11 +146,43 @@ func routingFromBuses(buses []dawmodel.Bus) []canvas.RouteEdge {
 // into an editable Arrangement, so opening a project in the canvas yields the rich
 // model. Thin wrapper over composearr (the same converter becky-reaper uses).
 func ArrangementFromProjectFile(path string) (*dawmodel.Arrangement, error) {
-	proj, baseDir, err := composearr.LoadProject(path)
-	if err != nil {
-		return nil, fmt.Errorf("load project: %w", err)
+	raw, rerr := os.ReadFile(path)
+	if rerr != nil {
+		return nil, fmt.Errorf("read project: %w", rerr)
+	}
+	// becky-song / becky-daw write a dawmodel.Arrangement DIRECTLY (tracks with inline
+	// clips+notes). Try that first: if it parses to tracks that actually carry notes it
+	// is a complete session — use it. (This is why loading a becky-song project showed an
+	// empty mixer: it was being forced through the music.Project+.mid-stem path below,
+	// which found no stem files.)
+	var arr dawmodel.Arrangement
+	if json.Unmarshal(raw, &arr) == nil && arrangementHasNotes(&arr) {
+		return &arr, nil
+	}
+	// Otherwise it's a becky-compose music.Project that references per-track .mid stems;
+	// resolve those into an Arrangement via composearr.
+	proj, baseDir, perr := composearr.LoadProject(path)
+	if perr != nil {
+		return nil, fmt.Errorf("load project: %w", perr)
 	}
 	return composearr.FromProject(proj, baseDir)
+}
+
+// arrangementHasNotes reports whether arr has at least one clip carrying notes — the
+// test for "this JSON was a real inline arrangement" vs a stem-referencing project
+// (whose tracks may parse but carry no inline notes).
+func arrangementHasNotes(arr *dawmodel.Arrangement) bool {
+	if arr == nil {
+		return false
+	}
+	for _, t := range arr.Tracks {
+		for _, c := range t.Clips {
+			if len(c.Notes) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func ppqOf(a *dawmodel.Arrangement) int {
