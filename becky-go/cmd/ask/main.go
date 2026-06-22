@@ -14,10 +14,16 @@
 //     a question/idea/ambiguous request is answered or clarified — never a tool
 //     call by default. The intent step uses the local Qwen3.5 model when present,
 //     else the offline keyword catalog.
+//   - SINGLE-SHOT (scriptable) mode: `--question "<q>"` (or `--image <f>
+//     --question "<q>"`) answers ONE request, prints a plain answer, and exits —
+//     for scripts/agents/CI. This is a PURE ADDITION beside the interactive TUI;
+//     it is opt-in (only via an explicit flag) and NEVER the default. See
+//     SPEC-ASK-SINGLESHOT.md and singleshot.go.
 //
-// Usage: run it (double-click, or `becky-ask [path ...]` on PATH). It needs an
-// interactive terminal; with no TTY (piped/headless) it prints what it parsed
-// (incl. any dropped Target) and exits cleanly rather than crashing.
+// Usage: run it (double-click, or `becky-ask [path ...]` on PATH). With a real
+// terminal and NO single-shot flag it launches the colored bubbletea TUI — the
+// accessibility-AID default (ACCESSIBILITY.md). With no TTY it prints what it
+// parsed and exits cleanly rather than crashing.
 package main
 
 import (
@@ -30,25 +36,67 @@ import (
 	"golang.org/x/term"
 )
 
-func main() {
-	args := os.Args[1:]
+// askMode is the top-level entry becky-ask resolves to from its flags/environment.
+// Making this a named, testable value is load-bearing: a regression test asserts
+// that an explicit single-shot flag selects modeSingleShot and that the default
+// (no flag + a terminal) selects modeTUI — i.e. single-shot can NEVER shadow the
+// interactive colored TUI (the accessibility AID; ACCESSIBILITY.md, SPEC §1).
+type askMode int
 
-	// becky-ask is an interactive TUI. If there is no real terminal on stdin
-	// (piped, redirected, or a headless runner), do NOT launch bubbletea (it would
-	// error on a missing TTY). Instead, honestly report what we parsed — including
-	// any dropped Target — and exit 0. This keeps the no-TTY path crash-free and
-	// makes the drag-drop→target behavior observable without a terminal.
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		// Headless run mode: `BECKY_ASK_RUN=transcribe becky-ask <file>` runs the
-		// workflow and exits — for scripting a folder, and for verifying behavior
-		// without a terminal. With no env set, just report what was parsed.
-		if op := strings.TrimSpace(os.Getenv("BECKY_ASK_RUN")); op != "" {
-			os.Exit(runHeadless(op, args))
-		}
-		printNoTTY(args)
+const (
+	modeTUI         askMode = iota // interactive colored bubbletea window (the DEFAULT)
+	modeSingleShot                 // --question / --image: print one answer, exit
+	modeHeadlessRun                // BECKY_ASK_RUN=<op> on a target (existing no-TTY path)
+	modeNoTTY                      // piped/headless with no flag/env: printNoTTY echo
+)
+
+// decideMode is the ONLY behavioral switch added to startup, expressed as a pure
+// function so it is unit-testable without a terminal. Precedence (SPEC §3.1):
+//
+//	single-shot flag present            -> modeSingleShot   [NEW, opt-in only]
+//	else terminal on stdin              -> modeTUI          [UNCHANGED DEFAULT]
+//	else BECKY_ASK_RUN set              -> modeHeadlessRun  [UNCHANGED]
+//	else                                -> modeNoTTY        [UNCHANGED]
+//
+// Single-shot is checked FIRST and fires ONLY on an explicit flag, so it can never
+// auto-select just because something looks headless, and the interactive TUI stays
+// the default whenever a real terminal is present and no single-shot flag is given.
+func decideMode(ss *ssFlags, isTTY bool, beckyAskRun string) askMode {
+	if ss != nil && ss.isSingleShot() {
+		return modeSingleShot
+	}
+	if isTTY {
+		return modeTUI
+	}
+	if strings.TrimSpace(beckyAskRun) != "" {
+		return modeHeadlessRun
+	}
+	return modeNoTTY
+}
+
+func main() {
+	ss, rest := parseSingleShotFlags(os.Args[1:])
+	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+
+	switch decideMode(ss, isTTY, os.Getenv("BECKY_ASK_RUN")) {
+	case modeSingleShot:
+		os.Exit(runSingleShot(ss))
+	case modeTUI:
+		launchTUI(rest)
+	case modeHeadlessRun:
+		os.Exit(runHeadless(strings.TrimSpace(os.Getenv("BECKY_ASK_RUN")), rest))
+	default: // modeNoTTY
+		printNoTTY(rest)
 		os.Exit(0)
 	}
+}
 
+// launchTUI starts the interactive colored bubbletea window. It is split out from
+// main so the mode-selection logic can be tested without ever entering bubbletea
+// (the accessibility guard: TestSingleShot_DoesNotLaunchTUI replaces this seam with
+// a spy). The body is byte-for-byte the original TUI launch — WithAltScreen +
+// WithMouseCellMotion — so the human window is unchanged.
+var launchTUI = func(args []string) {
 	p := tea.NewProgram(
 		modelFromArgs(args),
 		tea.WithAltScreen(),       // full-window chat, like the original

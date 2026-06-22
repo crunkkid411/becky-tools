@@ -14,3 +14,7 @@
 # keeps both copies — a visible duplicate a human can trim, never a lost edit.)
 CLAUDE.md            merge=union
 COLLAB-PROTOCOL.md   merge=union
+
+# Golden test fixtures must stay LF so byte-compare tests pass on Windows checkouts.
+*.golden.md text eol=lf
+*.golden text eol=lf

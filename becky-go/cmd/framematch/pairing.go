@@ -10,33 +10,57 @@
 // which is exactly what a court-exhibit page set needs.
 package main
 
-import "sort"
+import (
+	"image"
+	"os"
+	"sort"
 
-// candidate is an intermediate (i,j) cross-source pair with its distance.
+	"becky-go/internal/config"
+)
+
+// candidate is an intermediate (i,j) cross-source pair with its distances.
+// hamming is the ranking key (ROI-aHash when available, else whole-frame).
 type candidate struct {
-	ai, bi  int
-	hamming int
+	ai, bi   int
+	hamming  int // ranking distance (ROI primary)
+	wholeHam int // whole-frame aHash distance (weak/provenance)
+	roiHam   int // ROI-aHash distance (-1 if unknown/unparseable)
+	roiOK    bool
 }
 
-// pairFrames returns the ranked candidate pairs between framesA and framesB
-// whose Hamming distance is <= threshold, using greedy 1:1 selection (closest
-// first). maxPairs caps the result (<=0 means no cap). Frame copies/exhibit
-// images are NOT produced here — pairing is pure ranking over hashes.
-func pairFrames(framesA, framesB []Frame, threshold, maxPairs int) []Pair {
+// pairFrames returns the ranked candidate pairs between framesA and framesB,
+// ranked on the ROI-aHash (the primary same-room signal) when available and
+// falling back to the whole-frame hash otherwise. A pair is a candidate when its
+// ROI distance is within --roi-threshold OR (legacy) its whole-frame distance is
+// within --threshold, so a same-room pair the body-dominated whole-frame hash
+// would miss is still surfaced. Greedy 1:1, closest first. maxPairs caps the
+// result (<=0 means no cap). Each pair gets a corroborated room call. cfg is used
+// only when keypoint corroboration is on (it re-decodes the two frames' ROIs).
+func pairFrames(framesA, framesB []Frame, threshold, maxPairs int, roiCfg roiConfig, cfg config.Config) []Pair {
 	cands := make([]candidate, 0, len(framesA)*len(framesB))
 	for i := range framesA {
 		ha, badA := parseHash(framesA[i].Hash)
-		if badA {
-			continue
-		}
 		for j := range framesB {
 			hb, badB := parseHash(framesB[j].Hash)
-			if badB {
-				continue
+			wholeHam := 64
+			if !badA && !badB {
+				wholeHam = hamming64(ha, hb)
 			}
-			d := hamming64(ha, hb)
-			if d <= threshold {
-				cands = append(cands, candidate{ai: i, bi: j, hamming: d})
+			roiHam, roiOK := roiCfg.roiHammingOf(framesA[i].ROIHash, framesB[j].ROIHash)
+
+			// Rank on ROI when we have it, else whole-frame.
+			rank := wholeHam
+			if roiOK {
+				rank = roiHam
+			}
+			// Surface as a candidate if EITHER signal is within its threshold.
+			roiPass := roiOK && roiHam <= roiCfg.roiThreshold
+			wholePass := !badA && !badB && wholeHam <= threshold
+			if roiPass || wholePass {
+				cands = append(cands, candidate{
+					ai: i, bi: j, hamming: rank,
+					wholeHam: wholeHam, roiHam: roiHamOrNeg(roiHam, roiOK), roiOK: roiOK,
+				})
 			}
 		}
 	}
@@ -60,20 +84,91 @@ func pairFrames(framesA, framesB []Frame, threshold, maxPairs int) []Pair {
 		}
 		usedA[c.ai] = true
 		usedB[c.bi] = true
+		fa, fb := framesA[c.ai], framesB[c.bi]
+
+		in := roomInputs{
+			roiHamming:     c.roiHam,
+			roiOK:          c.roiOK,
+			roiFeatured:    roiCfg.roiFeaturedHex(fa.ROIHash) && roiCfg.roiFeaturedHex(fb.ROIHash),
+			roiThreshold:   roiCfg.roiThreshold,
+			wholeHamming:   c.wholeHam,
+			wholeThreshold: threshold,
+		}
+		if roiCfg.keypoints {
+			inliers, pop := keypointMatch(cfg, roiCfg, fa, fb)
+			in.keypointsOn = true
+			in.keypointInliers = inliers
+			in.keypointPop = pop
+			in.minInliers = roiCfg.minInliers
+		}
+		res := computeRoomCall(in)
+
 		pairs = append(pairs, Pair{
-			Rank:          len(pairs) + 1,
-			Hamming:       c.hamming,
-			Similarity:    round3(1.0 - float64(c.hamming)/64.0),
-			WhatToLookFor: whatToLookFor(c.hamming),
-			A:             framesA[c.ai],
-			B:             framesB[c.bi],
-			Enhancements:  []Enhance{},
+			Rank:            len(pairs) + 1,
+			Hamming:         c.wholeHam,
+			Similarity:      round3(1.0 - float64(c.wholeHam)/64.0),
+			WhatToLookFor:   whatToLookForCall(res, in, roiCfg.spec()),
+			RoomCall:        res.call,
+			RoomCallText:    roomCallPhrase(res),
+			Confidence:      res.confidence,
+			ROIHamming:      c.roiHam,
+			KeypointInliers: in.keypointInliers,
+			SignalsUsed:     signalsOrEmpty(res.signalsUsed),
+			A:               fa,
+			B:               fb,
+			Enhancements:    []Enhance{},
 		})
 		if maxPairs > 0 && len(pairs) >= maxPairs {
 			break
 		}
 	}
 	return pairs
+}
+
+// roiHamOrNeg returns the ROI Hamming, or -1 when the ROI signal is unknown
+// (unparseable hashes), so the manifest records "unknown" rather than a fake 0.
+func roiHamOrNeg(roiHam int, ok bool) int {
+	if !ok {
+		return -1
+	}
+	return roiHam
+}
+
+// signalsOrEmpty ensures the JSON array is [] not null.
+func signalsOrEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// keypointMatch re-decodes the two frames' ROIs and runs the decor matcher,
+// returning (inliers, judgeable-population). Degrade-never-crash: any decode
+// failure yields (0,0) → the keypoint signal becomes "unknown".
+func keypointMatch(_ config.Config, roiCfg roiConfig, a, b Frame) (inliers, pop int) {
+	if roiCfg.matcher == nil {
+		return 0, 0
+	}
+	ia := decodeFrame(a.Path)
+	ib := decodeFrame(b.Path)
+	if ia == nil || ib == nil {
+		return 0, 0
+	}
+	return roiCfg.matcher.Match(roiCfg.cropROI(ia), roiCfg.cropROI(ib))
+}
+
+// decodeFrame decodes a frame copy from disk, or nil on any error.
+func decodeFrame(slashPath string) image.Image {
+	f, err := os.Open(slashPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	img, _, derr := image.Decode(f)
+	if derr != nil {
+		return nil
+	}
+	return img
 }
 
 // whatToLookFor returns a plain-language reviewer hint scaled by how close the

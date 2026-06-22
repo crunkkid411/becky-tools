@@ -62,6 +62,14 @@ func main() {
 	gamma := flag.Float64("gamma", 1, "eq gamma (1 = none)")
 	saturation := flag.Float64("saturation", 1, "eq saturation (1 = none)")
 	enhanceSide := flag.String("enhance-side", "both", "which side to enhance: a, b, both")
+	roiMode := flag.String("roi", "band", "region hashed for matching: band | corners | full")
+	roiTop := flag.Float64("roi-top", 0.0, "ROI top edge as a fraction of height [0,1]")
+	roiHeight := flag.Float64("roi-height", 0.35, "ROI height as a fraction of height (0,1]")
+	roiLeft := flag.Float64("roi-left", 0.0, "ROI left edge as a fraction of width [0,1]")
+	roiWidth := flag.Float64("roi-width", 1.0, "ROI width as a fraction of width (0,1]")
+	roiThreshold := flag.Int("roi-threshold", 8, "max ROI-aHash Hamming for an 'agree' (0-64)")
+	keypoints := flag.Bool("keypoints", false, "enable static-decor keypoint corroboration (pure-Go)")
+	minInliers := flag.Int("min-inliers", 12, "keypoint inliers required for an 'agree'")
 	noImages := flag.Bool("no-images", false, "skip per-pair comparison PNGs (HTML + manifest only)")
 	output := flag.String("output", "", "write the manifest JSON here instead of stdout")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
@@ -83,6 +91,11 @@ func main() {
 	if side != "a" && side != "b" && side != "both" {
 		beckyio.Fatalf("--enhance-side must be a, b, or both")
 	}
+	roiCfg, rerr := buildROIConfig(strings.ToLower(*roiMode), *roiTop, *roiHeight, *roiLeft, *roiWidth,
+		*roiThreshold, *keypoints, *minInliers)
+	if rerr != nil {
+		beckyio.Fatalf("%v", rerr)
+	}
 
 	cfg := config.Load()
 	if err := os.MkdirAll(*outputDir, 0o755); err != nil {
@@ -91,19 +104,21 @@ func main() {
 
 	// 1. Sample + hash both sources.
 	beckyio.Logf(*verbose, "sampling source A: %s", srcA)
-	srcInfoA, framesA, err := sampleSource(cfg, srcA, "A", *outputDir, *interval, *fps, *verbose)
+	srcInfoA, framesA, err := sampleSource(cfg, srcA, "A", *outputDir, *interval, *fps, roiCfg, *verbose)
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
 	beckyio.Logf(*verbose, "sampling source B: %s", srcB)
-	srcInfoB, framesB, err := sampleSource(cfg, srcB, "B", *outputDir, *interval, *fps, *verbose)
+	srcInfoB, framesB, err := sampleSource(cfg, srcB, "B", *outputDir, *interval, *fps, roiCfg, *verbose)
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
 	beckyio.Logf(*verbose, "sampled %d frame(s) from A, %d from B", len(framesA), len(framesB))
 
-	// 2. Pair across sources by low Hamming distance, ranked.
-	pairs := pairFrames(framesA, framesB, *threshold, *maxPairs)
+	// 2. Pair across sources, ranked on the ROI-aHash (primary signal), with the
+	//    whole-frame hash kept as a weak/provenance signal and a corroborated
+	//    room call computed per pair.
+	pairs := pairFrames(framesA, framesB, *threshold, *maxPairs, roiCfg, cfg)
 	beckyio.Logf(*verbose, "%d candidate pair(s) within threshold %d", len(pairs), *threshold)
 
 	opts := enhanceOpts{
@@ -166,6 +181,11 @@ func main() {
 		Interval:       *interval,
 		FPS:            *fps,
 		Threshold:      *threshold,
+		ROIMode:        roiCfg.mode,
+		ROISpec:        roiCfg.spec(),
+		ROIThreshold:   roiCfg.roiThreshold,
+		KeypointsOn:    roiCfg.keypoints,
+		MinInliers:     roiCfg.minInliers,
 		MaxPairs:       *maxPairs,
 		EnhanceApplied: enhanceActive,
 		SourceA:        srcInfoA,

@@ -140,7 +140,6 @@ func resolvePaths() (bin, model string) {
 //	    "--grammar-file", <path from WriteGrammarFile>,
 //	    "--temp", "0", "--seed", "42", "-n", "512", "--no-display-prompt")
 //	out, err := cmd.Output() // return string(out), err
-//
 type execRunner struct{}
 
 func (execRunner) run(bin, model, prompt, grammar string) (string, error) {

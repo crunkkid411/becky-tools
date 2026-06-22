@@ -36,8 +36,8 @@ func buildComparison(cfg config.Config, outDir string, p Pair, aImg, bImg, srcNa
 	// Write the two header labels to textfiles (robust against punctuation).
 	labelA := fmt.Sprintf("A  %s  @ %s", srcNameA, p.A.TimeLabel)
 	labelB := fmt.Sprintf("B  %s  @ %s", srcNameB, p.B.TimeLabel)
-	footer := fmt.Sprintf("hamming=%d  similarity=%.2f  -  %s",
-		p.Hamming, p.Similarity, p.WhatToLookFor)
+	footer := fmt.Sprintf("%s  (conf %.2f)  -  %s",
+		p.RoomCallText, p.Confidence, p.WhatToLookFor)
 
 	tfA := filepath.Join(outDir, fmt.Sprintf(".lblA_%02d.txt", p.Rank))
 	tfB := filepath.Join(outDir, fmt.Sprintf(".lblB_%02d.txt", p.Rank))
@@ -120,9 +120,15 @@ func writeExhibitHTML(outDir, htmlPath string, m Manifest) error {
 	b.WriteString("<section class=\"sources\">")
 	writeSourceCard(&b, "Source A", m.SourceA)
 	writeSourceCard(&b, "Source B", m.SourceB)
+	kpStr := "off"
+	if m.KeypointsOn {
+		kpStr = fmt.Sprintf("on (min-inliers=%d)", m.MinInliers)
+	}
 	fmt.Fprintf(&b, "<div class=\"params\">interval=%gs &middot; fps=%g &middot; "+
-		"threshold=%d bits &middot; pairs=%d</div>",
-		m.Interval, m.FPS, m.Threshold, m.PairCount)
+		"roi=%s [%s] &middot; roi-threshold=%d bits &middot; keypoints=%s &middot; "+
+		"whole-frame threshold=%d bits &middot; pairs=%d</div>",
+		m.Interval, m.FPS, html.EscapeString(m.ROIMode), html.EscapeString(m.ROISpec),
+		m.ROIThreshold, html.EscapeString(kpStr), m.Threshold, m.PairCount)
 	b.WriteString("</section>")
 
 	if len(m.Pairs) == 0 {
@@ -168,9 +174,15 @@ func writeSourceCard(b *strings.Builder, title string, s SourceInfo) {
 // honest edit log if any enhancement was applied.
 func writePairCard(b *strings.Builder, outDir string, p Pair) {
 	b.WriteString("<section class=\"pair\">")
+	roiHamStr := "n/a"
+	if p.ROIHamming >= 0 {
+		roiHamStr = fmt.Sprintf("%d", p.ROIHamming)
+	}
 	fmt.Fprintf(b, "<div class=\"pairhead\"><span class=\"rank\">#%d</span>"+
-		"<span class=\"dist\">hamming %d &middot; similarity %.2f</span></div>",
-		p.Rank, p.Hamming, p.Similarity)
+		"<span class=\"call call-%s\">%s</span>"+
+		"<span class=\"dist\">ROI hamming %s &middot; confidence %.2f &middot; whole-frame %d</span></div>",
+		p.Rank, html.EscapeString(roomCallClass(p.RoomCall)),
+		html.EscapeString(p.RoomCallText), html.EscapeString(roiHamStr), p.Confidence, p.Hamming)
 
 	if p.Comparison != "" {
 		rel := relTo(outDir, p.Comparison)
@@ -257,6 +269,11 @@ body{margin:0;font:16px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color
 .pairhead{display:flex;align-items:center;gap:14px;margin-bottom:12px}
 .rank{font-size:22px;font-weight:700;color:var(--accent)}
 .dist{color:var(--muted);font-size:14px}
+.call{font-weight:700;font-size:13px;padding:4px 10px;border-radius:6px;letter-spacing:.02em}
+.call-same_room{background:#0a3d1f;color:#39ff14;border:2px solid #39ff14}
+.call-different_room{background:#3d0a0a;color:#ff5a5a;border:2px solid #ff5a5a}
+.call-candidate{background:#3d320a;color:#ffd233;border:2px solid #ffd233}
+.call-unknown{background:#22262b;color:#b6c2cf;border:2px solid #6b7785}
 .cmp{width:100%;height:auto;border-radius:8px;border:1px solid var(--line);display:block;background:#000}
 .frames{display:flex;gap:12px}.frames figure{margin:0;flex:1}
 .frames img{width:100%;border-radius:8px;border:1px solid var(--line)}

@@ -20,6 +20,26 @@ func mkFrame(label string, idx int, hash string) Frame {
 		Path: label + "/" + hash + ".jpg", Hash: hash}
 }
 
+// mkFrameROI builds a test frame with both a whole-frame hash and an ROI hash.
+func mkFrameROI(label string, idx int, whole, roi string) Frame {
+	f := mkFrame(label, idx, whole)
+	f.ROIHash = roi
+	return f
+}
+
+// testFullCfg is a roiConfig that ranks on the whole-frame hash (ROI hashes
+// absent) so the legacy ranking tests behave exactly as before.
+func testFullCfg() roiConfig {
+	c, _ := buildROIConfig("full", 0, 1, 0, 1, 8, false, 12)
+	return c
+}
+
+// testBandCfg is the default band config used by the ROI-aware tests.
+func testBandCfg(roiThreshold int) roiConfig {
+	c, _ := buildROIConfig("band", 0, 0.35, 0, 1, roiThreshold, false, 12)
+	return c
+}
+
 func TestPairFramesRanksClosestFirst(t *testing.T) {
 	// A0 is identical to B1 (ham 0); A1 is 1 bit from B0. Expect the ham-0 pair
 	// ranked first, then the ham-1 pair, both within threshold.
@@ -31,7 +51,7 @@ func TestPairFramesRanksClosestFirst(t *testing.T) {
 		mkFrame("B", 0, "00000000000000ff"),
 		mkFrame("B", 1, "00000000000000ff"),
 	}
-	pairs := pairFrames(framesA, framesB, 8, 0)
+	pairs := pairFrames(framesA, framesB, 8, 0, testFullCfg(), config.Config{})
 	if len(pairs) != 2 {
 		t.Fatalf("expected 2 pairs, got %d", len(pairs))
 	}
@@ -51,7 +71,7 @@ func TestPairFramesThresholdRejectsNonMatches(t *testing.T) {
 	// A0 and B0 differ by many bits (well above threshold) — must NOT pair.
 	framesA := []Frame{mkFrame("A", 0, "ffffffffffffffff")}
 	framesB := []Frame{mkFrame("B", 0, "0000000000000000")} // ham 64
-	pairs := pairFrames(framesA, framesB, 10, 0)
+	pairs := pairFrames(framesA, framesB, 10, 0, testFullCfg(), config.Config{})
 	if len(pairs) != 0 {
 		t.Fatalf("expected 0 pairs above threshold, got %d", len(pairs))
 	}
@@ -68,7 +88,7 @@ func TestPairFramesGreedyOneToOne(t *testing.T) {
 		mkFrame("B", 0, "00000000000000ff"), // ham 0 to both A
 		mkFrame("B", 1, "00000000000000fc"), // ham 2 to the A frames
 	}
-	pairs := pairFrames(framesA, framesB, 8, 0)
+	pairs := pairFrames(framesA, framesB, 8, 0, testFullCfg(), config.Config{})
 	if len(pairs) != 2 {
 		t.Fatalf("expected 2 distinct 1:1 pairs, got %d", len(pairs))
 	}
@@ -86,7 +106,7 @@ func TestPairFramesGreedyOneToOne(t *testing.T) {
 func TestPairFramesMaxPairsCap(t *testing.T) {
 	framesA := []Frame{mkFrame("A", 0, "0000000000000000"), mkFrame("A", 1, "0000000000000001"), mkFrame("A", 2, "0000000000000003")}
 	framesB := []Frame{mkFrame("B", 0, "0000000000000000"), mkFrame("B", 1, "0000000000000001"), mkFrame("B", 2, "0000000000000003")}
-	pairs := pairFrames(framesA, framesB, 64, 2)
+	pairs := pairFrames(framesA, framesB, 64, 2, testFullCfg(), config.Config{})
 	if len(pairs) != 2 {
 		t.Fatalf("max-pairs=2 should cap at 2, got %d", len(pairs))
 	}

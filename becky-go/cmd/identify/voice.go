@@ -25,13 +25,28 @@ import (
 )
 
 // voiceOptions bundles the knobs for the voice path.
+//
+// Two separate floors do two different jobs (the detection-vs-naming invariant):
+//   - threshold is the DETECTION floor (default 0.45): below it a speaker is genuinely
+//     "unidentified speaker, unknown identity" — no candidate worth surfacing.
+//   - nameThreshold is the NAMING floor (default 0.75): a lone voice is asserted as a
+//     NAME only when best >= nameThreshold. Between the two floors it is a named
+//     CANDIDATE, never a confident identification.
+//   - nameMargin is the minimum top-1 minus top-2 gap (default 0.06): even above the
+//     naming floor, two near-tied enrollees ("next-nearest male") are ambiguous and
+//     demoted to a candidate naming both, never one.
+//   - cast, when non-empty, restricts naming to expected enrollees: an enrollee not in
+//     cast can never be named or even act as the runner-up that suppresses a real match.
 type voiceOptions struct {
-	diarizedPath string
-	threshold    float64
-	device       string
-	numThreads   int
-	keepTemp     bool
-	verbose      bool
+	diarizedPath  string
+	threshold     float64
+	nameThreshold float64
+	nameMargin    float64
+	cast          []string // resolved cast filter (lowercased keys/names/aliases); empty = all eligible
+	device        string
+	numThreads    int
+	keepTemp      bool
+	verbose       bool
 }
 
 // speakerAudio holds one diarized speaker, its spans, and its embedding.
@@ -42,8 +57,12 @@ type speakerAudio struct {
 }
 
 // enrolledVoice is one enrolled name with its averaged (L2-normalized) embedding.
+// key and aliases are kept so the --cast plausibility guard can resolve a cast name
+// against the dir key, the display name, OR an entity alias (kb.go's pairing).
 type enrolledVoice struct {
 	name      string
+	key       string
+	aliases   []string
 	embedding []float64
 }
 
@@ -74,7 +93,7 @@ func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Kno
 	}
 
 	// Build enrolled embeddings (averaged across each name's clips).
-	enrolled, err := embedEnrolled(cfg, script, embedModel, kb.Voices, opts)
+	enrolled, err := embedEnrolled(cfg, script, embedModel, kb, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -82,9 +101,51 @@ func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Kno
 		beckyio.Logf(opts.verbose, "no voice-prints enrolled; all speakers -> unidentified")
 	}
 
-	ids := matchSpeakers(speakers, enrolled, opts.threshold, opts.verbose)
-	unids := unmatchedDescriptions(speakers, enrolled, opts.threshold)
+	ids := matchSpeakers(speakers, enrolled, opts)
+	unids := unmatchedDescriptions(speakers, enrolled, opts)
 	return ids, unids, nil
+}
+
+// filterCast restricts the enrolled set to those resolving to a name in cast. An empty
+// cast returns all enrollees unchanged (current behavior). Matching is case-insensitive
+// against the enrolled dir key, display name, and entity aliases.
+func filterCast(enrolled []enrolledVoice, cast []string) []enrolledVoice {
+	if len(cast) == 0 {
+		return enrolled
+	}
+	want := castSet(cast)
+	var out []enrolledVoice
+	for _, e := range enrolled {
+		if enrolleeInCast(e, want) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// castSet lowercases/trims the cast names into a lookup set.
+func castSet(cast []string) map[string]bool {
+	want := map[string]bool{}
+	for _, c := range cast {
+		if s := strings.ToLower(strings.TrimSpace(c)); s != "" {
+			want[s] = true
+		}
+	}
+	return want
+}
+
+// enrolleeInCast reports whether an enrollee matches any wanted cast name (lowercased)
+// by its dir key, display name, or any entity alias.
+func enrolleeInCast(e enrolledVoice, want map[string]bool) bool {
+	if want[strings.ToLower(strings.TrimSpace(e.key))] || want[strings.ToLower(strings.TrimSpace(e.name))] {
+		return true
+	}
+	for _, a := range e.aliases {
+		if want[strings.ToLower(strings.TrimSpace(a))] {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSpeakers returns each speaker's id + segments, either from the supplied
@@ -122,10 +183,11 @@ func embedSpeakers(cfg config.Config, script, model, input string, speakers []sp
 	return nil
 }
 
-// embedEnrolled extracts and averages each enrolled name's clip embeddings.
-func embedEnrolled(cfg config.Config, script, model string, voices []VoicePrint, opts voiceOptions) ([]enrolledVoice, error) {
+// embedEnrolled extracts and averages each enrolled name's clip embeddings, carrying
+// the dir key + entity aliases so the --cast guard can resolve a cast name later.
+func embedEnrolled(cfg config.Config, script, model string, kb Knowledge, opts voiceOptions) ([]enrolledVoice, error) {
 	var out []enrolledVoice
-	for _, v := range voices {
+	for _, v := range kb.Voices {
 		vecs, err := extractEmbeddings(cfg, script, model, v.Clips, opts)
 		if err != nil {
 			return nil, fmt.Errorf("embed enrolled %q: %w", v.Name, err)
@@ -134,69 +196,228 @@ func embedEnrolled(cfg config.Config, script, model string, voices []VoicePrint,
 			beckyio.Logf(opts.verbose, "  enrolled %q: no usable clips, skipping", v.Name)
 			continue
 		}
-		out = append(out, enrolledVoice{name: v.Name, embedding: averageNormalized(vecs)})
+		var aliases []string
+		if e, ok := kb.Entities[v.Key]; ok {
+			aliases = e.Aliases
+		}
+		out = append(out, enrolledVoice{
+			name:      v.Name,
+			key:       v.Key,
+			aliases:   aliases,
+			embedding: averageNormalized(vecs),
+		})
 		beckyio.Logf(opts.verbose, "  enrolled %q: averaged %d clip(s)", v.Name, len(vecs))
 	}
 	return out, nil
 }
 
-// matchSpeakers cosine-matches each embedded speaker against enrolled names and
-// returns identifications for those that clear the threshold.
-func matchSpeakers(speakers []speakerAudio, enrolled []enrolledVoice, threshold float64, verbose bool) []Identification {
+// why_unnamed enum — a small closed set so downstream consumers can branch on it.
+const (
+	whyBelowDetection  = "below-detection"      // best < voice-threshold -> generic unknown
+	whyBelowNameThresh = "below-name-threshold" // detection <= best < voice-name-threshold
+	whyAmbiguousMargin = "ambiguous-margin"     // best >= name-threshold but margin < voice-name-margin
+	whyNotInCast       = "not-in-cast"          // top-1 suppressed because absent from --cast
+)
+
+// namedScore is one (name, cosine) candidate.
+type namedScore struct {
+	name string
+	sim  float64
+}
+
+// voiceDecision is the resolved naming outcome for one speaker: either NAMED (named=true,
+// best is the asserted name+score) or a demoted CANDIDATE/unknown (named=false) with the
+// machine-readable reason and the runner-up audit trail.
+type voiceDecision struct {
+	named    bool
+	best     namedScore // top-1 IN-CAST enrollee (name "" when no plausible enrollees)
+	runnerUp namedScore // top-2 IN-CAST enrollee (name "" when fewer than 2 plausible)
+	margin   float64    // best.sim - runnerUp.sim (== best.sim when no runner-up)
+	why      string     // one of the why_unnamed enum values (only set when !named)
+}
+
+// decideSpeaker applies the full naming decision to one embedded speaker. The --cast
+// guard is applied HERE, before selection: naming runs over the in-cast enrollees, and
+// if the unfiltered winner (the real top-1) was suppressed by --cast, the outcome is
+// not-in-cast — the next-best in-cast enrollee is never substituted as the answer.
+//
+// A name is asserted ONLY when best >= nameThreshold AND margin >= nameMargin (the
+// corroborate-then-conclude rule on a single modality): below the detection floor ->
+// generic unknown; below the naming floor -> weak candidate; above it but too close to
+// the runner-up -> ambiguous candidate naming both contenders.
+func decideSpeaker(emb []float64, enrolled []enrolledVoice, opts voiceOptions) voiceDecision {
+	eligible := filterCast(enrolled, opts.cast)
+	best, runnerUp := topTwo(emb, eligible)
+	margin := best.sim
+	if runnerUp.name != "" {
+		margin = best.sim - runnerUp.sim
+	}
+	d := voiceDecision{best: best, runnerUp: runnerUp, margin: round4(margin)}
+
+	// Did --cast suppress the real winner? (Only meaningful when a cast is set.)
+	if castSuppressedWinner(emb, enrolled, opts) {
+		d.why = whyNotInCast
+		return d
+	}
+	switch {
+	case best.name == "" || best.sim < opts.threshold:
+		d.why = whyBelowDetection
+	case best.sim < opts.nameThreshold:
+		d.why = whyBelowNameThresh
+	case margin < opts.nameMargin:
+		d.why = whyAmbiguousMargin
+	default:
+		d.named = true
+	}
+	return d
+}
+
+// castSuppressedWinner reports whether the UNFILTERED top-1 enrollee (over the full
+// enrolled set) clears the detection floor but is absent from --cast — i.e. --cast
+// removed the real winner. Empty cast -> never suppressed.
+func castSuppressedWinner(emb []float64, enrolled []enrolledVoice, opts voiceOptions) bool {
+	if len(opts.cast) == 0 {
+		return false
+	}
+	rawBest, _ := topTwo(emb, enrolled)
+	if rawBest.name == "" || rawBest.sim < opts.threshold {
+		return false
+	}
+	want := castSet(opts.cast)
+	for _, e := range enrolled {
+		if e.name == rawBest.name {
+			return !enrolleeInCast(e, want)
+		}
+	}
+	return false
+}
+
+// matchSpeakers cosine-matches each embedded speaker against the enrolled names and
+// returns identifications ONLY for speakers that clear the naming threshold, the top-2
+// margin, and the --cast guard. Below those, the speaker is handled by
+// unmatchedDescriptions.
+func matchSpeakers(speakers []speakerAudio, enrolled []enrolledVoice, opts voiceOptions) []Identification {
 	var ids []Identification
 	for _, sp := range speakers {
 		if sp.embedding == nil {
 			continue
 		}
-		bestName, bestSim := bestMatch(sp.embedding, enrolled)
-		if bestName == "" || bestSim < threshold {
+		d := decideSpeaker(sp.embedding, enrolled, opts)
+		if !d.named {
 			continue // handled by unmatchedDescriptions
 		}
-		beckyio.Logf(verbose, "  %s -> %q (cosine=%.4f >= %.2f)", sp.id, bestName, bestSim, threshold)
-		ids = append(ids, Identification{
-			Type:       "voice",
-			SpeakerID:  sp.id,
-			Name:       bestName,
-			Confidence: round4(bestSim),
-			Match:      "cosine",
-			Segments:   sp.segments,
-		})
+		beckyio.Logf(opts.verbose, "  %s -> %q (cosine=%.4f >= %.2f, margin=%.4f >= %.2f)",
+			sp.id, d.best.name, d.best.sim, opts.nameThreshold, d.margin, opts.nameMargin)
+		id := Identification{
+			Type:        "voice",
+			SpeakerID:   sp.id,
+			Name:        d.best.name,
+			Confidence:  round4(d.best.sim),
+			Match:       "cosine",
+			Segments:    sp.segments,
+			VoiceMargin: d.margin,
+		}
+		if d.runnerUp.name != "" {
+			id.RunnerUp = d.runnerUp.name
+			id.RunnerUpConfidence = round4(d.runnerUp.sim)
+		}
+		ids = append(ids, id)
 	}
 	return ids
 }
 
-// unmatchedDescriptions returns an unidentified[] entry for each speaker that did
-// not clear the threshold (or had no embedding), with confidence 0.0.
-func unmatchedDescriptions(speakers []speakerAudio, enrolled []enrolledVoice, threshold float64) []Unidentified {
+// unmatchedDescriptions returns an unidentified[] entry for each speaker NOT named by
+// matchSpeakers — carrying the near-miss candidate, runner-up, margin, and a closed-set
+// why_unnamed reason so a downstream step can catch a weak/ambiguous match.
+func unmatchedDescriptions(speakers []speakerAudio, enrolled []enrolledVoice, opts voiceOptions) []Unidentified {
 	var unids []Unidentified
 	for _, sp := range speakers {
-		if sp.embedding != nil {
-			if name, sim := bestMatch(sp.embedding, enrolled); name != "" && sim >= threshold {
-				continue // identified
-			}
+		if sp.embedding == nil {
+			unids = append(unids, Unidentified{
+				Type:        "voice",
+				SpeakerID:   sp.id,
+				Description: "unidentified speaker, unknown identity",
+				Confidence:  0.0,
+				WhyUnnamed:  whyBelowDetection,
+			})
+			continue
 		}
-		unids = append(unids, Unidentified{
-			Type:        "voice",
-			SpeakerID:   sp.id,
-			Description: "unidentified speaker, unknown identity",
-			Confidence:  0.0,
-		})
+		d := decideSpeaker(sp.embedding, enrolled, opts)
+		if d.named {
+			continue // identified by matchSpeakers
+		}
+		unids = append(unids, demoteSpeakerToCandidate(sp, d, opts))
 	}
 	return unids
 }
 
-// bestMatch returns the highest-cosine enrolled name and its similarity.
-func bestMatch(emb []float64, enrolled []enrolledVoice) (string, float64) {
-	bestName := ""
-	bestSim := -1.0
+// demoteSpeakerToCandidate renders a not-named speaker as a plain-English Unidentified
+// with the full audit trail (candidate, runner-up, margin, reason). The why_unnamed field
+// carries the closed-set enum; the human-readable basis lives in description.
+func demoteSpeakerToCandidate(sp speakerAudio, d voiceDecision, opts voiceOptions) Unidentified {
+	u := Unidentified{
+		Type:       "voice",
+		SpeakerID:  sp.id,
+		Confidence: 0.0,
+		WhyUnnamed: d.why,
+	}
+	switch d.why {
+	case whyBelowDetection:
+		u.Description = "unidentified speaker, unknown identity"
+		return u
+	case whyNotInCast:
+		u.Description = "unidentified speaker, best match not in expected cast"
+		return u
+	}
+	// below-name-threshold or ambiguous-margin: surface the near-miss as a candidate.
+	u.Candidate = d.best.name
+	u.CandidateConfidence = round4(d.best.sim)
+	u.VoiceMargin = d.margin
+	if d.runnerUp.name != "" {
+		u.RunnerUp = d.runnerUp.name
+		u.RunnerUpConfidence = round4(d.runnerUp.sim)
+	}
+	switch d.why {
+	case whyAmbiguousMargin:
+		u.Description = fmt.Sprintf("ambiguous: %.2f for %s vs %.2f for %s (margin %.2f < %.2f) — possible %s, too close to %s to name; unconfirmed",
+			d.best.sim, d.best.name, d.runnerUp.sim, d.runnerUp.name, d.margin, opts.nameMargin, d.best.name, d.runnerUp.name)
+	default: // below-name-threshold
+		u.Description = fmt.Sprintf("possible %s (voice match %.2f) — below the naming threshold (%.2f), not confirmed",
+			d.best.name, d.best.sim, opts.nameThreshold)
+	}
+	return u
+}
+
+// topTwo returns the top-1 and top-2 enrolled candidates by cosine similarity. With 0
+// enrollees both names are ""; with 1 enrollee the runner-up name is "" (and the caller
+// treats margin as best). Deterministic: ties break toward the first-seen enrollee.
+func topTwo(emb []float64, enrolled []enrolledVoice) (best, runnerUp namedScore) {
+	best = namedScore{name: "", sim: -1.0}
+	runnerUp = namedScore{name: "", sim: -1.0}
 	for _, e := range enrolled {
 		sim := cosine(emb, e.embedding)
-		if sim > bestSim {
-			bestSim = sim
-			bestName = e.name
+		switch {
+		case sim > best.sim:
+			runnerUp = best
+			best = namedScore{name: e.name, sim: sim}
+		case sim > runnerUp.sim:
+			runnerUp = namedScore{name: e.name, sim: sim}
 		}
 	}
-	return bestName, bestSim
+	if best.name == "" {
+		best.sim = 0 // no enrollees: report a 0 best rather than the -1 sentinel
+	}
+	if runnerUp.name == "" {
+		runnerUp.sim = 0
+	}
+	return best, runnerUp
+}
+
+// bestMatch returns the highest-cosine enrolled name and its similarity. Retained for any
+// callers that only need the top-1; the naming decision uses topTwo + decideSpeaker.
+func bestMatch(emb []float64, enrolled []enrolledVoice) (string, float64) {
+	best, _ := topTwo(emb, enrolled)
+	return best.name, best.sim
 }
 
 // helperResult mirrors voice_embed.py's stdout.
