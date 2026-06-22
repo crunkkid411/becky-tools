@@ -1,9 +1,13 @@
 # SPEC-BECKY-LOCATION.md — room-fingerprint report: "were these filmed in the same place?"
 
-> **SPEC — NOT BUILT, AWAITING JORDAN'S APPROVAL.**
-> Design + grounding only. No Go code has been written, no new binary exists, nothing in
-> `becky-go/` has been changed. Jordan approves the fingerprint method (see **Open
-> Decisions**) before any build starts.
+> **CLOUD CORE BUILT 2026-06-22 — the deterministic clustering/verdict engine + CLI ship and
+> are unit-tested; the real visual Fingerprinter (keyframe extract + cv2 features) is LEFT FOR
+> LOCAL.** Tier-(a) `phash`+masked-decor-band+color is implemented (the honest deterministic
+> floor); tier-(b) cv2 ORB features is the documented stub the local agent wires; tier-(c) a
+> learned place-recognition embedding remains an Open Decision routed through deep-research.
+> See §6 for the per-item DONE/LEFT split with the exact interface name. The fingerprint
+> METHOD ORDER + crop default (Open Decisions §7) still want Jordan's confirmation, but the
+> cloud-verifiable core no longer blocks on it.
 >
 > Authored 2026-06-22. Grounded in the EXISTING perceptual-hash room-matching code
 > (`internal/osintexport/phash.go`, `cmd/framematch/`) and the frame-extraction +
@@ -359,38 +363,65 @@ additive Open Decision (§7).
 
 ## 6. Build plan (checkboxed) + unit tests
 
-### Cloud (this branch — deterministic, no media, fully testable)
+### Cloud (this branch — deterministic, no media, fully testable) — BUILT 2026-06-22
 
-- [ ] `internal/roomprint/fingerprint.go` — the `Fingerprint` struct, `CropMask`, and
-      `CropRect(w, h, mask) image.Rectangle` (pure function: talking-head/top/full/explicit).
-- [ ] `internal/roomprint/distance.go` — `decorHamming`, `colorChi2`, `featureDistance`, and
-      `fuse(a, b, thresholds) (agreeingSignals int, dist float64)`.
-- [ ] `internal/roomprint/cluster.go` — deterministic agglomerative clustering with the
-      `--min-signals ≥2` merge rule; returns rooms + per-clip assignment + cohesion.
-- [ ] `internal/roomprint/dwelling.go` — group rooms into dwellings on shared decor +
-      metadata signals; produce the corpus verdict (`SAME_ROOM`/`SAME_DWELLING`/
-      `DIFFERENT_DWELLING`/`UNDETERMINED`) with basis + confidence.
-- [ ] `internal/roomprint/phash.go` — pure-Go `phashFingerprinter` over the masked band,
-      reusing `osintexport.AHashFromImage` (crop the image to `CropRect` first) + a coarse
-      color histogram.
-- [ ] `cmd/location/main.go` — CLI flags (§3a), positional clip/folder expansion, per-clip
-      keyframe sampling (reuse `osintexport.ExtractFrameRotated` + `DisplayRotation`),
-      dedup, fingerprinting via the chosen `Fingerprinter`, then call the engine; emit JSON
-      (and `--summary` human block).
-- [ ] `cmd/location/features_stub.go` — the `featureFingerprinter` documented stub with the
-      cv2 contract; `--fingerprint auto` silently degrades to phash when it's the stub.
-- [ ] Register `cmd/location` is automatic (`build-all-tools.bat` auto-discovers `cmd/*` per
-      CLAUDE.md §3) — no script edit; verify `go build ./...` green.
-- [ ] `go build/vet/test ./...` + `gofmt -l .` green (the cloud half of the five gates).
+> NOTE: the package was named `internal/location` (not `internal/roomprint`) to match the
+> `cmd/location` binary and the becky one-package-per-tool convention. The Fingerprinter
+> interface the LOCAL feature impl must satisfy is **`location.Fingerprinter`**:
+> `Print(img image.Image, mask location.CropMask) (location.Fingerprint, error)`.
 
-### Local (Jordan's machine — needs media/GPU)
+- [x] `internal/location/fingerprint.go` — `Fingerprint` struct (`DecorHash uint64`,
+      `ColorHist []float64`, `Features []byte`), `CropMask`, the `Fingerprinter` interface, and
+      `MaskPreset` (talking-head/top/full).
+- [x] `internal/location/crop.go` — `CropRect(w, h, mask) image.Rectangle` (pure function;
+      degenerate masks fall back to full frame) + `ParseCrop` (presets or explicit "T,L,R,B").
+- [x] `internal/location/distance.go` — `decorHamming`, `colorChi2`, `featureDistance`, and
+      `fuse(a, b, thresholds) SignalScore` (counts INDEPENDENT agreeing signals — the
+      corroboration rule in code).
+- [x] `internal/location/cluster.go` — deterministic agglomerative (union-find, lowest-index
+      canonical) clustering with the `--min-signals ≥2` merge rule; a lone agreeing signal →
+      `WeakLink` (review_required), never an auto-merge. Returns rooms + per-clip assignment +
+      cohesion + all scored pairs.
+- [x] `internal/location/dwelling.go` — `GroupDwellings` groups rooms into dwellings on
+      shared decor (color) + capture-time + GPS signals (≥2 → merge); produces the corpus
+      verdict (`SAME_ROOM`/`SAME_DWELLING`/`DIFFERENT_DWELLING`/`UNDETERMINED`) with basis +
+      confidence. One lone shared signal → `UNDETERMINED` (no overclaim).
+- [x] `internal/location/phash.go` — pure-Go `phashFingerprinter` over the masked band
+      (`osintexport.AHashFromImage` on `CropRect`) + a 4×4×4 RGB color histogram.
+- [x] `cmd/location/main.go` — CLI flags (§3a), positional clip/folder expansion, per-clip
+      keyframe sampling (`sampling.go`, reuses `osintexport.ExtractFrameRotated` +
+      `DisplayRotation`), dedup, fingerprinting via the chosen `Fingerprinter`, then the
+      engine; emits the exact §3b JSON (`report.go`/`pairs.go`) and the `--summary` block
+      (`summary.go`).
+- [x] `cmd/location/features_stub.go` — the `featureFingerprinter` documented stub with the
+      cv2 contract; `--fingerprint auto`/`features` silently degrades to phash when the stub
+      reports `Available()==false`.
+- [x] `cmd/location` auto-discovered by `build-all-tools.bat`; `go build ./...` green.
+- [x] `go build/vet/test ./cmd/location/... ./internal/location/...` + `gofmt -l` green
+      (cloud half of the gates; `build-all-tools.bat` is the LOCAL completion step).
 
-- [ ] `internal/pyhelpers/room_features.py` — cv2 ORB/AKAZE descriptor + match-inlier helper
-      (read images via `np.fromfile`+`cv2.imdecode`, NEVER `cv2.imread` — README §"Unicode
-      paths").
-- [ ] Wire `featureFingerprinter.Print` to the helper (the seam contract above).
-- [ ] `build-all-tools.bat`; run `becky location` on the real case folder; calibrate
-      `--threshold`/`--color-threshold` on actual portrait talking-head clips.
+### Local (Jordan's machine — needs media/GPU) — LEFT FOR LOCAL
+
+The cloud half is the **clustering/verdict engine over an abstract `Fingerprint`** — it is
+fully built + unit-tested WITHOUT media. What remains needs real footage/CV on hardware:
+
+- [ ] **Implement the real `Fingerprinter` for the `features` signal.** The interface to
+      satisfy is `location.Fingerprinter` (`Print(img image.Image, mask location.CropMask)
+      (location.Fingerprint, error)`). Replace the body of `cmd/location/features_stub.go`
+      `featureFingerprinter.Print` (and make `Available()` return true when the helper is
+      present): crop to `location.CropRect`, then shell to the new
+      `internal/pyhelpers/room_features.py` (cv2 ORB/AKAZE) — read images via
+      `np.fromfile`+`cv2.imdecode`, NEVER `cv2.imread` (README §"Unicode paths"). Fill
+      `Fingerprint.Features` with the descriptor blob; for a TRUE geometric inlier ratio,
+      replace `internal/location/distance.go:decodeInlierRatio` with a real match-endpoint
+      read (today it is a deterministic stand-in so the fused-distance math is testable).
+- [ ] **The keyframe-extraction media path already exists** in `cmd/location/sampling.go`
+      (ffmpeg/ffprobe via osintexport) and degrades-never-crashes when binaries are absent —
+      verify it runs on the real case folder; tune the dedup `dedupBits` and `--interval` if a
+      static clip over-/under-samples.
+- [ ] `build-all-tools.bat` (auto-discovers `cmd/location`); run `becky-location <folder>` on
+      the real case folder; calibrate `--threshold`/`--color-threshold`/`--min-signals` on
+      actual portrait talking-head clips.
 - [ ] Confirm the masked crop actually fixes the README portrait-footage failure on real
       footage (same-room talking-heads now cluster; different-room same-tone clips no longer
       false-merge). Paste evidence into CLAUDE.md §6.
@@ -399,26 +430,32 @@ additive Open Decision (§7).
 
 Per `STANDARDS-ENGINEERING.md` (assert values, not truthiness; regression test per bug):
 
-- [ ] `cluster_test.go`: three synthetic fingerprint groups (decor hashes differing by ≤4
-      within a group, ≥30 across groups) → assert exactly 3 rooms with the expected clip
-      membership; assert a 4th clip with a borderline hash lands in `review_required`, not
-      auto-merged (the ≥2-signal rule).
-- [ ] `distance_test.go`: assert `decorHamming`/`colorChi2` exact values on known inputs;
-      assert `fuse` returns `agreeingSignals == 2` only when two signals are under threshold,
-      `1` (weak link) when only one is.
-- [ ] `dwelling_test.go`: two rooms with a shared color-histogram signal + close
-      capture-time → `SAME_DWELLING`; two rooms with no shared signal + large decor distance
-      → `DIFFERENT_DWELLING`; one signal only → `UNDETERMINED`. Assert the exact `level` and
-      that `basis` names the corroborating signals.
-- [ ] `crop_test.go`: `CropRect(1920,1080,"talking-head")` → assert the exact rectangle
-      (top 30% band + side 15% margins); `"full"` → full bounds; explicit `"10,20,20,40"` →
-      exact pixels. Assert determinism (same input → identical output).
-- [ ] `verdict_test.go`: single clip → `UNDETERMINED` ("only one clip"); conflicting signals
-      → `UNDETERMINED` with the conflict named; a clean same-room pair → `SAME_ROOM` with
-      `confidence` above the documented bar.
-- [ ] `degrade_test.go`: a fingerprinter returning an error for one clip → that clip in
-      `degraded[]` with a reason, the rest still clustered; feature helper absent →
-      `fingerprint_method: phash` + lower confidence, never a crash.
+All cloud tests are written and GREEN (32 tests across the two packages). Mapping (the test
+file names differ slightly from the spec's suggested names, noted inline):
+
+- [x] `internal/location/cluster_test.go` (`TestCluster_ThreeRooms`): three synthetic groups
+      (decor hashes differing by 2 within a group, ≥thousands of bits across groups, each
+      group sharing a color palette) → asserts exactly 3 rooms with the expected membership
+      `{0,1},{2,3},{4,5}`. `TestCluster_BorderlineGoesToReview`: a clip sharing ONLY color
+      (decor 64 bits away) is NOT merged and a `WeakLink` is recorded (the ≥2-signal rule).
+- [x] `internal/location/distance_test.go`: exact `decorHamming` (0/4/64) + `colorChi2`
+      (identical→0, disjoint→1.0, unavailable→-1) values; `fuse` returns `Agreeing==2` only
+      when two signals are under threshold, `1` (weak link) when only one is.
+- [x] `internal/location/dwelling_test.go`: shared color + close capture-time → `SAME_DWELLING`
+      (basis names the signals); no shared signal + large decor distance → `DIFFERENT_DWELLING`;
+      one signal only → `UNDETERMINED`. Exact `level` asserted.
+- [x] `internal/location/crop_test.go`: `CropRect(1920,1080,"talking-head")` → exact
+      `(288,0)-(1632,324)`; `"full"` → full bounds; explicit `"10,20,20,40"` → exact pixels;
+      determinism; degenerate mask falls back to full.
+- [x] verdict cases live in `dwelling_test.go`: single clip → `UNDETERMINED` ("only one clip");
+      one-weak-signal → `UNDETERMINED`; clean same-room → `SAME_ROOM` with confidence ≥0.8.
+- [x] degrade cases in `internal/location/cluster_test.go` (`TestCluster_DegradedExcluded`) +
+      `cmd/location/report_test.go` (`TestBuildReport_Degraded`): a degraded clip lands in
+      `degraded[]` with a reason, the rest still cluster; feature helper absent →
+      `fingerprint_method: phash`, never a crash (`features_stub.go` `Available()==false`).
+- [x] `cmd/location/report_test.go` additionally asserts the §3b JSON schema round-trips, the
+      provenance note is present, a SAME_ROOM pair carries a `becky-framematch` exhibit hint,
+      and `--summary` leads with `VERDICT:` and lists rooms (ACCESSIBILITY.md).
 
 ---
 
