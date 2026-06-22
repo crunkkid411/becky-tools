@@ -80,6 +80,10 @@ type Unidentified struct {
 	RunnerUpConfidence  float64 `json:"runner_up_confidence,omitempty"`
 	VoiceMargin         float64 `json:"voice_margin,omitempty"`
 	WhyUnnamed          string  `json:"why_unnamed,omitempty"`
+	// Remedy is the inline "teach me" hint: the exact becky command a human runs to
+	// enroll this unidentified person (see remedy.go). Filled in for every
+	// unidentified entry so the fix is visible at the point of failure.
+	Remedy string `json:"remedy,omitempty"`
 }
 
 // SpeakerSpan is one (start,end) attributed to a speaker.
@@ -237,6 +241,13 @@ func main() {
 	report.Identifications, report.Unidentified = fuseIdentifications(report.Identifications, report.Unidentified)
 	beckyio.Logf(*verbose, "fusion: %d raw id(s)/%d unid(s) -> %d conclusion(s)/%d candidate-or-unid(s)",
 		beforeIDs, beforeUnids, len(report.Identifications), len(report.Unidentified))
+
+	// Attach the inline "teach me" remedy to every FINAL unidentified entry (after
+	// fusion, so fusion-demoted candidates carry it too), telling the human how to
+	// enroll the person at the point of failure (README's "remedy inline" gap). The
+	// clip is the real input file; <name> stays a literal placeholder. Additive: the
+	// why_unnamed / candidate / description audit trail is left intact.
+	attachRemedies(&report)
 
 	if err := emit(report, *out); err != nil {
 		beckyio.Fatalf("%v", err)

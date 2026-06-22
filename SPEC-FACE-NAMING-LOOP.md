@@ -1,10 +1,14 @@
 # SPEC-FACE-NAMING-LOOP.md — the "who is this?" naming loop (cluster → name → enroll)
 
-> **SPEC — NOT BUILT, AWAITING JORDAN'S APPROVAL.**
-> Design only. No Go code has been written; nothing in `becky-go/` is changed. The
-> upstream `becky-cluster` and the enroll/identify paths this loop wires together
-> ALREADY EXIST (cited below) — this spec is the glue, not a redesign of any of them.
-> Jordan approves before any build starts.
+> **CLOUD-VERIFIABLE CORE BUILT 2026-06-22 (branch `claude/subagent-deployment-scaling-4hptv9`).**
+> The deterministic orchestration is built + tested green on cloud: the identify inline
+> `remedy` (Phase A), `internal/facenaming` (cluster walk / argv builder / `--names`
+> apply / dry-run, Phase B), and a compilable high-contrast `cmd/name` TUI (Phase C
+> code). What remains is the hardware/display step (Phase D): running the colored card
+> + the real `becky-enroll` on Jordan's GPU, and the in-terminal image-display choice.
+> See the build-plan checkboxes (§6) for exactly what's DONE vs LEFT FOR LOCAL. The
+> upstream `becky-cluster`/enroll/identify paths this loop wires together already exist
+> (cited below); this is the glue, not a redesign.
 >
 > Authored 2026-06-22. Read with: `ACCESSIBILITY.md` (load-bearing — Jordan is
 > SIGHTED with impaired vision, NO screen reader), `SPEC-PERSON-CLUSTERING.md` (the
@@ -309,66 +313,96 @@ the exact enroll argv per cluster — measurable, no hardware.
 Cloud builds the deterministic halves first; the visual + model wiring is the
 local completion step.
 
-**Phase A — identify remedy (smallest, highest-value, fully cloud-verifiable)**
-- [ ] Add `Remedy string \`json:"remedy,omitempty"\`` to `Unidentified`
-      (`cmd/identify/main.go:63`).
-- [ ] In `cmd/identify/face.go` (face.go:114) and `voice.go` (the parallel unnamed
-      path), set `Remedy` to `not enrolled — teach me: becky "this is <name>" <clip>`
-      with `<clip>` = the input file (`Output.File`), `<name>` left literal.
-- [ ] Factor a `remedyLine(clip string) string` helper so the exact string has one
-      source of truth (and is unit-assertable).
-- [ ] **Test** `TestRemedyLine_ExactString` — assert the produced string EQUALS
-      `not enrolled — teach me: becky "this is <name>" <clip-path>` for a sample
-      clip (assert the VALUE, not truthiness — STANDARDS-ENGINEERING).
-- [ ] **Test** `TestIdentify_Unidentified_HasRemedy` — a synthetic below-threshold
-      face/voice produces an `Unidentified` whose `Remedy` is the exact string.
-- [ ] **Test** `TestIdentify_Named_NoRemedy` — a named identification carries no
-      remedy (the field is omitempty + empty).
+**Phase A — identify remedy (smallest, highest-value, fully cloud-verifiable) — DONE (cloud, 2026-06-22)**
+- [x] Add `Remedy string \`json:"remedy,omitempty"\`` to `Unidentified`
+      (`cmd/identify/main.go`). DONE — additive field, omitempty.
+- [x] Set `Remedy` on every unidentified entry to `not enrolled — teach me: becky
+      "this is <name>" <clip>` with `<clip>` = the input file (`Output.File`),
+      `<name>` left literal. DONE via `attachRemedies(&report)` in `main()`, run
+      AFTER the fusion pass so fusion-demoted candidates carry it too. (Implemented as
+      one central pass rather than editing face.go/voice.go separately, so there is a
+      single source of truth and the wave-1 why_unnamed/candidate audit trail is left
+      untouched — verified by `TestAttachRemedies_PreservesWhyUnnamed`.)
+- [x] Factor a `remedyLine(clip string) string` helper — DONE in new
+      `cmd/identify/remedy.go` (one source of truth, unit-assertable).
+- [x] **Test** `TestRemedyLine_ExactString` — asserts the VALUE equals
+      `not enrolled — teach me: becky "this is <name>" C:\cases\stream-07.mp4`. PASS.
+- [x] **Test** `TestAttachRemedies_Unidentified_HasRemedy` — a below-threshold face +
+      a demoted voice candidate both get the exact remedy. PASS.
+- [x] **Test** `TestAttachRemedies_Named_NoRemedy` — named identifications carry no
+      remedy; empty unidentified list is a no-op. PASS. (Plus
+      `TestRemedyLine_NamePlaceholderKept`, `TestAttachRemedies_PreservesWhyUnnamed`.)
 
-**Phase B — becky-name orchestration core (cloud-buildable + testable headless)**
-- [ ] New `cmd/name/` + `internal/naming/` (loader, walk state machine, argv
-      builder, `--names` apply, dry-run). Pure logic over the `imageShower` /
-      `enroller` interfaces.
-- [ ] Read + validate a `becky-cluster` `Output` JSON; degrade-never-crash on bad
-      input.
-- [ ] `enrollArgs(cluster Cluster, name, kb, bin string) [][]string` — the per-clip
-      `becky-enroll --clip … --name … --kb …` argv (deduped by `SourceFile`, capped,
-      strongest-first).
-- [ ] `applyNames(clusters, map[clusterID]name, fakeEnroller)` — the headless apply.
-- [ ] **Test** `TestEnrollArgs_GoldenArgv` — assert the exact argv slice for a
-      2-clip cluster named "Braxton" (paths filled, name quoted, kb passed).
-- [ ] **Test** `TestEnrollArgs_DedupesAndCaps` — a cluster with repeated
-      `SourceFile`s yields one argv per distinct clip, capped at the limit.
-- [ ] **Test** `TestApplyNames_WiresClusterToEnroll` — with a FAKE enroller,
-      naming `face-A`="Braxton" calls Enroll once per distinct member clip with
-      name "Braxton" (assert the recorded calls — cluster→enroll wiring with fakes,
-      exactly as the prompt requires).
-- [ ] **Test** `TestApplyNames_SkipLeavesUnnamed` — a blank/skip entry produces NO
-      enroll calls and records the skip.
-- [ ] **Test** `TestLoadClusters_BadJSON_Degrades` — malformed JSON → typed error,
-      no panic.
-- [ ] **Test** `TestDryRun_PrintsArgvNoEnroll` — `--dry-run` records zero real
-      Enroll calls and emits the argv (the offline proof from §5).
-- [ ] **Test** `TestNoTTY_HeadlessParse` — non-terminal stdin with no `--names`
-      prints the parsed summary and exits 0 (mirrors `cmd/ask` no-TTY).
+**Phase B — becky-name orchestration core (cloud-buildable + testable headless) — DONE (cloud, 2026-06-22)**
+> NOTE: the package was built as `internal/facenaming` (not `internal/naming`) to avoid
+> colliding with existing naming code and to be self-describing. Same contract.
+- [x] New `cmd/name/` + `internal/facenaming/` (loader, walk order, argv builder,
+      `--names` apply, dry-run). Pure logic over the `imageShower` / `enroller`
+      interfaces (defined in `internal/facenaming/apply.go`, exported as
+      `ImageShower`/`Enroller`). DONE.
+- [x] Read + validate a `becky-cluster` `Output` JSON; degrade-never-crash on bad
+      input — `facenaming.LoadClusters` (typed error, no panic). DONE.
+- [x] `EnrollArgs(cl Cluster, name, kb, device string, cap int) [][]string` — the
+      per-clip `becky-enroll --clip … --name … --kb … [--device …]` argv (deduped by
+      `SourceFile`, capped at `DefaultEnrollCap`=5, strongest-first). DONE.
+- [x] `ApplyNames(clusters, map[clusterID]name, enroller, …)` — the headless apply,
+      biggest-first, skip-recording, fail-with-reason. DONE.
+- [x] **Test** `TestEnrollArgs_GoldenArgv` — exact argv slice for a 2-clip cluster
+      named "Braxton". PASS. (+ `TestEnrollArgs_WithDevice` asserts `--device` only
+      when set.)
+- [x] **Test** `TestEnrollArgs_DedupesAndCaps` — repeated `SourceFile`s → one argv
+      per distinct clip; cap bounds + keeps strongest-first order. PASS.
+- [x] **Test** `TestApplyNames_WiresClusterToEnroll` — with a FAKE enroller, naming
+      `face-A`="Braxton" calls `Enroll` once per distinct member clip with name
+      "Braxton" (asserts the recorded calls). PASS. (+
+      `TestApplyNames_FailedClipSkippedWithReason` for the degrade path.)
+- [x] **Test** `TestApplyNames_SkipLeavesUnnamed` — blank names → zero enroll calls,
+      both recorded as skipped. PASS.
+- [x] **Test** `TestLoadClusters_BadJSON_Degrades` — malformed JSON → typed error,
+      no panic; empty-but-valid loads cleanly. PASS. (+ `TestLoadClusters_RealShape`.)
+- [x] **Test** `TestDryRunPlan_PrintsArgvNoEnroll` — `--dry-run` plan emits the argv
+      with zero real Enroll calls (the offline proof from §5). PASS. Proven live too:
+      `becky-name --clusters fixture.json --names map.json --dry-run --kb kb-final`
+      prints the 4 exact `becky-enroll` commands, biggest-first.
+- [x] **Test** `TestDispatch_NoTTY_HeadlessParse` (cmd/name) — non-terminal stdin
+      with no `--names` prints the parsed summary and exits 0 (mirrors `cmd/ask`
+      no-TTY). PASS. (+ `TestDispatch_DryRun`, `TestRunNamesFile_AppliesMapHeadless`,
+      `TestShellJoin`, `TestModalitySummary`.)
 
-**Phase C — the visual TUI (LOCAL — needs a terminal + display)**
-- [ ] bubbletea Model-Update-View for the card (reuse `cmd/ask/styles.go`); the
-      large name `textinput`; Enter/skip/quit keys.
-- [ ] Real `imageShower`: external OS viewer (detached, `internal/proc.NoWindow`),
-      with optional inline Kitty/iTerm2/sixel if detected; representative-frame
-      extraction via `osintexport.ExtractFrameRotated` when `Representative` is a
-      video.
-- [ ] Real `enroller`: `exec.Command("becky-enroll", …)`; surface skip reasons on
-      the card.
+**Phase C — the visual TUI (CODE WRITTEN + COMPILES on cloud; RENDER is LOCAL — needs a terminal + display)**
+- [x] bubbletea Model-Update-View for the card (`cmd/name/tui.go` + `styles.go` with
+      the becky-ask palette reproduced — same hex values, since `cmd/ask` is a
+      separate `main` pkg and can't be imported); the large name `textinput`;
+      Enter=enroll / s=skip / q=quit keys; loose-cohesion warning. COMPILES
+      (`go build ./cmd/name`); the model constructs with fakes
+      (`TestNewCardModel_Builds`) and `factsLine`/`qualityLine`/`personLabel` render
+      to asserted plain text. **The actual colored render is the LOCAL display step**
+      (cloud has no terminal/display — not asserted here).
+- [x] Real `imageShower` written: `osImageShower` opens the OS viewer detached via
+      `internal/proc.NoWindow` (start/open/xdg-open), degrade-never-crash on a missing
+      file. **LEFT FOR LOCAL:** the in-terminal image-display CHOICE (inline
+      Kitty/iTerm2/sixel vs external viewer — SPEC Open Decision 1) and
+      representative-FRAME extraction via `osintexport.ExtractFrameRotated` when
+      `Representative` is a video (the rotation-corrected still). Currently it shows
+      the representative path as-is in the OS viewer.
+- [x] Real `enroller` written: `execEnroller` runs
+      `exec.Command("becky-enroll", "--clip", …, "--name", …, "--kb", …[, "--device"…])`
+      with `proc.NoWindow`; surfaces the stderr tail as the skip reason on the card.
+      **LEFT FOR LOCAL:** running it against real clips on the GPU (the embedding +
+      enroll is the model/hardware boundary — cloud cannot execute it).
 
-**Phase D — local verification (the hardware step cloud cannot do)**
+**Phase D — local verification (the hardware step cloud cannot do) — LEFT FOR LOCAL**
 - [ ] `becky-cluster` a real corpus slice → `becky-name --clusters … --kb kb-final`
-      → see a face, type a name, confirm the KB gains
-      `face-prints/<name>/` + `voice-prints/<name>/`.
+      → see a face (in the OS viewer / inline), type a name, confirm the KB gains
+      `face-prints/<name>/` + `voice-prints/<name>/`. (Tip: run
+      `becky-name … --dry-run` first to SEE the exact enroll commands before any
+      real enroll — cloud already verified this prints correctly.)
 - [ ] Re-run `becky-identify <a member clip> --kb kb-final` → that person is now
-      NAMED (the loop closed corpus-wide).
+      NAMED (the loop closed corpus-wide). Also confirm an UNidentified entry now
+      carries the inline `remedy` field (cloud verified the string + wiring).
 - [ ] `build-all-tools.bat` (auto-discovers `cmd/name`).
+- [ ] Decide the image-display method (Open Decision 1) + wire
+      `osintexport.ExtractFrameRotated` for video representatives.
 
 Every fixed bug ships a regression test; tests assert values, not truthiness
 (STANDARDS-ENGINEERING, the five gates).
