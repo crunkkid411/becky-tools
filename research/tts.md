@@ -1,54 +1,54 @@
 # TTS engine research — which voice becky should adopt to read things aloud
 
-**Status: corrected 2026-06-22.** The first pass leaned on stale articles and recommended
-Orpheus-3B (a 2024-era pick). This version is grounded in a LIVE Hugging Face hub re-check
-done the same day, after Jordan pointed out (with the current TTS-Arena-V2 leaderboard) that
-the original shortlist no longer reflects the field, 3B is heavy for TTS now, and Qwen's TTS
-(missed entirely) is the obvious local candidate.
+**Status: corrected to v3, 2026-06-22.** v1 (Orpheus-3B) was article-based and stale. v2
+(Qwen3-TTS-1.7B) picked on HF adoption — a safer default, still not real research. v3 does the
+actual task: define the right MODEL CLASS, survey the current field within it, and use leaderboards
+as a verification step. Conclusion: **NeuTTS Air.**
+
+## The class that matters (the real insight)
+Good small TTS models have an **LLM baked into the backbone** → expressive, context-aware,
+"intelligent" prosody. Kokoro (82M, no LLM) is light but flat — hence Jordan's rejection. Heavy
+LLM-TTS (3B+) sound great but are **too slow to be useful**. The target is the intersection:
+**tiny + LLM-backbone + expressive + fast.** Leaderboards verify a shortlist; they don't make it
+(arena #1 was Kokoro, which Jordan hates).
 
 ## Constraints (from Jordan — settled)
-- Local / offline, runs on a Windows RTX 3070 (~8 GB). Quality matters (he listens).
-- NOT Microsoft SAPI/Narrator (hard no). Piper deprecated. Kokoro rejected by ear.
-- Prefer permissive license (Apache/MIT) and a RIGHT-SIZED model — 3B is heavier than needed.
-- Integration must fit becky: a local binary becky shells out to (GGUF/llama-style) or a Python
-  helper (`internal/pyhelpers/`), with degrade-never-crash (absent model -> print text, never SAPI).
+Local/offline on a Windows RTX 3070; expressive + FAST; NOT Microsoft SAPI/Narrator; not Piper
+(deprecated) or Kokoro (flat); permissive license; right-sized (3B too slow); becky-integration =
+a local binary/helper with degrade-never-crash (absent model → print text, never SAPI).
 
-## Method
-Live HF hub queries this session (not an article): trending `text-to-speech` models, a `Qwen3-TTS
-GGUF` search, and repo detail lookups for the front-runners. Corroborate-then-conclude on
-license + size + adoption + offline feasibility. Voice naturalness is judged by Jordan's ears
-(final gate), not a leaderboard — see "Leaderboard caveat".
-
-## Current local TTS field (HF trending, 2026-06-22) — the real list
-| Model | Params | License | Local path | Adoption | Notes |
+## Field within the class (live HF + web, 2026-06-22)
+| Model | Params | Backbone | License | Local | Notes |
 |---|---|---|---|---|---|
-| **Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice** | ~1.9B | **Apache-2.0** | **GGUF + qwen3-tts.cpp**, or transformers | **7.6M dl, 1.6k likes** | **CHOSEN.** Right-sized, permissive, GGUF-ready, most-adopted. 0.6B variant exists. |
-| microsoft/VibeVoice-1.5B | 1.5B | MIT | transformers | 239k dl, 2.4k likes | Open model (NOT SAPI); podcast/expressive. Optics only. |
-| openbmb/VoxCPM2 | — | — | voxcpm | 499k dl, 1.4k likes | Diffusion, voice clone/design. |
-| Supertone/supertonic-3 | — | openrail | **ONNX, on-device** | 96k dl, 846 likes | Easiest pure-runtime integration (no torch). |
-| ResembleAI/chatterbox | — | MIT | PyTorch | 2.1M dl, 1.6k likes | Beats ElevenLabs in maker blind test; no first-class GGUF. |
-| FunAudioLLM/Fun-CosyVoice3-0.5B | 0.5B | Apache | onnx/safetensors | 27k dl | Tiny alternative. |
-| hexgrad/Kokoro-82M | 82M | Apache | ONNX | 16.6M dl | **Rejected by Jordan (quality).** |
+| **neuphonic/neutts-air** | **747.9M** | **qwen2 (0.5B-class LLM)** | **Apache-2.0** | **GGUF q4/q8 + NeuCodec** | **CHOSEN.** On-device, real-time, expressive, instant voice clone. English. 874 likes. |
+| ResembleAI Chatterbox-Turbo | ~350M | Llama-class | **MIT** | yes | Emotion-exaggeration control; beats ElevenLabs in side-by-sides. Strong alternate. |
+| neuphonic/neutts-nano | 228.7M | llama | **other** (restrictive — verify) | GGUF | Ultra-light; license is the catch. |
+| Qwen/Qwen3-TTS-12Hz | 0.6B / 1.9B | qwen3 | Apache-2.0 | GGUF + qwen3-tts.cpp | Heavier; multilingual; keep as fallback for a different voice. |
+| hexgrad/Kokoro-82M | 82M | none (StyleTTS2) | Apache | ONNX | **Rejected** — light but flat (no LLM). |
 
 ## Recommendation
-**Primary: Qwen3-TTS-12Hz-1.7B-CustomVoice (Apache-2.0).** Best fit on becky's axes — offline
-(community GGUF: `cstr/qwen3-tts-1.7b-customvoice-GGUF`, `Serveurperso/Qwen3-TTS-GGUF`; codec
-`cstr/qwen3-tts-tokenizer-12hz-GGUF`; runtime `qwen3-tts.cpp`), permissive, ~half Orpheus's size,
-and by far the most-adopted current open TTS. A **0.6B** CustomVoice exists if speed/VRAM bites.
-**Try-next if Jordan dislikes the voice by ear:** VibeVoice-1.5B (MIT), VoxCPM2, supertonic-3
-(ONNX), Chatterbox (MIT).
+**Primary: NeuTTS Air** — the tiny+intelligent sweet spot: 0.75B Qwen2-LLM backbone (expressive),
+Apache-2.0, GGUF (on-device/real-time), instant voice cloning. **Try-by-ear alternate:
+Chatterbox-Turbo** (350M, MIT, emotion control). **Max-speed bench option: NeuTTS Nano** (228M;
+license:other — verify terms). **Heavier fallback: Qwen3-TTS** (0.6B/1.7B, Apache) for a different
+timbre or multilingual. Final judge = Jordan's ears (SPEC §8.2).
 
-## Leaderboard caveat (why the arena rank doesn't decide this)
-TTS-Arena-V2's top (Inworld TTS MAX/Preliminary, Hume Octave, Papla, Vocu, ElevenLabs) is almost
-all **cloud/proprietary APIs** — disqualified by the offline rule. And the arena is a poor proxy
-for Jordan: Kokoro was arena #1 and he rejected it. So selection = local + permissive + right-sized
-+ adopted; the final judge is Jordan hearing it (SPEC-BECKY-TTS.md §8.2).
+## Leaderboard caveat (verification, not selector)
+TTS-Arena-V2's top is cloud APIs (Inworld/Hume/Papla/Vocu/ElevenLabs) — off-limits offline. The
+open-model arena (`Pendrokar/TTS-Spaces-Arena`) is where small local models like NeuTTS surface;
+use it to sanity-check the shortlist. The leaderboard verifies; it does not research.
 
 ## Confidence
-High on fit/license/size/offline-feasibility (verified on the live hub). Medium on "Jordan will
-like this specific voice" — unknowable without his ears, hence the mandatory hear-it gate.
+High on class fit / size / license / offline feasibility (verified on the live hub + field reviews).
+Medium on "Jordan likes this exact voice" — hence the mandatory hear-it gate, with named alternates.
 
-## Honesty note
-The earlier Orpheus-3B recommendation in this file's first version was shallow (article-based,
-stale, oversized, missed Qwen). It is superseded. Lesson logged in CLAUDE.md: a model choice goes
-through a LIVE re-check of the current field, not a single article.
+## Lesson logged
+A model choice = (1) identify the right model CLASS, (2) survey the current field within it on the
+live hub, (3) verify against the leaderboard, (4) let the human judge by ear. NOT: read one article,
+or grab the most-downloaded name. v1/v2 of this file both skipped step 1.
+
+## Sources
+- `hf.co/neuphonic/neutts-air`, `…-q4-gguf`, `…-q8-gguf`; `hf.co/neuphonic/neutts-nano`; `github.com/neuphonic/neutts`
+- `hf.co/ResembleAI/chatterbox`; `hf.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`
+- getstream.io/blog/best-on-device-tts-models; bentoml.com/blog (open-source TTS 2026)
+- `hf.co/spaces/TTS-AGI/TTS-Arena-V2`, `hf.co/spaces/Pendrokar/TTS-Spaces-Arena`

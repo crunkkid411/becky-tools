@@ -1,173 +1,152 @@
-# SPEC — becky-tts — a natural local voice (Qwen3-TTS-1.7B) so becky can read results aloud
+# SPEC — becky-tts — a tiny, intelligent local voice (NeuTTS Air) so becky can read results aloud
 
 > **Status: design-only, awaiting Jordan's go/no-go (§9). No code yet.**
 >
-> **Correction note (2026-06-22):** the first draft of this spec recommended Orpheus-3B
-> off stale articles. That was shallow — a re-check of the LIVE Hugging Face field (see
-> `research/tts.md`) shows the 2024-era names (Orpheus/XTTS/Maya) are no longer the local
-> front-runners, 3B is heavier than needed, and **Qwen3-TTS** (which the first pass missed
-> entirely) is the right pick: Apache-2.0, ~half the size, GGUF-ready, massively adopted.
-> This spec is rebuilt around it.
+> **Research note (corrected twice, 2026-06-22).** v1 picked Orpheus-3B off a stale article.
+> v2 swapped to Qwen3-TTS-1.7B off HF adoption — still not real research, just a safer default.
+> v3 (this) does the actual work Jordan asked for: identify the right MODEL CLASS — **tiny +
+> LLM-backbone (expressive) + fast** — survey the current field within it, and use the
+> leaderboard as a VERIFICATION step, not the search. Conclusion: **NeuTTS Air.**
 
 ## 0. TL;DR
 
-Give becky a real spoken voice so it can READ a result aloud (a forensic summary, a
-transcript answer, a "done" notice) — letting Jordan rest his eyes. The voice must be
-**local/offline, good-quality, and NOT Microsoft SAPI/Narrator**. A new `becky-tts` tool
-(text → WAV, optional playback) backed by **Qwen3-TTS-12Hz-1.7B-CustomVoice**. Degrade-
-never-crash: if the model/runtime is absent, becky PRINTS the text — it never falls back
-to a Microsoft voice. Final quality gate = **Jordan hears it on his hardware** (§8.2).
+Give becky a spoken voice to read a result aloud (a forensic summary, a transcript answer, a
+"done" notice) so Jordan can rest his eyes. The voice must be **local/offline, expressive, FAST,
+and NOT Microsoft SAPI/Narrator**. A new `becky-tts` tool (text → WAV, optional playback) backed
+by **NeuTTS Air** — a ~0.75B Qwen2-LLM-backbone on-device TTS (Apache-2.0, GGUF). Tiny enough to
+be instant, smart enough not to sound flat. Degrade-never-crash: model absent → becky PRINTS the
+text, never a Microsoft voice. Final quality gate = **Jordan hears it** (§8.2).
 
-## 1. Verified facts (live re-check, 2026-06-22) — Qwen3-TTS + alternatives
+## 1. The model class + the verified field (live HF + web re-check, 2026-06-22)
 
-All confirmed against the live HF hub this session (not an article):
+**The class that matters (Jordan's insight):** the good small TTS models have an **LLM baked in**
+→ expressive, context-aware, "intelligent" prosody. Kokoro (82M, no LLM) is light but flat — that's
+why he rejected it. The heavy LLM-TTS (3B+) sound great but are **too slow to be useful**. The
+target is the intersection: **tiny + LLM-backbone + expressive.** Leaderboards verify a shortlist;
+they don't make it (the arena #1 was Kokoro, which he hates).
 
-### 1.1 The chosen engine — Qwen3-TTS-12Hz-1.7B-CustomVoice
-- `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` — **license Apache-2.0** (clean commercial),
-  **~1.9B params** (arch `qwen3_tts`), **7.6M downloads**, official demo space
-  `hf.co/spaces/Qwen/Qwen3-TTS`. arXiv:2601.15621.
-- **Half the weight of the rejected Orpheus-3B**, and there is a still-lighter
-  `Qwen3-TTS-12Hz-0.6B-CustomVoice` if we want featherweight on the 3070.
-- **Runs local with GGUF already published** (community): `cstr/qwen3-tts-1.7b-customvoice-GGUF`,
-  `cstr/qwen3-tts-0.6b-customvoice-GGUF`, `Serveurperso/Qwen3-TTS-GGUF`, plus the matching
-  **12Hz audio codec/detokenizer** GGUF (`cstr/qwen3-tts-tokenizer-12hz-GGUF`) and a dedicated
-  **`qwen3-tts.cpp`** runtime (llama.cpp-style C++). So it fits becky's "local binary becky
-  shells out to" pattern, like the existing llama-server.
-- CustomVoice = preset + custom/cloned voices from a short sample; a sibling `VoiceDesign`
-  variant takes a plain-English voice description. For becky we want a stable preset/sample.
+### 1.1 Chosen engine — NeuTTS Air (`neuphonic/neutts-air`)
+- **747.9M params, architecture `qwen2`** (a 0.5B-class LLM backbone → the "intelligent" part),
+  **Apache-2.0**, 874 likes / 175K downloads, updated Feb 2026.
+- **On-device, real-time, GGUF shipped**: `neuphonic/neutts-air-q4-gguf`, `-q8-gguf`. Pairs the
+  LM (GGUF, llama.cpp-class) with the **NeuCodec** decoder → WAV. No torch needed for the LM path.
+- Positioned as "the first on-device super-realistic TTS with instant voice cloning… natural,
+  expressive, emotionally rich." English-only (fine for Jordan). GitHub: `neuphonic/neutts`.
+- Fits becky's "local binary becky shells out to" pattern exactly, and the size means it's fast.
 
-Why it wins on becky's axes: **offline-capable (GGUF), permissive (Apache), right-sized
-(1.7B/0.6B vs 3B), and the most-adopted current open TTS** — adoption is corroboration that
-it actually works for people, which a leaderboard rank does not give us (see §1.3).
+### 1.2 Alternates in the same class (try by ear if Air's voice doesn't land)
+- **Chatterbox-Turbo (Resemble AI)** — **350M, MIT**, first open model with emotion-exaggeration
+  control, benchmarked favorably vs ElevenLabs. Even smaller; strong second pick.
+- **NeuTTS Nano (`neuphonic/neutts-nano`)** — **228.7M, llama backbone**, ultra-light, GGUF — but
+  **license:other** (more restrictive than Air's Apache; verify terms before shipping).
+- **Qwen3-TTS-12Hz (0.6B / 1.7B, Apache, GGUF)** — heavier (1.7B ~1.9B), solid, multilingual; keep
+  as a fallback if a different voice/timbre or non-English is wanted. The 0.6B is the lighter option.
 
-### 1.2 Current LOCAL alternates (the real 2026 field, if Jordan dislikes Qwen's voice)
-- `microsoft/VibeVoice-1.5B` — **MIT**, 1.5B, podcast/expressive. (Open research model — this
-  is NOT the banned Microsoft SAPI/Narrator; different thing entirely. Flagged for optics only.)
-- `openbmb/VoxCPM2` — diffusion TTS, voice-cloning/design, very popular.
-- `Supertone/supertonic-3` — **ONNX, on-device** (license openrail); the easiest pure-runtime
-  integration if we want to avoid a Python/torch stack.
-- `ResembleAI/chatterbox` — **MIT**, beats ElevenLabs in the maker's blind test; PyTorch (heavier
-  helper, no first-class GGUF).
-
-### 1.3 Why the TTS-Arena-V2 leaderboard is NOT the selector
-The current arena top (Inworld TTS MAX/Preliminary, Hume Octave, Papla, Vocu, ElevenLabs
-Turbo/Flash) is almost entirely **cloud/proprietary APIs** — disqualified by becky's offline
-rule. And the leaderboard is an unreliable proxy for Jordan anyway: Kokoro hit arena #1 and he
-rejected it ("sounds like ass"). So we select on **local + permissive + right-sized + adopted**,
-then let **Jordan's ears make the final call** (§8.2), with named alternates so a "no" isn't a
-dead end.
-
-### 1.4 Explicitly rejected (settled — do NOT re-propose)
-- **Microsoft SAPI / Narrator** — Jordan's hard no. Not even a fallback.
+### 1.3 Rejected (settled — do NOT re-propose)
+- **Microsoft SAPI / Narrator** — hard no, not even a fallback.
+- **Kokoro** — light but no LLM → flat; rejected by Jordan's ear despite arena rank.
 - **Piper** — deprecated.
-- **Kokoro** — quality insufficient for Jordan (rejected by ear despite arena rank).
-- **Orpheus-3B / XTTS-v2 / Maya** — superseded; 3B is heavier than needed, XTTS is non-commercial
-  (CPML) and its maker (Coqui) is defunct.
+- **Orpheus-3B / XTTS / Maya / any 3B+** — too slow to be useful; XTTS non-commercial + maker defunct.
+
+### 1.4 Leaderboard as verification (not the selector)
+TTS-Arena-V2's top (Inworld, Hume, Papla, Vocu, ElevenLabs) is almost all **cloud APIs** —
+off-limits offline. The open-model arenas (e.g. `Pendrokar/TTS-Spaces-Arena`) are where small local
+models like NeuTTS show up; use them to sanity-check the shortlist, then let Jordan's ears decide.
 
 ## 2. becky's current model stack (what we integrate with)
-- becky already drives local GGUF models via a spawned server + HTTP (`internal/avlm/server.go`:
-  spawn → `/health` → POST → `DegradeError`) and via embedded Python helpers
-  (`internal/pyhelpers/`, e.g. `transcribe_parakeet.py`) called from a `cmd/*` tool.
-- becky-tts reuses ONE of these two patterns (see §4): a local TTS binary (qwen3-tts.cpp/GGUF)
-  OR a Python helper (transformers). Either way the Go CLI is the deterministic front; the model
-  is the only "AI in the loop", and absence degrades to printed text.
-- Model + runtime get tracked in `internal/freshness/manifest.json` (§6) so upgrades are visible.
+- becky drives local GGUF models via a spawned server + HTTP (`internal/avlm/server.go`: spawn →
+  `/health` → POST → `DegradeError`) and embedded Python helpers (`internal/pyhelpers/`, e.g.
+  `transcribe_parakeet.py`). becky-tts reuses ONE of these (see §4); the Go CLI is the deterministic
+  front, the model is the only AI step, absence degrades to printed text.
+- Model + runtime tracked in `internal/freshness/manifest.json` (§6).
 
 ## 3. The `becky-tts` tool — CLI shape
 ```
 becky-tts "<text>" --out speech.wav             # synth text -> WAV (explicit --out)
 becky-tts --in answer.txt --out speech.wav       # synth a file
 becky-tts "<text>" --play                        # synth to a temp WAV and play it (best-effort)
-becky-tts "<text>" --voice <name|sample.wav>     # preset name or a short reference sample
-becky-tts --selftest --out s.wav                 # offline proof path (no model needed) - see §8.1
+becky-tts "<text>" --voice <name|sample.wav>     # preset, or a short reference sample (Air clones it)
+becky-tts --selftest --out s.wav                 # offline proof path, no model needed (§8.1)
   flags: --seed N (default 42, deterministic), --rate (read from helper, not hardcoded),
          --model <path>, --bin <path> (override resolution), --json (machine status)
 ```
-- `--out` is mandatory unless `--play`. becky-tts NEVER overwrites a non-WAV file (sidecar rule).
-- Other becky tools (e.g. `becky-ask`, `becky-report`) call `becky-tts` as a sibling binary to
-  speak a short summary — keeping the single-tool principle (no TTS baked into them).
+- `--out` mandatory unless `--play`. Never overwrites a non-WAV file (sidecar rule).
+- Other tools (`becky-ask`, `becky-report`) call `becky-tts` as a sibling to speak a short summary —
+  single-tool principle (no TTS baked into them).
 
-## 4. The local-helper contract (text → WAV)
-Two viable backends; **§9 asks Jordan to pick**. The Go `becky-tts` is identical either way —
-it builds argv, runs the helper, and validates the returned WAV.
+## 4. The local-helper contract (text → WAV) — two backends; §9 picks one
+The Go `becky-tts` is identical either way: build argv, run the helper, validate the WAV.
 
-### 4.1 Path A (preferred, offline-first) — qwen3-tts.cpp + GGUF
-- becky-tts shells out to the `qwen3-tts` C++ binary with the 1.7B (or 0.6B) CustomVoice GGUF
-  + the 12Hz codec GGUF, which together emit a WAV directly (the codec is the audio detokenizer,
-  the role SNAC plays for other models). No torch stack.
+### 4.1 Path A (preferred, offline-first) — NeuTTS Air GGUF + NeuCodec
+- becky-tts shells out to the NeuTTS on-device runtime (`neuphonic/neutts` + the `-q4/-q8-gguf` LM
+  and the NeuCodec decoder), emitting a WAV. LM is GGUF (llama.cpp-class), so no torch for the LM.
 - Resolution mirrors `internal/reaperbrain`/`internal/config`: `BECKY_TTS_BIN` / `BECKY_TTS_MODEL`
-  -> becky default model dir -> PATH. Missing -> DegradeError (§4.4).
+  → becky default model dir → PATH. Missing → DegradeError (§4.4).
 
-### 4.2 Path B (official, heavier) — Python helper (transformers)
-- `internal/pyhelpers/tts_qwen3.py` loads the official safetensors via `transformers` and writes a
-  WAV — same pattern as `transcribe_parakeet.py`. Robust + officially supported, but pulls torch.
+### 4.2 Path B (reference, heavier) — NeuTTS Python package
+- `internal/pyhelpers/tts_neutts.py` using neuphonic's `neutts` package + safetensors → WAV (same
+  pattern as `transcribe_parakeet.py`). Robust; pulls a Python/torch stack.
 
 ### 4.3 Playback (`--play`, best-effort, NEVER Microsoft TTS)
-- Play the rendered WAV via becky's existing audio path / a system player. If playback fails,
-  becky still wrote the WAV and says where — it does NOT substitute any other voice.
+- Play the WAV via becky's audio path / a system player. On failure, becky still wrote the WAV and
+  says where — it does NOT substitute any other voice.
 
-### 4.4 Degrade-never-crash (the hard rule)
-- Model/binary/codec absent, or synth fails -> return a typed `DegradeError`, PRINT the text to
-  stdout so the human still gets the content, exit non-zero with a plain reason. **Never** SAPI.
+### 4.4 Degrade-never-crash (hard rule)
+- Model/binary/codec absent or synth fails → typed `DegradeError`, PRINT the text so the human still
+  gets the content, exit non-zero with a plain reason. **Never** SAPI.
 
-## 5. Deterministic vs model — the split (becky's "math not tokens" posture)
-- Deterministic (Go, cloud-testable): CLI parse, file/sidecar safety, `--seed` plumbing, argv
-  build, helper-process management, WAV validation (header/`ffprobe`), degrade path, `--selftest`
-  WAV assembly from a fixed PCM fixture.
-- Model (local hardware only): the actual neural synthesis + the audio codec decode. This is the
-  single AI step; everything around it is deterministic and testable without a GPU.
+## 5. Deterministic vs model — the split
+- Deterministic (Go, cloud-testable): CLI parse, file/sidecar safety, `--seed`, argv build, helper
+  process mgmt, WAV validation (header/`ffprobe`), degrade path, `--selftest` WAV assembly from a
+  fixed PCM fixture.
+- Model (local only): the neural synthesis + NeuCodec decode. The single AI step; all else testable
+  without a GPU.
 
 ## 6. Config + freshness wiring (contract; local agent makes the JSON/Go edits)
-- Add Qwen3-TTS (1.7B + 0.6B) + the 12Hz codec + the chosen runtime to
-  `internal/freshness/manifest.json` so `becky-freshness` reports upstream movement.
-- Add `BECKY_TTS_BIN` / `BECKY_TTS_MODEL` resolution to `internal/config` (mirror the existing
-  model/binary resolvers). becky-owned default model dir consistent with the rest of the stack.
+- Add NeuTTS Air (+ chosen GGUF quant) and NeuCodec to `internal/freshness/manifest.json`.
+- Add `BECKY_TTS_BIN` / `BECKY_TTS_MODEL` resolution to `internal/config` (mirror existing resolvers).
 
-## 7. Invariants — how this stays becky-shaped
+## 7. Invariants
 - Offline + deterministic front; one explicit local model call; degrade-never-crash.
-- Single-tool principle: `becky-tts` does ONE thing (text->speech); other tools call it.
-- ACCESSIBILITY.md: this voice is an OUTPUT convenience so Jordan can rest his eyes — it does
-  NOT replace the high-contrast visual UI, and the rejected-voices list (§1.4) is load-bearing.
+- Single-tool principle: `becky-tts` does ONE thing; other tools call it.
+- ACCESSIBILITY.md: the voice is an OUTPUT convenience to rest Jordan's eyes — it does NOT replace
+  the high-contrast visual UI; the rejected-voices list (§1.3) is load-bearing.
 
-## 8. Cloud <-> local build split + PROVABLE HANDOFF
+## 8. Cloud ↔ local build split + PROVABLE HANDOFF
+### Build split (honest about the audio boundary)
+- **Cloud builds + tests**: the whole deterministic Go layer (§5), the helper contract + a faked
+  helper, `--selftest`, `GOOS=windows` cross-compile. Cloud has NO audio device → it CANNOT judge
+  the voice and will not claim to.
+- **Local only**: install the NeuTTS runtime + GGUF (or the Python helper), run real synth, HEAR it.
 
-### Build split (be honest about the audio boundary)
-- **Cloud can build + test**: the whole deterministic Go layer (§5), the helper *contract* + a
-  faked helper, `--selftest`, and `GOOS=windows` cross-compile. Cloud has NO audio device, so it
-  **cannot** judge how the voice sounds. It will not claim it does.
-- **Local (Jordan's PC) only**: install the runtime + GGUF (or the Python helper), run real synth,
-  and HEAR it. That is the final gate.
-
-### 8.1 The one-command OFFLINE proof the cloud CAN run (no audio device needed)
+### 8.1 One-command OFFLINE proof the cloud CAN run
 ```
-# Cloud-runnable proof (no GPU, no model weights, no speakers):
 becky-tts --selftest --out /tmp/selftest.wav
-# then MEASURE it (becky's "it compiles is not proof" rule):
 ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -of csv=p=0 /tmp/selftest.wav
-# EXPECT: pcm_s16le,<rate>,1   (a real mono WAV assembled from a fixed PCM fixture - proves the
-#         text->WAV plumbing + WAV writer + validation without invoking the model)
+# EXPECT: pcm_s16le,<rate>,1  (a real mono WAV from a fixed PCM fixture — proves the text->WAV
+#         plumbing + WAV writer + validation WITHOUT invoking the model)
 ```
 
-### 8.2 Ordered, checkboxed LOCAL work order (drive to completion; paste evidence into CLAUDE.md §6)
+### 8.2 Ordered, checkboxed LOCAL work order (paste evidence into CLAUDE.md §6)
 - [ ] `go build ./... && go test ./... && gofmt -l .` green; `build-all-tools.bat` builds `becky-tts.exe`.
-- [ ] Install the chosen backend: Path A — fetch `cstr/qwen3-tts-1.7b-customvoice-GGUF` + the 12Hz
-      codec GGUF and the `qwen3-tts` binary; or Path B — `pip` the transformers helper deps.
-- [ ] `becky-tts --selftest --out s.wav` -> ffprobe shows a real WAV (offline plumbing proven).
-- [ ] `becky-tts "becky here, the transcript is ready" --out hi.wav` -> ffprobe confirms a real WAV.
-- [ ] `becky-tts "..." --play` -> **HEAR it.** Judge quality. If bad, try the 0.6B, then a §1.2 alternate.
-- [ ] Report to Jordan: which model/voice, did it sound good, any degrade notes.
+- [ ] Install backend: Path A — fetch `neuphonic/neutts-air-q4-gguf` (or q8) + NeuCodec + the `neutts`
+      runtime; or Path B — `pip install` neuphonic's `neutts` package.
+- [ ] `becky-tts --selftest --out s.wav` → ffprobe shows a real WAV (offline plumbing proven).
+- [ ] `becky-tts "becky here, the transcript is ready" --out hi.wav` → ffprobe confirms a real WAV.
+- [ ] `becky-tts "..." --play` → **HEAR it.** Judge quality. If off, try Chatterbox-Turbo, then NeuTTS Nano.
+- [ ] Report to Jordan: which model/voice, did it sound good + fast, any degrade notes.
 
 ## 9. Open decisions for Jordan (go/no-go — short)
-1. **Model size:** Qwen3-TTS **1.7B** (recommended) or the lighter **0.6B**? (1.7B unless speed/VRAM bites.)
-2. **Backend:** Path A **qwen3-tts.cpp + GGUF** (offline-first, recommended) or Path B **Python/transformers** (official, heavier)?
-3. **Voice:** a built-in preset, or clone from a short reference sample you provide?
-4. **Fallback if you dislike Qwen's voice by ear:** VibeVoice-1.5B (MIT) / VoxCPM2 / supertonic-3 / Chatterbox — pick a 2nd to try.
-5. **Where becky speaks first:** `becky-ask` answers and `becky-report`/forensic summaries (recommended), or a standalone `becky-tts` only for now?
+1. **Engine:** NeuTTS **Air** (0.75B, Apache — recommended) as primary? Want Chatterbox-Turbo (350M, MIT) tried alongside?
+2. **Backend:** Path A **GGUF runtime** (offline-first, recommended) or Path B **Python**?
+3. **Voice:** a built-in preset, or clone from a short reference sample you provide (Air does instant cloning)?
+4. **Lighter option:** keep NeuTTS **Nano** (228M) on the bench for max speed (note: license:other)?
+5. **Where becky speaks first:** `becky-ask` answers + `becky-report` summaries (recommended), or standalone `becky-tts` only?
 
-## 10. Sources (live HF re-check, 2026-06-22)
-- `hf.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (Apache-2.0, 1.9B, 7.6M downloads, arXiv:2601.15621)
-- GGUF: `hf.co/cstr/qwen3-tts-1.7b-customvoice-GGUF`, `hf.co/cstr/qwen3-tts-0.6b-customvoice-GGUF`,
-  `hf.co/Serveurperso/Qwen3-TTS-GGUF`; codec `hf.co/cstr/qwen3-tts-tokenizer-12hz-GGUF`
-- Alternates: `hf.co/microsoft/VibeVoice-1.5B` (MIT), `hf.co/openbmb/VoxCPM2`,
-  `hf.co/Supertone/supertonic-3` (ONNX/on-device), `hf.co/ResembleAI/chatterbox` (MIT)
-- Leaderboard context: `hf.co/spaces/TTS-AGI/TTS-Arena-V2` (top is cloud APIs — see §1.3)
+## 10. Sources (live HF + web re-check, 2026-06-22)
+- `hf.co/neuphonic/neutts-air` (Apache-2.0, 747.9M, qwen2 backbone, GGUF) + `…-q4-gguf` / `…-q8-gguf`;
+  `hf.co/neuphonic/neutts-nano` (228.7M, llama, license:other); GitHub `github.com/neuphonic/neutts`
+- `hf.co/ResembleAI/chatterbox` (MIT; Chatterbox-Turbo ~350M, emotion control)
+- Heavier fallback: `hf.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (Apache) + 0.6B; GGUF `cstr/qwen3-tts-*`
+- Field reviews: getstream.io/blog/best-on-device-tts-models; bentoml.com open-source TTS 2026
+- Arena context: `hf.co/spaces/TTS-AGI/TTS-Arena-V2` (cloud-dominated) + `hf.co/spaces/Pendrokar/TTS-Spaces-Arena` (open models) — verification, not selector

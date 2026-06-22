@@ -368,10 +368,11 @@ load-bearing rules, in brief:
 - **SPEC FACTORY — 2026-06-22 (cloud, design-only, NOT built; each ships a checkboxed build
   plan + value-asserting tests; await Jordan's go/no-go). Built by a parallel subagent swarm
   to clear the discussed-but-never-spec'd backlog:**
-  - `SPEC-BECKY-TTS.md` (+ `research/tts.md`) — a real local TTS (Qwen3-TTS-12Hz-1.7B GGUF,
-    Apache, ~half the size of a 3B; 0.6B option; alternates VibeVoice/VoxCPM/Chatterbox).
-    NOT Microsoft TTS; Piper/Kokoro/Orpheus ruled out. Final gate = Jordan HEARS it (the arena
-    top is cloud-only, so the leaderboard is the wrong selector).
+  - `SPEC-BECKY-TTS.md` (+ `research/tts.md`) — a tiny+intelligent local TTS: **NeuTTS Air**
+    (0.75B Qwen2-LLM backbone, Apache, GGUF, on-device/expressive); alternates Chatterbox-Turbo
+    (350M MIT) / NeuTTS Nano (228M) / Qwen3-TTS (heavier fallback). The class = tiny + LLM-backbone
+    + fast (Kokoro is light-but-flat; 3B too slow). NOT Microsoft TTS; Piper/Kokoro/Orpheus ruled
+    out. Leaderboard verifies, doesn't select (arena top is cloud). Final gate = Jordan HEARS it.
   - `SPEC-IDENTIFY-HARDENING.md` — fixes the Critical wrong-person voice-ID (name bar ~0.75,
     top-2 margin, `--cast` guard). The highest-value forensic-accuracy fix.
   - `SPEC-BECKY-INGEST.md` — `becky ingest <folder>` → runs the pipeline + a LINEAR `DIGEST.md`.
@@ -447,7 +448,7 @@ load-bearing rules, in brief:
 **Branch `claude/subagent-deployment-scaling-4hptv9` (cloud, 2026-06-22) — fixed a wrong accessibility assumption, then ran a SPEC-FACTORY swarm to clear the discussed-but-never-spec'd backlog. Draft PR #20. NO code shipped — all design-only, awaiting Jordan's go/no-go.**
 Context: Jordan corrected a load-bearing fact — he is SIGHTED with impaired vision, does NOT use a screen reader, his high-contrast colored TUIs (becky-ask bubbletea) are an AID, and he does NOT want Microsoft TTS. An earlier pass this session wrongly assumed a screen reader (stripped color, added SAPI TTS); that was reverted. His real point: the bottleneck isn't missing ideas, it's many *discussed* features that never got a spec. So one comprehension subagent read the whole repo, then a parallel swarm wrote a proper spec per gap.
 - **Accessibility corrected (on this branch):** `ACCESSIBILITY.md` rewritten + CLAUDE.md banner/invariant/doc-map to the TRUE facts (sighted/low-vision, keep colored TUIs, no screen reader, no MS TTS, wants a real researched TTS). becky-ask is back to its colored bubbletea default; the SAPI `internal/a11y` package was removed.
-- **9 new specs written (design-only, each with a checkboxed build plan + value-asserting tests):** `SPEC-BECKY-TTS.md` (+`research/tts.md`; Qwen3-TTS-1.7B GGUF primary after a live-field re-check corrected the first pass's stale Orpheus-3B pick — Jordan must HEAR it before commit), `SPEC-IDENTIFY-HARDENING.md` (the Critical wrong-person voice-ID fix), `SPEC-BECKY-INGEST.md`, `SPEC-BECKY-DATES.md`, `SPEC-BECKY-LOCATION.md`, `SPEC-FRAMEMATCH-HARDENING.md`, `SPEC-FACE-CROP-DB.md`, `SPEC-ASK-SINGLESHOT.md`, `SPEC-FACE-NAMING-LOOP.md`. All in the §5 doc map.
+- **9 new specs written (design-only, each with a checkboxed build plan + value-asserting tests):** `SPEC-BECKY-TTS.md` (+`research/tts.md`; NeuTTS Air primary — a tiny 0.75B LLM-backbone expressive on-device TTS — after a class-based re-research corrected two shallow earlier picks (Orpheus-3B, then Qwen3-TTS); Jordan must HEAR it before commit), `SPEC-IDENTIFY-HARDENING.md` (the Critical wrong-person voice-ID fix), `SPEC-BECKY-INGEST.md`, `SPEC-BECKY-DATES.md`, `SPEC-BECKY-LOCATION.md`, `SPEC-FRAMEMATCH-HARDENING.md`, `SPEC-FACE-CROP-DB.md`, `SPEC-ASK-SINGLESHOT.md`, `SPEC-FACE-NAMING-LOOP.md`. All in the §5 doc map.
 - **Honest state:** these are SPECS, not code (the thing Jordan named: "subagents researching and building proper specs"). Each is grounded in real `file:symbol` citations and carries a build plan so the next swarm can EXECUTE rather than re-research. `go build ./...` + `gofmt -l` green (only the unrelated ctlmodel gofmt fix touches code). **LEFT FOR JORDAN:** read/greenlight the specs (esp. the Open-Decisions in each: TTS engine+voice, the identify thresholds 0.75/0.06, ROI fractions, crop margins), then I fan out a BUILD swarm one tool per spec. The TTS voice + any audible/visual result is the hardware-only gate.
 
 **Branch `local/finish-cloud-integration-2026-06-21` (local, 2026-06-21) — FIXED the stalled "Get Becky Updates" button + REBUILT every .exe + wired 4 proven engines into becky-canvas (4 subagents). On master (fast-forwarded).**
