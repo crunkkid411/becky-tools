@@ -129,22 +129,76 @@ The Go `becky-tts` is identical either way: build argv, run the helper, validate
   the voice and will not claim to.
 - **Local only**: install the NeuTTS runtime + GGUF (or the Python helper), run real synth, HEAR it.
 
-### 8.1 One-command OFFLINE proof the cloud CAN run
+### 8.1 One-command OFFLINE proof — BUILT + RUN by cloud (2026-06-22)
 ```
 becky-tts --selftest --out /tmp/selftest.wav
 ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -of csv=p=0 /tmp/selftest.wav
-# EXPECT: pcm_s16le,<rate>,1  (a real mono WAV from a fixed PCM fixture — proves the text->WAV
-#         plumbing + WAV writer + validation WITHOUT invoking the model)
+# EXPECT (local, with ffprobe): pcm_s16le,24000,1
 ```
+**Cloud has NO ffprobe and NO audio device**, so cloud proved the same thing TWO other ways
+(equivalent, and the canonical one for this repo's CI which is also ffprobe-less):
+1. A Go test parses the `--selftest` WAV header and asserts RIFF/WAVE + `fmt ` (PCM, mono, 16-bit,
+   24000 Hz) + a non-empty `data` chunk (`internal/tts.ValidateWAV`, exercised by
+   `internal/tts/synth_test.go` and `cmd/tts/main_test.go`). This is the ffprobe-free equivalent.
+2. A real run + raw header dump (paste from cloud, `go run ./cmd/tts --selftest --out /tmp/tts_selftest.wav`):
+   ```
+   Saved: /tmp/tts_selftest.wav (28844 bytes, 24000 Hz)
+   0000000 52 49 46 46 a4 70 00 00 57 41 56 45 66 6d 74 20  >RIFF.p..WAVEfmt <
+   0000016 10 00 00 00 01 00 01 00 c0 5d 00 00 80 bb 00 00  >.........]......<
+   0000032 02 00 10 00 64 61 74 61 80 70 00 00 00 00 04 00  >....data.p......<
+   #            ^PCM ^mono ^24000Hz(0x5dc0)        ^16-bit ^data chunk, 0x7080 payload bytes
+   ```
+The neural-voice quality and actual SOUND are unverifiable in the cloud — those are local-only (8.2).
 
-### 8.2 Ordered, checkboxed LOCAL work order (paste evidence into CLAUDE.md §6)
-- [ ] `go build ./... && go test ./... && gofmt -l .` green; `build-all-tools.bat` builds `becky-tts.exe`.
-- [ ] Install backend: Path A — fetch `neuphonic/neutts-air-q4-gguf` (or q8) + NeuCodec + the `neutts`
-      runtime; or Path B — `pip install` neuphonic's `neutts` package.
-- [ ] `becky-tts --selftest --out s.wav` → ffprobe shows a real WAV (offline plumbing proven).
-- [ ] `becky-tts "becky here, the transcript is ready" --out hi.wav` → ffprobe confirms a real WAV.
-- [ ] `becky-tts "..." --play` → **HEAR it.** Judge quality. If off, try Chatterbox-Turbo, then NeuTTS Nano.
-- [ ] Report to Jordan: which model/voice, did it sound good + fast, any degrade notes.
+### 8.2 Work order — cloud's half DONE; local's half is the checklist below
+**CLOUD DID (this branch, deterministic half — only `cmd/tts/` + `internal/tts/` touched):**
+- [x] `internal/tts`: `Synth` interface + `Synthesize(text, opts)`; real `ggufSynth` resolving
+      `BECKY_TTS_BIN`+`BECKY_TTS_MODEL` (override → env → becky default `…\models\tts\` → PATH, mirrors
+      `internal/reaperbrain`); pure-Go PCM16-mono WAV writer (`WriteWAVPCM16`) + validator (`ValidateWAV`);
+      deterministic `SelfTest` fixture; typed `DegradeError` (NEVER a Microsoft voice). `NeuTTSArgs`
+      documents the exact argv the local runtime must honour.
+- [x] `cmd/tts` (`becky-tts`): full CLI — `"<text>"` / `--in` / `--out` / `--play` / `--voice` /
+      `--selftest` / `--seed` / `--model` / `--bin` / `--json`; flags work before OR after the text;
+      `--out` mandatory unless `--play`/`--selftest`; refuses a non-`.wav` ext AND refuses to overwrite an
+      existing non-WAV file; degrade = print the text to stdout + plain reason to stderr + non-zero exit;
+      `--play` best-effort (PowerShell SoundPlayer / afplay / aplay-paplay-ffplay) and keeps the WAV on failure.
+- [x] `go build ./cmd/tts/... ./internal/tts/...` exit 0; `go vet` clean; `gofmt -l cmd/tts/ internal/tts/`
+      empty; `go test ./cmd/tts/... ./internal/tts/...` green (value-asserting: header bytes, selftest
+      validity+determinism, degrade-prints-text-when-bin/model-absent, non-WAV-ext refusal, overwrite
+      guard, helper-contract, resolver precedence). `GOOS=windows go build ./cmd/tts/` exit 0.
+- [x] `--selftest` RUN offline; header dump pasted in §8.1. Cloud CANNOT hear it — stated plainly.
+
+**LOCAL TO DO (needs the GPU/audio/disk cloud has none of — drive in order, paste evidence into CLAUDE.md §6):**
+- [ ] 1. `cd becky-go && go build ./... && go test ./... && gofmt -l .` green on Windows; `build-all-tools.bat`
+        (auto-discovers `cmd/tts`) builds `becky-tts.exe`.
+- [ ] 2. Fetch the NeuTTS Air GGUF backend (Path A) — recommended layout under `X:\AI-2\becky-tools\models\tts\`:
+        - LM GGUF: `huggingface-cli download neuphonic/neutts-air-q4-gguf --local-dir X:\AI-2\becky-tools\models\tts`
+          (or `neutts-air-q8-gguf` for higher quality). Name the file so it contains `neutts`/`air`/`q4` (the
+          resolver's scorer prefers those and disqualifies `codec`/`mmproj`/`vocoder`).
+        - NeuCodec decoder: `huggingface-cli download neuphonic/neucodec --local-dir X:\AI-2\becky-tools\models\tts\neucodec`.
+- [ ] 3. Install the NeuTTS on-device runtime that becky-tts shells out to (the `--bin`). It MUST accept the
+        argv `internal/tts.NeuTTSArgs` emits: `--model <gguf> --text <text> --out <wav> --voice <name|sample> --seed <n> [--rate <hz>]`
+        and write a PCM WAV to `--out`. From neuphonic's `neutts` repo (`github.com/neuphonic/neutts`):
+        `pip install neutts` (or clone + `pip install -e .`), then provide a thin CLI wrapper exposing those
+        flags (or adapt the repo's inference script into one) and point `BECKY_TTS_BIN` at it. If you ship the
+        Python wrapper as `neutts-air.exe`/`neutts.exe` on PATH it is auto-found; otherwise set the env.
+- [ ] 4. Point becky at it (PowerShell), e.g.:
+        `setx BECKY_TTS_BIN "X:\AI-2\becky-tools\models\tts\neutts-air.exe"`
+        `setx BECKY_TTS_MODEL "X:\AI-2\becky-tools\models\tts\neutts-air-q4.gguf"`
+        (or pass `--bin` / `--model` per call). Until these resolve, becky-tts honestly degrades to printed text.
+- [ ] 5. `becky-tts --selftest --out s.wav` then `ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -of csv=p=0 s.wav`
+        → expect `pcm_s16le,24000,1` (offline plumbing proven on hardware; no model needed for this step).
+- [ ] 6. `becky-tts "becky here, the transcript is ready" --out hi.wav` then ffprobe `hi.wav` → confirm a real,
+        non-empty WAV from the MODEL (rate will be the NeuTTS native rate, not 24000).
+- [ ] 7. `becky-tts "becky here, the transcript is ready" --play` → **HEAR it.** Judge quality + speed.
+        If the voice is off, try `neutts-air-q8`, then Chatterbox-Turbo (MIT, ~350M), then NeuTTS Nano (§1.2).
+- [ ] 8. Report to Jordan: which model/voice/quant, did it sound good + fast, any degrade notes — and let
+        Jordan HEAR it (the final gate, §0).
+
+**Config/freshness wiring (local, §6 — not in cloud's `cmd/tts`+`internal/tts` lane):** add `BECKY_TTS_BIN`/
+`BECKY_TTS_MODEL` resolution to `internal/config` and add NeuTTS Air + the chosen quant + NeuCodec to
+`internal/freshness/manifest.json`. becky-tts works without these (env/flag/default resolution), so this is a
+convenience pass, not a blocker.
 
 ## 9. Decisions — LOCKED by Jordan 2026-06-22 (build to these)
 1. **Engine: NeuTTS Air** (0.75B, Apache) — default. ✔ Locked. (Chatterbox-Turbo / Nano stay as
