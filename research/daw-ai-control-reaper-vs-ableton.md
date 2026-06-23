@@ -145,11 +145,15 @@ old scripts; Live 12's Python 3.11 broke tooling). That's a recurring maintenanc
   while you play" loop is **real and has been built — on Strudel.** This *strengthens* the doc's
   conclusion: the cleanest surface for conversational/voice live control is a live-coding engine, and
   someone has now shipped a demo proving it.
-  - **Caveat (don't overstate):** the *public* `VoloBuilds/toaster` repo, as documented in its README, is
-    a **text-prompt → LLM → Strudel** codegen app (React 18 / TypeScript / Vite front-end, Cloudflare
-    Workers + Hono back-end, pluggable LLM provider). The **spoken/STT layer is shown in the video but is
-    not in the README**, and YouTube blocked the fetch — so the exact STT engine and real-time loop are
-    **unverified**. Treat "voice" as confirmed-by-demo, architecture-unconfirmed.
+  - **The voice is NOT a separate STT→LLM→TTS pipeline (per Jordan, 2026-06-23).** It's a **single
+    multimodal *realtime* model** — **Gemini Live (2.5 Flash native-audio; now `gemini-3.1-flash-live-preview`,
+    3.5)** — doing native speech-in / speech-out + live video over a WebSocket, with **barge-in interrupt**
+    (you talk over it and it stops), **no wake word, no typing**, and a **"proactive audio"** mode that
+    controls *when* the model chooses to speak. Jordan runs the same model for his own realtime assistant
+    ("whoretana") incl. **video streaming** (it has watched a YouTube video with him while he filmed a
+    reaction). The public `VoloBuilds/toaster` repo only documents the text-prompt → Strudel path (React /
+    Cloudflare Workers); the realtime-voice layer is the Gemini Live model, not a documented STT engine.
+    "How computers should work" — no wake word, interruptible — is the target interaction model.
   - **Correction of an earlier error in this doc:** the first research pass found a *different* repo,
     `github.com/vanities/toaster-strudel` (Claude-Code agents editing `.strudel` files, file-watch +
     cycle-boundary crossfade reload — text/agent-driven, not voice) and wrongly concluded "Toaster isn't
@@ -168,9 +172,30 @@ old scripts; Live 12's Python 3.11 broke tooling). That's a recurring maintenanc
   Script) proves Ableton is *deeply* externally controllable for **performance/looping** — but that's MIDI/
   session/transport control, the layer Ableton is good at, **not** audio-take editing.
 
-**Implication for becky:** the jam/voice-control dream is a *separate track* from the take-cleanup engineer
-dream. If Jordan wants the "talk to it like a producer while playing" experience, the lowest-friction,
-embeddable surface is **Strudel inside becky-canvas** — not Ableton, and not coupled to the REAPER cleanup work.
+- **The realtime multimodal model IS the interface layer — for BOTH lanes (per Jordan).** A Gemini-Live-class
+  realtime model (native duplex audio+video, barge-in, no wake word, proactive-audio timing) is the
+  conversational front-end for the *whole* becky assistant, not just the jam mode: the same "talk to it, it
+  watches/listens, it acts, you interrupt" loop wraps the **REAPER take-cleanup engineer** ("that trim's too
+  tight, back it off") *and* the **Strudel jam**. The model isn't the musical brain — becky's deterministic
+  `arrange`/ReaScript layer is — it's the *ears, eyes, and mouth*.
+- **Cloud vs local for that layer — an explicit, scoped trade Jordan has already made:**
+  - **Cloud (Gemini Live 2.5 Flash / 3.1 / 3.5):** delivers the true low-latency duplex + barge-in + video
+    *today*. Jordan is **fine using API calls for the realtime assistant layer** (it already runs his
+    "whoretana" incl. live video). This is a deliberate, **scoped** exception to becky's offline invariant:
+    the **forensic core stays offline + deterministic**; the *conversational/canvas assistant* may be online.
+    A future agent should NOT "fix" this back to offline-only — it's intended.
+  - **Local (already in becky's stack):** **Gemma-4 QAT** takes **audio + vision inputs**, and **NeuTTS Air**
+    is the existing local **TTS out** — so a fully-local approximation exists. Honest caveat: chaining
+    Gemma-in + NeuTTS-out does **not** match Gemini Live's *native-audio duplex / barge-in* — true
+    interrupt-while-speaking, sub-second turn-taking is the realtime model's special sauce and is the hard
+    part to replicate locally. Use local for offline/private sessions; reach for the API when he wants the
+    seamless "how computers should work" feel.
+
+**Implication for becky:** the take-cleanup engineer (REAPER) and the jam (Strudel) are *separate lanes*, but
+they **share one front-end** — a realtime multimodal model as the always-listening, interruptible voice. For
+the jam specifically, the embeddable surface is **Strudel inside becky-canvas** (not Ableton, not coupled to
+the REAPER cleanup work). For both, the voice/eyes layer is a Gemini-Live-class model (API now; Gemma-4 QAT +
+NeuTTS as the local, non-duplex fallback).
 
 ### 5. Cubase — confirmed out for AI control *(high confidence — Steinberg's own docs)*
 
@@ -209,9 +234,11 @@ there. becky drives REAPER; Cubase stays whatever he wants it to be.)
 - **High:** Ableton's no-fade/no-waveform gap (3 independent sources); REAPER's read/write incl. audio
   accessor + fade shape/curve (SDK header); Cubase controller-only (Steinberg docs).
 - **Medium-high:** DAWZY architecture (single arXiv source; corroborates the loop but not habit-learning).
-- **Confirmed-by-demo, architecture-unconfirmed:** `VoloBuilds/toaster` is voice-driven (Volo's YouTube
-  demo); the STT engine + real-time loop are not documented in its public README and YouTube blocked the
-  fetch. (The earlier doc claim "Toaster isn't voice" was wrong — it cited the wrong repo.)
+- **Corrected (per Jordan):** `VoloBuilds/toaster` is voice-driven, and the voice is a **Gemini-Live realtime
+  multimodal model** (native duplex audio+video, barge-in), NOT a separate STT/TTS chain. The earlier doc
+  claims ("Toaster isn't voice"; "STT engine unverified") were both wrong — the first cited the wrong repo,
+  the second assumed a pipeline that doesn't exist. Gemini Live API capabilities (barge-in, native audio,
+  WebSocket duplex, proactive-audio, models incl. `gemini-3.1-flash-live-preview`) verified via Google docs.
 - **Verify in-app:** the 1–6 fade-shape numeric→label mapping (header gives range + `0=linear` only);
   AbletonOSC clip-level "recording stopped" listener may need a tiny Remote-Script fork; REAPER/OSC exact
   latency (only "low-latency UDP" is established — don't quote a number).
