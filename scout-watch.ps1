@@ -20,6 +20,8 @@ param(
     [string]$Cookies = 'chrome',  # read cookies from this browser so YouTube doesn't block deep fetches ('' to disable)
     [switch]$Register,            # set up the weekly scheduled task and exit
     [switch]$All,                 # assess the whole playlist, not just new entries
+    [switch]$Propose = $true,     # let Qwen+Gemma decide what's worth building (writes intakes)
+    [switch]$Build,               # also run becky-new-tool to BUILD approved proposals (spends compute)
     [switch]$NoPause
 )
 
@@ -63,6 +65,8 @@ if (-not (Test-Path $Exe)) {
 $scoutArgs = @($Playlist)
 if ($Deep) { $scoutArgs += '--deep' }
 if (-not $All) { $scoutArgs += @('--new-only', '--state', $State) }
+if ($Propose) { $scoutArgs += @('--propose', '--propose-dir', (Join-Path $Repo 'scout-proposals')) }
+if ($Build)   { $scoutArgs += '--build' }
 
 # Deep fetches hit YouTube's "are you a bot?" check unless requests look like a
 # real signed-in browser. Reading cookies from Chrome fixes that on a home PC.

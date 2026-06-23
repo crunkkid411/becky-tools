@@ -10,6 +10,36 @@
 
 ---
 
+## 2026-06-23 (cloud, `claude/scout-autonomous-spec-proposals`) — becky-scout: autonomous "let the models decide what to build" gate
+
+Follow-on to the merged becky-scout (PR #5). Jordan: *"the local model should be used for
+judgement… if Qwen thinks something is genuinely useful it can propose a build spec and see if
+Gemma‑4 or Claude agree; if yes, build the spec"* — and he does NOT want to hand-review.
+
+Built the `--propose` gate = becky's corroborate-then-conclude applied to MODEL judgment:
+- **`internal/scout/propose.go`** (deterministic, fully unit-tested): `Proposer` + `Judge`
+  interfaces, `Propose(items, proposer, judges, minAgree)` → `Decision`s. APPROVED only when the
+  proposer pitches a tool AND ≥minAgree independent judges agree (≥2 models concur). `Decision.ToIntake()`
+  emits the exact `becky-new-tool --intake-file` shape (matches cmd/ask/pitch.go's PitchRecord).
+  Fakes (`FakeProposer`/`FakeJudge`) + 6 tests cover approve/hold/quorum/skip/no-models/intake.
+- **`cmd/scout/model.go`** (real backends, mirror cmd/ask/llama.go transport): `qwenProposer`
+  (the becky-ask Qwen GGUF) pitches; `gemmaJudge` (Gemma‑4 via `cfg.GemmaAVLM()`) votes — two
+  independent local models through llama-server (temp 0, seed 42). `PickProposeModels` starts both
+  servers once, reuses across items, degrades to a one-line note if a GGUF/llama-server is missing.
+  Overrides: `BECKY_SCOUT_PROPOSE_MODEL`, `BECKY_SCOUT_JUDGE_MODEL`.
+- **`cmd/scout/propose_run.go`** + flags `--propose` / `--propose-dir` / `--build`: writes an intake
+  per APPROVED proposal to `scout-proposals/`; `--build` hands each straight to
+  `becky-new-tool --intake-file … --yes --offline` (the existing staged factory does the building —
+  scout only decides WHETHER to ask). Default is emit-only (safe); `--build` is the money-spending opt-in.
+- **`scout-watch.ps1`** now passes `--propose` by default (+ `-Build` switch for full hands-off).
+- Gates green: `go build/vet/test ./...`, gofmt clean. Degrade path smoke-verified in the cloud
+  (no models → "propose: skipped — proposer (Qwen) unavailable…", report still prints).
+
+**Left for local (host/model only):** run `becky-scout … --propose` with the Qwen + Gemma GGUFs
+present (cloud has no models); confirm the two servers start and the JSON parses; **decide if the
+weekly watch runs `--build`** (auto-build new useful videos) or stays emit-only. Open decisions in
+`SPEC-SCOUT.md §7` (#4 auto-build vs emit, #5 add Claude as a judge).
+
 **Session 2026-06-23 (local, `claude/becky-edit-gemma4`) — BUILT the becky-edit (NLE) engine layer + the Gemma-4 QAT upgrade. Two research subagents (Shotcut API, video-db/Director). All gates green; `becky-edit --selftest` proves it offline; `.exe` runs.**
 
 Jordan's ask: implement the `research/gemma4-qat-upgrade.md` upgrade (QAT E4B default + 12B alternate) AND build out `SPEC-BECKY-NLE.md` as **becky-edit**, with the embedded Gemma sharing live state with the program and calling deterministic tools.

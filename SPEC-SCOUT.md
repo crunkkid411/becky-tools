@@ -131,6 +131,36 @@ tracked dependency AND lands in a becky domain (or is independently confirmed by
 the model) is **corroborated** → stated plainly as an upgrade/new-tool candidate.
 It never changes anything; it surfaces, ranks, and concludes.
 
+## 4a. The autonomous build gate (`--propose`) — Jordan, 2026-06-23
+
+Jordan: *"the local model should be used for judgement… if Qwen thinks something
+is genuinely useful it can propose a build spec and see if Gemma‑4 or Claude agree;
+if yes, build the spec."* He does NOT want to hand-review findings. So `--propose`
+runs a fully autonomous gate that is just becky's corroborate-then-conclude applied
+to MODEL judgment:
+
+```
+for each surfaced video (relevant + candidate + useful):
+  1. PROPOSE  — local Qwen pitches a concrete becky tool (strict-JSON intake:
+                worth_building? slug, capability, input/output, kind, why).
+                Most videos → worth_building=false (no flood).
+  2. JUDGE    — Gemma‑4 (an INDEPENDENT model) votes agree/disagree on the pitch.
+  3. CONCLUDE — APPROVED only when the proposer pitched AND ≥1 judge agreed
+                (≥2 independent models concur). Held back otherwise.
+  4. EMIT     — each approved proposal is written as a becky-new-tool intake
+                (`scout-proposals/<slug>.intake.json`). With --build, scout hands
+                it straight to `becky-new-tool --intake-file … --yes --offline`,
+                which runs the EXISTING staged build factory.
+```
+
+scout owns only the *decision*; the actual building is becky-new-tool's job
+(reusing its model stages, cost gates, and S4 Claude spec author — so "Claude
+agrees" happens naturally downstream). Default is emit-only (write intakes);
+`--build` is the explicit, money-spending opt-in. With no local models present it
+degrades to a one-line note. Interfaces `Proposer`/`Judge` live in
+`internal/scout/propose.go` (deterministic fakes + tests); the real Qwen/Gemma
+backends are `cmd/scout/model.go` (llama-server, temp 0, the becky-ask transport).
+
 ## 5. Build split (cloud ↔ local)
 
 | Cloud / web agent (DONE)                                       | Local agent (Jordan's PC — remaining)               |
@@ -140,6 +170,7 @@ It never changes anything; it surfaces, ranks, and concludes.
 | `internal/scout` core + boundary interfaces + fakes + tests    | (Optional) wire `Assessor` to a local llama.cpp model|
 | **Real `ytdlpSource`** (`cmd/scout/ytdlp.go`) — flat + `--deep`, tested live | Schedule `scout-watch.ps1` (or click it)  |
 | `--from-json`, `--new-only`/`--state`, `scout-watch.ps1`       | Tune `catalog.go`/`interests.go` keywords on results |
+| **Autonomous gate** (`internal/scout/propose.go` + `cmd/scout/model.go`) — Qwen propose + Gemma judge + intake emit; deterministic core tested | Run `--propose` with the local models present; decide whether the weekly watch runs `--build` (auto-build) or emit-only |
 
 The yt-dlp `PlaylistSource` is **built and verified live** from the cloud (flat
 mode returned all 100 videos of Jordan's playlist; `--deep` per-video enrichment
@@ -183,8 +214,18 @@ freshness/radar digest — one button, nothing new for Jordan to remember.)
    (titles); `--deep` adds per-video descriptions/tags (one request each). Full
    caption (VTT) download is a further opt-in left for later — descriptions+tags
    already corroborate most findings. (`scout-watch.ps1` uses `--deep`.)
-3. **Model assessor:** wire the optional 3rd signal now (Qwen3-4B already used by
-   the canvas), or ship the deterministic floor first and add the model later?
-4. **Catalog tuning:** the built-in keyword catalog is conservative. Any becky
+3. **Model judgment — ANSWERED (2026-06-23):** built as the `--propose` gate
+   (§4a): Qwen proposes, Gemma‑4 must agree, approved proposals become
+   becky-new-tool intakes. (This replaced the simpler "3rd signal" assessor idea.)
+4. **Auto-build vs emit — OPEN (default = emit):** `--propose` writes intakes;
+   `--propose --build` actually runs the factory (spends compute / Claude budget).
+   Should the weekly `scout-watch.ps1` run `--build` (fully hands-off: new useful
+   video → built tool while Jordan sleeps), or emit-only so he can glance at the
+   approved intakes first? Currently emit-only; flip `-Build` on the watch to go
+   fully autonomous.
+5. **Judge model:** Gemma‑4 is the independent judge today. Add Claude Code as a
+   second/third judge (becky-new-tool's S4 already uses Claude downstream), or is
+   Qwen+Gemma agreement enough to gate?
+6. **Catalog tuning:** the built-in keyword catalog is conservative. Any becky
    area you want weighted more aggressively (e.g. local-LLM inference tricks)?
 ```

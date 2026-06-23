@@ -507,6 +507,16 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean; `build-all-tools.ba
   GPU enroll run). Deterministic cores are built + unit-test-green; what remains is the model boundary
   named in each spec's §8.
 
+### This session (2026-06-23, `claude/scout-autonomous-spec-proposals`) — becky-scout autonomous build gate
+
+Full detail in `HANDOFF-LOG.md` (top entry). In brief: added `becky-scout --propose` — Jordan's
+"let the models decide" loop. Local **Qwen proposes** a concrete becky tool for each surfaced video,
+**Gemma‑4 independently votes**, and only proposals both back become **becky-new-tool intakes**
+(`--build` runs the factory; default emit-only). Deterministic core (`internal/scout/propose.go`)
+fully unit-tested; real models in `cmd/scout/model.go` (llama-server, degrades without GGUFs). Gates
+green; degrade path cloud-verified. **Left for local:** run `--propose` with the GGUFs present;
+decide if the weekly `scout-watch.ps1` runs `-Build` (fully hands-off) — `SPEC-SCOUT.md §7 #4`.
+
 ### This session (2026-06-23, `claude/becky-edit-gemma4`) — BUILT becky-edit's engine + the Gemma-4 QAT upgrade
 
 Full detail in `HANDOFF-LOG.md` (top entry). In brief:

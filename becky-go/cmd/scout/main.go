@@ -17,9 +17,14 @@
 //
 // The one online step (resolving the playlist via yt-dlp) needs yt-dlp on PATH;
 // if it's missing or the network fails, scout degrades to a plain-language note
-// instead of crashing. --deep additionally pulls per-video descriptions/tags. An
-// optional local model adds a third independent signal. --new-only/--state make
-// repeat runs report only newly-added videos. Exit codes: 0 ok, 1 error, 2 usage.
+// instead of crashing. --deep additionally pulls per-video descriptions/tags.
+// --new-only/--state make repeat runs report only newly-added videos.
+//
+// --propose runs the autonomous build gate (Jordan's "let the models decide"):
+// the local Qwen model pitches a concrete becky tool for each surfaced video, the
+// independent Gemma-4 model votes, and only proposals BOTH models back become
+// becky-new-tool intakes (written to --propose-dir; --build also runs the factory).
+// Without the local models it degrades to a note. Exit codes: 0 ok, 1 error, 2 usage.
 package main
 
 import (
@@ -42,6 +47,9 @@ func main() {
 	deep := flag.Bool("deep", false, "fetch each video's description/tags/channel via yt-dlp (richer, but one request per video)")
 	newOnly := flag.Bool("new-only", false, "only assess videos not seen on a previous run (requires --state)")
 	statePath := flag.String("state", "", "path to a JSON state file remembering which videos were already assessed")
+	propose := flag.Bool("propose", false, "autonomous gate: Qwen proposes tools, Gemma-4 must agree, write intakes for approved ones")
+	proposeDir := flag.String("propose-dir", "scout-proposals", "where to write approved becky-new-tool intakes (with --propose)")
+	build := flag.Bool("build", false, "with --propose: hand each approved intake to becky-new-tool to actually build it")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -123,9 +131,20 @@ func main() {
 			fmt.Fprintln(os.Stderr, "encode:", err)
 			os.Exit(1)
 		}
-		return
+	} else {
+		printReport(rep)
 	}
-	printReport(rep)
+
+	// Autonomous build-proposal gate (opt-in). Skipped on a degraded fetch (no
+	// videos to consider). In JSON mode its status goes to stderr so stdout stays
+	// valid JSON.
+	if *propose && !rep.Degraded {
+		w := os.Stdout
+		if *asJSON {
+			w = os.Stderr
+		}
+		runPropose(rep, *proposeDir, *build, w)
+	}
 }
 
 // stateFilterSource wraps another source for --new-only: it drops videos whose
@@ -232,11 +251,13 @@ func fillPositions(vids []scout.Video) []scout.Video {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: becky-scout <playlist-url-or-id> [--deep] [--new-only --state <file>] [--json]")
-	fmt.Fprintln(os.Stderr, "       becky-scout --from-json <file> [--json]   (assess a pre-fetched playlist offline)")
-	fmt.Fprintln(os.Stderr, "       becky-scout --catalog                     (show what scout looks for)")
+	fmt.Fprintln(os.Stderr, "usage: becky-scout <playlist-url-or-id> [--deep] [--new-only --state <file>] [--propose [--build]] [--json]")
+	fmt.Fprintln(os.Stderr, "       becky-scout --from-json <file> [--propose] [--json]   (assess a pre-fetched playlist offline)")
+	fmt.Fprintln(os.Stderr, "       becky-scout --catalog                                 (show what scout looks for)")
 	fmt.Fprintln(os.Stderr, "  assess a YouTube playlist for things that could improve/extend becky — or just be useful to you.")
 	fmt.Fprintln(os.Stderr, "  live fetch needs yt-dlp on PATH (pip install yt-dlp); --deep adds per-video descriptions/tags.")
+	fmt.Fprintln(os.Stderr, "  --propose: Qwen pitches tools, Gemma-4 must agree; approved ones become becky-new-tool intakes")
+	fmt.Fprintln(os.Stderr, "  (--build also runs the factory). Needs the local models; degrades to a note without them.")
 }
 
 // printReport writes a plain-language report for a non-developer.
