@@ -124,6 +124,42 @@ this exact folder; the NLE wires them to a real editor.)
 
 ---
 
+## 3.5 The AI engine — embedded llama is the workhorse; Claude is the escalation tier
+
+Video editing is **iterative + multi-step**, so the agent must act → see the result → decide
+the next step (a *feedback loop*), and it must be FAST in the common case. becky's cost-tiered
+router (SPEC-BECKY-CLIP §8) is exactly that; the NLE makes three things explicit (Jordan's
+point — and yes, the llama-embed + PTY belong here, not just in the DAW):
+
+- **Native llama.cpp embedding IS the inner-loop workhorse.** The local-model tier is an
+  **in-process `libllama` (llama.cpp `.dll`) call via cgo** — NOT a per-step `claude`
+  invocation. It loads ONE 4B-class GGUF into VRAM once and answers NL→action / cheap yes-no
+  in well under a second with immediate token streaming. This runs the *bulk* of the
+  iterative editing ("trim that to 8s", "add the next quote", "ripple-delete clip 3",
+  "tighten the gaps"). **Honest note — the speed win is REAL here**, the opposite of the
+  DAW's llama caveat: here we're comparing an in-process 4B (sub-second) against invoking
+  `claude` per step (seconds → tens of seconds), so the `.dll` genuinely "does a lot of it
+  much quicker," exactly as Jordan said. (The DAW caveat was about a *warm HTTP server* vs
+  in-process — a few ms either way; that's a different comparison.)
+- **The multi-step loop = the shared `internal/ctlagent`** (the same package the DAW spec
+  builds — build it once, both apps use it): call an action → read back the updated
+  timeline/selection state → decide the next action → repeat until the goal is met, previewing
+  before applying. Powered by the embedded llama in the common case; this IS the "feedback for
+  multi-step tasks" requirement.
+- **Claude (the PTY panel / `claude` CLI) is the ESCALATION tier, not the per-step driver.**
+  Reserved for the genuinely hard reasoning a 4B can't do (e.g. *"find every time he
+  contradicts an earlier statement and assemble them chronologically"*) and for advanced /
+  testing tasks with full app context. Triple-gated (classified-hard AND online AND
+  in-budget); degrades to the embedded llama when unavailable. **The fast iterative loop never
+  waits on Claude.**
+
+Tier ladder: deterministic verbs (instant) → **embedded llama** (fast, in-process, most
+multi-step work) → **Claude** (escalation only). Implementation: extend `internal/llmlocal` so
+its local tier can use an **in-process libllama binding** (cgo) in addition to today's
+llama-server HTTP transport; `internal/ctlagent` sits above it. Both are shared with the DAW.
+
+---
+
 ## 4. Extensibility — runtime tools/workflows WITHOUT recompiling (Jordan's question)
 
 **Short answer: YES — and that's the whole point of the Becky layer.** Recompiling the
@@ -136,12 +172,14 @@ four ways:
    `.exe` into the bin → the agent can call it immediately. **No host recompile** — a new
    becky tool is a new capability the moment it builds. This is becky's existing pattern
    (`build-all-tools.bat` auto-discovers `cmd/*`).
-2. **An embedded PTY / agent panel (Jordan's idea).** A terminal dock running `claude`
-   (Claude Code) with **full app context** — the bridge writes the live session state
-   (open folder, timeline, selection) to a file/socket the in-terminal agent reads, and the
-   agent drives the NLE through the SAME action schema (§4). New *workflows* = new prompts /
-   becky skills, authored and run live, **no recompile**. (This is what ACE-Step-DAW
-   attempted poorly; we do it cleanly via the documented command bus.)
+2. **An embedded PTY / agent panel (Jordan's idea) — the ESCALATION surface.** A terminal
+   dock running `claude` (Claude Code) with **full app context** — the bridge writes the live
+   session state (open folder, timeline, selection) to a file/socket the in-terminal agent
+   reads, and the agent drives the NLE through the SAME action schema (§4). New *workflows* =
+   new prompts / becky skills, authored and run live, **no recompile**. (This is what
+   ACE-Step-DAW attempted poorly; we do it cleanly via the documented command bus.) **It is
+   NOT the per-step driver** — the fast iterative loop runs on the embedded llama (§3.5); the
+   PTY/Claude is for the hard/advanced/testing tasks where the extra latency is worth it.
 3. **Saved workflow macros.** A workflow is just a named JSON list of action-schema verbs
    (`search → find_quotes → add_clip×N → set_overlay → export`). Jordan (or the agent) saves
    one; replays it on any folder. Data, not code → **no recompile**.
