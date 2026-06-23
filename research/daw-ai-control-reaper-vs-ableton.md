@@ -190,6 +190,13 @@ old scripts; Live 12's Python 3.11 broke tooling). That's a recurring maintenanc
     interrupt-while-speaking, sub-second turn-taking is the realtime model's special sauce and is the hard
     part to replicate locally. Use local for offline/private sessions; reach for the API when he wants the
     seamless "how computers should work" feel.
+  - **Transport/plumbing = FastRTC (`github.com/gradio-app/fastrtc`, maintained, v0.0.34 Nov 2025).**
+    "Turn any Python function into a real-time audio/video stream over WebRTC/WebSockets," with **built-in
+    VAD + automatic turn-taking (barge-in)** and demonstrated integrations with **Gemini, OpenAI Realtime,
+    and Claude**. It fits becky's existing Python `pyhelpers` layer and is **brain-swappable on one
+    transport**: FastRTC → Gemini Live (cloud duplex) **or** FastRTC → local Gemma-4 QAT + NeuTTS (offline).
+    This de-risks the "duplex is hard locally" caveat above — FastRTC supplies the VAD/turn-taking either
+    way; only the realtime model's native-audio quality differs.
 
 **Implication for becky:** the take-cleanup engineer (REAPER) and the jam (Strudel) are *separate lanes*, but
 they **share one front-end** — a realtime multimodal model as the always-listening, interruptible voice. For
