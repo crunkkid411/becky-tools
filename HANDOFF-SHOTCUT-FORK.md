@@ -5,6 +5,46 @@
 > finish the build to completion, and if context fills, hand off here and continue in a new loop.
 > This doc is the resumable state: check the boxes, read the live log at the bottom, continue.
 
+## ✅ SESSION 2 (2026-06-23) — ALL reported bugs FIXED + verified on the real GUI
+
+The local agent drove Jordan's actual mouse/keyboard (PowerShell Win32 `SetCursorPos`/
+`mouse_event` + screen-capture, scripts in scratchpad) to reproduce + verify every fix on
+the running window. **Answer to Jordan's question: this runs on NATIVE WINDOWS** — MSYS2/
+MINGW64 produces a native `shotcut.exe`; WSL2 is NOT involved.
+
+**Root cause of "error saving a new project" AND "preview/add failed" was the SAME thing:
+Shotcut found ZERO MLT plugins.** Shotcut resolves its MLT repository from the exe location
+(`build/lib/mlt`), IGNORING `MLT_REPOSITORY` (it calls `Mlt::Factory::init()` with NULL).
+That dir was empty → no producers/consumers → saving a project failed ("There was an error
+saving."), and opening/previewing a clip did nothing. The HANDOFF's "preview wired" only
+proved the command *flowed*, never that media played.
+
+What was fixed (all verified by screenshot on a real case folder):
+1. **MLT plugins deployed** → new project now SAVES; preview now PLAYS the clip. `deploy-mlt.sh`
+   (in becky-shotcut) automates copying the MSYS2 modules + data into `build/lib/mlt` + `build/share/mlt`.
+2. **`Qt6Core5Compat.dll` + `libebur128.dll` installed** (`pacman -S mingw-w64-x86_64-qt6-5compat
+   mingw-w64-x86_64-libebur128`) → `libmltqt6` (qtblend) + `libmltplus` load. Without qt6-5compat,
+   libmltqt6 resolved ICU from **kdenlive's incompatible `icuuc78.dll`** on PATH and popped a hard
+   "Entry Point Not Found" dialog; without it loaded, every timeline add popped "could not find the
+   qtblend plugin." Both gone now. (Only `libmltrtaudio.dll` stays removed — unused, missing dep.)
+3. **Add-to-timeline (double-click) rewired** (`beckydock.cpp`): was using `MAIN.open(QString)`
+   (the document-open path → "save your changes?" prompt, clip never landed). Now uses the producer
+   overload `MAIN.open(Mlt::Producer*, bool)` + `timelineDock()->append(-1)` (auto-creates the track).
+   **Verified: the clip lands on a "V1" track, no prompts.** Preview uses the same producer path.
+4. **Dock layout**: was a squished sliver. Gave it a minimum size (usable even under Jordan's restored
+   layout) + tabified with the Playlist. For the full new default, do **View > Layout > Restore Default
+   Layout** once.
+
+**Rebuilt `shotcut.exe` (commit becky-shotcut acffd2b). Launch = `Open Becky Edit.bat` (unchanged).**
+
+**Left for the NEXT increment (NOT blocking — the core forensic loop works):** wire the remaining
+HostCommands that still log "(pending host wiring)" — `timeline.move/trim/split/remove`, `filter.*`,
+`track.mute/gain`, `overlay.set`, `render.export`, `player.grab_frame`, `vision.*`. The seam + the
+deterministic Go side for all of these is already proven; only the Shotcut-side call mapping remains
+(table below). Also: run the AI **Ask** agent against the real warm Gemma (download + warm it).
+
+---
+
 ## ✅ BUILD COMPLETE (2026-06-23) — the forked Shotcut with the Becky dock RUNS
 
 `shotcut.exe` (becky-shotcut commit `487f41b`) is built and was launched on the PC: the window

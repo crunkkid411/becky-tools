@@ -515,6 +515,24 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean; `build-all-tools.ba
   GPU enroll run). Deterministic cores are built + unit-test-green; what remains is the model boundary
   named in each spec's §8.
 
+### This session (2026-06-23, local GUI) — becky-edit Shotcut fork: ALL reported bugs FIXED + verified
+
+Detail in `HANDOFF-LOG.md` (top) + `HANDOFF-SHOTCUT-FORK.md` (session 2). The local agent drove
+Jordan's real mouse/keyboard to reproduce + fix every issue from his test:
+- **New-project "error saving" + preview/add failures had ONE root cause:** Shotcut found ZERO MLT
+  plugins (it resolves its repository from the exe dir, not `MLT_REPOSITORY`). Fixed by deploying the
+  MSYS2 MLT modules into `build/lib/mlt` (+`deploy-mlt.sh`). New project SAVES, preview PLAYS — verified.
+- **qtblend / "Entry Point Not Found" dialogs:** `libmltqt6` needed `Qt6Core5Compat.dll` (else it pulled
+  kdenlive's incompatible `icuuc78.dll`). `pacman -S mingw-w64-x86_64-qt6-5compat mingw-w64-x86_64-libebur128`
+  fixed it — all 22 modules load, qtblend works.
+- **Add-to-timeline rewired** (`beckydock.cpp`): producer-based `MAIN.open(Mlt::Producer*)` instead of the
+  document-open `MAIN.open(QString)` (which prompted + dropped the clip). **Clip now lands on a V1 track.**
+- **Dock layout:** min-size + tabified with Playlist (was a sliver). Use *View > Layout > Restore Default
+  Layout* for the full new default.
+- Rebuilt `shotcut.exe` (becky-shotcut master `acffd2b`, local — origin is upstream, not pushed). Native
+  Windows (MSYS2/MINGW64), NOT WSL2. **Next increment:** wire the remaining "(pending)" HostCommands
+  (trim/split/move/filter/render) — Go side proven, only the Shotcut call-mapping remains.
+
 ### This session (2026-06-23, `claude/becky-edit-gemma4`) — BUILT becky-edit's engine + the Gemma-4 QAT upgrade
 
 Full detail in `HANDOFF-LOG.md` (top entry). In brief:
