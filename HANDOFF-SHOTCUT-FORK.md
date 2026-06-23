@@ -5,6 +5,38 @@
 > finish the build to completion, and if context fills, hand off here and continue in a new loop.
 > This doc is the resumable state: check the boxes, read the live log at the bottom, continue.
 
+## ✅ BUILD COMPLETE (2026-06-23) — the forked Shotcut with the Becky dock RUNS
+
+`shotcut.exe` (becky-shotcut commit `487f41b`) is built and was launched on the PC: the window
+opens ("Untitled - Automatic - Shotcut"), the **Becky dock** is compiled in + visible, and it
+**spawns the becky-edit Go bridge** (both `shotcut.exe` + `becky-edit.exe` confirmed running — the
+dock's QProcess found the bridge and connected). Full stack live: forked Shotcut → BeckyDock (C++)
+→ becky-edit (shared state + Gemma agent + tools).
+
+**The recipe that worked (no multi-hour from-source build needed):**
+1. MSYS2 deps via a **clean interactive terminal** (the `-Syu` deadlocks non-interactively): drove a
+   real `msys2_shell.cmd -mingw64` via keyboard automation → `pacman -Syuu --noconfirm --overwrite "*"`
+   (full system upgrade, gcc 15→16) → then the Qt6 + codec stack (`tmp/install-qt6.sh`).
+2. **KEY SHORTCUT:** `pacman -S mingw-w64-x86_64-mlt mingw-w64-x86_64-frei0r-plugins` — MSYS2 ships
+   **MLT 7.36.1**, which satisfies Shotcut master's `mlt++-7 >= 7.36.0`. This skips building
+   FFmpeg/MLT/OpenCV from source entirely. Build is then just Shotcut itself.
+3. `cd build && cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DSHOTCUT_VERSION=26.06.23 .. && ninja`
+   → `build/src/shotcut.exe` (configured cleanly; only optional ClangFormat missing).
+4. Runtime: `cp build/CuteLogger/libCuteLogger.dll build/src/`; put the qml under
+   `build/src/share/shotcut/qml` (copy of `src/qml`); set `MLT_REPOSITORY=/mingw64/lib/mlt`
+   `MLT_DATA=/mingw64/share/mlt`.
+
+**Relaunch (in a MINGW64 shell):**
+```bash
+cd /x/AI-2/becky-shotcut/build/src && MLT_REPOSITORY=/mingw64/lib/mlt MLT_DATA=/mingw64/share/mlt ./shotcut.exe
+```
+The dock resolves the bridge at `X:/AI-2/becky-tools/becky-go/becky-edit.exe` automatically.
+
+**What's wired now:** single-click a quote = preview (`player.open_seek_play`), double-click = add to
+timeline (`timeline.append`), plus folder open / transcript search / the AI agent (propose-preview-
+apply). Remaining host commands (filter.*/track.*/move/trim/split/render) log "(pending host wiring)"
+and are the incremental next layer — the seam is proven end to end.
+
 ## Goal
 Make `becky-edit` real on the desktop: build **Shotcut** (Qt6/QML/MLT) on this Windows PC, fork in
 a **Becky dock** that talks to the already-built `cmd/becky-edit` Go bridge over a local socket, and
