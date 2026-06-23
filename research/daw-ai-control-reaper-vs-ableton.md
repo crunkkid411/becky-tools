@@ -137,13 +137,24 @@ old scripts; Live 12's Python 3.11 broke tooling). That's a recurring maintenanc
   trim/fade, re-run the onset analysis on the edited item and assert residual head/tail silence ≤ tolerance
   (a few ms); nudge if off. No model needed for the check — it's a deterministic closed loop.
 
-### 4. The Toaster/Strudel "talk to it while jamming" model — clarified, and it points at Strudel, not a DAW *(high confidence — repo checked directly)*
+### 4. The Toaster/Strudel "talk to it while jamming" model — real, voice-driven, and built on Strudel *(corrected 2026-06-23 per Jordan; partly unverified — see caveat)*
 
-- **Correction:** "Toaster" (`github.com/vanities/toaster-strudel`) is **not voice-controlled.** It's
-  **Claude Code agents editing live-coding `.strudel` files**, with the browser player polling files
-  (~700–900 ms) and **crossfading at the next cycle boundary** so edits don't interrupt. The "conversational"
-  surface is a *text* agent, not spoken. A genuinely voice-driven jam tool is an **under-served niche** — no
-  mature product owns it (only hobby writeups).
+- **The project Jordan meant is `github.com/VoloBuilds/toaster`** (Volo's YouTube build "I Built an AI
+  That Codes Music," 28 Feb 2026), demoed as **a voice-controlled instrument that turns speech into
+  live-coded music — "jam with your computer just by talking to it."** So the "talk to it like a producer
+  while you play" loop is **real and has been built — on Strudel.** This *strengthens* the doc's
+  conclusion: the cleanest surface for conversational/voice live control is a live-coding engine, and
+  someone has now shipped a demo proving it.
+  - **Caveat (don't overstate):** the *public* `VoloBuilds/toaster` repo, as documented in its README, is
+    a **text-prompt → LLM → Strudel** codegen app (React 18 / TypeScript / Vite front-end, Cloudflare
+    Workers + Hono back-end, pluggable LLM provider). The **spoken/STT layer is shown in the video but is
+    not in the README**, and YouTube blocked the fetch — so the exact STT engine and real-time loop are
+    **unverified**. Treat "voice" as confirmed-by-demo, architecture-unconfirmed.
+  - **Correction of an earlier error in this doc:** the first research pass found a *different* repo,
+    `github.com/vanities/toaster-strudel` (Claude-Code agents editing `.strudel` files, file-watch +
+    cycle-boundary crossfade reload — text/agent-driven, not voice) and wrongly concluded "Toaster isn't
+    voice." Two different "Toaster" projects exist; **VoloBuilds/toaster is the voice one.** Spoken
+    live-jam control is still a thin/under-served niche overall, but it is no longer "nobody built it."
 - **Strudel** (strudel.cc, JS port of TidalCycles) is the cleanest programmatic surface for conversational
   live control: push a code string → `setCode()`/`evaluate()` → it's audible next cycle; and it's
   **embeddable** (`@strudel/repl`/`@strudel/embed` web components, or as a library) — so it could live
@@ -196,9 +207,11 @@ there. becky drives REAPER; Cubase stays whatever he wants it to be.)
 ## Confidence + flags
 
 - **High:** Ableton's no-fade/no-waveform gap (3 independent sources); REAPER's read/write incl. audio
-  accessor + fade shape/curve (SDK header); Cubase controller-only (Steinberg docs); Toaster is text/agent
-  not voice (repo read directly).
+  accessor + fade shape/curve (SDK header); Cubase controller-only (Steinberg docs).
 - **Medium-high:** DAWZY architecture (single arXiv source; corroborates the loop but not habit-learning).
+- **Confirmed-by-demo, architecture-unconfirmed:** `VoloBuilds/toaster` is voice-driven (Volo's YouTube
+  demo); the STT engine + real-time loop are not documented in its public README and YouTube blocked the
+  fetch. (The earlier doc claim "Toaster isn't voice" was wrong — it cited the wrong repo.)
 - **Verify in-app:** the 1–6 fade-shape numeric→label mapping (header gives range + `0=linear` only);
   AbletonOSC clip-level "recording stopped" listener may need a tiny Remote-Script fork; REAPER/OSC exact
   latency (only "low-latency UDP" is established — don't quote a number).
@@ -215,6 +228,8 @@ there. becky drives REAPER; Cubase stays whatever he wants it to be.)
 - Cubase: `steinbergmedia.github.io/midiremote_api_doc/`, `steinberg.help` MIDI Remote API.
 - Habit-learning / verify loop: DAWZY arXiv 2512.03289; `librosa.effects.trim`/`split`; Silero VAD;
   iZotope/sonible assistant docs; PBD arXiv 1909.00031.
-- Toaster/Strudel/Gurvich: `github.com/vanities/toaster-strudel`, `strudel.cc` + technical manual,
-  `npmjs.com/package/@strudel/repl`, `stanleygurvich.com`, `github.com/uisato/ableton-mcp-extended`,
-  `suno.com/blog/suno-acquires-wavtool`.
+- Toaster/Strudel/Gurvich: **`github.com/VoloBuilds/toaster`** (the voice one) + Volo's YouTube
+  "I Built an AI That Codes Music" (`youtube.com/watch?v=hLDEElYO6M0`, 28 Feb 2026, voice demo);
+  `github.com/vanities/toaster-strudel` (the *other*, text/agent one — not what Jordan meant);
+  `strudel.cc` + technical manual, `npmjs.com/package/@strudel/repl`, `stanleygurvich.com`,
+  `github.com/uisato/ableton-mcp-extended`, `suno.com/blog/suno-acquires-wavtool`.
