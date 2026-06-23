@@ -415,6 +415,15 @@ load-bearing rules, in brief:
     colored TUI (TUI stays the default — do not demote it).
   - `SPEC-FACE-NAMING-LOOP.md` — `becky-cluster → becky-name` (high-contrast review card) →
     enroll the cluster, + inline "teach me" remedy in identify's unnamed output.
+  - `SPEC-BECKY-VOICE.md` (cloud, 2026-06-23, design-only) — **the always-on, proactive VOICE +
+    context front-end for the WHOLE suite** ("I just talk and it does it"): a thin realtime skin
+    (FastRTC transport + Gemini-Live cloud OR Gemma-4+NeuTTS local) + a **rules/harness layer**
+    (GREEN/YELLOW/RED action tiers, kill switch, privacy-local-for-sensitive, **visible context
+    tray — never a silent attach**, customizable `becky-voice.rules.json`) over the EXISTING
+    front-doors (`becky`/`becky-ask`/`becky-harness`/REAPER bridge/Strudel) — reimplements NO tool
+    (single-tool principle preserved). Reactive ("talk") half is near-done; PROACTIVE watcher
+    (Highlight-style, fixed: transparent + customizable) is the real new work. whoretana-specific
+    verbs are explicitly the LOCAL agent's lane. Pairs with `research/daw-ai-control-reaper-vs-ableton.md`.
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
