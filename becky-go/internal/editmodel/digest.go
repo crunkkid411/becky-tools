@@ -2,10 +2,10 @@ package editmodel
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"becky-go/internal/edl"
+	"becky-go/internal/pathx"
 )
 
 // Digest renders the COMPACT, model-facing view of the project: the state the
@@ -53,7 +53,7 @@ func (p *Project) Digest() string {
 		fmt.Fprintf(&b, "track %d %s (%s)%s:\n", t.Index, t.Name, t.Kind, mute)
 		for _, c := range t.Clips {
 			fmt.Fprintf(&b, "  %s  %s [%.1f-%.1f] pos=%.1f dur=%.1f",
-				c.ID, filepath.Base(c.Source), c.In, c.Out, c.Pos, c.Dur())
+				c.ID, pathx.Base(c.Source), c.In, c.Out, c.Pos, c.Dur())
 			if c.Label != "" {
 				fmt.Fprintf(&b, " %q", truncate(c.Label, 50))
 			}
