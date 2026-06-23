@@ -173,6 +173,14 @@ flashes shut with no visible error. This silently broke both `Build Becky Clip.b
 cloud-written `Build Becky Drum.bat` (fixed 2026-06-18). Before shipping a launcher, parse-check
 it under 5.1: `powershell -Command "$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('x.ps1',[ref]$null,[ref]$e);$e"`.
 
+**MSYS2 native builds on THIS PC (the Shotcut fork, 2026-06-23):** `pacman -Syu` DEADLOCKS when run
+non-interactively/in the background (hangs for hours on the in-use `msys2-runtime` DLL swap; killing
+it corrupts the local DB). What WORKED: drive a REAL `C:\msys64\msys2_shell.cmd -mingw64` window via
+keyboard automation (PowerShell `WScript.Shell` `AppActivate('MINGW64')` + `SendKeys`) and type
+`pacman -Syuu --noconfirm --overwrite "*"` into it — interactive completes in minutes. And MSYS2's
+`mingw-w64-x86_64-mlt 7.36.1` package satisfies Shotcut's `mlt++-7>=7.36.0`, so you can SKIP the
+multi-hour FFmpeg/MLT/OpenCV from-source build and just `cmake+ninja` Shotcut. (Full saga: `HANDOFF-LOG.md`.)
+
 ---
 
 ## 4. Cloud ↔ Local handoff protocol

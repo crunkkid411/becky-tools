@@ -10,6 +10,16 @@
 
 ---
 
+**Session 2026-06-23 (local) — BUILT THE FORKED SHOTCUT (the becky-edit host) ON THE PC. It runs: window opens, the Becky dock is compiled in + visible, and it spawns the becky-edit Go bridge. Desktop shortcut "Becky Edit" created.**
+
+Jordan's directive: "you are the local model — download the models, perform the actual fork, finish the build to completion." Did exactly that.
+
+- **Gemma QAT models downloaded** (`scripts/get-gemma4-qat.ps1`): `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` (4.2 GB) + `mmproj-BF16.gguf`. The AVLM upgrade is now LIVE (config resolves QAT-first on disk, not just in theory).
+- **Forked Shotcut + added the Becky dock** (separate repo `X:\AI-2\becky-shotcut`, commit `487f41b`): `src/docks/beckydock.{h,cpp}` (the dock + the QProcess bridge to becky-edit + the HostCommand->Shotcut-call sink), `src/qml/becky/BeckyDock.qml` (folder open / quote search / agent / propose-preview), `src/CMakeLists.txt` + `src/mainwindow.cpp` (registered in `setupAndConnectDocks`). Single-click a quote = preview (`MAIN.open`->`Player::setIn/setOut/seek/play`); double-click = `TimelineDock::append`.
+- **The MSYS2 build saga (THE machine-specific lesson — see CLAUDE.md §3):** `pacman -Syu` **deadlocks non-interactively on this PC** — it hung for 8.6 HOURS on the in-use `msys2-runtime` DLL swap, and force-killing it twice corrupted the local DB (repaired both times via move-broken-dir-out-of-`local/` + `pacman -U` from cache). **The fix that worked in 15 min:** drive a REAL `msys2_shell.cmd -mingw64` terminal via keyboard automation (PowerShell `WScript.Shell.AppActivate`+`SendKeys`) and type `pacman -Syuu --noconfirm --overwrite "*"` into it — interactive completes cleanly (gcc 15->16). Then the Qt6 stack.
+- **THE BUILD SHORTCUT:** MSYS2 ships `mingw-w64-x86_64-mlt 7.36.1`, which satisfies Shotcut master's `mlt++-7 >= 7.36.0` — so `pacman -S mingw-w64-x86_64-mlt frei0r-plugins` **skips building FFmpeg/MLT/OpenCV from source entirely** (hours saved). Then just `cmake -G Ninja && ninja` -> `build/src/shotcut.exe` in ~15 min. Fixed 2 missing includes in beckydock.cpp (`QQmlContext`, `mltcontroller.h`), rebuilt green.
+- **Verified live:** launched it; `strings` proves the dock is linked; `shotcut.exe` + `becky-edit.exe` both running (the dock spawned the bridge). One-click **`Open Becky Edit.bat`** + Desktop "Becky Edit" shortcut (sets the MinGW64 PATH + MLT env so it opens with no terminal). **LEFT:** exercise the dock UI on real footage; finish the host commands that currently log "(pending host wiring)" (filter/track/move/trim/split/render). Full recipe + relaunch in `HANDOFF-SHOTCUT-FORK.md`.
+
 **Session 2026-06-23 (local, `claude/becky-edit-gemma4`) — BUILT the becky-edit (NLE) engine layer + the Gemma-4 QAT upgrade. Two research subagents (Shotcut API, video-db/Director). All gates green; `becky-edit --selftest` proves it offline; `.exe` runs.**
 
 Jordan's ask: implement the `research/gemma4-qat-upgrade.md` upgrade (QAT E4B default + 12B alternate) AND build out `SPEC-BECKY-NLE.md` as **becky-edit**, with the embedded Gemma sharing live state with the program and calling deterministic tools.
