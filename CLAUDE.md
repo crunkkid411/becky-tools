@@ -335,6 +335,12 @@ load-bearing rules, in brief:
   starred-repo mining + reference apps (infinite-kanvas, ACE-Step-DAW, DAW-Copilot,
   cate, jsoncrack, blocksuite, the "show me, don't do it" overlay). Read before any
   becky-canvas GUI/agent-UX work — the research is done, don't redo it.
+- `BECKY-CANVAS-ROADMAP.md` — **THE ratified post-pivot plan (2026-06-22): build the real
+  DAW INSIDE becky-canvas (Go+Gio).** REAPER/kdenlive *driving* is PAUSED (code kept dormant,
+  not deleted); **OpenDaw is the MODEL to PORT natively, not fork** (it's GPL3 Qt/C++). Carries
+  the Phase 0 architecture fix (replace spawn-per-click with a persistent in-process engine — the
+  lag/console-flash root cause) + the phased plan (drum fundamentals → one timeline widget →
+  agentic AI control → mixer/FX), each grounded in `research/`. Read it WITH CANVAS-NORTH-STAR.
 - `CANVAS-NORTH-STAR.md` — **THE pinned direction + Definition-of-Done for becky-canvas
   (read FIRST before any canvas/DAW/drum/piano/mixer/audio work).** Settles the
   re-litigated question once: becky-canvas (native Go+Gio) is the tool Jordan opens;
