@@ -116,8 +116,38 @@ download. Watch: `ls /c/msys64/mingw64/bin/qmake6.exe` (present == done). The in
 4. Launch `shotcut.exe` → View menu → Becky dock → Open a real case folder → single-click a quote
    (preview seeks+plays) → double-click (clip lands on timeline). Then Track C verifications.
 
+## DEPS SAGA + the real blocker (read before touching MSYS2 again)
+
+The MSYS2 build environment on this PC is **behind the rolling repo** and that is the gating issue:
+1. First `pacman -Syu` **deadlocked** on the in-use `msys2-runtime` self-upgrade (classic MSYS2
+   non-interactive hang). Killing it **corrupted the pacman local DB** (missing `desc` for
+   `msys2-runtime-3.6.9-2` + `xz-5.8.1-1`).
+2. **DB REPAIRED** (Jordan's MSYS2 is healthy again — `pacman -Q` works, 147 pkgs): moved the two
+   desc-less local-db dirs to `C:\msys64\tmp\pacman-broken-backup\`, then `pacman -U` the cached
+   `.pkg.tar.zst` for both → clean descs written. The runtime is now current (3.6.9-2), so the
+   deadlock cause is GONE.
+3. **Partial-install conflicts** (why a targeted `-S` won't work): (a) `mingw-w64-x86_64-toolchain`
+   conflicts with Jordan's **`-git` crt/headers/winpthreads** variants; (b) current Qt6 needs
+   `gcc-libs 16.1.0` but he has `gcc 15.1.0`. **Conclusion: a full `pacman -Syu` is REQUIRED** (gcc
+   15→16, etc.). That is now running (no deadlock expected since the runtime is current).
+
+**If the full `-Syu` finishes clean → install the Qt6 build stack:** re-run
+`scratchpad/install-deps3.sh` (the list WITHOUT the `toolchain` meta — gcc 15→16 is upgraded by the
+-Syu, so gcc-libs matches). Verify `ls /c/msys64/mingw64/bin/qmake6.exe`.
+**If `-Syu` stalls/half-applies again:** do the documented MSYS2 recovery — close ALL MSYS2/Git-Bash
+processes, open a fresh `C:\msys64\msys2_shell.cmd`, run `pacman -Suu` until it reports nothing to do
+(this is the one step that genuinely needs a clean restart and may want Jordan to run it). Then the
+deps3 install, then the build.
+
+**THEN the build** (multi-hour, from source): `bash scripts/build-shotcut-msys2.sh` builds FFmpeg/
+MLT/OpenCV/Shotcut. To build OUR FORK rather than a fresh upstream clone, after the deps+stock build,
+cmake the fork: see the "NEXT" block above (build dir + `cmake -G Ninja -DCMAKE_PREFIX_PATH=...`).
+
 ## Live log (newest at bottom)
 - 2026-06-23: env surveyed (MSYS2 present, Qt6/cmake/ninja missing); Shotcut clone + Gemma E4B QAT
   download done; MLT prebuilt bundle extracted to $HOME. **Becky dock fork written + committed
-  (becky-shotcut 55febcf).** Deps install (pacman -Syu + Qt6 stack) running. Build is the next step
-  once Qt6 lands — a multi-hour from-source compile (FFmpeg/MLT/OpenCV/Shotcut), continued via loop.
+  (becky-shotcut 55febcf).**
+- 2026-06-23: deps hit the MSYS2 runtime-upgrade deadlock; killing pacman corrupted the local DB;
+  **DB repaired** (see DEPS SAGA). Found the real blocker: MSYS2 is behind the repo (gcc 15 vs 16) +
+  has -git toolchain variants → a **full `pacman -Syu` is required**, now running in the background.
+  The from-source build is the step after that. Continued via the background task / a fresh loop.
