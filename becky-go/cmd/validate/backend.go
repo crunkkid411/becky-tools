@@ -71,7 +71,11 @@ func newBackend(name string) (Backend, error) {
 	}
 }
 
-const gemmaModelName = "gemma-4-E4B-it-Q4_K_M"
+// gemmaModelName is the default AVLM label used by main.go and as a fallback. The
+// two real backends below SHADOW it with the variant actually resolved by
+// cfg.GemmaAVLM() (QAT E4B by default, 12B when BECKY_AVLM_VARIANT=12b), so a
+// report names the model that actually ran.
+const gemmaModelName = "gemma-4-E4B-it-qat"
 
 // ---------------------------------------------------------------------------
 // gemma4-local backend — the real audio-visual path via internal/avlm.
@@ -89,7 +93,8 @@ func (gemma4LocalBackend) Name() string { return "gemma4-local" }
 // never a hard error.
 func (gemma4LocalBackend) Validate(ctx context.Context, cfg config.Config, in validateInput) (validateResult, error) {
 	logf := func(format string, a ...any) { beckyio.Logf(in.Verbose, format, a...) }
-	runner := avlm.New(cfg.GemmaModel, cfg.GemmaMMProj, cfg.LlamaServer, in.ServerURL, cfg.FFmpeg, cfg.FFprobe, logf)
+	model, mmproj, gemmaModelName := cfg.GemmaAVLM() // shadows the const with the active variant's label
+	runner := avlm.New(model, mmproj, cfg.LlamaServer, in.ServerURL, cfg.FFmpeg, cfg.FFprobe, logf)
 
 	if err := runner.Ready(); err != nil {
 		return validateResult{
@@ -192,7 +197,8 @@ func (fusionBackend) Name() string { return "fusion" }
 
 func (fusionBackend) Validate(ctx context.Context, cfg config.Config, in validateInput) (validateResult, error) {
 	logf := func(format string, a ...any) { beckyio.Logf(in.Verbose, format, a...) }
-	runner := avlm.New(cfg.GemmaModel, cfg.GemmaMMProj, cfg.LlamaServer, in.ServerURL, cfg.FFmpeg, cfg.FFprobe, logf)
+	model, mmproj, gemmaModelName := cfg.GemmaAVLM() // shadows the const with the active variant's label
+	runner := avlm.New(model, mmproj, cfg.LlamaServer, in.ServerURL, cfg.FFmpeg, cfg.FFprobe, logf)
 
 	if err := runner.Ready(); err != nil {
 		return validateResult{

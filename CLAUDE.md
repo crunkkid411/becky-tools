@@ -507,6 +507,22 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean; `build-all-tools.ba
   GPU enroll run). Deterministic cores are built + unit-test-green; what remains is the model boundary
   named in each spec's §8.
 
+### This session (2026-06-23, `claude/becky-edit-gemma4`) — BUILT becky-edit's engine + the Gemma-4 QAT upgrade
+
+Full detail in `HANDOFF-LOG.md` (top entry). In brief:
+- **Gemma-4 QAT swap (verified against the live HF cards first):** default AVLM is now the **E4B-it
+  QAT `UD-Q4_K_XL`**, with the **12B-it QAT** as a runtime alternate (`BECKY_AVLM_VARIANT=12b`).
+  `internal/config` resolves QAT-first with a legacy fallback; `scripts/get-gemma4-qat.ps1` pulls the
+  exact GGUFs. Local gate: download + verify VRAM/tok-s on the 3070 (esp. the 12B).
+- **becky-edit (the NLE) — Go ENGINE LAYER BUILT, proven offline.** `internal/editmodel` (shared live
+  state) + `internal/edittools` (deterministic tool allowlist) + `internal/ctlagent` (multi-step agent
+  loop, shared with the DAW) + `cmd/becky-edit` (NDJSON bridge; built-in Gemma-4 QAT; state synced from
+  BOTH the model and human edits). `becky-edit --selftest` is the one-command proof (exit 0; `.exe` runs).
+- **Two research subagents:** `research/shotcut-api.md` (real Shotcut/MLT API + the HostCommand->call map)
+  and `research/director-videodb-mining.md` (validated the agent-loop shape; future ideas -> roadmap).
+- **Gates green** for everything touched (the lone `cmd/tts` test FAIL is pre-existing/environmental).
+- **NEXT (local, host-dependent):** fork Shotcut + the Becky QML dock per `SPEC-BECKY-NLE.md §8`.
+
 ### This session (2026-06-22 → 06-23) — slim + a STRATEGIC PIVOT + two priority specs
 
 - **Slimmed this file:** moved the full §6 history (≈131k chars) to `HANDOFF-LOG.md`; CLAUDE.md is

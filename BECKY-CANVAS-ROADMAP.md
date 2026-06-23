@@ -107,3 +107,27 @@ dawmodel session, ctledit applier (~20 ops), ctlmodel NL→edit, arrange (stem-a
 layering), beatgen (rich step engine), musictheory, pianoroll model, audioengine sampler,
 canvasbridge render adapter, the Gio panels (drum/piano/mixer/audio), the warm TTS server,
 and now `--render-frame`. The work is wiring + UI + the agent loop, not new engines.
+
+**NLE (becky-edit) engine layer BUILT 2026-06-23** — `internal/editmodel` (shared live
+timeline state), `internal/edittools` (the deterministic tool allowlist the model calls),
+`internal/ctlagent` (the multi-step agent loop, shared with the DAW), `cmd/becky-edit` (the
+NDJSON bridge). See `SPEC-BECKY-NLE.md §8`. **`internal/ctlagent` is the agent loop the DAW
+should reuse** instead of building its own.
+
+## Future ideas to fold in later (from the video-db/Director study, 2026-06-23)
+
+From `research/director-videodb-mining.md` — concepts worth stealing once the basics are solid
+(all adapted to local/offline/deterministic; their cloud/SaaS/`exec()` parts are rejected):
+
+- **Multimodal/visual search** — wire `becky-vision`/framematch scene descriptions into the
+  `search` tool so "find the clip with the red car" works (spoken | visual | multimodal index).
+  Highest-value deferred capability for both becky-edit and the DAW's sample search.
+- **Captions-as-a-tool** — named caption style templates + word-level karaoke/reveal timing
+  (their `subtitle` agent's 8 templates), once basic editing is solid.
+- **Nested sub-agent loop** for one genuinely hard op (montage assembly: many trims+orders) —
+  a two-level orchestrator→worker loop, only when the flat `ctlagent` loop proves insufficient.
+- **Parallel tool fan-out** ("try 3 cut points, show side-by-side") — `comparison`-style; low priority.
+- **Deterministic session summary** — a templated "what changed this session" report from the
+  action log (no model). Cheap, high-trust, forensic-friendly.
+- **Gemma-4 12B QAT as the heavier AVLM** (`BECKY_AVLM_VARIANT=12b`, wired 2026-06-23) once the
+  3070 VRAM at becky's real frame count is verified — a tier up on forensic reasoning + audio.

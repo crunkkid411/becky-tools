@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds the external paths and defaults every becky tool depends on.
@@ -30,17 +31,54 @@ type Config struct {
 	// Gemma-4 E4B-it audio-visual model (becky-validate / internal/avlm). The
 	// GGUF + BF16 multimodal projector run on llama.cpp (llama-mtmd-cli /
 	// llama-server). BF16 mmproj is required — other quants corrupt audio.
-	GemmaModel    string `json:"gemma_model"`     // gemma-4-E4B-it Q4_K_M GGUF
-	GemmaMMProj   string `json:"gemma_mmproj"`    // BF16 multimodal projector GGUF (vision + audio)
-	LlamaMtmdCLI  string `json:"llama_mtmd_cli"`  // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
-	LlamaServer   string `json:"llama_server"`    // llama-server.exe (becky-validate spawns/reuses this for multimodal inference)
-	Web2mdPython  string `json:"web2md_python"`   // interpreter with trafilatura/markdownify/bs4/pyyaml/lxml
-	FacePython    string `json:"face_python"`     // interpreter with insightface + onnxruntime + cv2
-	FacePyLib     string `json:"face_pylib"`      // extra site-packages dir put on PYTHONPATH for face deps
-	FaceModelRoot string `json:"face_model_root"` // insightface root (holds models/<name>/)
-	FaceModelName string `json:"face_model_name"` // insightface model pack, e.g. buffalo_l
-	Codec         string `json:"codec"`           // h264_nvenc (never libx264)
-	Device        string `json:"device"`          // cpu or cuda
+	GemmaModel     string `json:"gemma_model"`      // DEFAULT AVLM: Gemma-4 E4B-it QAT GGUF (Unsloth UD-Q4_K_XL)
+	GemmaMMProj    string `json:"gemma_mmproj"`     // BF16 multimodal projector GGUF (vision + audio)
+	GemmaModel12B  string `json:"gemma_model_12b"`  // ALTERNATE AVLM: Gemma-4 12B-it QAT GGUF (select via BECKY_AVLM_VARIANT=12b)
+	GemmaMMProj12B string `json:"gemma_mmproj_12b"` // BF16 multimodal projector GGUF for the 12B model
+	LlamaMtmdCLI   string `json:"llama_mtmd_cli"`   // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
+	LlamaServer    string `json:"llama_server"`     // llama-server.exe (becky-validate spawns/reuses this for multimodal inference)
+	Web2mdPython   string `json:"web2md_python"`    // interpreter with trafilatura/markdownify/bs4/pyyaml/lxml
+	FacePython     string `json:"face_python"`      // interpreter with insightface + onnxruntime + cv2
+	FacePyLib      string `json:"face_pylib"`       // extra site-packages dir put on PYTHONPATH for face deps
+	FaceModelRoot  string `json:"face_model_root"`  // insightface root (holds models/<name>/)
+	FaceModelName  string `json:"face_model_name"`  // insightface model pack, e.g. buffalo_l
+	Codec          string `json:"codec"`            // h264_nvenc (never libx264)
+	Device         string `json:"device"`           // cpu or cuda
+}
+
+// GemmaAVLM resolves the ACTIVE audio-visual model (GGUF path, BF16 mmproj path,
+// display label) for becky-validate / becky-edit. The default is the QAT E4B
+// model; setting BECKY_AVLM_VARIANT=12b selects the larger 12B QAT model WHEN its
+// file is present (otherwise it stays on E4B — degrade, never crash). This is the
+// "default E4B, selectable 12B alternate" switch from research/gemma4-qat-upgrade.md.
+func (c Config) GemmaAVLM() (model, mmproj, label string) {
+	if strings.EqualFold(os.Getenv("BECKY_AVLM_VARIANT"), "12b") && fileExists(c.GemmaModel12B) {
+		mp := c.GemmaMMProj12B
+		if mp == "" {
+			mp = c.GemmaMMProj
+		}
+		return c.GemmaModel12B, mp, gemmaLabel(c.GemmaModel12B)
+	}
+	return c.GemmaModel, c.GemmaMMProj, gemmaLabel(c.GemmaModel)
+}
+
+// gemmaLabel derives a short, honest display label from a GGUF filename so a
+// report names the model that actually ran (QAT vs legacy, E4B vs 12B).
+func gemmaLabel(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return "gemma-4"
+	}
+	base := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.Contains(base, "12b") && strings.Contains(base, "qat"):
+		return "gemma-4-12B-it-qat"
+	case strings.Contains(base, "12b"):
+		return "gemma-4-12B-it"
+	case strings.Contains(base, "qat"):
+		return "gemma-4-E4B-it-qat"
+	default:
+		return "gemma-4-E4B-it"
+	}
 }
 
 // Path returns the location of the shared config file.
@@ -102,13 +140,25 @@ func defaults() Config {
 			`X:\AI-2\becky-tools\models\embeddings\gguf\Qwen3-Embedding-4B-Q5_K_M.gguf`,
 		),
 		EmbedModel: "qwen3-4b",
-		// Gemma-4 E4B-it audio-visual model + BF16 projector for becky-validate.
-		// Downloaded to models/gemma4/. llama-mtmd-cli / llama-server come from the
-		// shared C:\llama.cpp build (also used by the embedding server).
+		// Gemma-4 audio-visual model + BF16 projector for becky-validate / becky-edit.
+		// DEFAULT is the QAT (quantization-aware-trained) E4B GGUF — near-bf16 quality
+		// at 4-bit memory, the Unsloth UD-Q4_K_XL build a naïve q4_0 would throw away
+		// (research/gemma4-qat-upgrade.md). Falls back to the legacy non-QAT E4B GGUF
+		// when the QAT file isn't downloaded yet, so there is no regression. The 12B
+		// QAT is the selectable alternate (BECKY_AVLM_VARIANT=12b). Downloaded to
+		// models/gemma4/ by scripts/get-gemma4-qat.ps1. BF16 mmproj is mandatory.
 		GemmaModel: firstExisting(
+			`X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`,
 			`X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-Q4_K_M.gguf`,
 		),
 		GemmaMMProj: firstExisting(
+			`X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf`,
+		),
+		GemmaModel12B: firstExisting(
+			`X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf`,
+		),
+		GemmaMMProj12B: firstExisting(
+			`X:\AI-2\becky-tools\models\gemma4\mmproj-12B-BF16.gguf`,
 			`X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf`,
 		),
 		LlamaMtmdCLI: resolve("llama-mtmd-cli", `C:\llama.cpp\build\bin\llama-mtmd-cli.exe`),
@@ -241,6 +291,12 @@ func merge(base, over Config) Config {
 	}
 	if over.GemmaMMProj != "" {
 		base.GemmaMMProj = over.GemmaMMProj
+	}
+	if over.GemmaModel12B != "" {
+		base.GemmaModel12B = over.GemmaModel12B
+	}
+	if over.GemmaMMProj12B != "" {
+		base.GemmaMMProj12B = over.GemmaMMProj12B
 	}
 	if over.LlamaMtmdCLI != "" {
 		base.LlamaMtmdCLI = over.LlamaMtmdCLI

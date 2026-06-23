@@ -59,16 +59,31 @@
     },
     {
       "id": "gemma-4-e4b",
-      "name": "Gemma-4 E4B-it audio-visual",
+      "name": "Gemma-4 E4B-it audio-visual (QAT)",
       "used_by": [
-        "becky-validate"
+        "becky-validate",
+        "becky-edit"
       ],
-      "pinned": "E4B-it Q4_K_M + BF16 mmproj",
+      "pinned": "E4B-it QAT UD-Q4_K_XL + BF16 mmproj (DEFAULT AVLM)",
       "upstream": {
         "type": "hf-model",
-        "ref": "google/gemma-3n-E4B-it"
+        "ref": "unsloth/gemma-4-E4B-it-qat-GGUF"
       },
-      "note": "Multimodal (vision+audio) via llama.cpp. BF16 mmproj is mandatory."
+      "note": "Multimodal (vision+audio) via llama.cpp. DEFAULT AVLM as of 2026-06-23: the quantization-aware-trained E4B GGUF (Unsloth UD-Q4_K_XL recovers QAT quality a naive q4_0 throws away). Falls back to the legacy non-QAT E4B if the QAT file isn't downloaded. BF16 mmproj is mandatory. Download via scripts/get-gemma4-qat.ps1. See research/gemma4-qat-upgrade.md."
+    },
+    {
+      "id": "gemma-4-12b",
+      "name": "Gemma-4 12B-it audio-visual (QAT, alternate)",
+      "used_by": [
+        "becky-validate",
+        "becky-edit"
+      ],
+      "pinned": "12B-it QAT UD-Q4_K_XL + BF16 mmproj (ALTERNATE; BECKY_AVLM_VARIANT=12b)",
+      "upstream": {
+        "type": "hf-model",
+        "ref": "unsloth/gemma-4-12B-it-qat-GGUF"
+      },
+      "note": "Optional larger AVLM, a tier up on forensic reasoning + audio. QAT lets the 12B fit the 8 GB RTX 3070 (~7 GB) but the KV cache at full context is the local VRAM gate Jordan must verify. Selected at runtime by BECKY_AVLM_VARIANT=12b when its GGUF is present. See research/gemma4-qat-upgrade.md."
     },
     {
       "id": "qwen3-embed-4b",

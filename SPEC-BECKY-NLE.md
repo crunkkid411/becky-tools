@@ -1,11 +1,12 @@
-# SPEC-BECKY-NLE.md — the real video NLE: adopt Shotcut, add a Becky layer
+# SPEC-BECKY-NLE.md — the real video NLE (becky-edit): adopt Shotcut, add a Becky layer
 
-> **STATUS: SPEC (2026-06-23). Design-only — NOT built. To be built FIRST (Jordan's
-> priority: most immediately useful for everyday work).** Grounded in the research:
-> `research/daw-nle-strategy-feasibility.md`, `research/bookmarks-video-nle-crawl.md`,
-> and the becky-clip lessons (`SPEC-BECKY-CLIP.md` §1-9, `BECKY-CLIP-HANDOFF.md`).
-> Pinned direction: **don't build an NLE from scratch — adopt a mature one and add the
-> becky layer.** Reverses the from-scratch instinct that produced a "fancy .jpg."
+> **STATUS: PARTIALLY BUILT (2026-06-23). The whole Go ENGINE LAYER is built, green, and
+> proven offline; the Shotcut FORK + QML dock is the remaining (host-dependent) half.**
+> The tool is named **becky-edit** (Jordan's preference) — `cmd/becky-edit`. Grounded in
+> `research/daw-nle-strategy-feasibility.md`, `research/shotcut-api.md` (the real
+> Shotcut/MLT API, mined this session), `research/director-videodb-mining.md`, and the
+> becky-clip lessons. Pinned direction: **don't build an NLE from scratch — adopt a mature
+> one and add the becky layer.** See **§8** for exactly what is built and what is left.
 
 ---
 
@@ -249,3 +250,61 @@ provably untouched (sha256). Screenshot/clip every claim. `go build/vet/test ./.
 - Not loading the NLE into becky-canvas (separate app, launched on demand — the canvas/DAW is
   a sibling, spec'd in `SPEC-BECKY-DAW.md`).
 - Originals are NEVER written. Export goes to `<case-folder>/render/` only.
+
+---
+
+## 8. BUILT 2026-06-23 — the becky-edit engine layer (Phase 1 done; proven offline)
+
+The entire Go half is built, unit-tested, and proven by a one-command offline self-test.
+The remaining half is the Shotcut C++/Qt fork + the Becky QML dock (the host-dependent
+local build). What the model needs to "share state and call deterministic tools" is DONE.
+
+**Packages built (all pure Go, offline-green, value-asserting tests):**
+- `internal/editmodel` — **THE shared live editor state** (`Project`: tracks → clips with
+  id/source/in/out/pos/label/effects+params, playhead, selection, markers, forensic overlay,
+  monotonic `Rev`). Copy-on-write mutations; a compact `Digest()` is the minimal-but-not-
+  ignorant view fed to the model each turn; `ToReel`/`FromReel` bridge to the existing
+  `edl.Reel` so render reuses `internal/reel`/`internal/kdenlive`. This is Jordan's
+  "timeline structure, clip positions, playhead, effects and params, selection" state.
+- `internal/edittools` — **the deterministic tool layer** the embedded model calls that
+  "actually affect the program": a default-deny allowlist of ~26 verbs across the categories
+  Jordan named — **timeline** (add/remove/move/trim/split/ripple_delete/add_track),
+  **controls** (set_playhead/select_clip/set_marker/set_overlay), **effects**
+  (add/set_param/remove, an effect allowlist with clamped param ranges), **audio**
+  (set_volume/add_fade/mute_track/set_track_gain), **render/vision** (preview_clip/grab_frame/
+  vision/render), **search** (search/find_quotes). Each validates args, mutates a CLONE,
+  and emits an abstract `HostCommand` the dock maps to a real Shotcut call.
+- `internal/ctlagent` — **the multi-step agent loop** (the feedback loop): show the model the
+  compact state, it emits ONE JSON tool call, apply it, feed back the result + new state,
+  repeat; self-repairs on a bad/failed call; capped. Transport-agnostic (a `Model` interface);
+  propose-preview-apply (operates on a clone, never auto-commits). Shape validated against
+  video-db/Director (research/director-videodb-mining.md) — but JSON-allowlist, never `exec()`.
+- `cmd/becky-edit` — **the bridge**: NDJSON-over-stdio (the `internal/seam` wire) the forked
+  dock talks to. Owns the live `Project`; keeps it synced from BOTH the model (`agent` →
+  `approve`) AND the human (`event` mirrors a Shotcut-side edit through the SAME edittools).
+  Built-in AI = the warm **Gemma-4 QAT E4B** via `internal/llmlocal` (the same model the AVLM
+  uses), with an `Enricher` that runs the REAL search (`internal/footage`) + vision
+  (`internal/avlm`). `becky-edit --selftest` is the one-command proof.
+
+**The offline proof (run it):** `becky-edit --selftest` builds a synthetic case folder,
+indexes it, searches the transcript, adds+trims a clip, mirrors a human playhead edit,
+renders, runs the agent loop, and commits the AI's edit — all offline, asserting each step,
+printing a measurable JSON summary. (Green; the `.exe` runs.)
+
+**The HostCommand vocabulary the dock must implement** (research/shotcut-api.md has the exact
+Shotcut/MLT call for each): `timeline.append/remove/ripple_delete/move/trim/split/add_track`,
+`player.seek/open_seek_play/grab_frame`, `timeline.select/marker`, `filter.add/set/remove`,
+`track.mute/gain`, `overlay.set`, `vision.analyze`, `search`, `find_quotes`, `render.export`.
+
+**LEFT FOR LOCAL (the host-dependent half — Phase 0 + Phase 2):**
+1. Build Shotcut on the PC (research/shotcut-api.md §7: MSYS2/MinGW64 + Qt6 + prebuilt MLT).
+2. Fork in a **Becky `QDockWidget`** (copy `TimelineDock`; register in `MainWindow::
+   setupAndConnectDocks`) whose QML talks to `becky-edit` over a local socket/QProcess.
+3. Map each `HostCommand` to its Shotcut call (the §-by-§ table in research/shotcut-api.md);
+   emit host signals (`positionChanged`/`selectionChanged`/`appended` + `MultitrackModel`
+   roles) back as becky-edit `event`s so the shared state stays synced when Jordan edits by
+   hand. **All Shotcut objects are GUI-thread-only → marshal every call via
+   `QMetaObject::invokeMethod(..., Qt::QueuedConnection)`.**
+4. Download the Gemma-4 QAT GGUF (`scripts/get-gemma4-qat.ps1`) and run the agent loop against
+   the REAL model on a real case folder (the loop is proven with a scripted model; the live
+   model is the hardware gate).
