@@ -380,6 +380,20 @@ load-bearing rules, in brief:
   already ruled out). **Read the HANDOFF before touching becky-clip.**
 
 **Specs (read the one for the tool you're building):**
+- **PRIORITY BUILDS — 2026-06-23 (the "adopt a mature host, add the becky layer" pivot; see
+  `BECKY-CANVAS-ROADMAP.md` + the `research/daw-nle-*` + `research/bookmarks-*` docs):**
+  - `SPEC-BECKY-NLE.md` — **the real video NLE, to be built FIRST** (Jordan's priority). ADOPT
+    **Shotcut** (Qt6/QML/**MLT** — the engine becky already writes) + a **Becky dock** that
+    reuses the EXISTING becky-clip engine (`internal/footage`/`quotes`/`edl`/`reel`/`assistant`):
+    point at a folder → search the `.srt` transcripts → **single-click a quote = preview
+    seeks+plays**, **double-click = clip appended to the timeline** → real editing (Shotcut) →
+    forensic export. Runtime-extensible (becky CLIs as tools + embedded agent/PTY, no host
+    recompile). Phase 0 is a build-Shotcut SPIKE. Supersedes becky-clip's editing-less GUI.
+  - `SPEC-BECKY-DAW.md` — the real DAW (built after the NLE). **Spike-first** host decision:
+    **B = adopt OpenDAW** (C++/Qt6, ships a ~30-tool AI assistant) vs **C = build the UI in Go
+    via giu/Dear ImGui** (port `im-neo-sequencer`) + a C++ audio/VST engine (DawDreamer/sidecar).
+    becky's Go brain (`dawmodel`/`ctledit`/`ctlmodel`/`arrange`) stays + becomes the toolset
+    either way; #1 gap to build regardless = `internal/ctlagent` (multi-step agentic loop).
 - **SPEC FACTORY — 2026-06-22 (cloud, design-only, NOT built; each ships a checkboxed build
   plan + value-asserting tests; await Jordan's go/no-go). Built by a parallel subagent swarm
   to clear the discussed-but-never-spec'd backlog:**
@@ -493,14 +507,24 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean; `build-all-tools.ba
   GPU enroll run). Deterministic cores are built + unit-test-green; what remains is the model boundary
   named in each spec's §8.
 
-### This session (2026-06-22) — housekeeping + research
+### This session (2026-06-22 → 06-23) — slim + a STRATEGIC PIVOT + two priority specs
 
 - **Slimmed this file:** moved the full §6 history (≈131k chars) to `HANDOFF-LOG.md`; CLAUDE.md is
-  back well under the limit. No information was lost.
-- **Research in flight** (subagents; outputs land in `research/`): (1) Go GUI **live-preview / design
-  tooling** — how to get a fast "edit code → see the canvas update" loop and whether a Magic-MCP /
-  superdesign-style AI UI tool exists for Go/Gio/TUI → `research/go-gui-iteration-and-design-tools.md`;
-  (2) **existing mature OSS we keep reinventing** (drum machine / piano roll / DAW / video editor) and
-  whether to fork/drive/embed instead of hand-rolling → `research/existing-oss-we-keep-reinventing.md`;
-  (3) a plain-English **Go packages/dependencies explainer** for Jordan + a becky dependency audit →
-  `research/go-packages-explained-for-jordan.md`.
+  back well under the limit. No information lost. Added `becky-canvas --render-frame <png>` — the
+  off-screen "see the canvas without opening it" loop (gui_render.go, verified).
+- **THE PIVOT (Jordan, 2026-06-23):** stop hand-building pro DAW/NLE GUI widgets in Gio (it has ZERO
+  DAW widgets — the root cause of weeks of "toys"). REAPER/kdenlive *driving* is OUT (kept dormant,
+  not deleted). New direction = **ADOPT a mature host and add the becky layer**; becky's Go engine/
+  brain stays + becomes the toolset. Settled by the research below (6 docs in `research/`).
+- **NLE (build FIRST) → `SPEC-BECKY-NLE.md`:** adopt **Shotcut** (MLT — becky already writes it) + a
+  Becky dock reusing the becky-clip engine (folder → `.srt` search → single-click=preview-play,
+  double-click=clip-to-timeline) + runtime extensibility (becky CLIs as tools, no host recompile).
+- **DAW (after NLE) → `SPEC-BECKY-DAW.md`:** spike-first — **B adopt OpenDAW** vs **C giu/Dear ImGui
+  (all-Go) + DawDreamer/sidecar engine**; build `internal/ctlagent` (multi-step agent loop) regardless.
+- **Research (all in `research/`):** go-gui-iteration-and-design-tools, existing-oss-we-keep-reinventing,
+  go-packages-explained-for-jordan, daw-nle-strategy-feasibility, opendaw-adoption-plan,
+  reference-projects-gap-analysis, daw-video-timeline-gui-components, + 3 `bookmarks-*-crawl` (mined
+  Jordan's curated Chrome bookmarks: no OSS DAW beats OpenDAW; his saves lean giu/ImGui; Shotcut for NLE).
+- **NEXT (a build agent):** `SPEC-BECKY-NLE.md` Phase 0 — build Shotcut on the PC + a minimal Becky
+  dock (the go/no-go spike), then wire the bridge. Honest verify (it opens + the named interaction
+  works on a real folder), not "compiles."

@@ -5,6 +5,17 @@ Ratified direction (2026-06-22, Jordan). Supersedes the external-driving approac
 `research/` (six docs, summarized below). Read with `CANVAS-NORTH-STAR.md`,
 `CANVAS-BLUEPRINT.md`, `GUI-RULES.md`, `GAP-ANALYSIS.md`, `FEATURE-INVENTORY.md`.
 
+> **REFINEMENT (2026-06-23) — adopt a host for the HARD widget surfaces.** Deeper research +
+> Jordan's lived experience showed the trap: **Gio has ZERO pre-built DAW/NLE widgets**, so
+> hand-building Cubase-grade timeline/piano-roll/mixer/waveform/video-timeline in it is the
+> single hardest path (the cause of weeks of "toys"). becky's **engine + brain stay Go and
+> stay the value** (`dawmodel`/`ctledit`/`ctlmodel`/`arrange`/`beatgen`/the propose-preview-
+> apply loop) — but the hard GUI **widget layer is adopted, not hand-built**: **NLE → adopt
+> Shotcut** (`SPEC-BECKY-NLE.md`, build FIRST); **DAW → spike-first** between adopting OpenDAW
+> and building the UI in giu/Dear ImGui (`SPEC-BECKY-DAW.md`). The Gio canvas (drum grid /
+> agent box / overlay / the simple becky-specific surfaces) stays — only the pro widget
+> surfaces move. The phase plan below still holds for those becky-native surfaces + the brain.
+
 ## North star (settled)
 
 - **becky-canvas (Go + Gio) is the ONE app.** Everything lives inside it. No second
