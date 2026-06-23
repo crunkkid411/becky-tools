@@ -215,6 +215,12 @@ type App struct {
 }
 
 func main() {
+	// Fast "edit code -> SEE the canvas" loop: --render-frame writes ONE off-screen
+	// frame to a PNG and exits, no window shown (gui_render.go). Lets an agent verify a
+	// layout change without a human opening the window.
+	if code, handled := renderFrameCLI(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	go func() {
 		w := new(app.Window)
 		w.Option(app.Title("becky-canvas"), app.Size(unit.Dp(1180), unit.Dp(760)))
