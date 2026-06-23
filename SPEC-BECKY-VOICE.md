@@ -62,10 +62,12 @@ single-tool principle, preserved).
 - **REACTIVE (the "I just talk" half) — close to done.** Mic/cam/screen in → realtime model → intent → route
   to a becky front-door → result → spoken + on-screen reply. No wake word; **barge-in** (you talk over it, it
   stops). This is the "how computers should work" feel.
-- **PROACTIVE (the Highlight half — the real new work).** A customizable **watcher** ambient-samples context
-  (screen, active window, audio, becky tool events) and, on a rule firing, **proposes or acts**: "you just
-  recorded a take — trim it?" / auto-attaches the right screenshot/window to a query (Highlight's "task
-  detection") instead of you fetching context. *Proactive-on-reads, propose-on-actions* (§4).
+- **PROACTIVE (the real new work) — a background analyst, NOT a suggestion firehose.** A customizable **watcher**
+  ambient-samples context (screen, active window, audio, becky tool events), runs becky's **corroborate-then-
+  conclude protocol on its own findings** (≥2 signals / consult a second model — §5.2), and accumulates only
+  what clears the bar into a **visual briefing you review on your time** (HyperFrames/diagram in becky-canvas —
+  §5.3), instead of nagging you out loud. It runs cheap and always-on (LFM2.5), and you **stay in control** of
+  what it looks at (§4.7). *Proactive-on-reads, propose-on-actions, silent-unless-corroborated.*
 
 Both halves are a **thin driver** over: the **realtime seam** (§3), the **tool registry** (§3.2, reused), the
 existing **agent loop** (`internal/ctlagent` / `internal/pirun`), and the **rules layer** (§4).
@@ -157,36 +159,131 @@ the driver enforces them deterministically (the model cannot override them):
 6. **Customizable rules (the Highlight complaint, fixed).** All of the above — tiers, watcher rules, quiet hours,
    which context sources are allowed, cloud-vs-local per context — live in **one human-editable
    `becky-voice.rules.json`**, not hard-coded. This is the thing Highlight wouldn't let Jordan change.
-7. **VISIBLE context, never a silent attach (the specific Highlight bug Jordan hit).** Highlight would attach
-   screenshots/browser tabs *invisibly, before he hit enter* — he never knew what was being shared. That is the
-   banned anti-pattern. Rule: **every piece of context the watcher stages is shown in a visible tray BEFORE the
-   request is sent** (thumbnail of the screenshot, the named window/tab, the take) — Jordan can **strip any item
-   with one tap/word**, and **nothing leaves the machine until he sees it staged and confirms** (this is the
-   teeth behind §4.3's "nothing leaves unless attached"). No context is ever attached as a side effect of typing
-   or speaking; staging and sending are two visible, separable steps. This is becky's "show me, don't do it"
-   overlay (`CANVAS-INSPIRATION.md`) applied to context-gathering: the agent **shows** what it would attach, it
-   does not silently do it.
+7. **CONTROL over context — directable, not just visible (the REAL Highlight lesson, corrected by Jordan).**
+   Highlight *did* have an indicator showing what it attached — that wasn't the failure. The failure was
+   **control**: when Highlight decided a screenshot was needed, Jordan **couldn't redirect it** — he couldn't
+   just say *"hey, look at the screen"* on demand the way he can with whoretana. So the binding rule is
+   **directability**: (a) Jordan can **summon context any time by voice** ("look at the screen", "read this
+   tab") — on-demand, like whoretana; **and** (b) he can **override or cancel** the watcher's automatic context
+   choice — the agent never takes the context decision away from him. Visibility is necessary but *not
+   sufficient* (Highlight proves it): the staged set is shown AND strippable AND nothing leaves until he
+   confirms (§4.3), but above all he can always **steer what it looks at.** The agent proposes context; Jordan
+   commands it. ("Show me, don't do it" — `CANVAS-INSPIRATION.md` — with the human holding the wheel.)
+8. **Addressee awareness + a real off switch (always-on only).** Always-on must know the difference between
+   **Jordan talking TO it** and **Jordan talking to someone else** — it must not act on overheard speech.
+   Corroborate the addressee from **vision** (is he facing the camera / the becky window? gaze, lip-activity)
+   **plus** audio (direct address, name) before treating speech as a command — same corroborate-then-conclude
+   discipline as everything else; when unsure, it stays silent, it does not guess. And a plain **on/off** toggle
+   always exists (hotkey + the rules file) — "always-on is nice, but the option to turn it off" is the design,
+   i.e. both. Default when addressee is uncertain: **listen, don't act.**
 
 ---
 
-## 5. The proactive watcher (the Highlight half) — customizable, forensic-safe
+## 5. The proactive watcher — the anti-bullshit engine, not a suggestion firehose
 
-Models the *good* Highlight behavior Jordan named, under §4's rules:
+> **Jordan's reframe (load-bearing):** *"Proactive should not be a problem — proposing bullshit to me all the
+> time is. That's why we have structured protocols, corroborate multiple data points, consult other models."*
+> So the watcher is **not** a thing that pipes up with guesses. It is a background analyst that runs becky's
+> **existing forensic discipline on itself** and only ever surfaces something that already cleared the bar.
 
-- **Context sources (each toggleable in the rules file):** active-window title/app, an on-demand screen
-  capture, audio loopback (what's playing), clipboard, and — uniquely becky — **becky tool events**
-  (`cmd/events`/`internal/seam`): "a REAPER take just finished recording," "a pipeline stage emitted a finding."
-- **The "decide what's relevant" step (Highlight's task-detection, made yours):** when you ask something, the
-  watcher auto-assembles the *right* context (the screenshot of the window you're looking at, the take you just
-  cut) instead of you fetching it — but only GREEN context-gathering, and it is **staged into the visible
-  context tray (§4.7), not silently attached.** Jordan sees the thumbnail/named tab and can strip it before
-  anything is sent; nothing leaves the machine until he confirms the staged set. (This is the direct fix for the
-  Highlight bug where it shared screenshots/tabs before he hit enter and he never knew.)
-- **The proactive trigger model:** `notice (an event/context pattern) → check the rule → if GREEN, do it and
-  mention it; if YELLOW/RED, propose by voice and wait.` Example: take finishes → onset analysis (GREEN) →
-  "that take has 1.2s of dead air up front, want me to trim + fade it?" → YELLOW confirm → trim via the REAPER
-  bridge → re-verify (the research doc's closed loop). This is the "proactive software, not a chatbot" goal made
-  concrete, and it reuses the habit-learning trim/fade loop from the research doc, not new musical logic.
+### 5.1 The three jobs (each toggleable in the rules file)
+- **Context sources:** active-window title/app, on-demand + event-triggered screen capture, audio loopback,
+  clipboard, and — uniquely becky — **becky tool events** (`cmd/events`/`internal/seam`): "a REAPER take just
+  finished recording," "a pipeline stage emitted a finding." (On-demand capture is **Jordan-summonable**, §4.7.)
+- **Reactive context assembly:** when you ask something, assemble the *right* context (the window you're looking
+  at, the take you just cut) — GREEN-only, staged + strippable (§4.7), Jordan-steerable.
+- **Ambient analysis (the always-on background job Jordan described):** *"I could just talk with becky for a
+  while and the proactive thing to do is pay attention — compare it to what we're working on, find gaps in my
+  life/computer, research what other humans are doing with AI, and follow the protocols in the background."*
+
+### 5.2 The anti-bullshit gate — corroborate-then-conclude, applied to PROPOSALS
+A finding is **never** surfaced on a single weak signal. The watcher reuses `FORENSIC-OUTPUT-PHILOSOPHY.md`
+verbatim, pointed at itself: **≥2 independent signals agree → surface it as a conclusion; a lone weak signal →
+hold it as a silent candidate, do not interrupt.** Where it helps, it **consults a second model** (cheap local
+vs. a stronger one) and only escalates on agreement. *"A flood of maybes a human must sort = tool failure"*
+applies to suggestions as hard as it applies to forensic output. The default posture is **silent unless
+corroborated** — the watcher's success metric is *signal*, not activity.
+
+### 5.3 Delivery — a ~30-SECOND NARRATED DEBRIEF VIDEO, in whoretana's voice
+> Jordan (decisive): *"I'm not reading a 3-page proposal list… but I'd definitely watch a 30-second debrief /
+> proposal video narrated by whoretana."*
+
+This is the locked delivery format. Corroborated findings **accumulate silently** and are delivered as a
+**short (~30s) narrated debrief video** — **HyperFrames** renders the visuals (`heygen-com/hyperframes`: agent
+writes HTML/CSS → deterministic MP4 via the FFmpeg becky already runs; ideal for "here's what I found" cards /
+charts), and the **persona voice narrates** it (NeuTTS / the realtime model — see §5.3a). It plays in
+**becky-canvas** when Jordan sits down; he watches 30 seconds instead of reading three pages. A static
+**Mermaid** diagram is the even-quicker glance. (Only a GREEN, already-corroborated, time-sensitive item earns a
+live spoken mention, under §4.4's budget — everything else waits for the debrief.) **This is an accessibility
+feature, not a flourish:** it directly serves Jordan's reading limits — the agent reads so he doesn't have to.
+
+### 5.3a Persona — whoretana is *fun*, and that's a feature
+Jordan: *"whoretana is funny — we turn her on sometimes just because it's fun."* The assistant has a **persona**
+(voice + manner); the debrief is narrated *in character*, and the conversational replies carry it. This is part
+of why an always-on assistant is something he actually *wants* on — engagement is a real design goal, not
+decoration. The persona lives in the realtime/TTS layer + a system-prompt style; it never overrides the §4
+safety rules or the forensic output contract (a finding's *content* stays honest; only its *delivery* has
+personality). whoretana-specific persona tuning is the local agent's lane (§7).
+
+### 5.4 What the ambient job actually does — orchestrate EXISTING becky tools, don't invent
+The background analyst is **cheap and always-on** using the small **Liquid LFM2.5-VL** model (already adopted —
+`internal/vision` / `SPEC-BECKY-VISION-MODELS.md`; Jordan: *"it's not dumb, and harnessed properly it'd find
+all kinds of little stuff I don't have time to prompt for"*). It **does not** reimplement research — it **runs
+becky's existing research tools under protocol**: `becky-research` (deep-research harness), `becky-radar`
+(Chrome history → flagged models/tools), `becky-scout` (assess sources for things that improve becky). The
+ambient loop: *listen/watch → form a candidate (gap in his work, a tool others are using, a mismatch vs what
+we're building) → corroborate via the research tools + a second model (§5.2) → if it clears the bar, add it to
+the visual briefing (§5.3); else hold it silently.* All GREEN/read-only by tier (§4.1); RED never auto.
+
+### 5.5 The reactive trigger model (unchanged, in-session)
+`notice (event/context) → check the rule → GREEN: do it and mention it · YELLOW: propose and wait · RED:
+never proactive.` Example: take finishes → onset analysis (GREEN) → "that take has 1.2s of dead air up front —
+trim + fade?" → YELLOW confirm → trim via the REAPER bridge → re-verify (the research doc's closed loop). Reuses
+the habit-learning trim/fade loop, not new musical logic.
+
+### 5.6 The background-agent harness — how the "little guy" actually runs (this is the part to dial in)
+> Jordan: *"give him narrow direction with specific steps, let it think, but the harness has to be dialed in —
+> hooks that reroute certain things, a couple places to start, maybe cron/heartbeat like hermes-agent… I'm not
+> sure what the best approach is."* And: *"set routines within limitations; if it finds something useful it
+> hands off to Qwen or Gemma, they review it and have their own protocol of what happens next."*
+
+The honest answer from the current field (verified 2026-06-23): **don't run one always-thinking loop** (cost +
+runaway). Use a **heartbeat scheduler + bounded goal-runs + tiered model handoff**. Three grounded patterns
+compose into exactly what Jordan described:
+
+1. **Heartbeat / cron tick (the clock) — model the hermes-agent primitive.** A long-running becky daemon ticks
+   on an interval; most ticks are **`no_agent` deterministic checks** (cheap watchdogs: "did a take finish?",
+   "new browser history since last sweep?") that **burn no model**. Only when a tick's deterministic trigger
+   fires does it wake a model. [hermes-agent: 60s scheduler tick, isolated sessions, file-lock against overlap,
+   first-class heartbeat jobs, `no_agent=True`.] This is "routines within limitations" — narrow, scheduled,
+   guard-railed, cheap by default.
+2. **Bounded goal-run, not an open loop (the stopping condition) — model Anthropic `/goal`.** When a trigger
+   warrants thinking, the cheap **LFM2.5** scout runs a **goal-bounded** mini-task ("is there a real candidate
+   here? — stop when decided"), not an endless `/loop`. Anthropic shipped exactly this distinction in June 2026:
+   `/loop` = keep going on a clock; **`/goal` = keep going until a checkable condition is true** — and their
+   "Effective harnesses for long-running agents" post is the canon for the guardrails. becky's existing
+   **Ralph-loop** discipline (kick the agent back if it claims done prematurely — already used by
+   `becky-new-tool`) is the same idea, in-repo.
+3. **Tiered model escalation with per-tier protocols (Jordan's hand-off).** The pipeline is a **corroboration
+   ladder**, each rung with its own bounded protocol:
+   - **Tier 0 — LFM2.5 scout (always-on, cheap):** watch/listen, form a *candidate*. Discard the obvious noise.
+   - **Tier 1 — Qwen / Gemma reviewer (woken only on a candidate):** review it under **its own protocol** —
+     corroborate (≥2 signals, §5.2), optionally run a becky research tool, then decide *what happens next*:
+     **drop · dig deeper (spawn a `becky-research` goal-run) · escalate to the debrief (§5.3) · propose a YELLOW
+     action (§4.1, never auto-RED).** "Their own protocol of what happens next" = a small per-tier rules block
+     in `becky-voice.rules.json`.
+   - Escalation only ever moves a finding *up* to more scrutiny or to the visual debrief — **never straight to
+     an action without the tier gate**. This is "consult other models" (§5.2) made into an explicit ladder.
+4. **Hooks that reroute (Jordan's "hooks").** A hook table (mirroring hermes' hook system / Claude Code hooks)
+   lets a tick or a finding be **rerouted** before/after a step — e.g. "any finding touching case material →
+   force local models + skip the cloud debrief", "a REAPER take event → jump straight to the trim protocol,
+   skip the scout." Hooks are declared in the rules file; they are the customizable wiring Jordan asked for.
+
+**Recommendation:** start with **(1) heartbeat + mostly `no_agent` deterministic triggers**, escalate to a
+**(2) `/goal`-bounded LFM2.5 scout**, hand confirmed candidates **up the (3) tier ladder to Qwen/Gemma**, and
+deliver via the **30s debrief (§5.3)** — all wired by **(4) hooks** in `becky-voice.rules.json`. This keeps it
+cheap, bounded, auditable, and dialed-in, which is the whole concern. The exact intervals / tier prompts /
+hook table are tuning the local agent + Jordan settle on real use (§10 Q6).
 
 ---
 
@@ -226,21 +323,42 @@ there's some things I don't like or don't understand."* So:
    fully unit-testable — assert: a RED tool is refused proactively, a GREEN one allowed, budget enforced,
    sensitive-context forces local, **and a staged screenshot/tab is NOT marked sent without an explicit confirm
    (the Highlight-bug regression test)**. This is the safety core — test it hard, assert VALUES.
-3. `cmd/becky-voice/` — the driver: NDJSON seam in (faked realtime events), route via `internal/catalog` +
-   `internal/intent`, enforce `internal/voicerules`, shell the existing front-doors, write the audit transcript,
-   emit spoken-reply text. A **`--selftest`** one-command offline proof (feed a scripted NDJSON intent stream →
-   assert the correct front-door command + tier decision + transcript, **runs no model, no mic**).
-4. `internal/seam` reuse for the proactive event source; a faked event feed for tests.
-5. Gates 1–4 green on Ubuntu+Windows (`go build/vet/test ./...`, `gofmt`); push to the `claude/*` branch; draft PR.
+3. `internal/proactive/` — the anti-bullshit gate (§5.2) + the ambient orchestrator (§5.4): the
+   corroboration rule (a candidate needs ≥2 agreeing signals before it's surfaced; a lone signal is **held**,
+   not emitted), the proposal budget, and the deterministic plumbing that fans a candidate out to the existing
+   `becky-research`/`becky-radar`/`becky-scout` tools and collects their JSON. **Pure Go, value-asserted:** a
+   1-signal candidate is HELD (not surfaced), a 2-signal candidate is SURFACED, budget caps enforced. (The
+   small-model judgment is faked in tests; the *gate* is deterministic.)
+4. `cmd/becky-voice/` — the driver: NDJSON seam in (faked realtime events), route via `internal/catalog` +
+   `internal/intent`, enforce `internal/voicerules` + `internal/proactive`, shell the existing front-doors,
+   write the audit transcript, emit spoken-reply text. A **`--selftest`** one-command offline proof (feed a
+   scripted NDJSON intent stream → assert the correct front-door command + tier decision + transcript, **runs no
+   model, no mic**).
+5. `internal/briefing/` — render a set of corroborated findings to the **~30s narrated debrief (§5.3)**: emit
+   the **HyperFrames HTML** (deterministic, agent-writes-HTML → MP4 via the ffmpeg becky already has) + the
+   narration script for the persona TTS, and/or a **Mermaid** diagram. Pure Go templating + an existing-ffmpeg
+   call; test asserts the HTML/script/diagram contains the findings (value-asserted); render-to-MP4 is the local step.
+6. `internal/heartbeat/` — the harness (§5.6): an interval scheduler with **`no_agent` deterministic triggers**
+   (cheap, model-free), a **`/goal`-bounded** scout step, the **tiered escalation ladder** (LFM2.5 → Qwen/Gemma,
+   each tier's "what next" protocol from the rules file), and the **hook table** (reroute before/after a step).
+   Pure Go + faked models; value-asserted: a `no_agent` tick burns no model, a scout run stops at its goal
+   condition, a candidate escalates exactly one tier, a hook reroutes a case-material finding to local-only.
+7. `internal/seam` reuse for the proactive event source; a faked event feed for tests.
+8. Gates green on Ubuntu+Windows (`go build/vet/test ./...`, `gofmt`); push to the `claude/*` branch; draft PR.
 
 **Local agent (Jordan's Win10 PC — realtime model + hardware):**
 1. Stand up **FastRTC** beside `pyhelpers`; wire the mic/cam/screen capture + the NDJSON seam to `cmd/becky-voice`.
 2. Wire the realtime model both ways: **Gemini Live** (API) and **local Gemma-4 + NeuTTS**; confirm barge-in +
    no-wake-word feel; confirm the local path degrades gracefully.
-3. With Jordan, define + wire the **whoretana-specific** verbs (§7) onto the agent loop under the tiers.
-4. The hardware Definition-of-Done (per `CANVAS-NORTH-STAR.md`): you talk → it hears with no wake word → it does
-   a GREEN action unprompted once → it *proposes* a YELLOW one and waits → a RED one is refused without explicit
-   ok → the kill phrase instantly stops it. Tune the watcher so it helps without nagging. Report back.
+3. Wire the **ambient analyst** on **LFM2.5-VL** (`internal/vision`): the always-on background loop that feeds
+   candidates into `internal/proactive` and renders the visual briefing into **becky-canvas**. Tune the
+   addressee detector (§4.8: vision + audio → "is he talking to me?") on real use.
+4. With Jordan, define + wire the **whoretana-specific** verbs (§7) onto the agent loop under the tiers.
+5. The hardware Definition-of-Done (per `CANVAS-NORTH-STAR.md`): you talk → it hears with no wake word → it
+   knows when you're NOT talking to it → it does a GREEN action unprompted once → it *proposes* a YELLOW one and
+   waits → a RED one is refused without explicit ok → the kill/off switch instantly stops it → after a session
+   it shows ONE visual briefing of corroborated findings, not a stream of nags. Tune until it helps without
+   nagging. Report back.
 
 ---
 
@@ -249,6 +367,12 @@ there's some things I don't like or don't understand."* So:
   none of them. It is the realtime *skin* + *rules* only.
 - `becky-ask` stays the chat front-door; `becky-voice` is what makes it hands-free + proactive. `becky-harness`
   stays the per-request grinder; `becky-voice` can *launch* one by voice ("for every clip in this folder…").
+- **It drives Jordan's OTHER CLIs too — including Claude Code — and digests them so he reads less.** Jordan's
+  goal: *"eventually whoretana interacts with my Claude Code and other CLI tools for me and just tells me what's
+  important so I don't have to read so much."* becky already has **`internal/agentrun`** (drives headless
+  `claude -p`) — `becky-voice` reuses it to run Claude Code, then **digests the long output into the 30s narrated
+  debrief (§5.3)** instead of making Jordan read a wall of agent text. This is the reading-load/accessibility
+  payoff, and it's reuse, not new plumbing.
 - Keeping the realtime skin thin and the work in the existing tools is what preserves the single-tool principle —
   the explicit guard against this becoming "one fragile mega-project" (`CLAUDE.md` §1).
 
@@ -267,14 +391,35 @@ there's some things I don't like or don't understand."* So:
   acting), so ambiguity degrades to "it proposes a plan," never to a wrong action.
 - **Q5 — whoretana verb set (§7).** Which whoretana capabilities to carry over first, and which "things you don't
   like" to deliberately drop/redesign? A local-agent + Jordan working session, not a cloud decision.
+- **Q6 — Ambient analyst cadence + corroboration bar (§5.2/§5.4).** How often does the background analyst run its
+  research sweeps, and how strict is the ≥2-signal bar before something reaches the briefing? Rec: **strict bar,
+  low cadence, batch into one briefing** — err toward silence; a too-eager analyst is the Highlight-proposal
+  failure in a new coat. Tunable in the rules file; Jordan sets the comfort point on real use.
+- **Q7 — Briefing surface (§5.3).** HyperFrames MP4 vs a live Mermaid/HTML panel in becky-canvas as the *default*
+  digest format? Rec: **Mermaid/HTML panel for the quick digest, HyperFrames MP4 only for a richer weekly-style
+  roundup** (rendering video for every small finding is overkill). Confirm.
+- **Q8 — Addressee detection threshold (§4.8).** How sure must it be that Jordan is addressing it before acting on
+  speech, and how much does vision (gaze/facing) weigh vs audio? Rec: **vision-gated by default — act on speech
+  only when he's facing the camera/becky window OR uses its name; otherwise listen-only.** A real-use tuning dial.
 
 ## 11. Sources
 - becky in-repo: `SPEC-AGENT-HARNESS.md` (the deterministic-shell-around-an-agent pattern, the tool registry +
   default-deny allowlist + audit transcript this reuses), `SPEC-BECKY-ASK.md` (chat front-door + `catalog.go`),
-  `internal/ctlagent` · `internal/pirun` · `internal/intent` · `internal/avlm` (Gemma-4) · `internal/tts`
-  (NeuTTS) · `internal/seam` · `internal/undo`/`ctledit` (undo history), `GUI-RULES.md` (the NDJSON engine↔front
-  seam), `CANVAS-NORTH-STAR.md` (the hardware Definition-of-Done), `FORENSIC-OUTPUT-PHILOSOPHY.md` (no flood of
-  maybes), `research/daw-ai-control-reaper-vs-ableton.md` §4 (the realtime model + FastRTC + cloud/local analysis).
+  `SPEC-BECKY-VISION-MODELS.md` + `internal/vision` (the LFM2.5-VL small model the ambient analyst runs on),
+  `SPEC-DEEP-RESEARCH.md`/`becky-research` · `SPEC-RADAR.md`/`becky-radar` · `SPEC-SCOUT.md`/`becky-scout` (the
+  existing research tools the ambient job orchestrates — §5.4), `internal/ctlagent` · `internal/pirun` ·
+  `internal/intent` · `internal/avlm` (Gemma-4) · `internal/tts` (NeuTTS) · `internal/seam` ·
+  `internal/undo`/`ctledit` (undo history), `SPEC-BECKY-CANVAS.md` (the HUB the briefing surfaces in),
+  `GUI-RULES.md` (the NDJSON engine↔front seam), `CANVAS-NORTH-STAR.md` (the hardware Definition-of-Done),
+  `FORENSIC-OUTPUT-PHILOSOPHY.md` (corroborate-then-conclude; no flood of maybes — applied to PROPOSALS in §5.2),
+  `research/daw-ai-control-reaper-vs-ableton.md` §4 (the realtime model + FastRTC + cloud/local analysis).
+- External (live, 2026-06-23): **HyperFrames** `github.com/heygen-com/hyperframes` (open-source HTML→MP4 video
+  renderer built for AI agents — deterministic, FFmpeg-backed; the visual-briefing format §5.3); Mermaid (the
+  quick-digest diagram format). **Anthropic loops** — Claude Code `/loop` (clock) + `/goal` (checkable stopping
+  condition), shipped June 2026, and **"Effective harnesses for long-running agents"** (anthropic.com/engineering)
+  — the §5.6 bounded-run canon. **hermes-agent** `github.com/NousResearch/hermes-agent` (60s cron tick, isolated
+  sessions, file-lock, first-class **heartbeat jobs**, `no_agent=True` model-free ticks, hook system) — the §5.6
+  heartbeat/hook model. The tiered LFM2.5→Qwen/Gemma escalation reuses becky's existing local models.
 - External (live, 2026-06-23): Gemini Live API (duplex audio+video, barge-in, proactive-audio, models incl.
   `gemini-3.1-flash-live-preview`) — Google AI / Vertex docs; **FastRTC** `github.com/gradio-app/fastrtc`
   (v0.0.34, Nov 2025; VAD + turn-taking; Gemini/OpenAI-Realtime/Claude integrations); **Highlight AI** desktop

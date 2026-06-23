@@ -418,12 +418,18 @@ load-bearing rules, in brief:
   - `SPEC-BECKY-VOICE.md` (cloud, 2026-06-23, design-only) — **the always-on, proactive VOICE +
     context front-end for the WHOLE suite** ("I just talk and it does it"): a thin realtime skin
     (FastRTC transport + Gemini-Live cloud OR Gemma-4+NeuTTS local) + a **rules/harness layer**
-    (GREEN/YELLOW/RED action tiers, kill switch, privacy-local-for-sensitive, **visible context
-    tray — never a silent attach**, customizable `becky-voice.rules.json`) over the EXISTING
-    front-doors (`becky`/`becky-ask`/`becky-harness`/REAPER bridge/Strudel) — reimplements NO tool
-    (single-tool principle preserved). Reactive ("talk") half is near-done; PROACTIVE watcher
-    (Highlight-style, fixed: transparent + customizable) is the real new work. whoretana-specific
-    verbs are explicitly the LOCAL agent's lane. Pairs with `research/daw-ai-control-reaper-vs-ableton.md`.
+    (GREEN/YELLOW/RED action tiers, kill switch, privacy-local-for-sensitive, **user CONTROL over
+    context — directable like whoretana, not just a visible indicator**, addressee-detection for
+    always-on, customizable `becky-voice.rules.json`) over the EXISTING front-doors
+    (`becky`/`becky-ask`/`becky-harness`/REAPER bridge/Strudel) — reimplements NO tool (single-tool
+    principle preserved). Reactive ("talk") half is near-done; the real new work is the PROACTIVE
+    **background analyst** — corroborate-then-conclude applied to PROPOSALS (no bullshit firehose),
+    cheap always-on LFM2.5 orchestrating `becky-research`/`radar`/`scout` under a **heartbeat + `/goal`-
+    bounded harness** (hermes-style `no_agent` ticks + hooks; tiered LFM2.5→Qwen/Gemma escalation, each
+    tier its own protocol), findings delivered as a **~30s narrated debrief VIDEO in whoretana's persona
+    voice** (HyperFrames/Mermaid in becky-canvas — Jordan won't read 3 pages but will watch 30s), NOT
+    spoken nagging; it can also drive **Claude Code** (`internal/agentrun`) + CLIs and digest them so he
+    reads less. whoretana persona/verbs = LOCAL agent's lane. Pairs with `research/daw-ai-control-reaper-vs-ableton.md`.
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
