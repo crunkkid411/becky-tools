@@ -8,8 +8,8 @@
 # Two ways to use it (Jordan never types anything either way):
 #   1. Double-click the Desktop shortcut "Watch Becky Playlist" to run it now.
 #   2. Run once with -Register to have Windows run it automatically on a schedule
-#      (default: every Monday 9am). After that it just happens; new finds wait in
-#      the report file for you.
+#      (default: every day 9am). After that it just happens; new finds (and queued
+#      build proposals) wait in the report file / scout-proposals for you.
 #
 # Needs yt-dlp installed (one-time: `pip install yt-dlp`). becky-scout itself is
 # built by build-all-tools.bat into becky-go\bin.
@@ -46,11 +46,11 @@ if ($Register) {
     $ps = (Get-Command powershell.exe).Source
     $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -NoPause"
     $action  = New-ScheduledTaskAction -Execute $ps -Argument $arg
-    $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 9am
+    $trigger = New-ScheduledTaskTrigger -Daily -At 9am
     $set     = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable
     Register-ScheduledTask -TaskName 'Becky Playlist Watch' -Action $action -Trigger $trigger `
-        -Settings $set -Description 'Assess new videos in the ai-useful YouTube playlist for becky' -Force | Out-Null
-    Good 'Done. Windows will check the playlist every Monday 9am.'
+        -Settings $set -Description 'Assess new videos in the ai-useful YouTube playlist for becky (daily)' -Force | Out-Null
+    Good 'Done. Windows will check the playlist every day at 9am.'
     Say  "New findings will be saved to: $Report"
     Finish 0
 }

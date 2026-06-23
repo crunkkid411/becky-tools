@@ -514,8 +514,10 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief: added `becky-scout --prop
 **Gemma‑4 independently votes**, and only proposals both back become **becky-new-tool intakes**
 (`--build` runs the factory; default emit-only). Deterministic core (`internal/scout/propose.go`)
 fully unit-tested; real models in `cmd/scout/model.go` (llama-server, degrades without GGUFs). Gates
-green; degrade path cloud-verified. **Left for local:** run `--propose` with the GGUFs present;
-decide if the weekly `scout-watch.ps1` runs `-Build` (fully hands-off) — `SPEC-SCOUT.md §7 #4`.
+green; degrade path cloud-verified. Per Jordan (2026-06-23): **queue-only** (no auto-build) and
+`scout-watch.ps1 -Register` installs a **DAILY** task. **Left for local:** run `--propose` with the
+GGUFs present + double-click `scout-watch.ps1 -Register`. (Unrelated red CI on PR #22 was a
+pre-existing `editmodel` Windows-path bug — fixed separately in PR #24.)
 
 ### This session (2026-06-23, `claude/becky-edit-gemma4`) — BUILT becky-edit's engine + the Gemma-4 QAT upgrade
 

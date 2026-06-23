@@ -31,14 +31,20 @@ Built the `--propose` gate = becky's corroborate-then-conclude applied to MODEL 
   per APPROVED proposal to `scout-proposals/`; `--build` hands each straight to
   `becky-new-tool --intake-file … --yes --offline` (the existing staged factory does the building —
   scout only decides WHETHER to ask). Default is emit-only (safe); `--build` is the money-spending opt-in.
-- **`scout-watch.ps1`** now passes `--propose` by default (+ `-Build` switch for full hands-off).
+- **`scout-watch.ps1`** passes `--propose` by default (+ `-Build` for full hands-off), and
+  per Jordan (2026-06-23 *"queue them, once a day not once a week"*) it is **queue-only** (writes
+  intakes, no auto-build) and `-Register` installs a **DAILY** 9am task.
 - Gates green: `go build/vet/test ./...`, gofmt clean. Degrade path smoke-verified in the cloud
   (no models → "propose: skipped — proposer (Qwen) unavailable…", report still prints).
 
 **Left for local (host/model only):** run `becky-scout … --propose` with the Qwen + Gemma GGUFs
-present (cloud has no models); confirm the two servers start and the JSON parses; **decide if the
-weekly watch runs `--build`** (auto-build new useful videos) or stays emit-only. Open decisions in
-`SPEC-SCOUT.md §7` (#4 auto-build vs emit, #5 add Claude as a judge).
+present (cloud has no models); confirm the two servers start and the JSON parses; double-click
+`scout-watch.ps1 -Register` to install the daily task. Auto-build vs queue is DECIDED (queue);
+remaining open decision is `SPEC-SCOUT.md §7 #5` (add Claude as a judge).
+
+> NOTE (2026-06-23): the unrelated red CI on this PR (#22) was a pre-existing master bug —
+> `internal/editmodel/Digest` used `filepath.Base` on Windows paths (fails on Linux). Fixed on its
+> own branch `claude/fix-editmodel-digest-pathx` (PR #24). #22 goes green once that lands + rebase.
 
 **Session 2026-06-23 (local, `claude/becky-edit-gemma4`) — BUILT the becky-edit (NLE) engine layer + the Gemma-4 QAT upgrade. Two research subagents (Shotcut API, video-db/Director). All gates green; `becky-edit --selftest` proves it offline; `.exe` runs.**
 

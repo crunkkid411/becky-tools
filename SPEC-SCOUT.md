@@ -200,8 +200,8 @@ pipeline (`SPEC-BECKY-NEW-TOOL.md`).
 <file>` remembers which videos were already assessed and reports only newly-added
 ones, so a repeat run is a short "what's new" digest, not a re-read of all 100.
 `scout-watch.ps1` (repo root) wraps this for Jordan: double-click it to check now,
-or run it once with `-Register` to have Windows Task Scheduler run it weekly and
-save the new-finds digest to `scout-latest.txt`. (It can also be folded into the
+or run it once with `-Register` to have Windows Task Scheduler run it **daily** (9am)
+and save the new-finds digest to `scout-latest.txt`. (It can also be folded into the
 existing "Get Becky Updates" button so the playlist digest rides along with the
 freshness/radar digest — one button, nothing new for Jordan to remember.)
 
@@ -217,12 +217,11 @@ freshness/radar digest — one button, nothing new for Jordan to remember.)
 3. **Model judgment — ANSWERED (2026-06-23):** built as the `--propose` gate
    (§4a): Qwen proposes, Gemma‑4 must agree, approved proposals become
    becky-new-tool intakes. (This replaced the simpler "3rd signal" assessor idea.)
-4. **Auto-build vs emit — OPEN (default = emit):** `--propose` writes intakes;
-   `--propose --build` actually runs the factory (spends compute / Claude budget).
-   Should the weekly `scout-watch.ps1` run `--build` (fully hands-off: new useful
-   video → built tool while Jordan sleeps), or emit-only so he can glance at the
-   approved intakes first? Currently emit-only; flip `-Build` on the watch to go
-   fully autonomous.
+4. **Auto-build vs emit — ANSWERED (2026-06-23): QUEUE (emit-only), run DAILY.**
+   Jordan: *"Queue them. but this needs to happen once a day not once a week."* So
+   `scout-watch.ps1` proposes (Qwen+Gemma) and **writes intakes to `scout-proposals/`
+   without building** — he triggers a build when he wants. `-Register` now installs a
+   **daily** 9am task. `-Build` remains available to flip to fully hands-off later.
 5. **Judge model:** Gemma‑4 is the independent judge today. Add Claude Code as a
    second/third judge (becky-new-tool's S4 already uses Claude downstream), or is
    Qwen+Gemma agreement enough to gate?
