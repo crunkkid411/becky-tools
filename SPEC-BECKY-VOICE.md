@@ -53,6 +53,23 @@ watches and offers.** `becky-voice` reaches its goals by **calling the existing 
 reimplementing them — when a tool breaks it's still obvious which one, and the rest keep working (the
 single-tool principle, preserved).
 
+### 1.1 `becky-voice` IS "becky-whoretana" — ONE agent, pluggable bridges, per-context tool PROFILES
+Jordan's framing (2026-06-23), and it's the right one: rather than rebuild a new agent for REAPER, then another
+for the NLE, then another for the next bridge, there is **ONE lightweight agent — the same floating whoretana
+GUI Jordan already uses — that plugs into whatever he's working in.** `becky-voice` and "becky-whoretana" are
+the same thing from two directions: the realtime voice shell + rules + router (this spec) *is* the reusable
+whoretana base. New bridges (REAPER today, others later) are **tool packs it loads**, not new agents.
+
+**The critical nuance (Jordan's own worry, and he's right to have it): never hand a small local model a
+gazillion tools at once.** The fix is **per-context tool PROFILES, not clone-per-program.** The agent is one;
+the *toolset is scoped to the active context*: in REAPER it loads the REAPER-bridge profile (~a dozen verbs); in
+the NLE, the edit profile; idle, a tiny default. This is **exactly** the declared-allowlist mechanism
+`becky-harness` already uses (§3.2) — a profile is just a saved allowlist + tier map. So:
+- **Don't** clone whoretana per program (that fragments the thing that should stay one).
+- **Don't** expose all ~74 tools to the model at once (tool overload, especially on the local 4B).
+- **Do** keep one agent + swap a small, context-scoped tool profile as the active program changes.
+This keeps becky-whoretana lightweight *and* universal, and it's the same single-tool discipline everywhere.
+
 ---
 
 ## 2. The two halves
@@ -241,7 +258,51 @@ never proactive.` Example: take finishes → onset analysis (GREEN) → "that ta
 trim + fade?" → YELLOW confirm → trim via the REAPER bridge → re-verify (the research doc's closed loop). Reuses
 the habit-learning trim/fade loop, not new musical logic.
 
-### 5.6 The background-agent harness — how the "little guy" actually runs (this is the part to dial in)
+### 5.6 The voice-response model — PRE-AUTHORED, deterministic, per-tool/per-outcome (the whoretana `speak_error` pattern)
+This is the heart of what makes whoretana feel instant and *not* like a chatbot, and it is pure becky
+determinism applied to speech. In whoretana, every tool has **pre-written things to say** for each outcome —
+`speak_error(tool, err) → "Ah shit, {tool} encountered an error. {short}"`, and different lines for success /
+partial / "ran out of clicks." It **swears and names the broken tool, full stop** — it does NOT say *"I'm
+having a problem, here's what we could do, I can deploy my coding agent if…"* That verbose hedging is the
+banned anti-pattern (it's the §5.2 anti-bullshit rule applied to *responses*, not just proposals). Then a bare
+*"fix it"* is understood to mean **deploy the coding agent** — no menu, no narration.
+
+becky models this as a **deterministic response map** that ships *with each tool/profile*:
+```jsonc
+// part of a tool profile — pre-authored, becky-deterministic, NO model needed to choose the line
+"becky-identify": {
+  "ok":      ["Got 'em.", "Found your guy.", "Done — IDs are in."],          // round-robin (anti-stale)
+  "partial": ["Eh, only got a couple. Want me to dig harder?"],
+  "error":   ["Ah shit, identify broke. {short}"],                            // {short} = first 120 chars
+  "fix_verb": "becky-new-tool"                                                 // what "fix it" means here
+}
+```
+- **Deterministic by default:** the line is *chosen by code* (round-robin/seeded), not generated — so it's
+  instant, predictable, and Jordan authored it. The realtime model is only invoked when a response must be
+  *dynamic* (it riffs on the error detail — which, as Jordan notes, Gemini already does and it's part of the
+  fun). Determinism is the floor; the model's riff is a flavor option, never required.
+- **Persona-owned:** the lines live in a per-persona file (whoretana's voice), editable like
+  `becky-voice.rules.json`. This is the "**trace dataset**" idea Jordan named — a script the persona reads and
+  optionally interprets, except here the *script is authored by Jordan* and the interpretation is bounded.
+- **One word to two sentences.** Almost every response is tiny — which is what makes §5.7 (pre-rendered audio)
+  a clean win.
+
+### 5.7 Tiered audio — pre-rendered cache (instant) → local TTS (dynamic) → realtime model (conversation)
+Jordan's instinct is correct and it's a real latency win: **for the fixed, tiny set of canned phrases, render
+them to audio ONCE and just play the file** — playing a 3-second clip is ~0 ms and ~0 VRAM vs. generating it
+every time. So becky uses three tiers, cheapest first:
+1. **Pre-rendered clips (default for canned lines).** Each response-map line (§5.6) is rendered once by NeuTTS
+   into a small `.mp3`/`.wav`, with **round-robin variants per outcome** so it never goes stale, plus optional
+   **sound-effect stings**. Instant playback, deterministic, no GPU. This covers the majority of whoretana's
+   talking.
+2. **Live NeuTTS (for dynamic text).** When a line has a `{slot}` (the actual error string, a count, a name) or
+   is otherwise novel, NeuTTS generates it on the fly. Still local, still fast.
+3. **Realtime model (conversation / mind-dump).** Full Gemini Live (or the local E2E model, §6) only for actual
+   back-and-forth — the "intake / mind-dump" mode Jordan described. The expensive tier is used least.
+A tiny **cache builder** re-renders tier-1 whenever the response map changes (a deterministic offline step,
+testable: assert every canned line has ≥1 rendered clip).
+
+### 5.8 The background-agent harness — how the "little guy" actually runs (this is the part to dial in)
 > Jordan: *"give him narrow direction with specific steps, let it think, but the harness has to be dialed in —
 > hooks that reroute certain things, a couple places to start, maybe cron/heartbeat like hermes-agent… I'm not
 > sure what the best approach is."* And: *"set routines within limitations; if it finds something useful it
@@ -287,12 +348,25 @@ hook table are tuning the local agent + Jordan settle on real use (§10 Q6).
 
 ---
 
-## 6. Cloud vs local — one transport, swap the model (from the research doc)
+## 6. Cloud vs local — one transport, three model options (updates the research doc's local caveat)
+Three brains on the one FastRTC transport, chosen per-context by the rules file (§4.6):
 - **Cloud (Gemini Live):** true low-latency duplex + barge-in + video now; for non-sensitive work; Jordan is fine
-  with API calls here.
-- **Local (Gemma-4 QAT in + NeuTTS out, over FastRTC):** offline/private; mandatory for sensitive forensic
-  material; honest caveat — it approximates but does not match native-audio duplex. FastRTC supplies VAD +
-  turn-taking either way, so only the model's audio quality differs. Selected per-context by the rules file (§4.6).
+  with API calls here. This is what whoretana already runs (`gemini-2.5-flash-native-audio`, per his `main.py`).
+- **Local E2E speech-to-speech — `LiquidAI/LFM2.5-Audio-1.5B` (the duplex answer I was missing).** A true
+  **end-to-end audio→audio** model (no separate ASR/TTS), 1.5B (1.2B LM + 115M audio encoder), **built for
+  low-latency real-time conversation**, GGUF/llama.cpp + ONNX, ~32k ctx, English-only, LFM Open License. This
+  **directly softens the research-doc caveat** that "local can't match native-audio duplex" — LFM2.5-Audio *is*
+  native local duplex. Trade-offs to go in eyes-open: (a) **less reasoning** than Gemma-4 (it's 1.5B) — fine for
+  whoretana's *talk + route to tools* job, not for hard analysis; (b) **function-calling isn't documented** on
+  the base model — so pair it with becky's **deterministic tool router** (§3.1) and/or the community
+  **tool-aware fine-tune** (`matbee/lfm2.5-audio-tool-aware-v4.1`) rather than trusting it to free-form
+  tool-call; (c) **no vision** — when a turn needs eyes, hand off to Gemma-4 / LFM2.5-VL (§5.4). VRAM is a
+  fraction of even Gemma-4 E2B (Jordan's estimate: ~25×) so it's cheap to keep warm always-on.
+- **Local chained (fallback) — Gemma-4 QAT in + NeuTTS out:** when you want Gemma-4's stronger reasoning locally
+  and accept non-duplex turn-taking; FastRTC supplies VAD/turn-taking. Use when reasoning > latency.
+**Recommended local default:** **LFM2.5-Audio for the conversational/whoretana voice** (best feel, tiny), with
+**Gemma-4 only pulled in for vision or harder reasoning** — exactly Jordan's "run whoretana on the small speech
+model except when vision is needed." Sensitive forensic material → local only, always.
 
 ---
 
@@ -338,18 +412,24 @@ there's some things I don't like or don't understand."* So:
    the **HyperFrames HTML** (deterministic, agent-writes-HTML → MP4 via the ffmpeg becky already has) + the
    narration script for the persona TTS, and/or a **Mermaid** diagram. Pure Go templating + an existing-ffmpeg
    call; test asserts the HTML/script/diagram contains the findings (value-asserted); render-to-MP4 is the local step.
-6. `internal/heartbeat/` — the harness (§5.6): an interval scheduler with **`no_agent` deterministic triggers**
+6. `internal/voiceresp/` — the pre-authored **response map** (§5.6) + the **pre-rendered audio cache builder**
+   (§5.7): choose a line by code (round-robin/seeded) per tool×outcome; render canned lines to clips; resolve a
+   `{slot}` to live NeuTTS. Pure Go, value-asserted: every canned outcome has ≥1 clip, round-robin cycles
+   without repeat, a bare `fix` maps to the tool's declared `fix_verb`, and **no model is needed to pick a line**.
+7. `internal/heartbeat/` — the harness (§5.8): an interval scheduler with **`no_agent` deterministic triggers**
    (cheap, model-free), a **`/goal`-bounded** scout step, the **tiered escalation ladder** (LFM2.5 → Qwen/Gemma,
    each tier's "what next" protocol from the rules file), and the **hook table** (reroute before/after a step).
    Pure Go + faked models; value-asserted: a `no_agent` tick burns no model, a scout run stops at its goal
    condition, a candidate escalates exactly one tier, a hook reroutes a case-material finding to local-only.
-7. `internal/seam` reuse for the proactive event source; a faked event feed for tests.
-8. Gates green on Ubuntu+Windows (`go build/vet/test ./...`, `gofmt`); push to the `claude/*` branch; draft PR.
+8. `internal/seam` reuse for the proactive event source; a faked event feed for tests.
+9. Gates green on Ubuntu+Windows (`go build/vet/test ./...`, `gofmt`); push to the `claude/*` branch; draft PR.
 
 **Local agent (Jordan's Win10 PC — realtime model + hardware):**
 1. Stand up **FastRTC** beside `pyhelpers`; wire the mic/cam/screen capture + the NDJSON seam to `cmd/becky-voice`.
-2. Wire the realtime model both ways: **Gemini Live** (API) and **local Gemma-4 + NeuTTS**; confirm barge-in +
-   no-wake-word feel; confirm the local path degrades gracefully.
+2. Wire the realtime model three ways (§6): **Gemini Live** (API), **local `LFM2.5-Audio-1.5B`** (the E2E
+   speech↔speech default for whoretana — GGUF, evaluate the tool-aware fine-tune + the cookbook), and **Gemma-4
+   + NeuTTS** (vision / harder reasoning). Confirm barge-in + no-wake-word feel; confirm graceful degrade and the
+   LFM2.5-Audio→Gemma-4 hand-off when a turn needs vision.
 3. Wire the **ambient analyst** on **LFM2.5-VL** (`internal/vision`): the always-on background loop that feeds
    candidates into `internal/proactive` and renders the visual briefing into **becky-canvas**. Tune the
    addressee detector (§4.8: vision + audio → "is he talking to me?") on real use.
@@ -417,12 +497,18 @@ there's some things I don't like or don't understand."* So:
   renderer built for AI agents — deterministic, FFmpeg-backed; the visual-briefing format §5.3); Mermaid (the
   quick-digest diagram format). **Anthropic loops** — Claude Code `/loop` (clock) + `/goal` (checkable stopping
   condition), shipped June 2026, and **"Effective harnesses for long-running agents"** (anthropic.com/engineering)
-  — the §5.6 bounded-run canon. **hermes-agent** `github.com/NousResearch/hermes-agent` (60s cron tick, isolated
-  sessions, file-lock, first-class **heartbeat jobs**, `no_agent=True` model-free ticks, hook system) — the §5.6
+  — the §5.8 bounded-run canon. **hermes-agent** `github.com/NousResearch/hermes-agent` (60s cron tick, isolated
+  sessions, file-lock, first-class **heartbeat jobs**, `no_agent=True` model-free ticks, hook system) — the §5.8
   heartbeat/hook model. The tiered LFM2.5→Qwen/Gemma escalation reuses becky's existing local models.
 - External (live, 2026-06-23): Gemini Live API (duplex audio+video, barge-in, proactive-audio, models incl.
   `gemini-3.1-flash-live-preview`) — Google AI / Vertex docs; **FastRTC** `github.com/gradio-app/fastrtc`
   (v0.0.34, Nov 2025; VAD + turn-taking; Gemini/OpenAI-Realtime/Claude integrations); **Highlight AI** desktop
   companion (local screen/audio capture, task-detection auto-context, Cmd-anywhere hands-free, privacy "nothing
   leaves unless attached") — highlightai.com/assistant + reviews; `VoloBuilds/toaster` (voice→Strudel, the
-  realtime-model pattern).
+  realtime-model pattern); **`LiquidAI/LFM2.5-Audio-1.5B`** (HF — end-to-end speech↔speech, 1.5B, GGUF/ONNX,
+  low-latency real-time, English-only, LFM Open License; the local-duplex option §6) + the voice-assistant
+  cookbook `github.com/Liquid4All/cookbook` + community tool-aware fine-tune `matbee/lfm2.5-audio-tool-aware-v4.1`.
+- Jordan's reference implementation: **whoretana** (his fork of `FatihMakes/Mark-XXXV`/Jarvis) — `main.py`
+  (Gemini 2.5 Flash native-audio Live, the `speak_error` per-tool spoken-response pattern §5.6, F4 mute, tool
+  registry) shared 2026-06-23 as the experience becky-voice generalizes. (Repo not in-tree; the uploaded
+  `main.py`/README are the grounding.)
