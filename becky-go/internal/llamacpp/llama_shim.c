@@ -27,9 +27,24 @@ int becky_llama_init(const char *model_path, const char *backend_dir,
     }
 
     struct llama_model_params mp = llama_model_default_params();
-    mp.n_gpu_layers = n_gpu_layers;
 
-    g_model = llama_model_load_from_file(model_path, mp);
+    /* Degrade, never crash (the becky rule): try the requested GPU offload first, then
+     * partial offload, then all-CPU, if VRAM is too tight to load fully on the GPU. Keeps
+     * the model IN-PROCESS under VRAM pressure instead of failing out to the warm server. */
+    int tries[3];
+    int nt = 0;
+    tries[nt++] = n_gpu_layers;
+    if (n_gpu_layers < 0 || n_gpu_layers > 24) tries[nt++] = 24; /* partial */
+    if (n_gpu_layers != 0) tries[nt++] = 0;                      /* all-CPU */
+    for (int i = 0; i < nt; i++) {
+        mp.n_gpu_layers = tries[i];
+        g_model = llama_model_load_from_file(model_path, mp);
+        if (g_model) {
+            if (i > 0)
+                fprintf(stderr, "shim: degraded to n_gpu_layers=%d (VRAM pressure)\n", tries[i]);
+            break;
+        }
+    }
     if (!g_model) { fprintf(stderr, "shim: model load failed: %s\n", model_path); return 1; }
     g_vocab = llama_model_get_vocab(g_model);
 
