@@ -1,6 +1,10 @@
 # SPEC — `becky-voice` — the always-on, proactive voice + context front-end for the whole becky-tools suite
 
 > ## STATUS — SPEC, NOT BUILT, AWAITING JORDAN'S GO/NO-GO
+> **▶ The step-by-step build lives in `HANDOFF-BECKY-VOICE.md`** (ordered, checkboxed, WHAT·HOW·WHY·VERIFY·DONE,
+> with the builder-discipline rules). This spec is the *why + nuance*; that file is the *do-this-then-this* a
+> subagent executes to completion. Read both.
+>
 > Author: cloud/web agent, drafted **2026-06-23** on `claude/ai-daw-integration-hh5y8l`, as the
 > follow-on to `research/daw-ai-control-reaper-vs-ableton.md` (the realtime-interface conclusion) and
 > Jordan's stated end goal: *"I just talk when I need my computer to do something — not just for REAPER,
@@ -140,6 +144,29 @@ The router needs one machine-readable list of every tool + its args. **This alre
 both `cmd/ask` and `cmd/harness` import. `becky-voice` imports the **same** `internal/catalog` — so all
 front-doors agree on what tools exist and never drift. *(If `internal/catalog` isn't extracted yet when this is
 built, extracting it is a prerequisite step, not a new invention.)* This is the single dispatch source of truth.
+
+### 3.3 Workflows & tool packs — DECLARATIVE files Jordan controls, not hardcoded Go (the "run it like this when I ask for X" fix)
+This is the thing that's currently *missing* and frustrates Jordan: today the "transcribe" workflow is
+**hardcoded in `cmd/ask/workflow.go`** and runs `transcribe,diarize,events,osint,ocr` **unconditionally** — so
+diarize fires even on a one-speaker clip. There is no file he can point at to say "run it like *this* when I ask
+for X." becky-voice fixes that with two declarative file types he can read and edit:
+- **A workflow recipe** (`workflows/<name>.json`) = a **named, ordered list of steps with optional conditions**,
+  triggered by **phrases**. Steps call existing tools; conditions are **deterministic** (no model) over facts
+  earlier steps produced. Example — `process-video` skips diarize for one speaker:
+  ```jsonc
+  { "name": "process-video", "phrases": ["process this video", "do the usual"],
+    "steps": [ { "tool": "becky-transcribe" },
+               { "tool": "becky-diarize", "when": "speakers > 1" },     // conditional — no wasted work
+               { "tool": "becky-ocr" },
+               { "verb": "verify-with-gemma4", "when": "speakers > 1" },
+               { "merge": "transcript" } ] }
+  ```
+- **A tool pack** (`packs/<name>.json`) = a saved **allowlist + tier overrides** scoped to a context (REAPER,
+  forensic, default). The active pack is the *only* toolset the model sees — this is the anti-overload guard
+  (§1.1) and reuses `becky-harness`'s allowlist mechanism.
+**The point:** "run transcribe + diarize + gemma4-check, but skip diarize if one speaker" becomes a **recipe
+file**, not a sentence Jordan has to re-explain to an agent every time. Deterministic, repeatable, editable by
+him. Build details: `HANDOFF-BECKY-VOICE.md` Phase 0 Steps 0.2 (recipes) + 2.1 (packs).
 
 ---
 
@@ -284,6 +311,12 @@ becky models this as a **deterministic response map** that ships *with each tool
 - **Persona-owned:** the lines live in a per-persona file (whoretana's voice), editable like
   `becky-voice.rules.json`. This is the "**trace dataset**" idea Jordan named — a script the persona reads and
   optionally interprets, except here the *script is authored by Jordan* and the interpretation is bounded.
+- **Jordan does NOT author it from scratch — it's GENERATED, then he replaces strings (his explicit ask).**
+  Jordan's worry: *"with a trace dataset I have no idea how to create one, what tool-call responses we need."* He
+  doesn't have to. The catalog **defines the outcomes** (every tool × `ok`/`partial`/`error`), so a generator
+  emits a **pre-filled `responses.json`** with a sensible default line for each — and Jordan edits by
+  **replacing the default strings**, exactly like he did in the whoretana Python (`if the tool fails, say
+  "blabla"`). Same five-minute experience, now data-driven. (Build: `HANDOFF-BECKY-VOICE.md` Step 0.3.)
 - **One word to two sentences.** Almost every response is tiny — which is what makes §5.7 (pre-rendered audio)
   a clean win.
 
@@ -349,6 +382,12 @@ hook table are tuning the local agent + Jordan settle on real use (§10 Q6).
 ---
 
 ## 6. Cloud vs local — one transport, three model options (updates the research doc's local caveat)
+> **PIN (Jordan, 2026-06-23): v1 uses GEMINI 2.5 FLASH REALTIME ONLY.** Wire and prove the whole system on the
+> exact model whoretana already runs (`gemini-2.5-flash-native-audio`) FIRST — so if something doesn't work, we
+> *know* it's the wiring, not the model. The local options below (LFM2.5-Audio, Gemma-4) are **Phase 4, after v1
+> works on real use.** Do not start local. The transport (FastRTC) + the deterministic Go half are model-agnostic,
+> so swapping later is a config change, not a rebuild.
+
 Three brains on the one FastRTC transport, chosen per-context by the rules file (§4.6):
 - **Cloud (Gemini Live):** true low-latency duplex + barge-in + video now; for non-sensitive work; Jordan is fine
   with API calls here. This is what whoretana already runs (`gemini-2.5-flash-native-audio`, per his `main.py`).
