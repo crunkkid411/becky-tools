@@ -36,7 +36,6 @@ import (
 	"time"
 
 	"becky-go/internal/config"
-	"becky-go/internal/ctlagent"
 	"becky-go/internal/seam"
 )
 
@@ -78,11 +77,12 @@ func main() {
 // degrades that one verb, never the whole bridge.
 func serve(logf func(string, ...any)) error {
 	cfg := config.Load()
-	model, note := newLocalModel(cfg, logf)
-	var m ctlagent.Model // stays nil (not a non-nil interface over a nil pointer) when no model
-	if model != nil {
-		m = model
-		defer model.Close()
+	// newLocalModel returns a true-nil ctlagent.Model when no model is available, so the
+	// bridge degrades the agent verb honestly. It prefers the in-process llama.dll model
+	// (built with -tags llamacgo) and falls back to the warm llama-server.
+	m, closeModel, note := newLocalModel(cfg, logf)
+	if closeModel != nil {
+		defer closeModel()
 	}
 	br := NewBridge(cfg, m, note, logf)
 

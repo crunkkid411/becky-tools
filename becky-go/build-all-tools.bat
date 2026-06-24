@@ -94,6 +94,15 @@ go build -tags audio -o bin\becky-daw-engine.exe .\cmd\daw-engine
 if errorlevel 1 echo WARN: audio daw-engine build failed - stub becky-daw-engine.exe kept.
 set "CC=%BECKY_OLDCC%"
 
+REM becky-edit ships with the IN-PROCESS Gemma-4 model (llama.dll via cgo, -tags llamacgo),
+REM installed to becky-go\becky-edit.exe (the path the Shotcut Becky dock spawns). The loop
+REM above already built a portable warm-llama-server bin\becky-edit.exe as the fallback. This
+REM is best-effort: it needs the local llama.cpp build + gendef/dlltool; if it fails the warm
+REM build is kept. Launch via "Open Becky Edit.bat" (it puts the llama DLLs on PATH).
+echo Building becky-edit.exe ^(in-process Gemma-4, -tags llamacgo^)...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\scripts\build-becky-edit-llama.ps1"
+if errorlevel 1 echo WARN: in-process becky-edit build failed - warm-server bin\becky-edit.exe kept.
+
 echo.
 echo Done. Built !COUNT! tools ^(+ GUI/audio variants^). Binaries in %~dp0bin
 dir /b bin

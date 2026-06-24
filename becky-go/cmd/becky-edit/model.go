@@ -10,6 +10,7 @@ import (
 	"becky-go/internal/ctlagent"
 	"becky-go/internal/edittools"
 	"becky-go/internal/footage"
+	"becky-go/internal/llamacpp"
 	"becky-go/internal/llmlocal"
 )
 
@@ -23,22 +24,57 @@ type localModel struct {
 	c *llmlocal.Client
 }
 
-// newLocalModel builds the warm-client model when the GGUF + llama-server both
-// exist. It returns nil when unavailable so the bridge degrades the agent verb to
-// an honest "no model" note rather than failing.
-func newLocalModel(cfg config.Config, logf func(string, ...any)) (*localModel, string) {
+// newLocalModel builds the agent's model. It PREFERS the IN-PROCESS Gemma-4 QAT
+// (llama.dll via cgo — SPEC-BECKY-NLE §3.5's "embedded llama is the inner-loop
+// workhorse") when this binary was built with `-tags llamacgo`; otherwise it falls
+// back to the warm llama-server (HTTP). Returns (model, closeFn, note); model is a
+// true-nil interface when no model is available so the bridge degrades the agent verb
+// to an honest "no model" note rather than failing.
+func newLocalModel(cfg config.Config, logf func(string, ...any)) (ctlagent.Model, func(), string) {
 	model, _, label := cfg.GemmaAVLM()
+
+	// 1) In-process llama.dll (the real Gemma-4 QAT GGUF loaded into this process).
+	if llamacpp.Available() {
+		if err := llamacpp.Load(model, "", -1, 4096); err == nil {
+			logf("becky-edit: in-process Gemma-4 loaded (%s)", label)
+			return &inProcessModel{}, llamacpp.Close, label + " (in-process llama.dll)"
+		} else {
+			logf("becky-edit: in-process llama unavailable (%v); trying llama-server", err)
+		}
+	}
+
+	// 2) Warm llama-server fallback.
 	c := llmlocal.NewWarmClient(model, cfg.LlamaServer, logf)
 	if err := c.Available(); err != nil {
-		return nil, "agent disabled: " + err.Error()
+		return nil, nil, "agent disabled: " + err.Error()
 	}
-	return &localModel{c: c}, label
+	lm := &localModel{c: c}
+	return lm, lm.Close, label
 }
 
 // Complete runs one system+user exchange against the warm Gemma server. Thinking
 // stays off so the JSON tool call lands in message.content.
 func (m *localModel) Complete(ctx context.Context, system, user string) (string, error) {
 	return m.c.Chat(ctx, system, user, llmlocal.Options{MaxTokens: 512})
+}
+
+// inProcessModel adapts the in-process llama.dll binding (internal/llamacpp) to the
+// ctlagent.Model interface. It formats the prompt with the Gemma chat template (Gemma
+// has no system role, so the system text is folded into the user turn) and decodes
+// greedily for a deterministic JSON tool call. The context is not cancellable mid-decode
+// (the cgo call is synchronous); the loop is fast enough that this is acceptable.
+type inProcessModel struct{}
+
+func (inProcessModel) Complete(_ context.Context, system, user string) (string, error) {
+	var b strings.Builder
+	b.WriteString("<start_of_turn>user\n")
+	if system != "" {
+		b.WriteString(system)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(user)
+	b.WriteString("<end_of_turn>\n<start_of_turn>model\n")
+	return llamacpp.Complete(b.String(), 512, 0, 42)
 }
 
 // Close shuts the warm server down (frees VRAM).

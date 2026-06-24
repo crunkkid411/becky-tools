@@ -5,6 +5,70 @@
 > finish the build to completion, and if context fills, hand off here and continue in a new loop.
 > This doc is the resumable state: check the boxes, read the live log at the bottom, continue.
 
+## ✅ SESSION 3 (2026-06-23) — IN-PROCESS Gemma-4 (llama.dll) + dimensions fix + the verb map
+
+Two of Jordan's three asks DONE + verified; the third (remaining HostCommand verbs) has an
+exact work order below.
+
+**1. IN-PROCESS Gemma-4 QAT via llama.dll (cgo) — BUILT, WIRED, VERIFIED.** No more warm
+llama-server child; the GGUF loads INTO the becky-edit process and drives the agent loop.
+- `internal/llamacpp/` — a build-tagged cgo binding (`//go:build llamacgo`): `llama_shim.{c,h}`
+  (thin completion shim on the new llama.cpp API: `llama_model_load_from_file` →
+  `llama_init_from_model` → tokenize → `llama_decode` → `llama_sampler_*` → detokenize, greedy
+  for deterministic JSON) + `binding_cgo.go` (Load/Complete/Close) + `binding_stub.go`
+  (`//go:build !llamacgo`, no-op, so the DEFAULT module/CI build stays pure-Go + cgo-free).
+  The `.c` carries a `//go:build llamacgo` line so `go build ./...` ignores it. **CRITICAL: this
+  build-tag split is what keeps CI/cloud green** — do not import llamacpp unconditionally without it.
+- `cmd/becky-edit/model.go` — `newLocalModel` now PREFERS the in-process model (Gemma chat
+  template applied in Go), falling back to the warm server. `main.go` returns (model, closeFn, note).
+- **Build:** `scripts/build-becky-edit-llama.ps1` generates mingw import libs (gendef+dlltool
+  from `C:\llama.cpp\build\bin\llama.dll` + `ggml.dll`) and builds becky-edit.exe with
+  `-tags llamacgo` + CGO to `becky-go\becky-edit.exe` (the dock's spawn path). `build-all-tools.bat`
+  calls it best-effort after the loop; the loop's portable warm-server `bin\becky-edit.exe` is the fallback.
+- **Runtime:** load-time-linked to llama.dll/ggml.dll, so the launcher (`Open Becky Edit.bat`) now
+  puts `C:\llama.cpp\build\bin` on PATH. **Proof:** model loads 43/43 layers on CUDA in ~2s; a
+  headless agent run ("find the penguin quote and add it") loaded Gemma in-process and emitted
+  `search`→`add_clip`→`timeline.append` correctly. The llama.cpp build is MSVC but its `extern "C"`
+  API uses the Win64 calling convention, so mingw cgo links it fine via the dlltool import libs.
+- **KNOWN refinement (not blocking):** the 4B over-iterates (added the clip twice before the
+  8-step cap) — tune `internal/ctlagent` to let the model emit a "done"/finish so it stops once the
+  goal is met. The propose-preview-apply gate catches duplicates meanwhile.
+
+**2. Project-dimensions bug FIXED (becky-shotcut 615dd55).** Importing a vertical clip used to
+make a 1920x1080 project. `beckydock.cpp::openSourceClip` now calls `Mlt::Profile::from_producer`
+(reads the file's native size) when the profile is non-explicit + the timeline is empty (first
+import). **Verified: a 1080x1920 source makes a 1080x1920 30fps project.**
+
+**3. REMAINING HostCommand verbs — work order (the only thing left of the hookup).** The Go side
+already emits all of these; only the Shotcut-side call in `beckydock.cpp::executeHostCommands` is
+left (they currently log "(pending host wiring)"). Source-verified map (a subagent read the headers):
+- **Clip identity FIRST (enabler for all id-addressed verbs):** Shotcut addresses clips by
+  (trackIndex, clipIndex) which shift on edits. Store becky-id → `QUuid` when a clip is appended
+  (`MAIN.timelineClipUuid(track, clipIndex)`, mainwindow.h:106) and resolve via
+  `MultitrackModel::findClipByUuid(uuid, &track, &clip)` (multitrackmodel.h:127) before each edit.
+- **NAMING INVERSION (verified):** becky `timeline.remove` (leave gap) → `MAIN.timelineDock()->lift(t,c)`;
+  becky `timeline.ripple_delete` (close gap) → `->remove(t,c)`. (Shotcut's remove == ripple.)
+- `timeline.move {id,track,pos}` → `moveClip(fromTrack,toTrack,clip,posFrames,ripple)` (timelinedock.h:158).
+- `timeline.trim {id,in/out}` → `trimClipIn/trimClipOut(track,clip,oldClip,deltaFrames,ripple,roll)`
+  (.h:160/162) — delta is a FRAME delta (read InPointRole/OutPointRole or `getClipInfo`).
+- `timeline.split {id,at}` → push `Timeline::SplitCommand(*model, {track}, {clip}, atFrames)` (timelinecommands.cpp:1119).
+- `timeline.add_track {kind}` → `addVideoTrack()` / `addAudioTrack()` (return new index, .h:136/137).
+- `timeline.select {ids}` → `setSelection(QList<QPoint{clip,track}>)` (.h:72). `timeline.marker` →
+  `markersModel()->append(Markers::Marker{start=end=frame,text,color})` (markersmodel.h:85).
+- `filter.add/set/remove` → `MAIN.filterController()`: `setProducer(target)` → `attachedModel()->add(metadata("<service>"))`
+  → `currentFilter()->set(prop,val)` (filtercontroller.h / attachedfiltersmodel.h / qmlfilter.h).
+- `track.mute` → `toggleTrackMute(track)` (.h:152; read IsMuteRole to force a state). `track.gain` →
+  NO single API; attach a `volume` filter (set `level`=dB) via the filter path.
+- `overlay.set` → `dynamictext` filter via the filter path (`argument`=text, geometry/size/colour).
+- `player.grab_frame {source,at}` → ASYNC: seek, `Mlt::VideoWidget::requestImage()`, save in the
+  `imageReady` slot (pattern: mainwindow.cpp:5556 on_actionExportFrame_triggered).
+- `render.export {clips,out}` → NEEDS FORK ADDITIONS: a public `EncodeDock` encode method +
+  `MAIN.encodeDock()` accessor (both private now). Interim: `MAIN.saveXML(path)` then run `melt`/becky's
+  `internal/reel` as a child against the `.mlt`.
+All are GUI-thread-safe (the dock is on the GUI thread); positions are FRAMES (use the dock's `secToFrame`).
+
+---
+
 ## ✅ SESSION 2 (2026-06-23) — ALL reported bugs FIXED + verified on the real GUI
 
 The local agent drove Jordan's actual mouse/keyboard (PowerShell Win32 `SetCursorPos`/

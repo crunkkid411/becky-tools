@@ -515,6 +515,25 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean; `build-all-tools.ba
   GPU enroll run). Deterministic cores are built + unit-test-green; what remains is the model boundary
   named in each spec's §8.
 
+### This session (2026-06-23, local) — IN-PROCESS Gemma-4 (llama.dll) + dimensions fix
+
+Detail in `HANDOFF-LOG.md` (top) + `HANDOFF-SHOTCUT-FORK.md` (session 3). Jordan: stop deferring
+the in-process llama — do it now. Done + verified:
+- **In-process Gemma-4 QAT via llama.dll (cgo), wired into becky-edit.** New build-tagged
+  `internal/llamacpp` (`//go:build llamacgo`; pure-Go stub by default so CI/cloud stay cgo-free) +
+  a thin C shim on the new llama.cpp API. `cmd/becky-edit` prefers it (warm llama-server is the
+  fallback). Builds via `scripts/build-becky-edit-llama.ps1` (gendef/dlltool import libs +
+  `-tags llamacgo`). **Proof:** Gemma loads 43/43 layers on CUDA in ~2s; the agent loop ran
+  in-process and emitted `search`→`add_clip`→`timeline.append`. Launcher now puts
+  `C:\llama.cpp\build\bin` on PATH (the load-time llama.dll link). The MSVC llama.dll links from
+  mingw cgo because its `extern "C"` API is Win64-ABI.
+- **Project-dimensions bug FIXED (becky-shotcut 615dd55):** a vertical clip now makes a vertical
+  project (verified 1080x1920 30fps), via `Mlt::Profile::from_producer` on the first import.
+- **LEFT:** the remaining HostCommand verbs (trim/move/split/filter/render/grab/track) — the exact
+  source-verified Shotcut-call map is in `HANDOFF-SHOTCUT-FORK.md` §3 (session 3). Go side already
+  emits them; only the `beckydock.cpp` call mapping + a clip-id→QUuid map remain. Also: tune
+  `internal/ctlagent` so the 4B stops once the goal is met (it over-iterated once).
+
 ### This session (2026-06-23, local GUI) — becky-edit Shotcut fork: ALL reported bugs FIXED + verified
 
 Detail in `HANDOFF-LOG.md` (top) + `HANDOFF-SHOTCUT-FORK.md` (session 2). The local agent drove
