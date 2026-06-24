@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Minimal native Windows WPF app. Build: `dotnet build` (needs the .NET 8 SDK).
+       Run: `dotnet run` from this folder, or launch bin/.../BeckyWindow.exe.
+       It shells out to becky-catalog.exe + becky-*.exe (must be on PATH). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>BeckyWindow</AssemblyName>
+    <RootNamespace>BeckyWindow</RootNamespace>
+  </PropertyGroup>
+
+</Project>

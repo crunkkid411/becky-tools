@@ -48,32 +48,23 @@ master) is the single source of truth for the tool list + tiers.
 
 ## STEPS (each to its DONE box)
 
-### Step 1 — `becky catalog --json` (CLOUD-buildable, Go, verifiable now)
-- **WHAT:** a tiny subcommand that prints the `internal/catalog` as JSON (per tool: `name`, `summary`,
-  `example`, `tier`, `pack`) — the data the WPF reads at startup.
-- **HOW:** add to `cmd/becky` (or `cmd/catalog`) a `catalog --json` path that marshals `internal/catalog`.
-- **WHY:** one source of truth for the tool list; the GUI never hardcodes tools, and stays in sync with the Go side.
-- **VERIFY (cloud):** `becky catalog --json` exits 0 and emits a JSON array; a Go test asserts the shape + that a
-  known tool (e.g. `becky-transcribe`, tier green) is present. `go build/vet/test ./...` + `gofmt` clean.
-- **DONE:** the command prints the catalog JSON; tested. *(Cloud will build + prove this and hand it over.)*
+### Step 1 — `becky catalog --json` (CLOUD-buildable, Go, verifiable now) — ✅ DONE (cloud, 2026-06-24)
+- **BUILT + PROVEN:** `becky-go/cmd/catalog` → `becky-catalog --json` prints the catalog as JSON
+  (`{tools:[...], ops:[...]}`, each entry `verb/summary/example/keywords/tier/pack`, tier resolved never-empty).
+  Tests green (`becky-transcribe`=green, `becky-export`=red, JSON round-trips). `go build/vet/test` + `gofmt`
+  clean. **One source of truth** (reuses `internal/catalog`); the GUI never hardcodes tools.
 
-### Step 2 — WPF scaffold + tool list (LOCAL)
-- **WHAT:** `dotnet new wpf` app `BeckyWindow`; on startup run `becky catalog --json` and render one button per
-  tool (label + summary, tier color).
-- **VERIFY:** build, run, **screenshot**: the window opens and shows the REAL tool list from the catalog.
-- **DONE:** window opens with the live tool list (screenshot attached), no crash.
-
-### Step 3 — run a tool, show the result (LOCAL)
-- **WHAT:** clicking a tool runs the real `becky-<tool>.exe` (with the picked file as input) via `Process`,
-  captures stdout+stderr, shows the headline big + output in a scroll area + "open output file".
-- **VERIFY:** pick a real file, click a **GREEN** tool (e.g. transcribe), **screenshot** the result in the window.
-- **DONE:** a real becky tool runs from a click and its result shows in the window — no terminal used.
-
-### Step 4 — file picker + high-contrast styling + degrade (LOCAL)
-- **WHAT:** native file/folder picker + drag-drop; apply Jordan's high-contrast palette + large text; a missing
-  tool / error shows a clear message, never crashes.
-- **VERIFY:** **screenshot** the styled window; test a missing-exe path shows a message (no crash).
-- **DONE:** readable, file-pickable, degrades cleanly.
+### Steps 2–4 — the WPF app (LOCAL build) — ⏳ FULL PROJECT PROVIDED by cloud at `gui/BeckyWindow/`
+The cloud agent wrote the **complete** WPF project (not a stub): `BeckyWindow.csproj`, `App.xaml(.cs)`,
+`MainWindow.xaml`, `MainWindow.xaml.cs`, `README.md`. It already implements **all of Steps 2–4**: startup loads
+`becky-catalog --json` → one tier-colored button per tool; **Pick file...** native dialog; click → runs
+`becky-<tool> "<file>"` → shows the stderr headline big + stdout below; **red**-tier confirms first;
+missing/failed tool degrades (no crash); high-contrast palette. **Cloud could NOT compile/run it (no
+Windows/.NET/display)** — so the LOCAL job is: `dotnet build && dotnet run`, **screenshot it**, fix any compile
+nits, and confirm the DoD below. You were handed ~95%, not a blank page. See `gui/BeckyWindow/README.md`.
+- **VERIFY/DONE for 2–4:** window opens with the **live** tool list; **Pick file...** works; a GREEN tool
+  (transcribe) runs from a click and its result shows in-window (no terminal); a RED tool prompts; a missing exe
+  shows a clean message. **Screenshot each.**
 
 ### Step 5 — the mouse+keyboard Definition-of-Done (LOCAL, `CANVAS-NORTH-STAR.md`)
 - Open it → click **three** different tools on a real file → see three real results → resize/scroll → it never
