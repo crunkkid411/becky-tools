@@ -53,36 +53,92 @@ addresses them by a stable id ("c1"). So the dock must remember id->Shotcut-QUui
 
 ## 3. Phase B — wire these verbs (clean public APIs; each has a visible check)
 Implement as `else if (name == "...")` branches. **`MAIN.timelineDock()` = TD below.**
-- [ ] `timeline.add_track {kind}` -> `kind=="audio" ? TD->addAudioTrack() : TD->addVideoTrack()`
-      (timelinedock.h:136/137, return the new index). **Verify:** a new track row appears.
-- [ ] `timeline.remove {id}` (LEAVE a gap) -> resolve id->(t,c), `TD->lift(t, c)` (timelinedock.h:144).
-      **NOTE the inversion:** Shotcut `lift` = leave blank. **Verify:** the clip becomes a blank, gap stays.
-- [ ] `timeline.ripple_delete {id}` (CLOSE the gap) -> `TD->remove(t, c)` (timelinedock.h:142 — Shotcut
-      `remove` == ripple-delete). **Verify:** clip gone AND the following clips shift left.
-- [ ] `timeline.select {ids}` -> build `QList<QPoint>` of `QPoint(clip, track)` per id, `TD->setSelection(list)`
-      (timelinedock.h:72). **Verify:** the clip(s) show selected (highlighted border).
-- [ ] `timeline.marker {pos,text}` -> `Markers::Marker m; m.start=m.end=frame(pos); m.text=text;
-      m.color=Settings.markerColor(); TD->markersModel()->append(m);` (markersmodel.h:85;
-      `#include "models/markersmodel.h"`, `settings.h`). **Verify:** a marker tick appears on the ruler.
-- [ ] `track.mute {track,on}` -> read the model's `IsMuteRole` for that track; if it differs from `on`,
-      `TD->toggleTrackMute(track)` (timelinedock.h:152). **Verify:** the track's mute icon toggles.
-- [ ] `timeline.move {id,track,pos}` -> resolve id->(fromTrack,clip),
-      `TD->moveClip(fromTrack, args.track, clip, frame(pos), /*ripple*/false)` (timelinedock.h:158).
-      **Verify:** the clip moves to the new position/track.
-- [ ] `timeline.trim {id,in|out}` -> resolve id->(t,c); read current in/out via the model
-      (`InPointRole`/`OutPointRole` or `getClipInfo(t,c)`), compute a FRAME DELTA, then
-      `TD->trimClipIn(t,c,c,delta,false,false)` or `TD->trimClipOut(t,c,delta,false,false)`
-      (timelinedock.h:160/162 — delta is a frame delta, NOT an absolute). **Verify:** clip length changes.
-- [ ] `timeline.split {id,at}` -> resolve id->(t,c),
-      `MAIN.undoStack()->push(new Timeline::SplitCommand(*TD->model(), std::vector<int>{t},
-      std::vector<int>{c}, frame(at)))` (`#include "commands/timelinecommands.h"`, `<vector>`;
-      ctor at timelinecommands.cpp:1119). **Verify:** the clip splits into two at the playhead.
+ALL DONE (wired 2026-06-23, `claude/verbs-impl`). Phase A clip-id map (`m_clipUuids` +
+`captureClipUuid`/`resolveClip`) is in beckydock.cpp/.h and PROVEN (split + ripple_delete
+both resolved `c1` correctly). Verification used the AUTOSAVE .mlt as ground truth
+(`%LOCALAPPDATA%\Meltytech\Shotcut\autosave\*.mlt`) — the document is the source of truth,
+not a pixel guess.
+- [x] `timeline.add_track {kind}` -> `kind=="audio" ? TD->addAudioTrack() : TD->addVideoTrack()`.
+      **VERIFIED:** new track rows appeared (V3..V43; .mlt playlist count grew).
+- [x] `timeline.remove {id}` (LEAVE a gap) -> resolve id->(t,c), `TD->lift(t, c)`.
+      WIRED, NOT YET GUI-VERIFIED. (Signatures confirmed; the one clean test attempt mis-fired
+      because `c1` had already been ripple-deleted, so becky returned "no clip c1" — not a wiring
+      fault. Re-test with a fresh clip id to confirm a blank is left in place.)
+- [x] `timeline.ripple_delete {id}` (CLOSE the gap) -> `TD->remove(t, c)`.
+      **VERIFIED:** .mlt entry count 4->3, project duration 2.03s->1.07s (gap closed).
+- [x] `timeline.select {ids}` -> `QList<QPoint>` of `QPoint(clip, track)`, `TD->setSelection(list)`.
+      WIRED, NOT YET GUI-VERIFIED (selection isn't persisted to the .mlt, so it needs a visual/border
+      check; uses the same proven resolveClip path).
+- [x] `timeline.marker {pos,text}` -> `Markers::Marker m; m.start=m.end=frame; m.color=
+      Settings.markerColor(); TD->markersModel()->append(m);`. **VERIFIED:** .mlt shows
+      `shotcut:markers` -> text "evidence", start/end 00:00:02.000, color #008000.
+- [x] `track.mute {track,on}` -> read `IsMuteRole` at the TOP-LEVEL index `model()->index(track)`
+      (NOT makeIndex, which builds a clip-level index); if differs, `TD->toggleTrackMute(track)`.
+      WIRED, NOT YET GUI-VERIFIED. (The model-less agent never cleanly emitted `track.mute` —
+      it added tracks instead — so no `hide` appeared in the .mlt. The branch + signatures are
+      correct; re-test once the Gemma model is loaded so the agent obeys "mute track N".)
+- [x] `timeline.move {id,track,pos}` -> resolve id->(fromTrack,clip),
+      `TD->moveClip(fromTrack, to_track, clip, frame_pos, false)`.
+      WIRED, NOT YET GUI-VERIFIED (same proven resolveClip path; args use `to_track`/`frame_pos`).
+- [x] `timeline.trim {id,in|out}` -> resolve id->(t,c); becky sends ABSOLUTE source in/out (frames),
+      so compute a FRAME DELTA from `getClipInfo(t,c)->frame_in/frame_out`, call
+      `TD->trimClipIn(t,c,c,deltaIn,false,false)` / `trimClipOut(t,c,deltaOut,false,false)`,
+      THEN `TD->commitTrimCommand()` (these dock methods stage an interactive trim and only push the
+      undo command on commit). WIRED, NOT YET GUI-VERIFIED.
+- [x] `timeline.split {id,at}` -> resolve id->(t,c),
+      `MAIN.undoStack()->push(new Timeline::SplitCommand(*TD->model(), {t}, {c}, frame_at))`.
+      **VERIFIED:** the clip was cut into adjacent pieces in the .mlt (entry count rose; cut
+      boundaries align). This also proves the whole id->uuid->(track,clip) resolve path.
 
-All of the above are GUI-thread-safe and undo-wrapped (they push QUndoCommands — good, keep it).
+All of the above are GUI-thread-safe and undo-wrapped (they push QUndoCommands).
 
-## 4. Phase C — the harder verbs (wire what's clean; DOCUMENT precisely what needs more)
-These need more than a one-liner. Do them if you can verify them; otherwise leave the
-`(pending host wiring)` log AND write the exact remaining step in this file so it's not lost.
+### Verification status (2026-06-23, session 4) — honest summary
+Test rig: forked shotcut.exe rebuilt + launched (env from `Open Becky Edit.bat`), case folder
+`X:\AI-2\beckytest` (interview.mp4 1280x720 30fps + matching .srt), driven via
+`scripts/gui-test` (winshot/input). Oracle = the autosaved Shotcut .mlt (document truth).
+- VERIFIED on the running window/document: `timeline.append`(+Phase A uuid), `timeline.add_track`,
+  `timeline.marker`, `timeline.split`, `timeline.ripple_delete`.
+- WIRED, signatures confirmed against the real headers, NOT YET individually GUI-verified:
+  `timeline.remove`(lift), `timeline.select`, `track.mute`, `timeline.move`, `timeline.trim`.
+  They reuse the SAME proven mechanisms (resolveClip + one confirmed TimelineDock slot each).
+- BLOCKER for finishing the unverified five: the in-process **Gemma-4 QAT model failed to load**
+  (`shim: model load failed ...gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`), so the agent ran on a weak
+  server-fallback and would NOT reliably emit specific single verbs (e.g. it kept adding tracks
+  instead of muting). Load the model (the .gguf IS present at models/gemma4/) and the agent will
+  obey targeted goals — then the five above can each be confirmed the same .mlt-oracle way, OR
+  expose them as direct QML methods on BeckyDock (like addClip) for deterministic single-verb tests.
+
+## 4. Phase C — the harder verbs (DEFERRED — still log "(pending host wiring)")
+STATUS (2026-06-23): NONE of these are wired yet — they still fall through to the `else` that
+logs `becky: <name> (pending host wiring)`. They were intentionally deferred this session: each
+needs more than a one-liner, and during testing the model-less agent never emitted any of them
+(so there was nothing to verify against). Exact remaining work per verb, so it is not lost:
+- **`filter.add/set/remove {clip,fx_id,name,params/param/value}`** — resolve `clip`->(t,c)->
+  `Mlt::Producer p = TD->producerForClip(t,c)` (timelinedock.h:64), then via
+  `MAIN.filterController()`: `setProducer(&p)` -> `attachedModel()->add(metadata("<mlt_service>"))`
+  -> `setCurrentFilter(row)` -> `currentFilter()->set(prop,value)`. NEEDS a becky-name -> MLT-service
+  map (brightness->"brightness", volume->"volume"/"avfilter.volume", crop->"crop"/"qtcrop",
+  fadeIn->"fadeInBrightness"/"fadeInVolume", etc.; the becky allowlist is in
+  internal/edittools/effects.go). Track-targeted filters attach to the track producer instead.
+- **`overlay.set {field,on}`** — attach/update a `dynamictext` filter (the forensic lower-third) on
+  the bottom video track (or a dedicated overlay track) via the same filterController path:
+  `set("argument", <built text>)` + geometry/size/fgcolour. The text is built from the on/off fields
+  (filename/timecode/date/person/location/link); store which lines are on in a member so toggling one
+  rebuilds the whole lower-third.
+- **`track.gain {track,db}`** — no single API; attach a `volume` filter to the TRACK producer
+  (`MAIN.timelineDock()->model()->tractor()->track(mltIndexForTrack(track))`) and `set("level", db)`
+  (or "gain"). Confirm the property name against the volume filter's metadata.
+- **`player.grab_frame {source,at}`** — ASYNC. Open the source span, seek to `at`, then
+  `Mlt::VideoWidget::requestImage()` and save the PNG in the `imageReady` slot. Copy
+  mainwindow.cpp `on_actionExportFrame_triggered` / `onVideoWidgetImageReady` (mainwindow.h:357/358).
+  Write to becky's work dir; the bridge expects the PNG path back as the result.
+- **`render.export {clips,out,overlay}`** — needs a FORK ADDITION (`EncodeDock::encode` is private,
+  no `MAIN.encodeDock()` accessor). Two clean options: (a) add a thin public `MAIN.beckyEncode(out)`
+  + accessor that drives the existing EncodeDock; OR (b) simpler + reuses becky's PROVEN path:
+  `MAIN.saveXML(tmpMlt)` then run becky's `internal/reel`/`melt` as a child against the `.mlt`.
+  Verify an actual output file appears + ffprobe shows the expected duration.
+
+Original guidance below (kept for reference):
 - `filter.add/set/remove {target,name,value}` -> via `MAIN.filterController()`:
   `setProducer(targetProducer)` -> `attachedModel()->add(metadata("<mlt_service>"))` ->
   `setCurrentFilter(row)` -> `currentFilter()->set(prop, value)` (filtercontroller.h / attachedfiltersmodel.h
