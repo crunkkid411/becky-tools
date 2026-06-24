@@ -1,0 +1,11 @@
+{
+  "name": "process-video",
+  "phrases": ["process this video", "do the usual", "transcribe and check"],
+  "steps": [
+    { "tool": "becky-transcribe" },
+    { "tool": "becky-diarize", "when": "speakers > 1" },
+    { "tool": "becky-ocr" },
+    { "verb": "verify-with-gemma4", "when": "speakers > 1" },
+    { "merge": "transcript" }
+  ]
+}

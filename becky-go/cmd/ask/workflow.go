@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"becky-go/internal/workflowdef"
 )
 
 // --- minimal views of the becky JSON we merge (only the fields we use) ---
@@ -351,7 +353,13 @@ func wfFindJSONDir(root, src string) string {
 // to the input (<base>.transcript.md). The source is never modified.
 func runTranscribeWorkflow(ctx context.Context, target Target) runResult {
 	src := target.Primary()
-	steps := "transcribe,diarize,events,osint,ocr"
+	// The chain is now driven by the declarative process-video recipe (recipe.go).
+	// Without a cheap pre-pipeline speaker probe we cannot yet know the speaker count,
+	// so we pass speakers=2 to keep diarize active — exactly the old always-run chain
+	// (no behavior loss). The recipe's conditional skip is exercised + asserted in
+	// internal/workflowdef; wiring a real probe here only flips diarize OFF for a
+	// genuine one-speaker clip, never on.
+	steps, _ := pipelineStepsFromRecipe(workflowdef.Facts{"speakers": 2})
 	res := runResult{Command: []string{"becky-pipeline", src, "--steps", steps}}
 
 	tmp, err := os.MkdirTemp("", "becky-ask-wf-")
