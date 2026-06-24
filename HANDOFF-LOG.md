@@ -46,6 +46,41 @@ Jordan's directive: "you are the local model — download the models, perform th
 - **The MSYS2 build saga (THE machine-specific lesson — see CLAUDE.md §3):** `pacman -Syu` **deadlocks non-interactively on this PC** — it hung for 8.6 HOURS on the in-use `msys2-runtime` DLL swap, and force-killing it twice corrupted the local DB (repaired both times via move-broken-dir-out-of-`local/` + `pacman -U` from cache). **The fix that worked in 15 min:** drive a REAL `msys2_shell.cmd -mingw64` terminal via keyboard automation (PowerShell `WScript.Shell.AppActivate`+`SendKeys`) and type `pacman -Syuu --noconfirm --overwrite "*"` into it — interactive completes cleanly (gcc 15->16). Then the Qt6 stack.
 - **THE BUILD SHORTCUT:** MSYS2 ships `mingw-w64-x86_64-mlt 7.36.1`, which satisfies Shotcut master's `mlt++-7 >= 7.36.0` — so `pacman -S mingw-w64-x86_64-mlt frei0r-plugins` **skips building FFmpeg/MLT/OpenCV from source entirely** (hours saved). Then just `cmake -G Ninja && ninja` -> `build/src/shotcut.exe` in ~15 min. Fixed 2 missing includes in beckydock.cpp (`QQmlContext`, `mltcontroller.h`), rebuilt green.
 - **Verified live:** launched it; `strings` proves the dock is linked; `shotcut.exe` + `becky-edit.exe` both running (the dock spawned the bridge). One-click **`Open Becky Edit.bat`** + Desktop "Becky Edit" shortcut (sets the MinGW64 PATH + MLT env so it opens with no terminal). **LEFT:** exercise the dock UI on real footage; finish the host commands that currently log "(pending host wiring)" (filter/track/move/trim/split/render). Full recipe + relaunch in `HANDOFF-SHOTCUT-FORK.md`.
+## 2026-06-23 (cloud, `claude/scout-autonomous-spec-proposals`) — becky-scout: autonomous "let the models decide what to build" gate
+
+Follow-on to the merged becky-scout (PR #5). Jordan: *"the local model should be used for
+judgement… if Qwen thinks something is genuinely useful it can propose a build spec and see if
+Gemma‑4 or Claude agree; if yes, build the spec"* — and he does NOT want to hand-review.
+
+Built the `--propose` gate = becky's corroborate-then-conclude applied to MODEL judgment:
+- **`internal/scout/propose.go`** (deterministic, fully unit-tested): `Proposer` + `Judge`
+  interfaces, `Propose(items, proposer, judges, minAgree)` → `Decision`s. APPROVED only when the
+  proposer pitches a tool AND ≥minAgree independent judges agree (≥2 models concur). `Decision.ToIntake()`
+  emits the exact `becky-new-tool --intake-file` shape (matches cmd/ask/pitch.go's PitchRecord).
+  Fakes (`FakeProposer`/`FakeJudge`) + 6 tests cover approve/hold/quorum/skip/no-models/intake.
+- **`cmd/scout/model.go`** (real backends, mirror cmd/ask/llama.go transport): `qwenProposer`
+  (the becky-ask Qwen GGUF) pitches; `gemmaJudge` (Gemma‑4 via `cfg.GemmaAVLM()`) votes — two
+  independent local models through llama-server (temp 0, seed 42). `PickProposeModels` starts both
+  servers once, reuses across items, degrades to a one-line note if a GGUF/llama-server is missing.
+  Overrides: `BECKY_SCOUT_PROPOSE_MODEL`, `BECKY_SCOUT_JUDGE_MODEL`.
+- **`cmd/scout/propose_run.go`** + flags `--propose` / `--propose-dir` / `--build`: writes an intake
+  per APPROVED proposal to `scout-proposals/`; `--build` hands each straight to
+  `becky-new-tool --intake-file … --yes --offline` (the existing staged factory does the building —
+  scout only decides WHETHER to ask). Default is emit-only (safe); `--build` is the money-spending opt-in.
+- **`scout-watch.ps1`** passes `--propose` by default (+ `-Build` for full hands-off), and
+  per Jordan (2026-06-23 *"queue them, once a day not once a week"*) it is **queue-only** (writes
+  intakes, no auto-build) and `-Register` installs a **DAILY** 9am task.
+- Gates green: `go build/vet/test ./...`, gofmt clean. Degrade path smoke-verified in the cloud
+  (no models → "propose: skipped — proposer (Qwen) unavailable…", report still prints).
+
+**Left for local (host/model only):** run `becky-scout … --propose` with the Qwen + Gemma GGUFs
+present (cloud has no models); confirm the two servers start and the JSON parses; double-click
+`scout-watch.ps1 -Register` to install the daily task. Auto-build vs queue is DECIDED (queue);
+remaining open decision is `SPEC-SCOUT.md §7 #5` (add Claude as a judge).
+
+> NOTE (2026-06-23): the unrelated red CI on this PR (#22) was a pre-existing master bug —
+> `internal/editmodel/Digest` used `filepath.Base` on Windows paths (fails on Linux). Fixed on its
+> own branch `claude/fix-editmodel-digest-pathx` (PR #24). #22 goes green once that lands + rebase.
 
 **Session 2026-06-23 (local, `claude/becky-edit-gemma4`) — BUILT the becky-edit (NLE) engine layer + the Gemma-4 QAT upgrade. Two research subagents (Shotcut API, video-db/Director). All gates green; `becky-edit --selftest` proves it offline; `.exe` runs.**
 

@@ -39,3 +39,37 @@ func (f FakeAssessor) Assess(v Video, _ []Capability) (Assessment, error) {
 	}
 	return Assessment{Relevant: false}, nil
 }
+
+// FakeProposer is a canned Proposer keyed by video ID, for testing the
+// autonomous propose→judge gate with no model.
+type FakeProposer struct {
+	ByID map[string]Proposal
+	Err  error
+}
+
+// Propose implements Proposer.
+func (f FakeProposer) Propose(it Item) (Proposal, error) {
+	if f.Err != nil {
+		return Proposal{}, f.Err
+	}
+	return f.ByID[it.ID], nil // zero Proposal (WorthBuilding=false) when absent
+}
+
+// FakeJudge is a canned Judge: it agrees unless the proposal slug is in Reject.
+type FakeJudge struct {
+	JudgeName string
+	Reject    map[string]bool // slugs this judge votes against
+	Err       error
+}
+
+// Name implements Judge.
+func (f FakeJudge) Name() string { return f.JudgeName }
+
+// Vote implements Judge.
+func (f FakeJudge) Vote(p Proposal, _ Item) (JudgeVote, error) {
+	if f.Err != nil {
+		return JudgeVote{}, f.Err
+	}
+	agree := !f.Reject[p.Slug]
+	return JudgeVote{Judge: f.JudgeName, Agree: agree, Why: "fake judge"}, nil
+}
