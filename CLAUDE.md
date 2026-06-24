@@ -79,6 +79,16 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   UI with plain text "for accessibility"; keep user text tight (he has reading limits); no
   Microsoft TTS (he wants a real researched TTS instead). Canon: `ACCESSIBILITY.md`. This
   was violated once already — don't repeat it.
+- **HOW TO INTERACT WITH JORDAN: never make him run a CLI command or answer a technical question, and
+  BUILD TO COMPLETION.** Jordan is non-dev and does NOT use the tools via CLI — "open a terminal and run X,
+  paste the output" is a dead end for him, and a chat window full of jargon is often literally unreadable in his
+  chaotic environment. So: (1) make decisions yourself from the spec/work-order/these docs — do NOT stop each
+  increment to ask questions already settled; (2) if you GENUINELY need him, surface it as a **form**
+  (`AskUserQuestion`, chips) or a **one-line spoken prompt** (whoretana-style) — never "run this command", never
+  a wall of technical text; (3) **finish the job** — agents keep building stubs, testing forever, and stopping
+  half-done. "It compiles" is NOT done; done = the VERIFY command passes + (for anything with a window/audio) it
+  was exercised by **mouse + keyboard** (`CANVAS-NORTH-STAR.md` DoD). A buried step-by-step is why this keeps
+  failing — work orders (`HANDOFF-*.md`) carry the ordered WHAT·HOW·WHY·VERIFY·DONE so agents don't wander.
 - **Model choice = research a CLASS, then verify — never one article or the top download.** Pick the
   right model FAMILY first (e.g. TTS: tiny + LLM-backbone + fast; Kokoro is light-but-flat, 3B is
   too slow), survey the CURRENT field live (HF hub + the model's real card: params/license/GGUF), use
@@ -423,6 +433,24 @@ load-bearing rules, in brief:
     colored TUI (TUI stays the default — do not demote it).
   - `SPEC-FACE-NAMING-LOOP.md` — `becky-cluster → becky-name` (high-contrast review card) →
     enroll the cluster, + inline "teach me" remedy in identify's unnamed output.
+  - `SPEC-BECKY-VOICE.md` (cloud, 2026-06-23, design-only) — **the always-on, proactive VOICE +
+    context front-end for the WHOLE suite** ("I just talk and it does it"): a thin realtime skin
+    (FastRTC transport + Gemini-Live cloud OR Gemma-4+NeuTTS local) + a **rules/harness layer**
+    (GREEN/YELLOW/RED action tiers, kill switch, privacy-local-for-sensitive, **user CONTROL over
+    context — directable like whoretana, not just a visible indicator**, addressee-detection for
+    always-on, customizable `becky-voice.rules.json`) over the EXISTING front-doors
+    (`becky`/`becky-ask`/`becky-harness`/REAPER bridge/Strudel) — reimplements NO tool (single-tool
+    principle preserved). Reactive ("talk") half is near-done; the real new work is the PROACTIVE
+    **background analyst** — corroborate-then-conclude applied to PROPOSALS (no bullshit firehose),
+    cheap always-on LFM2.5 orchestrating `becky-research`/`radar`/`scout` under a **heartbeat + `/goal`-
+    bounded harness** (hermes-style `no_agent` ticks + hooks; tiered LFM2.5→Qwen/Gemma escalation, each
+    tier its own protocol), findings delivered as a **~30s narrated debrief VIDEO in whoretana's persona
+    voice** (HyperFrames/Mermaid in becky-canvas — Jordan won't read 3 pages but will watch 30s), NOT
+    spoken nagging; it can also drive **Claude Code** (`internal/agentrun`) + CLIs and digest them so he
+    reads less. whoretana persona/verbs = LOCAL agent's lane. Pairs with `research/daw-ai-control-reaper-vs-ableton.md`.
+    **BUILD it from `HANDOFF-BECKY-VOICE.md`** — the ordered, checkboxed WHAT·HOW·WHY·VERIFY·DONE work order
+    (Gemini-2.5-realtime first; declarative conditional workflows + auto-generated fill-in-the-blank response
+    map; cloud Phases 0–2 then a local hardware runbook). The spec is the why; the handoff is the do.
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
