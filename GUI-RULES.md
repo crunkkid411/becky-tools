@@ -1,5 +1,14 @@
 # GUI-RULES.md — becky's standard GUI + audio architecture (write-once, read-first)
 
+> ## ⚠️ SUPERSEDED FOR THE BECKY GUI SHELL — 2026-06-24 (Jordan): the becky GUI is now **native WPF (C#/.NET)**.
+> After **three Go+Gio `becky-canvas` attempts failed in one week** (Gio ships no real widgets, so every control
+> was hand-drawn — the root cause of the jank), Jordan ruled: the becky GUI is a **native Windows WPF app**.
+> **No browsers / web views / localhost servers** (his hard constraint — servers are fragile on his machine).
+> WPF is native, fast (compiled, GPU-composited), has real widgets + deep Windows resources, and Claude Code
+> builds it reliably. becky's Go tools are NOT rewritten — the WPF window **shells out to the existing
+> `becky-*.exe`** (JSON in/out). **Work order: `HANDOFF-BECKY-WPF-GUI.md`.** The Go+Gio stack below is retained
+> only as reference/for any non-shell engine pieces; **do NOT start new GUI work in Gio** — use WPF.
+
 **Status:** CANONICAL. Ratified by Jordan 2026-06-19. Every becky GUI/audio surface follows
 this. It supersedes the audio-licensing conclusion in `research/gui-toolkit.md` (written before
 the 2025-11 Steinberg relicensing) and consolidates two research passes (the GUI-toolkit pass and
