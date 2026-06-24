@@ -516,10 +516,18 @@ load-bearing rules, in brief:
 > the short summary here. **Do NOT let this section grow back into a full log** — an accumulating
 > §6 is exactly what pushed CLAUDE.md past the prompt-size limit (fixed 2026-06-22).
 
-### Current state of master (as of 2026-06-22)
+### Current state of master (as of 2026-06-24)
 
-Green and pushed. `go build/vet/test ./...` + `gofmt` clean; `build-all-tools.bat` produces ~76
-`.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` test FAIL is
+pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
+`build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+
+- **Cloud queue drained (2026-06-24, local):** integrated three diverged cloud branches —
+  `fix-editmodel-digest-pathx` (the pathx CI fix, fixes red Linux CI), `scout-autonomous-spec-proposals`
+  (becky-scout `--propose` gate: Qwen proposes → Gemma judges → queue-only daily watch), and
+  `ai-daw-integration` / **becky-voice Phase 0** (new `internal/catalog`, `workflowdef`, `voiceresp`,
+  `voicerules` + `SPEC-BECKY-VOICE.md` / `HANDOFF-BECKY-VOICE.md`, design+scaffolding, fully unit-tested).
+  All gates green; left-for-local items are the per-branch model/hardware gates noted below.
 
 - **becky-canvas usability fixed:** no console-flash on clicks (`proc.NoWindow` everywhere),
   **Spacebar = play/stop**, drum machine updates **live** while playing (debounced relaunch), and a
