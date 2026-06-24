@@ -163,8 +163,12 @@ These encode the exact behaviors Jordan is tired of. Violating one means the ste
 > These need hardware; cloud cannot do them. Each is a tight runbook item, NOT open-ended. Build to the DONE box.
 
 - [ ] **3.1 FastRTC + Gemini 2.5 Flash realtime** beside `pyhelpers`; feed its intents/audio to `cmd/becky-voice`
-  over the NDJSON seam. **DONE:** you talk → it routes to a real becky tool → it speaks a line from
-  `responses.json`. No wake word; barge-in works.
+  over the NDJSON seam. **Cost-critical (spec §6.1): do NOT stream the mic to Gemini continuously** (that bills
+  ~$2/hr idle). Run a **local on-device VAD ($0)** always; only forward audio to Gemini when a **gate** fires
+  (push-to-talk / push-to-disable / wake gesture / addressee §4.8). Keep the GUI **always resident** so it's
+  instant (no relaunch), and show a small **token/cost meter**. **DONE:** you talk → it routes to a real becky
+  tool → it speaks a line from `responses.json`; no wake word; barge-in works; **sitting idle for 10 min sends
+  ~no audio tokens** (verify on the meter).
 - [ ] **3.2 The whoretana floating GUI** (reuse the existing whoretana/Jarvis UI shape) bound to `cmd/becky-voice`.
   **DONE (mouse/keyboard):** window opens, mute toggles, a typed command works, it doesn't freeze.
 - [ ] **3.3 Fill in `responses.json`** — Jordan replaces the default lines with his own (the 5-minute job, like

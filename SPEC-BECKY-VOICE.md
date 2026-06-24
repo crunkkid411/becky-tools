@@ -407,6 +407,29 @@ Three brains on the one FastRTC transport, chosen per-context by the rules file 
 **Gemma-4 only pulled in for vision or harder reasoning** — exactly Jordan's "run whoretana on the small speech
 model except when vision is needed." Sensitive forensic material → local only, always.
 
+### 6.1 Standby & cost — NEVER stream to the cloud on idle (answering Jordan's billing worry)
+Jordan's worry: *"if it's 'on' but I don't use it for an hour, is that still making significant API calls?"* The
+honest mechanics:
+- **Gemini Live bills per second of audio you actually SEND, not for the connection being open** (~25 tokens/sec
+  ≈ **$0.037/min ≈ ~$2.20/hour of *continuous* audio**, 2.5 Flash). An open WebSocket with **no media streamed**
+  costs nothing token-wise (the cost is the audio, not the socket).
+- **So Jordan's "ambient, doesn't shoot up" assumption is only true IF we gate the mic.** Today whoretana streams
+  the mic continuously whenever it isn't muted (`main.py` sends PCM on every callback while unmuted) — that means
+  it **is** billing ~$2/hr even sitting idle. That's the gap in the mental model, and it's the thing to fix.
+- **The fix is exactly Jordan's instinct (gate it).** A **local, on-device VAD** (FastRTC/Silero — **$0**, never
+  leaves the machine) runs always and decides *when* there's real speech; audio is **only forwarded to Gemini
+  when a gate fires** (push-to-talk, **push-to-DISABLE** — default-open, tap to mute when others are around, like
+  whoretana's F4 — a wake gesture, or §4.8 addressee detection). Result: **idle standby ≈ $0** (just local
+  listening), a quick question ≈ a few cents.
+- **This also kills the "launching whoretana is a momentum killer" problem:** the floating GUI stays **always
+  resident** with the free local-VAD standby, so it's *instantly there* — no launch — but the **metered cloud
+  pipe only opens on a real turn.** Always-available without always-billing.
+- **Show the meter.** A tiny running token/cost indicator in the GUI (rules-file budget cap optional) so cost is
+  never a mystery. And the **Phase-4 local LFM2.5-Audio path makes idle standby truly $0** (on-device), which is
+  the long-run answer for "leave it on all day."
+- **Free tier:** the free Gemini tiers (2.0 Flash) are deprecating and the 2.5 native-audio Live model is paid —
+  so treat cloud audio as **metered** and design to minimize it via gating; don't rely on a free allowance.
+
 ---
 
 ## 7. The whoretana carve-out — explicitly the LOCAL AGENT's lane
