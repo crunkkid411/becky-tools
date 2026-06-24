@@ -1,0 +1,10 @@
+{
+  "cloud_allowed": true,
+  "allow_proactive_tiers": ["green"],
+  "tier_overrides": {},
+  "max_proposals_per_minute": 2,
+  "quiet_hours": [
+    { "start": 22, "end": 7 }
+  ],
+  "sensitive_contexts": ["case", "forensic", "evidence", "private"]
+}
