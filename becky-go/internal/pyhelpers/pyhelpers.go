@@ -13,6 +13,9 @@ import (
 //go:embed transcribe_parakeet.py
 var TranscribeParakeet []byte
 
+//go:embed transcribe_parakeet_dml.py
+var TranscribeParakeetDML []byte
+
 //go:embed vad_silero.py
 var VADSilero []byte
 

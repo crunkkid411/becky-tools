@@ -171,10 +171,38 @@ func main() {
 		beckyio.Logf(*verbose, "transcribing in %d windows of %gs (overlap %gs)", n, chunkSecs, *chunkOverlap)
 	}
 
-	beckyio.Logf(*verbose, "running Parakeet-v3 (device=%s, model=%s)...", dev, cfg.ParakeetModelDir)
-	res, err := runHelper(cfg.Python, script, wav, cfg.ParakeetModelDir, dev, *lang, *numThreads, chunkSecs, *chunkOverlap, *verbose)
-	if err != nil {
-		beckyio.Fatalf("%v", err)
+	// Prefer the GPU/DirectML path (onnx-asr) when its venv is present and the
+	// caller didn't force CPU/CUDA: it runs the SAME Parakeet model ~4-5x faster
+	// on the GPU with NO CUDA setup (the "Handy" approach). It falls back to the
+	// sherpa CPU path below if DirectML is unavailable or the helper degrades, so
+	// the proven CPU Parakeet always stays available ("keep the CPU one in case").
+	var res helperResult
+	usedDML := false
+	if cfg.DMLTranscribePython != "" && dev != "cpu" && dev != "cuda" {
+		if dmlScript, derr := pyhelpers.Materialize("transcribe_parakeet_dml.py", pyhelpers.TranscribeParakeetDML); derr == nil {
+			dmlDev := "dml"
+			if dev != "auto" && dev != "" {
+				dmlDev = dev
+			}
+			beckyio.Logf(*verbose, "running Parakeet on the GPU via DirectML (onnx-asr)...")
+			dres, derr2 := runDMLHelper(cfg.DMLTranscribePython, dmlScript, wav, dmlDev, *lang, chunkSecs, *chunkOverlap, *verbose)
+			switch {
+			case derr2 == nil && !dres.Skipped:
+				res, usedDML = dres, true
+			case derr2 != nil:
+				beckyio.Logf(*verbose, "DirectML path failed (%v); falling back to CPU Parakeet", derr2)
+			default:
+				beckyio.Logf(*verbose, "DirectML path degraded (%s); falling back to CPU Parakeet", dres.Reason)
+			}
+		}
+	}
+	if !usedDML {
+		beckyio.Logf(*verbose, "running Parakeet-v3 on CPU (sherpa, device=%s, model=%s)...", dev, cfg.ParakeetModelDir)
+		r, err := runHelper(cfg.Python, script, wav, cfg.ParakeetModelDir, dev, *lang, *numThreads, chunkSecs, *chunkOverlap, *verbose)
+		if err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		res = r
 	}
 	if res.Skipped {
 		beckyio.Fatalf("transcription skipped: %s", res.Reason)
@@ -324,6 +352,32 @@ func runHelper(python, script, wav, modelDir, device, lang string, numThreads in
 	res, ok := parseHelperJSON(stdout.String())
 	if !ok {
 		return helperResult{}, fmt.Errorf("could not parse transcribe helper output:\n%s", tail(stdout.String()))
+	}
+	return res, nil
+}
+
+// runDMLHelper runs the onnx-asr + DirectML GPU helper (transcribe_parakeet_dml.py)
+// and parses its JSON. Same output contract as runHelper, different args (no
+// --model-dir / --num-threads; the model is the cached onnx-asr Parakeet).
+func runDMLHelper(python, script, wav, device, lang string, chunkSeconds, chunkOverlap float64, verbose bool) (helperResult, error) {
+	args := []string{script, wav, "--device", device, "--lang", lang,
+		"--chunk-seconds", strconv.FormatFloat(chunkSeconds, 'f', -1, 64),
+		"--chunk-overlap", strconv.FormatFloat(chunkOverlap, 'f', -1, 64)}
+	cmd := exec.Command(python, args...)
+	proc.NoWindow(cmd)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	if verbose {
+		cmd.Stderr = os.Stderr
+	} else {
+		cmd.Stderr = &stderr
+	}
+	if err := cmd.Run(); err != nil {
+		return helperResult{}, fmt.Errorf("DML transcribe helper failed: %v\n%s", err, tail(stderr.String()))
+	}
+	res, ok := parseHelperJSON(stdout.String())
+	if !ok {
+		return helperResult{}, fmt.Errorf("could not parse DML transcribe helper output:\n%s", tail(stdout.String()))
 	}
 	return res, nil
 }

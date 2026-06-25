@@ -13,21 +13,22 @@ import (
 
 // Config holds the external paths and defaults every becky tool depends on.
 type Config struct {
-	Python           string `json:"python"`             // interpreter with sherpa_onnx + torch
-	ParakeetModelDir string `json:"parakeet_model_dir"` // sherpa-onnx Parakeet-TDT-0.6B-v3 dir
-	AutoEditor       string `json:"auto_editor"`        // auto-editor binary
-	FFmpeg           string `json:"ffmpeg"`
-	FFprobe          string `json:"ffprobe"`
-	SileroVADModel   string `json:"silero_vad_model"`   // silero_vad.onnx for sherpa-onnx VAD
-	VADScript        string `json:"vad_script"`         // legacy torch Silero analyzer (optional)
-	DiarSegModel     string `json:"diar_seg_model"`     // pyannote-segmentation-3.0 model.onnx
-	SpeakerEmbModel  string `json:"speaker_emb_model"`  // CAM++ 3D-Speaker embedding onnx
-	Sqlite3          string `json:"sqlite3"`            // sqlite3.exe CLI (for sqlite-vec DB access)
-	SqliteVecExt     string `json:"sqlite_vec_ext"`     // sqlite-vec vec0 loadable extension (vec0.dll)
-	EmbedModelCache  string `json:"embed_model_cache"`  // sentence-transformers cache dir (Qwen3 weights)
-	EmbedServerURL   string `json:"embed_server_url"`   // resident llama-server embedding endpoint (Qwen3-4B)
-	EmbedServerModel string `json:"embed_server_model"` // Qwen3-Embedding-4B GGUF path (served by start-embed-server.bat)
-	EmbedModel       string `json:"embed_model"`        // default embedding model name: qwen3-4b (server) | qwen3-0.6b (in-process)
+	Python              string `json:"python"`                // interpreter with sherpa_onnx + torch
+	DMLTranscribePython string `json:"dml_transcribe_python"` // GPU ASR venv (onnx-asr+DirectML); empty = use sherpa CPU
+	ParakeetModelDir    string `json:"parakeet_model_dir"`    // sherpa-onnx Parakeet-TDT-0.6B-v3 dir
+	AutoEditor          string `json:"auto_editor"`           // auto-editor binary
+	FFmpeg              string `json:"ffmpeg"`
+	FFprobe             string `json:"ffprobe"`
+	SileroVADModel      string `json:"silero_vad_model"`   // silero_vad.onnx for sherpa-onnx VAD
+	VADScript           string `json:"vad_script"`         // legacy torch Silero analyzer (optional)
+	DiarSegModel        string `json:"diar_seg_model"`     // pyannote-segmentation-3.0 model.onnx
+	SpeakerEmbModel     string `json:"speaker_emb_model"`  // CAM++ 3D-Speaker embedding onnx
+	Sqlite3             string `json:"sqlite3"`            // sqlite3.exe CLI (for sqlite-vec DB access)
+	SqliteVecExt        string `json:"sqlite_vec_ext"`     // sqlite-vec vec0 loadable extension (vec0.dll)
+	EmbedModelCache     string `json:"embed_model_cache"`  // sentence-transformers cache dir (Qwen3 weights)
+	EmbedServerURL      string `json:"embed_server_url"`   // resident llama-server embedding endpoint (Qwen3-4B)
+	EmbedServerModel    string `json:"embed_server_model"` // Qwen3-Embedding-4B GGUF path (served by start-embed-server.bat)
+	EmbedModel          string `json:"embed_model"`        // default embedding model name: qwen3-4b (server) | qwen3-0.6b (in-process)
 	// Gemma-4 E4B-it audio-visual model (becky-validate / internal/avlm). The
 	// GGUF + BF16 multimodal projector run on llama.cpp (llama-mtmd-cli /
 	// llama-server). BF16 mmproj is required — other quants corrupt audio.
@@ -105,7 +106,8 @@ func Load() Config {
 
 func defaults() Config {
 	return Config{
-		Python: detectPython(),
+		Python:              detectPython(),
+		DMLTranscribePython: detectDMLTranscribePython(),
 		ParakeetModelDir: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\asr\sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`,
 		),
@@ -212,6 +214,17 @@ func detectPython() string {
 	return "python"
 }
 
+// detectDMLTranscribePython returns the dedicated onnx-asr + DirectML venv that
+// runs Parakeet on the GPU (the fast path, the "Handy" approach), or "" when it
+// isn't set up — in which case becky-transcribe uses the sherpa CPU path. Create
+// it with scripts/setup-asr-gpu.ps1.
+func detectDMLTranscribePython() string {
+	if p := `X:\AI-2\becky-tools\models\asr\venv-dml\Scripts\python.exe`; fileExists(p) {
+		return p
+	}
+	return ""
+}
+
 // resolve prefers a binary on PATH, then a known fallback, then the bare name.
 func resolve(name, fallback string) string {
 	if p, err := exec.LookPath(name); err == nil {
@@ -243,6 +256,9 @@ func fileExists(p string) bool {
 func merge(base, over Config) Config {
 	if over.Python != "" {
 		base.Python = over.Python
+	}
+	if over.DMLTranscribePython != "" {
+		base.DMLTranscribePython = over.DMLTranscribePython
 	}
 	if over.ParakeetModelDir != "" {
 		base.ParakeetModelDir = over.ParakeetModelDir
