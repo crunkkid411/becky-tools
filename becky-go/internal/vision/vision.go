@@ -69,6 +69,7 @@ type Result struct {
 	Tool        string `json:"tool"`
 	Image       string `json:"image"`
 	Model       string `json:"model"`
+	Engine      string `json:"engine,omitempty"` // model family that produced this (default LFM2.5-VL; "Gemma-4" via --gemma)
 	Prompt      string `json:"prompt"`
 	Description string `json:"description"`
 	Degraded    bool   `json:"degraded"`
@@ -259,9 +260,14 @@ func degrade(res Result, err error) Result {
 }
 
 // Provenance is the one-line "which model produced this" string for the
-// plain-language report.
+// plain-language report. Engine defaults to LFM2.5-VL (the fast still-image
+// path) and is "Gemma-4" when the stronger --gemma model produced the answer.
 func (r Result) Provenance() string {
-	return fmt.Sprintf("(produced by %s via local LFM2.5-VL: %s)", ToolName, pathx.Base(r.Model))
+	engine := r.Engine
+	if engine == "" {
+		engine = "LFM2.5-VL"
+	}
+	return fmt.Sprintf("(produced by %s via local %s: %s)", ToolName, engine, pathx.Base(r.Model))
 }
 
 // firstNonEmpty returns the first non-empty string, or "" if all are empty.

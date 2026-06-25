@@ -20,6 +20,55 @@ instead of dumping maybes for you to sort. A lone weak signal stays "unknown." (
 - Search commands (`find`, `index`, `corroborate`) need the embedding server running once:
   `X:\AI-2\becky-tools\start-embed-server.bat`. Transcribe/diarize/identify/enroll do **not**.
 
+## Find or verify a SUBJECT on screen — the corroboration playbook (agents: READ THIS FIRST)
+
+This is the recipe the suite is BUILT for, and the one most often done wrong. The tools are
+deterministic building blocks; **YOU (the agent) chain them.** A job like "find the clip where the cat
+shows its chipped tooth" is NOT one tool — it is this chain. **Nothing is "on screen" until a vision
+model actually WATCHED the segment and said so.** (Verified 2026-06-24: `becky-validate` watches a clip's
+frames+audio with Gemma-4 and returns per-frame observations in ~30s — the capability is real; use it.)
+
+### Evidence hierarchy — know what each signal actually proves
+| Signal | Tool | Proves | Does NOT prove |
+|---|---|---|---|
+| subject *spoken about* | `becky-transcribe` | a word was said at [t] | that the subject is on camera — people narrate off-screen things constantly |
+| *something moved* at [t] | `becky-motion` | motion at frame precision | WHAT moved or WHO — a person gesturing trips it as often as a pet. A burst is a CANDIDATE MOMENT to go look, nothing more. |
+| a fast caption | `becky-vision` (LFM 450M) | a rough guess | anything fine — the 450M confuses cat/dog and misses detail. TRIAGE ONLY. |
+| a print match | `becky-identify` | a KNOWN voice/face print matched | identity on its own — face alone is weak; trust a NAME most when corroborated |
+| **the model WATCHED it** | **`becky-validate` (Gemma-4)** | **frames + audio actually seen/heard** | — **THIS is the step that can say "a cat is on screen at [t1,t2]."** |
+
+### The chain — do it in this order
+1. **NARROW (cheap/fast).** Use transcribe / motion / identify / LFM-vision to get a SHORT list of
+   high-likelihood windows. Every one is a *candidate*, not an answer.
+2. **WATCH each candidate with Gemma-4 — the load-bearing step.**
+   ```
+   becky-validate "<clip>" --window <seconds> --fps 4 --verbose        # Gemma sees ~4 fps of frames + the audio
+   becky-validate "<clip>" --motion motion.json                        # auto-aims Gemma at the top becky-motion burst
+   ```
+   Add your own plain question: `--question "Is a cat visible in any frame? If yes, describe it."`
+   **If Gemma does not confirm the subject, the window is OUT — full stop.**
+3. **CORROBORATE before concluding.** Ship a window only when **>=2 independent signals agree** (e.g.
+   Gemma says "a cat is visible" AND a print match / the subject persists across frames). One lone signal =
+   "candidate", never a result. (becky's core rule — `FORENSIC-OUTPUT-PHILOSOPHY.md`.)
+4. **RE-VERIFY close calls with the bigger model.** When the call is marginal, run the SAME watch on
+   Gemma-4 **12B**: `BECKY_AVLM_VARIANT=12b becky-validate "<clip>" --window <s> --fps 4`
+   (the 12B GGUF must be present — `scripts\get-gemma4-qat.ps1 -Include12B`).
+5. **FINE DETAIL on the best single frame** (e.g. a chipped tooth): pick a frame with the mouth OPEN and ask
+   the STRONG model about that one still — `becky-vision --image best.jpg --gemma --prompt "Describe this cat's mouth and teeth in detail."`
+6. **SHIP only what was verified, TIGHT** — +/- 2-3 s around the confirmed moment, not a 1-3 min window. Record
+   which signals confirmed each clip.
+
+> **Batch tip:** `becky-validate` spawns a fresh Gemma server per call (re-loads the model each time). To
+> watch MANY windows, start ONE server and point every call at it:
+> `llama-server -m <gemma-qat.gguf> --mmproj <mmproj-BF16.gguf> -ngl 99 -c 16384 -fa off --port 8077`
+> then `becky-validate "<clip>" --server-url http://127.0.0.1:8077 ...` (also works on `becky-vision --gemma --server-url`).
+
+### The discipline rule this playbook exists to enforce
+**If you (or a tool) looked at a window and the subject is NOT there, you DROP it. You never put an
+unverified or contradicted clip on a timeline "anyway."** A transcript mention or a motion peak is NEVER
+enough to claim the subject is on screen. "Not sure" -> say **unknown**, don't ship it. Wide, unverified
+windows that waste a human's review time are a TOOL-USE FAILURE, not a near-miss.
+
 ## The easy way — the `becky` command (plain language)
 ```
 becky enroll-wiki --wiki "C:\Users\only1\Documents\Obsidian\llm-wiki-CLANCY-TRIAL\wiki" --kb kb-final
@@ -42,8 +91,11 @@ Each prints JSON (or use `--format srt|txt|vtt` on transcribe):
 becky-transcribe "<video>" --format srt          # what's said + timestamps
 becky-diarize    "<video>"                        # how many speakers + when each talks
 becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face)
-becky-validate   "<video>" --backend gemma4-local # plain-language description of on-screen actions
+becky-validate   "<video>"                        # AV description of on-screen actions (Gemma-4, default backend)
 ```
+`becky-validate` defaults to `--backend gemma4-local` — you don't need to pass it. See the
+**Vision / audio-visual models** section below for which model runs, how to pick 12B vs E4B,
+and how to describe a single still image.
 All-in-one (transcript + speakers + identities + events + on-screen OSINT + OCR; resumable):
 ```
 becky-pipeline "<video-or-folder>" --kb kb-final --steps transcribe,diarize,identify,events,osint,ocr --out ingest-out
@@ -52,10 +104,82 @@ becky-pipeline "<video-or-folder>" --kb kb-final --steps transcribe,diarize,iden
 ## Find text, locations, and recurring strangers
 ```
 becky-ocr "<frame-or-osint-dir>" --db forensic.db   # read signs/IDs/chat/timestamps off frames -> searchable
-becky-motion "<video>"                                # localize sub-second movement (aims validate at the moment)
+becky-motion "<video>"                                # MOTION ONLY: WHEN something moved (NOT who/what). Each burst is a CANDIDATE -> route to becky-validate to actually LOOK.
 becky-cluster --db forensic.db                        # group recurring UNKNOWN people: "Person A appears in N clips"
 ```
 On-screen text is searchable in the SAME `becky find` as speech (addresses live in signage — your clips carry no GPS).
+
+## Vision / audio-visual models (the eyes + ears)
+Two separate tools, two different llama.cpp paths, **one model on the GPU at a time** (8 GB RTX 3070):
+
+- **`becky-vision`** — describe / read text off ONE still image. Default = the fast LFM2.5-VL **450M**
+  via **`llama-mtmd-cli.exe`** (image-only, deterministic). Add **`--gemma`** to instead run the strong
+  Gemma-4 on the SAME still via `llama-server` — use it for fine detail the tiny model gets wrong.
+- **`becky-validate`** — Gemma-4 **audio-visual** pass over a short VIDEO CLIP via **`llama-server.exe`**
+  (it ffmpeg-samples frames + 16 kHz mono audio, then asks cross-modal questions). This is the ONLY tool
+  that understands AUDIO, and the one that WATCHES a segment. (Do not point the default LFM path
+  `llama-mtmd-cli` at Gemma — it hard-crashes 0xC0000409; that is why `--gemma` uses `llama-server`.)
+
+### Models on disk (full paths)
+| Model | Role | GGUF | mmproj |
+|---|---|---|---|
+| LFM2.5-VL **450M** (default for `becky-vision`) | fastest still-image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-450m\LFM2.5-VL-450M-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-450m-Q8_0.gguf` |
+| LFM2.5-VL **1.6B** | higher-quality still image | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
+| **Qwen3-4B-Instruct** (text/reason; handles images via a VL mmproj if supplied) | text reasoning helper | `X:\AI-2\becky-tools\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | (none bundled) |
+| **Gemma-4 E4B-it QAT** ← *default AVLM* | AV clip analysis (vision **+ audio**) | `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | `X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf` |
+| **Gemma-4 12B-it QAT** ← *alternate, NOT yet downloaded* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(absent — run the fetch script)* | `…\mmproj-12B-BF16.gguf` |
+
+QAT = quantization-aware-trained: near-bf16 quality at 4-bit memory. Always the Unsloth **`UD-Q4_K_XL`**
+build (a naïve q4_0 throws QAT's benefit away). The **BF16 mmproj is mandatory** for Gemma — other
+mmproj quants corrupt the audio encoder. Paths are resolved in `becky-go/internal/config/config.go`
+(override per-machine via `~/.becky/config.json`); none are hardcoded in the tools.
+
+### Pick 4B vs 12B (Gemma AVLM)
+`becky-validate` resolves the active Gemma via `config.GemmaAVLM()`:
+- **Default = E4B-it QAT** (~5 GB, the no-drama fit). Just run `becky-validate "<clip>"`.
+- **12B = set the env var** `BECKY_AVLM_VARIANT=12b` — BUT only takes effect **if the 12B GGUF exists**;
+  otherwise it silently stays on E4B (degrade-never-crash). The 12B is **not on disk by default** —
+  fetch it first:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File "X:\AI-2\becky-tools\scripts\get-gemma4-qat.ps1" -Include12B
+  ```
+  Then: `setx`/session `$env:BECKY_AVLM_VARIANT="12b"` before calling `becky-validate`. (12B is ~7 GB
+  weights + mmproj + KV — borderline on 8 GB at full context; verify VRAM/tok-s on the 3070, or accept
+  a few CPU-offloaded layers.)
+
+### Describe ONE still image
+Fast LFM2.5-VL (default) — image-only triage:
+```
+becky-vision --image "<frame.jpg>" --prompt "Describe this image factually." [--json]
+becky-vision --image "<frame.jpg>" --dir "X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b" --prompt "..."   # use the 1.6B
+```
+Override the model explicitly with `--model <gguf> --mmproj <gguf>`; `--bin` retargets `llama-mtmd-cli.exe`;
+`--ngl 99` = full GPU offload (default).
+
+**Strong Gemma-4 on a still — `--gemma`** (for the fine detail the 450M gets wrong; verified working
+2026-06-24, ~4 s/frame):
+```
+becky-vision --image "<frame.jpg>" --gemma --prompt "Describe this cat's mouth and teeth in detail." [--json]
+becky-vision --image "<frame.jpg>" --gemma --server-url http://127.0.0.1:8077   # reuse a warm server for many frames
+```
+`--gemma` routes the still through `llama-server` (the default `llama-mtmd-cli` hard-crashes on Gemma-4),
+disabling thinking + flash-attention for you. It honors `BECKY_AVLM_VARIANT=12b` for the bigger model.
+Still image-only (no audio) — for audio + motion across a segment, use `becky-validate` on a clip.
+
+### Analyze a short CLIP (with audio)
+```
+becky-validate "<clip.mp4>"                          # default Gemma E4B-QAT, vision + audio
+becky-validate "<clip.mp4>" --window 30 --fps 1                  # --window = LENGTH in s (<=60); start AT a burst via --motion. caps: <=60s video, <=30s audio @16kHz mono
+BECKY_AVLM_VARIANT=12b becky-validate "<clip.mp4>"   # 12B (only if its GGUF was fetched)
+```
+Audio IS understood by `becky-validate` (Gemma's audio encoder); `becky-vision` is silent/image-only.
+
+### Neutral prompting (forensic discipline)
+Drive the model NEUTRALLY: one factual instruction, never primed toward a conclusion. For a possibly
+broken/missing tooth, ask **"Describe this cat's face, mouth, and teeth in detail."** — NOT "is the
+tooth broken?". Over-prompting a small VLM produces confidently-wrong output. The model only sees what's
+in frame: if the mouth is closed it will (correctly) say no teeth are visible — pick frames where the
+mouth is open for any dental question.
 
 ## Output style (for the description/validate tools)
 Governed by `FORENSIC-OUTPUT-PHILOSOPHY.md`: **plain words** (butt/hips/waist, not "iliac

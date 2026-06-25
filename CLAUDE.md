@@ -97,7 +97,13 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   method produced NeuTTS Air — don't repeat the shortcut. Canon: `SPEC-BECKY-TTS.md` / `research/tts.md`.
 - **Corroborate, then CONCLUDE — don't hedge.** ≥2 independent signals agreeing →
   state the conclusion plainly. A lone weak signal → "unknown"/candidate. A flood
-  of maybes a human must sort = tool failure.
+  of maybes a human must sort = tool failure. The CONCRETE tool-chain for "is subject
+  X actually on screen during [t0,t1]" is the **corroboration playbook in `SKILL.md`**
+  (narrow with cheap signals → **`becky-validate` WATCHES the window with Gemma-4** →
+  ≥2 agree → ship a TIGHT interval). A transcript mention or a `becky-motion` burst is
+  NEVER presence; never put a window a model looked at — and the subject wasn't there —
+  on a timeline anyway. (2026-06-24: a forensic task failed exactly here — the tools
+  worked, the agent's chaining didn't.)
 - **Recall is for DETECTION, not NAMING.** Surface every face/voice; attach a NAME
   only when corroborated.
 - **Offline + deterministic.** No network at runtime; same input → same output
