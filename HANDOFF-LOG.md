@@ -10,6 +10,40 @@
 
 ---
 
+## 2026-06-24 (local) — FORENSIC CORROBORATION PLAYBOOK + becky-vision --gemma (Jordan: "ridiculously bad")
+
+Triggered by `user-feedback-06-24-2026.md` + Jordan's correction: the "find the cat's chipped tooth"
+task failed because the **agent chained the tools wrong**, not because a tool was broken, and SKILL.md
+was stale. Verified this session with REAL runs (not assumed):
+- **`becky-validate` watches a clip with Gemma-4 E4B** — pulled 6 frames + 6 s audio from a real clip,
+  captioned each frame accurately, ran VAD, synthesized 4 observations in ~30 s. The capability Jordan
+  asked for ("E4B watches the likely segments") was there the whole time; it just wasn't being used.
+- **`becky-vision --gemma` (NEW)** — the strong Gemma-4 on a SINGLE still via `internal/avlm.AnalyzeImage`
+  (the missing front door; the default 450M LFM is cat/dog-confused on fine detail). Verified on a real
+  frame in 4.2 s.
+- **Gemma-4 12B re-verify tier downloaded + verified** — loads on the 3070 at `-ngl 99`, ~8 s/still,
+  noticeably finer detail than E4B; `BECKY_AVLM_VARIANT=12b` selects it. (The 12B repo's BF16 mmproj is
+  genuinely ~175 MB vs E4B's 945 MB — checked the HF repo; not a bad download.)
+
+Landed on master (`264e175`, branch `fix/forensic-corroboration-playbook`, FF):
+- **SKILL.md**: top-of-file **corroboration playbook** — evidence hierarchy (transcript/motion are NOT
+  presence), the chain (narrow → `becky-validate` WATCHES → ≥2 agree → 12B re-verify → ship TIGHT), warm-
+  server batch tip, and the discipline rule ("never put a window a model looked at — and the subject
+  wasn't there — on a timeline anyway"). Doc-drift fixes: motion=motion-only, real `becky-validate`
+  flags, `--gemma` usage, 12B now present.
+- becky-vision `--gemma`/`--server-url`; `internal/avlm.AnalyzeImage`+`ImageOptions` (+ value-asserting
+  tests); `vision.Result.Engine`. CLAUDE.md §2 "Corroborate, then CONCLUDE" invariant points at the playbook.
+
+Gates: `go build/vet ./...` green; `internal/avlm`+`internal/vision` tests green; `build-all-tools.bat`
+= 74 tools. (`cmd/tts` FAIL + audio-engine WARN are the pre-existing environmental cases.)
+
+NOT done (deliberate): no NLE work (Jordan: "don't refactor another NLE"); `becky-transcribe` still
+CPU-only (works, slow — a GPU sherpa-onnx wheel swap risks breaking the working path, left as its own
+task pending Jordan's go-ahead). No new presence-verifier TOOL built — per Jordan, the fix is the agent
+chaining the EXISTING tools with corroboration, which the playbook now teaches.
+
+---
+
 ## 2026-06-24 (local) — CLOUD QUEUE DRAINED: three diverged branches integrated, master green
 
 Launched by the "Get Becky Updates" button, which punted to the agent because **all three waiting

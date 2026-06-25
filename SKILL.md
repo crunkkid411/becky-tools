@@ -127,7 +127,7 @@ Two separate tools, two different llama.cpp paths, **one model on the GPU at a t
 | LFM2.5-VL **1.6B** | higher-quality still image | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
 | **Qwen3-4B-Instruct** (text/reason; handles images via a VL mmproj if supplied) | text reasoning helper | `X:\AI-2\becky-tools\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | (none bundled) |
 | **Gemma-4 E4B-it QAT** ← *default AVLM* | AV clip analysis (vision **+ audio**) | `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | `X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf` |
-| **Gemma-4 12B-it QAT** ← *alternate, NOT yet downloaded* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(absent — run the fetch script)* | `…\mmproj-12B-BF16.gguf` |
+| **Gemma-4 12B-it QAT** ← *re-verify tier (downloaded + verified 2026-06-24)* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(6.3 GB, present)* | `…\mmproj-12B-BF16.gguf` *(present)* |
 
 QAT = quantization-aware-trained: near-bf16 quality at 4-bit memory. Always the Unsloth **`UD-Q4_K_XL`**
 build (a naïve q4_0 throws QAT's benefit away). The **BF16 mmproj is mandatory** for Gemma — other
@@ -137,15 +137,12 @@ mmproj quants corrupt the audio encoder. Paths are resolved in `becky-go/interna
 ### Pick 4B vs 12B (Gemma AVLM)
 `becky-validate` resolves the active Gemma via `config.GemmaAVLM()`:
 - **Default = E4B-it QAT** (~5 GB, the no-drama fit). Just run `becky-validate "<clip>"`.
-- **12B = set the env var** `BECKY_AVLM_VARIANT=12b` — BUT only takes effect **if the 12B GGUF exists**;
-  otherwise it silently stays on E4B (degrade-never-crash). The 12B is **not on disk by default** —
-  fetch it first:
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File "X:\AI-2\becky-tools\scripts\get-gemma4-qat.ps1" -Include12B
-  ```
-  Then: `setx`/session `$env:BECKY_AVLM_VARIANT="12b"` before calling `becky-validate`. (12B is ~7 GB
-  weights + mmproj + KV — borderline on 8 GB at full context; verify VRAM/tok-s on the 3070, or accept
-  a few CPU-offloaded layers.)
+- **12B = set the env var** `BECKY_AVLM_VARIANT=12b` (the re-verify tier). **Downloaded + verified working
+  2026-06-24**: it loads on the 3070 at full GPU offload (`-ngl 99`) and runs a still in ~8 s, with
+  noticeably finer detail than E4B. If the 12B GGUF is ever absent it silently stays on E4B
+  (degrade-never-crash); re-fetch with
+  `powershell -ExecutionPolicy Bypass -File "X:\AI-2\becky-tools\scripts\get-gemma4-qat.ps1" -Include12B`.
+  Use it to RE-CHECK a close call after E4B: `BECKY_AVLM_VARIANT=12b becky-validate "<clip>" --window <s> --fps 4`.
 
 ### Describe ONE still image
 Fast LFM2.5-VL (default) — image-only triage:
