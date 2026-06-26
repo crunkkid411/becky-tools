@@ -78,10 +78,10 @@ const (
 // Verdict is the protocol-enforced outcome for one claim. Only Concluded verdicts may be
 // stated as fact; Candidate/Unknown are never dumped as "maybes" — they are held.
 type Verdict struct {
-	Claim   string
-	Status  Status
-	Sources []string // the distinct sources that counted toward the verdict
-	Reason  string   // plain-language audit of WHY this status (forensic transparency)
+	Claim   string   `json:"claim"`
+	Status  Status   `json:"status"`
+	Sources []string `json:"sources"` // the distinct sources that counted toward the verdict
+	Reason  string   `json:"reason"`  // plain-language audit of WHY this status (forensic transparency)
 }
 
 // Corroborate is the LOAD-BEARING gate. It applies becky's protocols to a claim's signals and
