@@ -76,6 +76,16 @@ gate in **`becky-go/internal/orchestrate`**. Use it; do not re-implement the rul
 4. returning `orchestrate.Resolve(...)` — the final corroborated output. The forensic agent sees only this.
 The engine + its rules are cloud-built and proven; steps 1–4 are the local model wiring.
 
+**Two protocols are already enforced in RUNNING tools (the proven pattern — extend it, don't reinvent):**
+- **`becky-resolve`** (naming): reads becky-identify's real output and STATES a name only when corroborated
+  (voice+face → named; a single weak match → held candidate, then escalated through the Gemma-4 ladder, named
+  only if the model corroborates). Kills the wrong-person voice-ID at the structure level.
+- **`becky-presence`** (on-screen): the cross-tool chain compiled — mentions + motion bursts + a vision-model
+  WATCH are grouped by time window; a window is STATED on screen only if a model actually watched it AND ≥2
+  sources agree (proven: "cat" concludes where a model saw a cat, NOT where it saw a dog). Tight intervals, no
+  smeared blobs, no mention-or-motion-as-presence.
+The remaining tools/protocols follow this same pattern (`HANDOFF-SELF-REGULATE.md`); the model calls are local.
+
 ## Find or verify a SUBJECT on screen — the corroboration playbook (the BUILD SPEC for becky's internal orchestration)
 
 This is the recipe the suite is BUILT for, and the one most often done wrong. The tools are
