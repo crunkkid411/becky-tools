@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM start-embed-server.bat — resident llama.cpp embedding server for becky-embed
+REM start-embed-server.bat - resident llama.cpp embedding server for becky-embed
 REM and becky-search.
 REM
 REM Serves Qwen3-Embedding-4B (Q5_K_M GGUF) on http://127.0.0.1:8088. The becky

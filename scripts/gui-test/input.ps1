@@ -1,4 +1,4 @@
-# input.ps1 — drive native Windows mouse/keyboard for GUI testing of the forked
+# input.ps1 - drive native Windows mouse/keyboard for GUI testing of the forked
 # Shotcut. Throwaway test harness; not referenced by project code.
 # Ops (run in order): -Click "x,y"  -Double "x,y"  -Move "x,y"  -Type "text"  -Keys "{ENTER}"
 # Coordinates are absolute SCREEN pixels. -Activate "TitleSubstr" brings a window up first.

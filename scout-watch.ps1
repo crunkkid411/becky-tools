@@ -1,4 +1,4 @@
-# scout-watch.ps1 — keep an eye on Jordan's "ai useful" YouTube playlist.
+# scout-watch.ps1 - keep an eye on Jordan's "ai useful" YouTube playlist.
 #
 # Runs becky-scout on the playlist and shows ONLY the videos you've added since
 # the last run (it remembers what it already looked at in a small state file), so

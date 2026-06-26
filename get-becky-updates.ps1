@@ -1,4 +1,4 @@
-# Get-Becky-Updates.ps1 — the one-click "button" for Jordan (non-dev).
+# Get-Becky-Updates.ps1 - the one-click "button" for Jordan (non-dev).
 #
 # Double-clicking the Desktop shortcut runs this. It does the whole cloud->local
 # handoff automatically and explains everything in plain English:

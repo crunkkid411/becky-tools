@@ -1,4 +1,4 @@
-# winshot.ps1 — find a window by title substring, optionally maximize, capture just
+# winshot.ps1 - find a window by title substring, optionally maximize, capture just
 # that window's rect to a PNG. Throwaway GUI-test harness; not referenced by project code.
 # Usage: pwsh winshot.ps1 -Title "Shotcut" -Out win.png [-Maximize] [-Activate]
 param(

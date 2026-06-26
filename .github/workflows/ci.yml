@@ -71,3 +71,15 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+  launchers:
+    name: launcher scripts are ASCII-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A single non-ASCII char (em-dash, smart quote) makes a .bat/.ps1 fail to
+      # parse under Windows PowerShell 5.1, flashing the window shut with no error.
+      # This has broken Jordan's one-click buttons repeatedly; enforce ASCII-only.
+      - name: Check launchers
+        run: bash scripts/check-launchers.sh
+

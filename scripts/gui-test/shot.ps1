@@ -1,4 +1,4 @@
-# shot.ps1 — capture the full virtual screen to a PNG. Usage: pwsh shot.ps1 out.png
+# shot.ps1 - capture the full virtual screen to a PNG. Usage: pwsh shot.ps1 out.png
 # Throwaway GUI-test harness (screenshots Jordan's screen so the agent can see the
 # forked Shotcut). Not referenced by project code.
 param([string]$Out = "shot.png")
