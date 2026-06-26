@@ -21,6 +21,7 @@ import (
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
+	"becky-go/internal/forensicrun"
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/proc"
 	"becky-go/internal/pyhelpers"
@@ -76,6 +77,11 @@ type Output struct {
 	// skipped). Both are honesty fields: they make the filtering auditable.
 	VADApplied bool             `json:"vad_applied"`
 	VADDropped []DroppedSegment `json:"vad_dropped,omitempty"`
+	// Forensic is the SELF-REGULATING result, present ONLY with --forensic. It runs
+	// the protocol-enforcement engine (internal/forensicrun -> orchestrate) over this
+	// clip: corroborated names + watched on-screen intervals, with maybes HELD. Omitted
+	// by default so every existing consumer (becky-embed/clip/validate) is unchanged.
+	Forensic *forensicrun.ForensicReport `json:"forensic,omitempty"`
 }
 
 // helperResult mirrors transcribe_parakeet.py's stdout.
@@ -124,6 +130,10 @@ func main() {
 	noChunk := flag.Bool("no-chunk", false, "decode the whole file in one pass (equivalent to --chunk-seconds 0)")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD speech-mask gate (keep ASR segments over silence)")
+	forensicMode := flag.Bool("forensic", false, "after transcribing, run the self-regulating forensic resolution (corroborated names + watched on-screen intervals) and add a \"forensic\" block; default off so existing consumers are unchanged")
+	subject := flag.String("subject", "", "with --forensic: who/what to locate on screen (presence is stated only where a model watched it)")
+	speakers := flag.Int("speakers", 0, "with --forensic: known speaker count (>1 triggers diarize in the plan; 0 = unknown)")
+	kb := flag.String("kb", "", "with --forensic: knowledge-base dir for naming (default: BECKY_KB env, else kb-final)")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
 
 	input := parsePositional()
@@ -256,6 +266,13 @@ func main() {
 	}
 	beckyio.Logf(*verbose, "%d words, %d segments (%d dropped by VAD)",
 		len(output.Words), len(output.Segments), len(vadDropped))
+
+	// --forensic: self-regulate. Reuse the transcript we just produced (no second ASR pass) and
+	// run the protocol engine over this clip; the corroborated result rides under "forensic".
+	if *forensicMode {
+		beckyio.Logf(*verbose, "forensic resolution (identify + corroborate%s)...", forensicSubjectNote(*subject))
+		output.Forensic = buildForensic(input, *subject, *kb, *speakers, output)
+	}
 
 	rendered, err := render(output, *format)
 	if err != nil {

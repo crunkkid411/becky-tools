@@ -10,6 +10,57 @@
 
 ---
 
+## 2026-06-25 (local) — orchestrate WIRED into becky-transcribe + becky-ask (the forward step), proven on a real clip
+
+Jordan: "wire orchestrate into becky-transcribe and becky-ask." Done end-to-end + proven on a real file
+(not "it compiles"). Built one shared runtime package so there's a SINGLE source instead of a third copy.
+
+**New `internal/forensicrun`** — the runtime layer that makes an entry verb self-regulate:
+- `Report` (PURE: already-gathered tool JSON + an Executor -> corroborated report) and `Plan`
+  (diarize-conditional, from the embedded process-video recipe) are fully unit-tested with value
+  assertions + a fake Executor. `RunAndReport` (IMPURE) shells the sibling tools + the Gemma-4 ladder
+  via an injected `ToolRunner` (so even that is tested) and degrades-never-crashes. The tool->claim
+  mapping stays in `internal/forensic` (no second copy of the protocol).
+- **Two real bugs fixed that the cloud design had (caught by reading the actual tools, not guessing):**
+  (1) the validate ladder escalates E4B->12B via the **`BECKY_AVLM_VARIANT=12b` env**, NOT a `--variant`
+  flag — becky-validate has no such flag, so `becky-resolve`'s `gemmaLadder` (which passes `--variant`)
+  is broken; forensicrun does it right. (2) becky-identify REQUIRES `--kb`; the runtime now resolves it
+  (explicit -> `BECKY_KB` env -> the `kb-final` convention) so naming doesn't always degrade. Also made
+  the executor return `KindWatched` for a presence claim (the proof rule 3 needs) vs `KindPrint` for an
+  identity claim, and return the watch's real (even sub-floor) confidence so the ladder ESCALATES
+  instead of stopping (orchestrate.ResolveClaim breaks on an Executor *error* but escalates on a weak
+  *signal*).
+
+**`becky-transcribe --forensic [--subject X] [--speakers N] [--kb dir]`** — after transcribing, attaches a
+`"forensic"` block (corroborated names + watched on-screen intervals, maybes HELD). It reuses the
+transcript it just produced (no 2nd ASR pass). Opt-in + `omitempty`, so becky-embed/clip/validate and
+every other consumer are byte-unchanged by default. Tested via a swappable resolver seam.
+
+**`becky-ask --question "who is in this?" / "is X on screen?" --target <file>`** (single-shot) — a forensic
+question on a dropped file is intercepted (`forensic.go`) and routed straight into the engine, returning
+ONE corroborated plain-English answer ("Named (corroborated): …" / "No one could be named …"), maybes
+held, NOT a staged becky-identify command to chain. Scoped to single-shot on purpose: the interactive
+colored TUI is left untouched so a long model run never freezes the accessibility AID (ACCESSIBILITY.md).
+Deterministic intent + subject extraction, value-tested (who/identify -> naming; "is X on screen/visible",
+"does X appear" -> presence with subject; non-forensic + no-target -> falls through).
+
+**PROOF — real run, `fixture_2spk.wav` (2 speakers), real models on this PC:**
+- `becky-transcribe --forensic --speakers 2`: plan = transcribe/**diarize**/ocr/**verify-with-gemma4**/transcript
+  (multi-speaker -> diarize INCLUDED); `becky-identify` ran vs `kb-final`, matched ONE voice signal for
+  "Hair Jordan"; engine HELD it (`names: null`, `held: candidate "only one signal; needs a second
+  independent source"`); audit shows `validate L1 (gemma4-e4b conf 0.00)` then `L2 (gemma4-12b conf 0.00)`
+  — the ladder fired BOTH levels on the real models, audio-only so no watch, candidate stayed held. No
+  false name from a lone signal — the protocol enforced in code.
+- `becky-ask --question "who is in this" --target fixture_2spk.wav --json`: `kind=forensic`,
+  `source=becky-orchestrate`, answer = *"No one could be named with corroboration … 2 candidate(s) held."*
+
+**Gates:** `go build/vet ./...` green; `go test ./...` green except the lone documented `cmd/tts`
+environmental FAIL; my new files are gofmt-clean (LF); `build-all-tools.bat` rebuilt all `.exe`s.
+
+**Left for local (the always-local model boundary):** point `BECKY_KB` at a real case KB with enrolled
+faces+voices and confirm a 2-modality (voice+face on real video) match CONCLUDES a name; tune identify
+thresholds + the validate window-targeting on Jordan's footage. The deterministic wiring is complete.
+
 ## 2026-06-25 (local) — becky SELF-REGULATES the forensic protocol: `internal/orchestrate` enforcement engine + 3 entry tools
 
 Triggered by the "Get Becky Updates" button, which handed off again (the cloud agent pushed a **second wave**

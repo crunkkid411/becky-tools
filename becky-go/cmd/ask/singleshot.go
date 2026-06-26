@@ -180,6 +180,13 @@ func buildSingleShot(ctx context.Context, f *ssFlags) singleShotResult {
 func textSingleShot(ctx context.Context, f *ssFlags, q string) singleShotResult {
 	t := resolveSingleShotTarget(f)
 
+	// Forensic intercept: a "who is in this?" / "is X on screen?" question about a dropped file
+	// goes straight into becky's self-regulating engine (forensic.go) and returns ONE corroborated
+	// answer — not a staged becky-identify command the agent would have to run and chain itself.
+	if r, ok := forensicSingleShot(ctx, q, t); ok {
+		return r
+	}
+
 	// Build the local model client exactly as the TUI does; nil-safe — when the
 	// model/binary is absent, classify() degrades to the deterministic + keyword
 	// catalog path with an honest note. Never hard-fails.

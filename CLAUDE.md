@@ -539,9 +539,22 @@ pre-existing/environmental — the local TTS model is present, so "degrades when
   with a real `becky-validate`/`becky-identify` ladder + degrade-never-crash), `becky-presence`. Plus
   a launcher ASCII-only gate now ENFORCED in CI + pre-commit (`scripts/check-launchers.sh`). `becky-mcp`
   was added then **rejected/removed** (becky self-orchestrates instead). All gates green (build/vet/test;
-  new `.exe`s build; only the documented `cmd/tts` environmental FAIL). **Left for local:** wire the
-  engine *into* `becky-transcribe`/`becky-ask` on real footage + the live Gemma-4 ladder —
-  `HANDOFF-SELF-REGULATE.md` is the ordered work order.
+  new `.exe`s build; only the documented `cmd/tts` environmental FAIL).
+
+- **Self-regulate WIRED into the entry verbs + PROVEN on a real clip (2026-06-25, local):** the
+  orchestrate engine now drives `becky-transcribe` and `becky-ask` through one shared runtime package
+  `internal/forensicrun` (single source; mapping stays in `internal/forensic`). `becky-transcribe
+  --forensic [--subject X] [--speakers N] [--kb dir]` adds a corroborated `"forensic"` block (opt-in, so
+  existing consumers are unchanged); `becky-ask --question "who is in this?" --target <file>` (single-shot)
+  returns ONE corroborated answer (the colored TUI is left untouched so a model run never freezes it).
+  **Proof on `fixture_2spk.wav`:** multi-speaker plan included diarize; `becky-identify` ran vs `kb-final`,
+  matched one weak voice signal, and the engine HELD it (`names: null`, *"needs a second independent
+  source"*) with the Gemma-4 E4B->12B ladder firing both levels — no false naming. Fixed two real bugs
+  while wiring: the ladder escalates via `BECKY_AVLM_VARIANT=12b` env (not a non-existent `--variant`
+  flag — `becky-resolve` has this latent bug), and the runtime now passes `--kb` to identify (env
+  `BECKY_KB` -> `kb-final`), without which naming always degraded. 8 value-asserting `forensicrun` tests
+  green. **Left for local:** point `BECKY_KB` at a real case KB (enrolled faces+voices) and confirm a
+  2-modality match CONCLUDES a name on real video; tune identify thresholds + validate window-targeting.
 
 - **Native becky GUI = WPF, window verified (2026-06-25, local):** integrated the additive cloud branch
   `claude/ai-daw-integration-hh5y8l` — new `becky-catalog --json` (Go) + `gui/BeckyWindow` (a native

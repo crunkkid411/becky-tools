@@ -1,5 +1,34 @@
 # HANDOFF — make becky-tools SELF-REGULATE (wire `internal/orchestrate` into the entry tools)
 
+> **STATUS — DONE + PROVEN on a real clip (2026-06-25, local).** `internal/orchestrate` is now wired
+> into BOTH entry verbs through one shared runtime package `internal/forensicrun` (single source; the
+> tool->claim mapping stays in `internal/forensic`):
+> - **`becky-transcribe --forensic [--subject X] [--speakers N] [--kb dir]`** transcribes, then adds a
+>   `"forensic"` block (corroborated names + watched on-screen intervals, maybes HELD). Default off, so
+>   every existing consumer (becky-embed/clip/validate) is unchanged.
+> - **`becky-ask --question "who is in this?" / "is X on screen?" --target <file>`** (single-shot)
+>   routes straight into the same engine and returns ONE corroborated plain-English answer — not a
+>   staged becky-identify command to chain. The colored TUI is intentionally untouched (a long model
+>   run must never freeze the accessibility AID).
+>
+> **PROOF (real run on `fixture_2spk.wav`, 2 speakers):** the multi-speaker plan correctly included
+> `becky-diarize`+`verify-with-gemma4`; `becky-identify` ran against `kb-final` and matched a single
+> voice signal for "Hair Jordan"; the engine HELD it as a candidate (`names: null`) — *"only one signal;
+> needs a second independent source to conclude"* — and the audit shows the Gemma-4 ladder fired BOTH
+> levels (E4B then 12B) before leaving it held. `becky-ask` returned the honest *"No one could be named
+> with corroboration … 2 candidate(s) held."* No false naming from a lone signal — the protocol enforced
+> in code. 8 value-asserting tests in `internal/forensicrun` (+ tool tests) green.
+>
+> **Two real fixes made while wiring (not in the original cloud design):** (1) the executor escalates
+> E4B->12B via the **`BECKY_AVLM_VARIANT=12b` env**, NOT a `--variant` flag (becky-validate has none — the
+> sibling `becky-resolve` has this latent bug); (2) the runtime now passes **`--kb`** to becky-identify
+> (env `BECKY_KB` -> `kb-final` convention), without which naming always degraded.
+>
+> **Left (the always-local model-boundary tuning, Jordan's footage):** point `BECKY_KB` at a real case KB
+> with enrolled faces+voices and confirm a 2-modality match CONCLUDES a name on real video; tune the
+> identify thresholds + the validate window-targeting on real footage. The deterministic wiring is done.
+> The steps below are the original work order, kept for reference.
+
 > **Goal (Jordan, 2026-06-26):** the forensic agent makes ONE dumb call; becky enforces every protocol
 > deterministically and returns the FINAL corroborated output. No "ignoring" protocol — it's forced, in code.
 >
