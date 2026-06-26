@@ -20,7 +20,38 @@ instead of dumping maybes for you to sort. A lone weak signal stays "unknown." (
 - Search commands (`find`, `index`, `corroborate`) need the embedding server running once:
   `X:\AI-2\becky-tools\start-embed-server.bat`. Transcribe/diarize/identify/enroll do **not**.
 
-## Find or verify a SUBJECT on screen — the corroboration playbook (agents: READ THIS FIRST)
+## ARCHITECTURE — becky is SELF-ORCHESTRATING (Jordan, 2026-06-26; the load-bearing decision)
+
+> This file is for the agent **BUILDING** becky-tools, not for the forensic agent **USING** them. The
+> forensic agent carries a mountain of legal context and must spend **zero** of it on becky internals.
+
+**How the forensic agent uses becky: ONE dumb call.** It runs `becky-transcribe <file>` (or whatever the
+request is), or — if there's no specific tool — asks **`becky-ask "<plain English>"`**. That is the entire
+contract. The forensic agent knows **no flags, no tool suite, no protocol, no chaining.** It does not read the
+playbook below.
+
+**becky does ALL the thinking, deterministically, INSIDE the tool call.** That single `becky-transcribe` call
+internally runs becky's workflow + protocols and decides for itself:
+- does this need diarization? if so, **how many speakers** — and did the forensic agent already pass that
+  knowledge? (accept caller-supplied facts, else infer them);
+- **validate** the result (diarize / transcribe / ocr — whatever was asked) with **Gemma-4 E4B when confidence
+  is low**; still unclear → **escalate to Gemma-4 12B**. becky has the LLMs to make these calls *when necessary*;
+- return ONE finished, corroborated result. The caller never sees the machinery.
+
+**Why this shape, and not the others (so no agent re-proposes them):**
+- **NOT an MCP server / a big tool list.** That forces the forensic agent to know and chain atomic tools — the
+  opposite of "one dumb call" — and it's a fragile server. **Rejected.** (Built once by mistake; removed.)
+- **NOT "the agent follows the playbook."** Protocols-as-prose are *suggestions* an agent ignores — and the
+  forensic agent **did ignore almost every becky protocol**. becky-tools is **deterministic, not a suggestion**:
+  the orchestration must be **compiled into the tools**, where it cannot be skipped.
+- The **playbook below is the BUILD SPEC** for that internal orchestration — what becky must do *inside* the
+  call — NOT a checklist for the forensic agent to run by hand.
+
+**The bar (Jordan): "that's how this needs to work, or it simply does not work."** A becky entry tool is not
+done until a single call returns the finished, validated answer with the diarize/validate/escalate decisions
+made *internally*.
+
+## Find or verify a SUBJECT on screen — the corroboration playbook (the BUILD SPEC for becky's internal orchestration)
 
 This is the recipe the suite is BUILT for, and the one most often done wrong. The tools are
 deterministic building blocks; **YOU (the agent) chain them.** A job like "find the clip where the cat
