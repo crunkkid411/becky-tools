@@ -51,6 +51,31 @@ internally runs becky's workflow + protocols and decides for itself:
 done until a single call returns the finished, validated answer with the diarize/validate/escalate decisions
 made *internally*.
 
+### The enforcement engine: `internal/orchestrate` (built 2026-06-26 — the protocols are now CODE)
+
+The corroboration protocol is no longer prose anyone can ignore — it is a deterministic, unit-tested
+gate in **`becky-go/internal/orchestrate`**. Use it; do not re-implement the rules in each tool.
+- `Corroborate(claim, rules)` → a `Verdict` that is **Concluded only with ≥2 independent agreeing
+  signals** (same source twice ≠ corroboration; sub-confidence signals don't count), else Candidate/
+  Unknown. Naming is the same rule on an identity claim. A **presence** claim never concludes without a
+  `KindWatched` signal (a model actually watched it) — a mention or motion burst can't prove presence.
+- `ResolveClaim(...)` forces the **confidence ladder**: not-concluded → validate (Gemma-4 E4B) →
+  escalate (12B), re-running `Corroborate` each loop, so the ladder can't produce a verdict the protocol
+  rejects.
+- `Resolve(...)` returns only **Concluded** facts as stated output; Candidates/Unknown are held (no flood
+  of maybes).
+
+**WIRING BUILD-SPEC (the local step that makes a tool self-regulate).** An entry tool (e.g.
+`becky-transcribe`, or a `becky` orchestrator verb) becomes self-regulating by:
+1. running the deterministic workflow (the playbook below) — shell the building-block `becky-*.exe`;
+2. mapping each tool's JSON output into `orchestrate.Signal`s tagged to `orchestrate.Claim`s (e.g. a
+   `becky-identify` hit → `KindPrint`; a `becky-validate` watch → `KindWatched`; a transcript mention →
+   `KindMention`), carrying through any caller-supplied facts (known speakers);
+3. implementing `orchestrate.Executor.Validate` to call **Gemma-4 E4B then 12B** locally for low-confidence
+   claims (the models live on the PC);
+4. returning `orchestrate.Resolve(...)` — the final corroborated output. The forensic agent sees only this.
+The engine + its rules are cloud-built and proven; steps 1–4 are the local model wiring.
+
 ## Find or verify a SUBJECT on screen — the corroboration playbook (the BUILD SPEC for becky's internal orchestration)
 
 This is the recipe the suite is BUILT for, and the one most often done wrong. The tools are
