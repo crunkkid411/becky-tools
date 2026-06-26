@@ -2,55 +2,26 @@
 // it with a file (one dumb call) and gets the PROTOCOL-ENFORCED final naming — never a half-named
 // maybe. becky-identify already corroborates voice+face and DEMOTES a single weak match to a
 // "candidate"; becky-resolve adds the missing self-regulation: every candidate runs the forced
-// Gemma-4 E4B→12B ladder and is named ONLY if the model corroborates it (a 2nd independent source).
-// The tool→claim mapping lives in internal/forensic (one source); enforcement in internal/orchestrate
-// (deterministic, unit-tested). Gemma-4 calls are local. JSON in / JSON out, degrade-never-crash.
+// Gemma-4 E4B->12B ladder and is named ONLY if the model corroborates it (a 2nd independent source).
+//
+// The model call + KB resolution come from internal/forensicrun (the ONE correct implementation):
+// the ladder escalates via the BECKY_AVLM_VARIANT env (becky-validate has NO --variant flag — the
+// earlier hand-rolled ladder here passed one and silently never escalated), and becky-identify is
+// run WITH its required --kb (without which naming always degraded). JSON in / JSON out, degrade-never-crash.
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 
 	"becky-go/internal/forensic"
+	"becky-go/internal/forensicrun"
 	"becky-go/internal/orchestrate"
 )
-
-// gemmaLadder is the local escalation Executor: level 1 = Gemma-4 E4B, level 2 = 12B. On a
-// machine without the model it returns an error, so the claim stays a candidate (degrade, not
-// crash) — never a false conclusion.
-type gemmaLadder struct{ file string }
-
-func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signal, error) {
-	model, variant := "gemma4-e4b", "e4b"
-	if level >= 2 {
-		model, variant = "gemma4-12b", "12b"
-	}
-	out, err := exec.Command("becky-validate", g.file, "--backend", "gemma4-local", "--variant", variant).Output()
-	if err != nil {
-		return orchestrate.Signal{}, fmt.Errorf("%s unavailable: %w", model, err)
-	}
-	var v struct {
-		Observations []struct {
-			Confidence float64 `json:"confidence"`
-		} `json:"observations"`
-	}
-	conf := 0.0
-	if json.Unmarshal(bytes.TrimSpace(out), &v) == nil {
-		for _, o := range v.Observations {
-			if o.Confidence > conf {
-				conf = o.Confidence
-			}
-		}
-	}
-	if conf < 0.5 {
-		return orchestrate.Signal{}, fmt.Errorf("%s did not corroborate", model)
-	}
-	return orchestrate.Signal{Source: model, Kind: orchestrate.KindPrint, Confidence: conf}, nil
-}
 
 type resultDoc struct {
 	File      string                `json:"file"`
@@ -62,8 +33,9 @@ type resultDoc struct {
 }
 
 // loadIdentify returns the raw becky-identify JSON: from --identify <json>, else by running
-// becky-identify on the file (the local step), plus the file label and any degrade reason.
-func loadIdentify(file, identifyJSON string) (raw []byte, fileLabel, degraded string) {
+// becky-identify on the file WITH its REQUIRED --kb (the fix — becky-identify exits non-zero
+// without a --kb, so the old kb-less call always degraded). Returns the file label + degrade reason.
+func loadIdentify(file, identifyJSON, kb string) (raw []byte, fileLabel, degraded string) {
 	if identifyJSON != "" {
 		b, err := os.ReadFile(identifyJSON)
 		if err != nil {
@@ -71,7 +43,8 @@ func loadIdentify(file, identifyJSON string) (raw []byte, fileLabel, degraded st
 		}
 		raw = b
 	} else {
-		b, err := exec.Command("becky-identify", file).Output()
+		// RunTool resolves becky-identify on PATH OR next to this exe (bin/), and runs it windowless.
+		b, err := forensicrun.RunTool(context.Background(), "becky-identify", file, "--kb", kb)
 		if err != nil {
 			return nil, file, "becky-identify unavailable: " + err.Error()
 		}
@@ -91,6 +64,7 @@ func loadIdentify(file, identifyJSON string) (raw []byte, fileLabel, degraded st
 func main() {
 	file := flag.String("file", "", "the media file to resolve identities for")
 	identifyJSON := flag.String("identify", "", "use this becky-identify JSON instead of running it")
+	kbFlag := flag.String("kb", "", "knowledge-base dir for naming (default: BECKY_KB env, else kb-final)")
 	maxLevel := flag.Int("max-level", 2, "escalation ladder depth (1=E4B, 2=+12B)")
 	flag.Parse()
 	if *file == "" && *identifyJSON == "" {
@@ -98,12 +72,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	raw, fileLabel, degraded := loadIdentify(*file, *identifyJSON)
+	kb := forensicrun.ResolveKB(*kbFlag)
+	raw, fileLabel, degraded := loadIdentify(*file, *identifyJSON, kb)
 	claims := forensic.IdentifyToClaims(raw)
 
+	// The forced ladder runs only when we have a real file to re-watch (not the --identify JSON path,
+	// and not after a degrade). NewGemmaLadder is the single correct implementation (env variant).
 	var ex orchestrate.Executor
-	if *identifyJSON == "" && degraded == "" {
-		ex = gemmaLadder{file: *file}
+	if *identifyJSON == "" && degraded == "" && *file != "" {
+		ex = forensicrun.NewGemmaLadder(*file)
 	}
 	res := orchestrate.Resolve(claims, orchestrate.DefaultRules(), ex, *maxLevel)
 

@@ -3,22 +3,31 @@
 // signals (transcript mention, motion burst) and the vision-model WATCH (becky-validate), groups
 // them into time windows, and returns ONLY the tight intervals a model actually watched and >=2
 // sources agree on. A mention or a motion burst NEVER becomes a stated on-screen interval. The
-// tool→signal mapping lives in internal/forensic (one source); the rule in internal/orchestrate
-// (deterministic, unit-tested). Model calls are local.
+// tool->signal mapping lives in internal/forensic (one source); the rule in internal/orchestrate.
+//
+// The cheap signals are now actually GATHERED from the file (becky-transcribe + becky-motion via
+// internal/forensicrun) when --file is given — the previous build only read them from --transcribe/
+// --motion JSON flags despite documenting "else run it". The WATCH ladder is internal/forensicrun's
+// single correct implementation: it escalates Gemma-4 E4B->12B via the BECKY_AVLM_VARIANT env (the
+// old hand-rolled ladder passed a --variant flag becky-validate does not have, so it never escalated)
+// and a presence watch is subject-aware. Model calls are local; degrade-never-crash.
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
+	"time"
 
 	"becky-go/internal/forensic"
+	"becky-go/internal/forensicrun"
 	"becky-go/internal/orchestrate"
 )
+
+// gatherTimeout bounds the optional sibling-tool runs (transcribe/motion + the watch ladder).
+const gatherTimeout = 30 * time.Minute
 
 func readBytes(path string) []byte {
 	if path == "" {
@@ -28,38 +37,21 @@ func readBytes(path string) []byte {
 	return b
 }
 
-// validateLadder escalates an unconcluded presence window by having Gemma-4 WATCH the clip
-// (becky-validate). Local; degrades to "not corroborated" off-machine — never a false conclusion.
-type validateLadder struct{ file, subject string }
-
-func (l validateLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signal, error) {
-	variant := "e4b"
-	if level >= 2 {
-		variant = "12b"
+// gather returns a sibling tool's JSON: from an explicit --<tool> path if given, else by running
+// the tool on the file (when --file is set), else nil. Degrade-never-crash: a tool error -> nil
+// (that signal is simply absent, never a crash).
+func gather(ctx context.Context, tool, explicitPath, file string) []byte {
+	if explicitPath != "" {
+		return readBytes(explicitPath)
 	}
-	out, err := exec.Command("becky-validate", l.file, "--backend", "gemma4-local", "--variant", variant).Output()
+	if file == "" {
+		return nil
+	}
+	b, err := forensicrun.RunTool(ctx, tool, file)
 	if err != nil {
-		return orchestrate.Signal{}, fmt.Errorf("gemma4-%s unavailable: %w", variant, err)
+		return nil
 	}
-	var va struct {
-		Observations []struct {
-			Visual     string  `json:"visual"`
-			Finding    string  `json:"finding"`
-			Confidence float64 `json:"confidence"`
-		} `json:"observations"`
-	}
-	_ = json.Unmarshal(bytes.TrimSpace(out), &va)
-	subj := strings.ToLower(l.subject)
-	best := 0.0
-	for _, o := range va.Observations {
-		if strings.Contains(strings.ToLower(o.Visual+" "+o.Finding), subj) && o.Confidence > best {
-			best = o.Confidence
-		}
-	}
-	if best < 0.5 {
-		return orchestrate.Signal{}, fmt.Errorf("gemma4-%s did not see %q", variant, l.subject)
-	}
-	return orchestrate.Signal{Source: "gemma4-" + variant, Kind: orchestrate.KindWatched, Confidence: best}, nil
+	return b
 }
 
 type resultDoc struct {
@@ -71,10 +63,10 @@ type resultDoc struct {
 
 func main() {
 	subject := flag.String("subject", "", "who/what to locate on screen, e.g. \"cat\" or \"Shelby\"")
-	file := flag.String("file", "", "the media file (run the tools locally)")
-	trPath := flag.String("transcribe", "", "becky-transcribe JSON (else run it)")
-	moPath := flag.String("motion", "", "becky-motion JSON (else run it)")
-	vaPath := flag.String("validate", "", "becky-validate JSON (else run it)")
+	file := flag.String("file", "", "the media file (gather the signals + watch locally)")
+	trPath := flag.String("transcribe", "", "becky-transcribe JSON (else run it on --file)")
+	moPath := flag.String("motion", "", "becky-motion JSON (else run it on --file)")
+	vaPath := flag.String("validate", "", "becky-validate JSON (optional; else the model watches via --file)")
 	gap := flag.Float64("merge-gap", 2.0, "seconds: signals within this gap are one window")
 	flag.Parse()
 	if *subject == "" {
@@ -82,12 +74,21 @@ func main() {
 		os.Exit(2)
 	}
 
-	sigs := forensic.PresenceSignals(*subject, readBytes(*trPath), readBytes(*moPath), readBytes(*vaPath))
+	ctx, cancel := context.WithTimeout(context.Background(), gatherTimeout)
+	defer cancel()
+
+	tr := gather(ctx, "becky-transcribe", *trPath, *file)
+	mo := gather(ctx, "becky-motion", *moPath, *file)
+	va := readBytes(*vaPath)
+
+	sigs := forensic.PresenceSignals(*subject, tr, mo, va)
 	claims := orchestrate.CorrelatePresence(*subject, sigs, *gap)
 
+	// The forced WATCH ladder runs only with a real file. A presence window concludes ONLY where a
+	// model actually watched the subject (forensicrun's subject-aware ladder).
 	var ex orchestrate.Executor
 	if *file != "" {
-		ex = validateLadder{file: *file, subject: *subject}
+		ex = forensicrun.NewGemmaLadder(*file)
 	}
 	res := orchestrate.Resolve(claims, orchestrate.DefaultRules(), ex, 2)
 

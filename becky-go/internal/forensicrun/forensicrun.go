@@ -122,9 +122,10 @@ type ToolRunner func(ctx context.Context, tool string, args, extraEnv []string) 
 // case); without it naming can never resolve, so the runtime must always supply one.
 const defaultKB = "kb-final"
 
-// resolveKB picks the knowledge-base dir for becky-identify: an explicit value wins, else the
+// ResolveKB picks the knowledge-base dir for becky-identify: an explicit value wins, else the
 // BECKY_KB env (so the forensic agent sets a case's KB once, not per call), else the convention.
-func resolveKB(explicit string) string {
+// Exported so the entry tools (becky-resolve etc.) resolve the KB identically.
+func ResolveKB(explicit string) string {
 	if s := strings.TrimSpace(explicit); s != "" {
 		return s
 	}
@@ -140,7 +141,7 @@ func resolveKB(explicit string) string {
 // Gemma-4 ladder, and runs Report. kb is an explicit knowledge base ("" => BECKY_KB env or the
 // kb-final convention). Degrade-never-crash: a missing tool/KB is recorded in Degraded, never panicked on.
 func RunAndReport(ctx context.Context, file, subject, kb string, speakers int, transcribeJSON []byte) ForensicReport {
-	return runAndReport(ctx, file, subject, resolveKB(kb), speakers, transcribeJSON, realRunner)
+	return runAndReport(ctx, file, subject, ResolveKB(kb), speakers, transcribeJSON, realRunner)
 }
 
 func runAndReport(ctx context.Context, file, subject, kb string, speakers int, transcribeJSON []byte, run ToolRunner) ForensicReport {
@@ -196,14 +197,63 @@ func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signa
 		// below: it yields a sub-floor signal so the ladder ESCALATES (E4B -> 12B) instead.
 		return orchestrate.Signal{}, fmt.Errorf("%s unavailable: %w", model, err)
 	}
+	// A presence watch only corroborates the SUBJECT when the model actually saw the subject (not
+	// just "something" on screen), so for a presence claim we score only the observations that name
+	// it. An identity claim is a generic re-check (top confidence).
 	kind := orchestrate.KindPrint
+	conf := topObservationConfidence(out)
 	if c.IsPresence {
 		kind = orchestrate.KindWatched
+		conf = topObservationConfidenceMatching(out, presenceSubjectFromKey(c.Key))
 	}
 	// Return the watch's actual confidence (possibly below the floor). orchestrate.Corroborate
 	// drops a sub-floor signal, so a weak E4B watch leaves the claim a candidate and the loop
 	// escalates to 12B; only a >=floor watch counts toward corroboration / satisfies the watch rule.
-	return orchestrate.Signal{Source: model, Kind: kind, Confidence: topObservationConfidence(out)}, nil
+	return orchestrate.Signal{Source: model, Kind: kind, Confidence: conf}, nil
+}
+
+// NewGemmaLadder returns the real validate-ladder Executor for a clip — the SINGLE correct model
+// call entry tools share (becky-transcribe/ask/case/resolve/presence) instead of each re-deriving
+// it (and mis-flagging it): it escalates E4B->12B via the BECKY_AVLM_VARIANT env, and a presence
+// claim's watch is subject-aware. Degrade-never-crash (a missing binary errors -> claim stays held).
+func NewGemmaLadder(file string) orchestrate.Executor {
+	return gemmaLadder{file: file, run: realRunner}
+}
+
+// presenceSubjectFromKey pulls "<subject>" out of an "onscreen=<subject>@[t0-t1]" claim key.
+func presenceSubjectFromKey(key string) string {
+	s := strings.TrimPrefix(key, "onscreen=")
+	if at := strings.IndexByte(s, '@'); at >= 0 {
+		s = s[:at]
+	}
+	return strings.TrimSpace(s)
+}
+
+// topObservationConfidenceMatching returns the highest confidence among observations whose text
+// NAMES the subject (case-insensitive over visual/finding/content) — a watch of the subject, not of
+// "something". An empty subject falls back to the overall top confidence.
+func topObservationConfidenceMatching(raw []byte, subject string) float64 {
+	subj := strings.ToLower(strings.TrimSpace(subject))
+	if subj == "" {
+		return topObservationConfidence(raw)
+	}
+	var v struct {
+		Observations []struct {
+			Visual     string  `json:"visual"`
+			Finding    string  `json:"finding"`
+			Content    string  `json:"content"`
+			Confidence float64 `json:"confidence"`
+		} `json:"observations"`
+	}
+	conf := 0.0
+	if json.Unmarshal(bytes.TrimSpace(raw), &v) == nil {
+		for _, o := range v.Observations {
+			if strings.Contains(strings.ToLower(o.Visual+" "+o.Finding+" "+o.Content), subj) && o.Confidence > conf {
+				conf = o.Confidence
+			}
+		}
+	}
+	return conf
 }
 
 // topObservationConfidence returns the highest observation confidence in a becky-validate JSON
@@ -223,6 +273,13 @@ func topObservationConfidence(raw []byte) float64 {
 		}
 	}
 	return conf
+}
+
+// RunTool shells a sibling becky tool (resolved on PATH or next to this exe), windowless, and
+// returns its stdout — the shared, single way entry tools gather a sibling's JSON, so a tool that
+// needs just one sibling's output (e.g. becky-presence) doesn't re-roll exec + NoWindow + lookup.
+func RunTool(ctx context.Context, tool string, args ...string) ([]byte, error) {
+	return realRunner(ctx, tool, args, nil)
 }
 
 // realRunner shells a sibling becky tool (resolved on PATH or next to this exe), windowless (no

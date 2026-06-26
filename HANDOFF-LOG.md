@@ -10,6 +10,48 @@
 
 ---
 
+## 2026-06-26 (local) — FIXED the 3 broken self-regulate siblings (becky-resolve/-presence/-case), proven on a real clip
+
+Jordan: "fix becky-resolve, fix any other tool that is not functional the way it's supposed to be." All
+three of the cloud-written self-regulate entry tools were broken at RUNTIME (they compiled + had passing
+unit tests, but the binary did the wrong thing on a real file — exactly the "compiles != works" trap). All
+three now route through the one correct shared runtime `internal/forensicrun`. Fixed + PROVEN on
+`fixture_2spk.wav`:
+
+- **becky-resolve** had THREE runtime bugs: (1) its `gemmaLadder` passed `becky-validate --variant <x>` — a
+  flag becky-validate does NOT have, so every escalation failed and the ladder never ran; (2) it ran
+  `becky-identify <file>` with NO `--kb` — becky-identify REQUIRES `--kb`, so naming always degraded; (3) it
+  used a raw `exec.Command("becky-identify")` (PATH-only), so it couldn't even find the sibling in `bin/`.
+  Now: `forensicrun.NewGemmaLadder` (escalates via `BECKY_AVLM_VARIANT=12b` env), `--kb` resolved
+  (`forensicrun.ResolveKB`: flag -> `BECKY_KB` -> `kb-final`), and `forensicrun.RunTool` (resolves PATH +
+  exe-dir). **Proof:** `becky-resolve --file fixture_2spk.wav` now finds + runs identify, holds a lone voice
+  match as a candidate, and the ladder fires BOTH levels (gemma4-e4b -> gemma4-12b). Was: instant degrade.
+- **becky-presence** had the same `--variant` bug AND never gathered transcribe/motion despite documenting
+  "else run it" (so `--file` alone produced zero signals). Now gathers becky-transcribe + becky-motion via
+  `forensicrun.RunTool` and uses `forensicrun.NewGemmaLadder`. **Proof:** `becky-presence --subject social
+  --file fixture` found the "social" mentions at [0.5-5.4] + [43.8-49.5] and correctly HELD them as candidate
+  moments ("a mention never proves presence"); the watch ladder fired both levels.
+- **becky-case** ("the ONE dumb call") only READ tool JSON from flags — a bare `--file` ran NOTHING (empty
+  report). Now a bare `--file` actually runs the pipeline via `forensicrun.RunAndReport`; the JSON flags stay
+  for composition/testing. `plan`/`report` now delegate to forensicrun (one source). **Proof:** `becky-case
+  --file fixture --speakers 2` ran the multi-speaker plan (diarize included), held 2 candidates, no false names.
+
+**forensicrun improvements (the single source these now share):** exported `NewGemmaLadder`, `ResolveKB`,
+`RunTool`; made the validate ladder SUBJECT-AWARE for presence (a watch only corroborates the subject when the
+model actually saw the subject — visual/finding/content names it — not just "something on screen"). becky-
+transcribe/ask inherit this precision. New value-asserting tests: subject-aware watch (sees cat -> concluded;
+sees dog -> held), NewGemmaLadder degrade, ResolveKB precedence.
+
+**Swept for other broken tools:** the `--variant` bug existed ONLY in becky-resolve + becky-presence (the
+becky-ask layer already invoked `becky-validate --backend gemma4-local` correctly). Other sibling calls verified
+against the real tools (`becky-pipeline --steps/--out` exists; identify/validate args correct). No stub/TODO/
+not-implemented tools in cmd. (The `becky-daw-engine` build-stub is a SEPARATE, deliberate C++-audio gap, not
+a silent bug — out of scope here.)
+
+**Gates:** `go build/vet ./...` green; `go test ./...` green except the lone documented `cmd/tts` environmental
+FAIL; new/changed files gofmt-clean (LF); `build-all-tools.bat` rebuilt all `.exe`s. All three tools exercised
+on real audio with real models (not "it compiles").
+
 ## 2026-06-25 (local) — orchestrate WIRED into becky-transcribe + becky-ask (the forward step), proven on a real clip
 
 Jordan: "wire orchestrate into becky-transcribe and becky-ask." Done end-to-end + proven on a real file

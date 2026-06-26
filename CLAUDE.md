@@ -522,11 +522,22 @@ load-bearing rules, in brief:
 > the short summary here. **Do NOT let this section grow back into a full log** — an accumulating
 > §6 is exactly what pushed CLAUDE.md past the prompt-size limit (fixed 2026-06-22).
 
-### Current state of master (as of 2026-06-25)
+### Current state of master (as of 2026-06-26)
 
 Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` test FAIL is
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+
+- **Fixed the 3 broken self-regulate siblings (2026-06-26, local):** becky-resolve, becky-presence,
+  becky-case all COMPILED + unit-passed but were broken at RUNTIME on a real file. Root causes: a
+  `becky-validate --variant <x>` flag that doesn't exist (so the Gemma ladder never escalated — in
+  becky-resolve + becky-presence); `becky-identify` run with no required `--kb` (naming always degraded);
+  becky-resolve using raw `exec.Command` (couldn't find the sibling in `bin/`); becky-presence never
+  gathering transcribe/motion; and becky-case ("the one dumb call") running NOTHING on a bare `--file`.
+  All three now route through `internal/forensicrun` (exported `NewGemmaLadder`/`ResolveKB`/`RunTool`; the
+  presence watch is now subject-aware). PROVEN on `fixture_2spk.wav`: each finds + runs its siblings, the
+  ladder fires both E4B+12B levels, and lone signals are HELD not falsely named. Swept the rest — the
+  `--variant` bug was confined to those two tools; no other broken/stub tools in cmd.
 
 - **becky now SELF-REGULATES the forensic protocol (2026-06-25, local):** integrated the additive cloud
   branch `claude/ai-daw-integration-hh5y8l` (the same branch name, a NEW wave on top of the WPF work) —

@@ -197,17 +197,58 @@ func TestLadder_EscalatesViaVariantEnv(t *testing.T) {
 	}
 }
 
-// resolveKB prefers an explicit value, then BECKY_KB, then the kb-final convention.
+// A presence watch corroborates ONLY when the model saw the SUBJECT, not just "something".
+func TestPresenceWatch_SubjectAware(t *testing.T) {
+	tr := `{"segments":[{"start":10,"end":12,"text":"the cat is here"}]}`
+	mo := `{"motion_bursts":[{"window_start":10,"window_end":14}]}`
+	base := func(validateJSON string) ToolRunner {
+		return func(ctx context.Context, tool string, args, env []string) ([]byte, error) {
+			switch tool {
+			case "becky-identify":
+				return []byte(`{}`), nil
+			case "becky-transcribe":
+				return []byte(tr), nil
+			case "becky-motion":
+				return []byte(mo), nil
+			case "becky-validate":
+				return []byte(validateJSON), nil
+			}
+			return nil, errors.New("unused")
+		}
+	}
+
+	sawCat := runAndReport(context.Background(), "clip.mp4", "cat", "kb", 1, nil,
+		base(`{"observations":[{"visual":"a cat on the floor","confidence":0.8}]}`))
+	if len(sawCat.OnScreen) == 0 {
+		t.Fatalf("a watch that SAW the cat must conclude presence; held=%v audit=%v", sawCat.Held, sawCat.Audit)
+	}
+
+	sawDog := runAndReport(context.Background(), "clip.mp4", "cat", "kb", 1, nil,
+		base(`{"observations":[{"visual":"a dog by the door","confidence":0.95}]}`))
+	if len(sawDog.OnScreen) != 0 {
+		t.Fatalf("a watch that did NOT see the cat must NOT conclude cat presence, got %v", sawDog.OnScreen)
+	}
+}
+
+// NewGemmaLadder degrades (errors) on a missing becky-validate binary, so a claim stays held.
+func TestNewGemmaLadder_DegradesOnMissingBinary(t *testing.T) {
+	ex := NewGemmaLadder("/no/such/file.mp4")
+	if _, err := ex.Validate(orchestrate.Claim{Key: "person=X"}, 1); err == nil {
+		t.Error("a missing becky-validate must error so the claim stays held, got nil")
+	}
+}
+
+// ResolveKB prefers an explicit value, then BECKY_KB, then the kb-final convention.
 func TestResolveKB(t *testing.T) {
 	t.Setenv("BECKY_KB", "")
-	if got := resolveKB("/cases/jordan/kb"); got != "/cases/jordan/kb" {
+	if got := ResolveKB("/cases/jordan/kb"); got != "/cases/jordan/kb" {
 		t.Errorf("explicit kb must win, got %q", got)
 	}
-	if got := resolveKB(""); got != defaultKB {
+	if got := ResolveKB(""); got != defaultKB {
 		t.Errorf("no explicit, no env -> default %q, got %q", defaultKB, got)
 	}
 	t.Setenv("BECKY_KB", "/env/kb")
-	if got := resolveKB(""); got != "/env/kb" {
+	if got := ResolveKB(""); got != "/env/kb" {
 		t.Errorf("BECKY_KB must be used when no explicit, got %q", got)
 	}
 }
