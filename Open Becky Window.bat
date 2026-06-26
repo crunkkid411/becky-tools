@@ -11,6 +11,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
+REM Put becky's tools on PATH so the window can find becky-catalog.exe and the
+REM becky-*.exe tools (build-all-tools.bat puts them in becky-go\bin). Without
+REM this the window opens but cannot load the tool list.
+set "PATH=%~dp0becky-go\bin;%PATH%"
+
+if not exist "%~dp0becky-go\bin\becky-catalog.exe" (
+  echo Building becky's tools first (one time)...
+  pushd "%~dp0becky-go"
+  call build-all-tools.bat
+  popd
+)
+
 echo Building and launching Becky Window...
 dotnet run --project "%~dp0gui\BeckyWindow\BeckyWindow.csproj"
 if errorlevel 1 (

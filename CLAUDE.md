@@ -522,11 +522,20 @@ load-bearing rules, in brief:
 > the short summary here. **Do NOT let this section grow back into a full log** — an accumulating
 > §6 is exactly what pushed CLAUDE.md past the prompt-size limit (fixed 2026-06-22).
 
-### Current state of master (as of 2026-06-24)
+### Current state of master (as of 2026-06-25)
 
 Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` test FAIL is
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+
+- **Native becky GUI = WPF, window verified (2026-06-25, local):** integrated the additive cloud branch
+  `claude/ai-daw-integration-hh5y8l` — new `becky-catalog --json` (Go) + `gui/BeckyWindow` (a native
+  **WPF** tool-runner). Built + launched + mouse-clicked + screenshotted by the local agent: opens
+  high-contrast, loads the **live 18-tool catalog** (tier-colored), clicks register, degrades cleanly,
+  no freeze. Launcher `Open Becky Window.bat` fixed to put `becky-go\bin` on PATH. Ratifies Jordan's
+  WPF decision (window shells out to existing `becky-*.exe` — single-tool principle intact; supersedes
+  the Go+Gio canvas attempts, which are kept dormant, not deleted). Left = one real model-heavy tool
+  run on footage (Jordan's tap).
 
 - **Cloud queue drained (2026-06-24, local):** integrated three diverged cloud branches —
   `fix-editmodel-digest-pathx` (the pathx CI fix, fixes red Linux CI), `scout-autonomous-spec-proposals`
@@ -548,6 +557,10 @@ pre-existing/environmental — the local TTS model is present, so "degrades when
 
 ### Pending for Jordan (hardware "hear/see" gates only he can close)
 
+- Open the new **becky window** (double-click **"Open Becky Window"**) → it opens with the tool list;
+  click **Pick file...**, choose a real video/audio file, then click a **green** tool (e.g.
+  becky-transcribe) and watch the result fill the box. (The window, catalog, clicks, and degrade path
+  are already verified by the local agent; this is just the first real model run on your footage.)
 - Open **becky-canvas** → confirm no console flash on any click; press **Space** (plays/stops); in
   Drum, ▶ then toggle cells (hear them update live); click **Speak** (first click warms ~30s, then
   judge the GGUF voice quality + speed).

@@ -10,6 +10,34 @@
 
 ---
 
+## 2026-06-25 (local) — native becky GUI is WPF: window BUILT + verified (mouse-exercised), tools wired to PATH
+
+Triggered by the "Get Becky Updates" button, which handed off (the branch had diverged from master AND
+had left-for-local work, so it could not auto-install). Integrated cloud branch
+`claude/ai-daw-integration-hh5y8l` (rebased onto master — **purely additive, 0 deletions**, no master
+work lost) → FF master. The branch ratifies Jordan's 2026-06-24 decision: the native becky GUI is a
+**WPF (C#/.NET) app**, superseding the three failed Go+Gio canvas attempts (Gio has no widgets — the
+real root cause, not the agent). It does NOT rewrite any tool: the window shells out to the existing
+`becky-*.exe` (single-tool principle intact). What landed:
+- **`becky-catalog --json` (new Go tool, `cmd/catalog`)** — prints the shared `internal/catalog` as
+  JSON (tools+ops, tier resolved never-empty). The window's single source of truth; never hardcodes
+  tools. `go build/vet/test` green; the lone `cmd/tts` FAIL is the documented environmental inversion.
+- **`gui/BeckyWindow` — the native WPF window, BUILT + RUN + verified by me (not "it compiles"):**
+  `dotnet build` green (net8; the net8 desktop pack is installed, .NET 9 SDK present). Launched the
+  `.exe` and screenshotted it: opens high-contrast, loads the **live 18-tool catalog** with tier-colored
+  borders (green/orange). Drove a real mouse click on `becky-transcribe` with no file → the handler
+  fired and showed the clean degrade message ("Pick a file first") — clicks register, no crash, no
+  freeze. Screenshots in session scratchpad.
+- **Launcher fix (`Open Becky Window.bat`, local):** the cloud handoff assumed the tools were on PATH,
+  but `becky-go\bin` is not — so as handed over the window would open to "could not load the tool list."
+  Fixed: the launcher now prepends `%~dp0becky-go\bin` to PATH and auto-builds the tools if missing.
+  ASCII-only, ends with `pause` (launcher rules).
+- **LEFT (Jordan's hardware tap only):** a real green-tool run on actual footage (transcribe/diarize/etc.
+  are GPU/model-heavy + slow) — pick a file, click a tool, watch the result fill the box. Everything up
+  to the model boundary is proven; the model boundary is his to close.
+
+---
+
 ## 2026-06-24 (local) — FORENSIC CORROBORATION PLAYBOOK + becky-vision --gemma (Jordan: "ridiculously bad")
 
 Triggered by `user-feedback-06-24-2026.md` + Jordan's correction: the "find the cat's chipped tooth"
