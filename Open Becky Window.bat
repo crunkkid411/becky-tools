@@ -1,32 +1,35 @@
 @echo off
-REM Open Becky Window - builds and launches the native WPF becky window.
-REM Double-click this. Needs the .NET 8 SDK installed once (see message below).
+setlocal
+REM Open Becky Window - opens the native becky window.
+REM Tip: the Desktop "Becky Window" shortcut opens it instantly with no console.
+REM This .bat is the fallback / first-time builder. The program finds its own tools,
+REM so no PATH setup is needed here.
 
+set "EXE=%~dp0gui\BeckyWindow\bin\Release\net8.0-windows\BeckyWindow.exe"
+if not exist "%EXE%" set "EXE=%~dp0gui\BeckyWindow\bin\Debug\net8.0-windows\BeckyWindow.exe"
+
+if exist "%EXE%" goto LAUNCH
+
+REM Not built yet - build it once. Needs the .NET SDK.
 where dotnet >nul 2>nul
-if errorlevel 1 (
-  echo .NET SDK not found.
-  echo Install it once by running this in a terminal:  winget install Microsoft.DotNet.SDK.8
-  echo Then double-click this file again.
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto NODOTNET
+echo First run: building the becky window. Please wait...
+dotnet build -c Release "%~dp0gui\BeckyWindow\BeckyWindow.csproj"
+set "EXE=%~dp0gui\BeckyWindow\bin\Release\net8.0-windows\BeckyWindow.exe"
+if not exist "%EXE%" goto BUILDFAIL
 
-REM Put becky's tools on PATH so the window can find becky-catalog.exe and the
-REM becky-*.exe tools (build-all-tools.bat puts them in becky-go\bin). Without
-REM this the window opens but cannot load the tool list.
-set "PATH=%~dp0becky-go\bin;%PATH%"
+:LAUNCH
+start "" "%EXE%"
+exit /b 0
 
-if not exist "%~dp0becky-go\bin\becky-catalog.exe" (
-  echo Building becky's tools first (one time)...
-  pushd "%~dp0becky-go"
-  call build-all-tools.bat
-  popd
-)
-
-echo Building and launching Becky Window...
-dotnet run --project "%~dp0gui\BeckyWindow\BeckyWindow.csproj"
-if errorlevel 1 (
-  echo.
-  echo Build or launch failed - see the messages above.
-)
+:BUILDFAIL
+echo.
+echo Build failed - see the messages above.
 pause
+exit /b 1
+
+:NODOTNET
+echo .NET SDK not found. Install it once:  winget install Microsoft.DotNet.SDK.8
+echo Then double-click this again.
+pause
+exit /b 1

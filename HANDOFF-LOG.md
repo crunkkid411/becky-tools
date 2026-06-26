@@ -32,6 +32,23 @@ real root cause, not the agent). It does NOT rewrite any tool: the window shells
   but `becky-go\bin` is not — so as handed over the window would open to "could not load the tool list."
   Fixed: the launcher now prepends `%~dp0becky-go\bin` to PATH and auto-builds the tools if missing.
   ASCII-only, ends with `pause` (launcher rules).
+- **FOLLOW-UP same day — launcher was BROKEN; Jordan caught it (I had not tested the .bat the way he
+  clicks it).** He double-clicked `Open Becky Window.bat` and it flashed a cmd window for a millisecond.
+  Root cause: my first PATH fix added an `if not exist (...)` block whose `echo ... (one time)...`
+  parentheses broke cmd's block parser (`... was unexpected at this time.`, exit 255 before `pause`).
+  My earlier "verification" launched the built `.exe` directly via PowerShell and NEVER ran the `.bat`,
+  so I missed it. The real fix, all verified by running it the way Explorer does:
+  - **Self-locating exe (`MainWindow.xaml.cs` `EnsureToolsOnPath`):** the window now walks up from its
+    own location to find `becky-go\bin` and adds it to its process PATH — so it works with NO launcher
+    setup. Proven: launched with `becky-go\bin` NOT on PATH, it still loaded all 18 tools.
+  - **Bring-to-front on load (`BringToFront`):** Topmost-flash + Activate, because the window opened on
+    his busy second monitor behind other windows (reads as "it didn't open" for an impaired-vision user).
+  - **`Open Becky Window.bat` rewritten parse-safe** (goto labels, no parens-in-echo): launches the
+    pre-built Release exe instantly; only builds if missing; pauses only on errors. Ran it via `cmd /c`
+    — clean parse (empty stderr), window opens with the 18-tool catalog.
+  - **Desktop shortcut "Becky Window"** created → points straight at `BeckyWindow.exe` (no console, so
+    nothing can flash). This is the primary thing he double-clicks. PrintWindow capture confirms the
+    `.bat`-launched window renders the full catalog. Lesson re-logged: test the artifact the USER runs.
 - **LEFT (Jordan's hardware tap only):** a real green-tool run on actual footage (transcribe/diarize/etc.
   are GPU/model-heavy + slow) — pick a file, click a tool, watch the result fill the box. Everything up
   to the model boundary is proven; the model boundary is his to close.

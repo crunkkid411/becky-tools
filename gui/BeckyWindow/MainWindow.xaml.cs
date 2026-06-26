@@ -20,7 +20,58 @@ namespace BeckyWindow
         public MainWindow()
         {
             InitializeComponent();
-            Loaded += async (_, __) => await LoadCatalogAsync();
+            EnsureToolsOnPath();
+            Loaded += async (_, __) =>
+            {
+                BringToFront();           // make sure Jordan SEES it (multi-monitor / busy desktop)
+                await LoadCatalogAsync();
+            };
+        }
+
+        // Find becky-go\bin (walking up from this .exe) and put it on THIS process's PATH,
+        // so the window works when launched directly from a desktop shortcut — not only when
+        // a launcher script set PATH first. If it can't be found, the catalog load shows a
+        // clear message instead of crashing (degrade, never crash).
+        private static void EnsureToolsOnPath()
+        {
+            try
+            {
+                var dir = AppContext.BaseDirectory;
+                for (int i = 0; i < 8 && !string.IsNullOrEmpty(dir); i++)
+                {
+                    var bin = System.IO.Path.Combine(dir, "becky-go", "bin");
+                    if (System.IO.File.Exists(System.IO.Path.Combine(bin, "becky-catalog.exe")))
+                    {
+                        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+                        Environment.SetEnvironmentVariable("PATH", bin + System.IO.Path.PathSeparator + path);
+                        return;
+                    }
+                    dir = System.IO.Directory.GetParent(dir)?.FullName;
+                }
+            }
+            catch
+            {
+                // ignored: the window still opens; the catalog load reports the problem.
+            }
+        }
+
+        // Pop the window to the front of whatever else is open. Jordan runs a busy, multi-monitor
+        // desktop; a window that opens behind other windows reads as "it didn't open." A brief
+        // Topmost flash + Activate reliably brings it forward without staying always-on-top.
+        private void BringToFront()
+        {
+            try
+            {
+                if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+                Topmost = true;
+                Activate();
+                Topmost = false;
+                Focus();
+            }
+            catch
+            {
+                // ignored: not being on top is cosmetic, never fatal.
+            }
         }
 
         // --- the JSON shape emitted by `becky-catalog --json` (Step 1) ---

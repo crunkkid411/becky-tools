@@ -557,10 +557,13 @@ pre-existing/environmental — the local TTS model is present, so "degrades when
 
 ### Pending for Jordan (hardware "hear/see" gates only he can close)
 
-- Open the new **becky window** (double-click **"Open Becky Window"**) → it opens with the tool list;
-  click **Pick file...**, choose a real video/audio file, then click a **green** tool (e.g.
-  becky-transcribe) and watch the result fill the box. (The window, catalog, clicks, and degrade path
-  are already verified by the local agent; this is just the first real model run on your footage.)
+- Open the new **becky window** — double-click the Desktop shortcut **"Becky Window"** (launches the
+  program directly, NO console). It opens with the tool list; click **Pick file...**, choose a real
+  video/audio file, then click a **green** tool (e.g. becky-transcribe) and watch the result fill the
+  box. (The window, catalog, clicks, degrade path, the self-locating-tools fix, the bring-to-front,
+  AND the `Open Becky Window.bat` parse-error fix are all verified by the local agent — the window
+  opens both from the shortcut and the `.bat`; this last step is just the first real model run on your
+  footage.)
 - Open **becky-canvas** → confirm no console flash on any click; press **Space** (plays/stops); in
   Drum, ▶ then toggle cells (hear them update live); click **Speak** (first click warms ~30s, then
   judge the GGUF voice quality + speed).
