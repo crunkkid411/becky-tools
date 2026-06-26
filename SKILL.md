@@ -76,7 +76,14 @@ gate in **`becky-go/internal/orchestrate`**. Use it; do not re-implement the rul
 4. returning `orchestrate.Resolve(...)` — the final corroborated output. The forensic agent sees only this.
 The engine + its rules are cloud-built and proven; steps 1–4 are the local model wiring.
 
-**Two protocols are already enforced in RUNNING tools (the proven pattern — extend it, don't reinvent):**
+**The ONE-CALL entry — `becky-case`** (what the forensic agent actually calls): `becky-case --file X
+[--subject Y]` returns ONE final corroborated output and nothing else. It decides the plan deterministically
+(diarize/gemma4-check only when speakers > 1, from `internal/workflowdef`), runs the tools, and pushes every
+result through the gate: a name is stated only when corroborated, an on-screen interval only where a model
+watched it, maybes are held. No flags, no chaining, no protocol for the agent to remember. Proven end-to-end
+(one speaker → plan skips diarize; Shelby named, John held, cat on-screen at [10-13]). Tool/model runs are local.
+
+**The protocols enforced in RUNNING, tested tools (the proven pattern — extend it, don't reinvent):**
 - **`becky-resolve`** (naming): reads becky-identify's real output and STATES a name only when corroborated
   (voice+face → named; a single weak match → held candidate, then escalated through the Gemma-4 ladder, named
   only if the model corroborates). Kills the wrong-person voice-ID at the structure level.
