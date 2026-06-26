@@ -10,6 +10,48 @@
 
 ---
 
+## 2026-06-25 (local) — becky SELF-REGULATES the forensic protocol: `internal/orchestrate` enforcement engine + 3 entry tools
+
+Triggered by the "Get Becky Updates" button, which handed off again (the cloud agent pushed a **second wave**
+onto the same branch name `claude/ai-daw-integration-hh5y8l` — 11 new commits on top of master's `38bff4f`, a
+clean fast-forward, but its `HANDOFF-SELF-REGULATE.md` declares left-for-local work, so the button launched me
+instead of auto-installing). Integrated → FF master, pushed, branch deleted (local + remote).
+
+**What landed (purely additive — new package + new tools + CI/launcher hardening; no existing tool changed):**
+- **`internal/orchestrate` — the deterministic protocol-ENFORCEMENT engine** (8 value-asserting tests green).
+  It COMPUTES verdicts so the forensic protocol can't be skipped by an agent: corroborate-then-conclude (a
+  claim is `Concluded` ONLY with ≥2 independent agreeing signals; a lone signal is a `Candidate`; else
+  `Unknown`), naming = rule-1 applied to an identity claim, **presence requires a `KindWatched` signal** (a
+  transcript `KindMention` or `becky-motion` `KindMotion` burst NEVER concludes on-screen), and a forced
+  validate→escalate ladder (Gemma-4 E4B level 1 → 12B level 2) injected via an `Executor` interface so the
+  engine stays deterministic + unit-testable. `presence.go` adds `CorrelatePresence` (interval correlation).
+- **`internal/forensic` — the one-source tool→claim mapping** (`IdentifyToClaims`, `PresenceSignals`): turns
+  real becky-*.exe JSON into `orchestrate.Signal`/`Claim` tagged to claims. Value-asserted tests on fixtures.
+- **`becky-case`** — the "ONE dumb call": `--file X` (optionally `--subject`) → final corroborated report.
+  Deterministic plan from `internal/workflowdef` (diarize only when speakers>1), every result through the
+  protocol gate; names stated only when corroborated, on-screen only where watched, maybes held separately.
+  Pure testable `report()` core; tool JSON accepted via flags for composition/test.
+- **`becky-resolve`** — self-regulating identity resolver with a REAL `gemmaLadder` Executor that shells out
+  to `becky-validate`/`becky-identify` (single-tool principle intact) and degrades-never-crashes when a model
+  is absent (claim stays a candidate, never a false conclusion). `--identify <json>` keeps the core testable.
+- **`becky-presence`** — enforces the presence protocol in a running tool.
+- **Launcher ASCII-only gate ENFORCED** (`scripts/check-launchers.sh`) in `.github/workflows/ci.yml` (new
+  `launchers` job) + the pre-commit hook — the standing fix for non-ASCII chars flashing Jordan's `.bat`/`.ps1`
+  shut under PowerShell 5.1. Verified it passes against the current tree, so it won't block CI/commits.
+- **`becky-mcp` was added then removed** (commit `6c5c6eb` add → `4da0def` remove): MCP rejected in favor of
+  becky self-orchestrating for the forensic agent. Net zero; no `cmd/becky-mcp` remains.
+
+**Gates (local, this PC):** `go build/vet ./...` green; `go test ./...` green except the lone documented
+`cmd/tts` environmental FAIL (TTS model IS present, so "degrades when no model" inverts); gofmt = CRLF-only
+(cosmetic per CLAUDE.md); `build-all-tools.bat` produced fresh `becky-case.exe`/`becky-presence.exe`/
+`becky-resolve.exe`; `becky-case` smoke-tested (no-args → usage, exit 2).
+
+**Left for local (the FORWARD step — `HANDOFF-SELF-REGULATE.md`):** wire `internal/orchestrate` *into* the
+primary entry verbs `becky-transcribe`/`becky-ask` so a single dumb call returns the corroborated answer with
+the diarize/validate/escalate decisions made internally, and exercise the live Gemma-4 E4B→12B ladder on
+Jordan's real footage. The deterministic engine + standalone tools are done + green; this is the model-boundary
+integration that needs the PC + models — the same pattern as every prior wave.
+
 ## 2026-06-25 (local) — native becky GUI is WPF: window BUILT + verified (mouse-exercised), tools wired to PATH
 
 Triggered by the "Get Becky Updates" button, which handed off (the branch had diverged from master AND

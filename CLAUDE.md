@@ -528,6 +528,21 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **becky now SELF-REGULATES the forensic protocol (2026-06-25, local):** integrated the additive cloud
+  branch `claude/ai-daw-integration-hh5y8l` (the same branch name, a NEW wave on top of the WPF work) —
+  a deterministic protocol-ENFORCEMENT engine `internal/orchestrate` (+ `internal/forensic` tool→claim
+  mapping) that FORCES becky's invariants in code: corroborate-then-conclude (≥2 independent signals to
+  name/conclude, a lone signal stays a "candidate"), **presence needs a `KindWatched` signal** (a
+  transcript mention or motion burst NEVER proves on-screen), and a forced Gemma-4 E4B→12B validate
+  ladder. Three new entry tools wrap it — `becky-case` (the "one dumb call": file in → final
+  corroborated report, diarize-conditional plan), `becky-resolve` (self-regulating identity resolver
+  with a real `becky-validate`/`becky-identify` ladder + degrade-never-crash), `becky-presence`. Plus
+  a launcher ASCII-only gate now ENFORCED in CI + pre-commit (`scripts/check-launchers.sh`). `becky-mcp`
+  was added then **rejected/removed** (becky self-orchestrates instead). All gates green (build/vet/test;
+  new `.exe`s build; only the documented `cmd/tts` environmental FAIL). **Left for local:** wire the
+  engine *into* `becky-transcribe`/`becky-ask` on real footage + the live Gemma-4 ladder —
+  `HANDOFF-SELF-REGULATE.md` is the ordered work order.
+
 - **Native becky GUI = WPF, window verified (2026-06-25, local):** integrated the additive cloud branch
   `claude/ai-daw-integration-hh5y8l` — new `becky-catalog --json` (Go) + `gui/BeckyWindow` (a native
   **WPF** tool-runner). Built + launched + mouse-clicked + screenshotted by the local agent: opens
