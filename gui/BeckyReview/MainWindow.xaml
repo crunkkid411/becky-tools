@@ -59,14 +59,34 @@
             <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch"
                           Background="#2A2A38" ResizeBehavior="PreviousAndNext" />
 
-            <!-- RIGHT: native libmpv video pane (embedded via mpv wid into a WinForms HWND). -->
+            <!-- RIGHT: native libmpv video pane (embedded via mpv wid into a WinForms HWND)
+                 over a transport strip with mouse-driven frame-step + play. -->
             <Border Grid.Column="2" Background="#000000" BorderBrush="#3A3A4D" BorderThickness="1"
                     CornerRadius="4">
-                <Grid x:Name="RightPaneHost">
-                    <wf:WindowsFormsHost x:Name="VideoHostElement" />
-                    <TextBlock x:Name="VideoPlaceholder" Text="RIGHT - video preview"
-                               Foreground="#6E7191" FontSize="20" HorizontalAlignment="Center"
-                               VerticalAlignment="Center" IsHitTestVisible="False" />
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid x:Name="RightPaneHost" Grid.Row="0">
+                        <wf:WindowsFormsHost x:Name="VideoHostElement" />
+                        <TextBlock x:Name="VideoPlaceholder" Text="Click a result on the left to play that moment"
+                                   Foreground="#6E7191" FontSize="20" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" IsHitTestVisible="False" TextWrapping="Wrap"
+                                   TextAlignment="Center" />
+                    </Grid>
+
+                    <!-- Transport: frame-step is forensic-critical, so it gets big mouse buttons. -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center"
+                                Background="#0A0A0A" Margin="0,6,0,0">
+                        <Button x:Name="FrameBackButton" Content="&#9664;| frame" Click="FrameBackButton_Click"
+                                ToolTip="Step one frame back (or press the Left arrow)" />
+                        <Button x:Name="PlayPauseButton" Content="&#9654; play" Click="PlayPauseButton_Click"
+                                ToolTip="Play / pause (or press Space)" />
+                        <Button x:Name="FrameFwdButton" Content="frame |&#9654;" Click="FrameFwdButton_Click"
+                                ToolTip="Step one frame forward (or press the Right arrow)" />
+                    </StackPanel>
                 </Grid>
             </Border>
         </Grid>

@@ -27,6 +27,7 @@ public partial class MainWindow : Window
 
     private MpvPlayer? _mpv;
     private WinForms.Panel? _videoPanel;
+    private bool _isPaused;
 
     public MainWindow()
     {
@@ -290,8 +291,36 @@ public partial class MainWindow : Window
             return;
         }
         VideoPlaceholder.Visibility = Visibility.Collapsed;
+        _isPaused = false;
+        PlayPauseButton.Content = "⏸ pause";
         StatusLabel.Text = $"Playing {Path.GetFileName(file)} @ {t:0.0}s";
         _ = _mpv.PlayAtAsync(file!, t, play: true);
+    }
+
+    // --- transport (mouse-driven; mirrors the mpv arrow/space key bindings) ----
+
+    private void FrameBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mpv == null) { return; }
+        _isPaused = true;
+        PlayPauseButton.Content = "▶ play";
+        _ = _mpv.FrameBackStepAsync();
+    }
+
+    private void FrameFwdButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mpv == null) { return; }
+        _isPaused = true;
+        PlayPauseButton.Content = "▶ play";
+        _ = _mpv.FrameStepAsync();
+    }
+
+    private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mpv == null) { return; }
+        _isPaused = !_isPaused;
+        PlayPauseButton.Content = _isPaused ? "▶ play" : "⏸ pause";
+        _ = _mpv.SetPauseAsync(_isPaused);
     }
 
     protected override void OnClosed(EventArgs e)
