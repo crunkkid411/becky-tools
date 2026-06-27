@@ -39,7 +39,26 @@ writes exactly this file from a Reel. Until that ships, you can convert any Reel
 by hand or with a one-liner — the only fields needed are each clip's `source`, `in`,
 `out`, and `label`.
 
-## 3. Run it (no compiling, ~10 seconds)
+## 2b. The repeatable, agent-driven flow (no human clicking)
+
+This is the loop for "the forensic agent hands becky a list of videos + timestamps and it
+lands on the Vegas timeline":
+
+1. **Agent produces the list.** Either it has a Reel JSON and runs
+   `becky-otio --reel findings.json --format vegas-list --out C:\case` (writes
+   `findings.review.txt`), or it writes the `path | in | out | label` text file directly.
+2. **Agent points the script at the list and launches Vegas — no dialog:**
+   ```bat
+   set BECKY_REVIEW_LIST=C:\case\findings.review.txt
+   "C:\Program Files\VEGAS\VEGAS Pro 18.0\vegas180.exe" -SCRIPT "C:\...\vegas\BeckyReviewTimeline.cs"
+   ```
+   The script reads `BECKY_REVIEW_LIST`, skips the picker, and builds the timeline automatically.
+3. Vegas opens with the clips on the timeline + a named region per clip.
+
+So `BECKY_REVIEW_LIST` set → fully automatic (agent use). Unset → file picker pops (human use).
+Same script, both ways.
+
+## 3. Run it by hand (no compiling, ~10 seconds)
 
 1. Open VEGAS Pro 18.
 2. **Tools ▸ Scripting ▸ Run Script…** and pick `BeckyReviewTimeline.cs`.

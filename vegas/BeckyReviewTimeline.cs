@@ -55,14 +55,22 @@ public class EntryPoint
     public void FromVegas(Vegas vegas)
     {
         // ---- 1. Choose the review list -------------------------------------
-        string listPath = null;
-        using (OpenFileDialog dlg = new OpenFileDialog())
+        // Agent-driven (no clicking): set the BECKY_REVIEW_LIST environment
+        // variable to the list file's full path, then launch VEGAS with this
+        // script (vegas180.exe -SCRIPT "...\BeckyReviewTimeline.cs"). If the var
+        // is set and the file exists, the picker is skipped entirely.
+        // Human-driven: leave the var unset and a file picker appears.
+        string listPath = Environment.GetEnvironmentVariable("BECKY_REVIEW_LIST");
+        if (string.IsNullOrEmpty(listPath) || !File.Exists(listPath))
         {
-            dlg.Title = "Becky: choose the review clip list";
-            dlg.Filter = "Becky review list (*.txt;*.csv)|*.txt;*.csv|All files (*.*)|*.*";
-            if (dlg.ShowDialog() != DialogResult.OK)
-                return; // cancelled - do nothing
-            listPath = dlg.FileName;
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Title = "Becky: choose the review clip list";
+                dlg.Filter = "Becky review list (*.txt;*.csv)|*.txt;*.csv|All files (*.*)|*.*";
+                if (dlg.ShowDialog() != DialogResult.OK)
+                    return; // cancelled - do nothing
+                listPath = dlg.FileName;
+            }
         }
 
         // ---- 2. Parse the list --------------------------------------------
