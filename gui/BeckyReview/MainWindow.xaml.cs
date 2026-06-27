@@ -1,10 +1,9 @@
 using System;
-using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Input;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using WinForms = System.Windows.Forms;
@@ -12,22 +11,30 @@ using WinForms = System.Windows.Forms;
 namespace BeckyReview;
 
 /// <summary>
-/// Becky Review main window.
-/// LEFT  = WebView2 HTML UI (virtual-host mapping, NO server) - AI-authorable + CDP-verifiable.
-/// RIGHT = native libmpv video pane (mpv.exe embedded via --wid) - frame-exact, GPU-decoded.
-/// Shells out to existing becky-*.exe (JSON in/out) - engine unchanged.
+/// Becky Review main window — a thin shell over becky-clip's engine + native mpv.
+/// LEFT  = WebView2 HTML UI (find / quotes / timeline / chat), loaded with NO server.
+/// RIGHT = native mpv video (frame-exact, GPU-decoded; the overlay is drawn by mpv).
+/// The page talks to the persistent engine (BeckyEngine) and the video (MpvPlayer)
+/// only through host messages relayed here.
 /// </summary>
 public partial class MainWindow : Window
 {
-    // The virtual host the local HTML is served from (no TCP server involved).
     private const string VirtualHost = "beckyreview.local";
 
-    private string? _folder;
-    private bool _webReady;
-
+    private BeckyEngine? _engine;
     private MpvPlayer? _mpv;
     private WinForms.Panel? _videoPanel;
-    private bool _isPaused;
+    private bool _webReady;
+    private bool _paused = true;
+    private string? _folder;
+
+    // Host-drawn forensic lower-third state (mpv osd-overlay).
+    private bool _overlayOn;
+    private string _ovFile = "";
+    private string _ovDate = "";
+    private string _ovLink = "";
+    private double _ovFps = 30;
+    private double _lastPos;
 
     public MainWindow()
     {
@@ -44,41 +51,18 @@ public partial class MainWindow : Window
         {
             StatusLabel.Text = "WebView2 failed to start";
             MessageBox.Show(
-                "The left pane (WebView2) could not start.\n\n" + ex.Message +
+                "The UI (WebView2) could not start.\n\n" + ex.Message +
                 "\n\nInstall the Microsoft Edge WebView2 Runtime, then reopen Becky Review.",
                 "Becky Review", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-
         StartVideo();
-
-        // Dev/verify hook: auto-load a folder (and optionally run a search) on startup so
-        // the window is self-verifiable without clicking the native dialog. Normal use
-        // leaves these unset and Jordan clicks "Pick folder...".
-        var autoFolder = Environment.GetEnvironmentVariable("BECKY_REVIEW_FOLDER");
-        if (!string.IsNullOrWhiteSpace(autoFolder) && Directory.Exists(autoFolder))
-        {
-            _folder = autoFolder;
-            await LoadFolderAsync();
-            var autoSearch = Environment.GetEnvironmentVariable("BECKY_REVIEW_SEARCH");
-            if (!string.IsNullOrWhiteSpace(autoSearch))
-            {
-                await RunSearchAsync(autoSearch);
-            }
-        }
+        StartEngine();
     }
 
-    /// <summary>
-    /// Boot WebView2, map the local <c>ui</c> folder to a virtual host (no server),
-    /// and load the review UI. Sets up the page-to-host message channel.
-    /// </summary>
     private async Task InitWebViewAsync()
     {
-        // Keep the WebView2 profile beside the exe so the app stays offline + deterministic.
         var userData = Path.Combine(AppContext.BaseDirectory, "webview2-data");
 
-        // Opt-in CDP for the AI self-verify loop (Step 7): set BECKY_REVIEW_CDP_PORT to a
-        // port to let an external agent (Playwright connectOverCDP) drive + screenshot the
-        // LEFT UI. Off by default - no debug surface is exposed in normal use.
         CoreWebView2Environment env;
         var cdpPort = Environment.GetEnvironmentVariable("BECKY_REVIEW_CDP_PORT");
         if (!string.IsNullOrWhiteSpace(cdpPort))
@@ -96,29 +80,41 @@ public partial class MainWindow : Window
         await WebView.EnsureCoreWebView2Async(env);
 
         var core = WebView.CoreWebView2;
-
-        // Lock it down: it only ever loads our local UI.
         core.Settings.AreDefaultContextMenusEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
-        core.Settings.AreDevToolsEnabled = true; // needed for the Step 7 CDP self-verify loop
+        core.Settings.AreDevToolsEnabled = true;
 
-        // Serve the local ui/ folder over a real https:// origin with NO server process.
         var uiFolder = Path.Combine(AppContext.BaseDirectory, "ui");
         core.SetVirtualHostNameToFolderMapping(
             VirtualHost, uiFolder, CoreWebView2HostResourceAccessKind.Allow);
 
         core.WebMessageReceived += OnWebMessage;
-
+        core.NavigationCompleted += OnNavigationCompleted;
         core.Navigate($"https://{VirtualHost}/index.html");
 
         _webReady = true;
-        StatusLabel.Text = "Ready - pick a case folder";
+        StatusLabel.Text = "Pick a case folder to begin.";
     }
 
     /// <summary>
-    /// Embed mpv into a black WinForms panel on the RIGHT. The panel handle is the
-    /// native parent window mpv composites into (no overlap with WebView2 = no airspace bug).
+    /// Verify/dev hook: once the UI has loaded, auto-open the folder named by
+    /// BECKY_REVIEW_FOLDER (so the window is self-drivable without the native dialog).
+    /// Normal use leaves it unset and the user clicks "Pick folder...".
     /// </summary>
+    private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        var auto = Environment.GetEnvironmentVariable("BECKY_REVIEW_FOLDER");
+        if (string.IsNullOrWhiteSpace(auto) || !Directory.Exists(auto) || _engine == null)
+        {
+            return;
+        }
+        _folder = auto;
+        var reply = await _engine.CallAsync("open_folder", new { folder = _folder });
+        PostToPage(new { t = "folder", reply = ReplyOrError(reply) });
+        StatusLabel.Text = BeckyEngine.Ok(reply) ? _folder! : "Could not open folder.";
+    }
+
+    /// <summary>Embed mpv into a black WinForms panel on the RIGHT and stream its position back.</summary>
     private void StartVideo()
     {
         try
@@ -129,18 +125,12 @@ public partial class MainWindow : Window
                 Dock = WinForms.DockStyle.Fill,
             };
             VideoHostElement.Child = _videoPanel;
-            var hwnd = _videoPanel.Handle; // forces native handle creation
+            var hwnd = _videoPanel.Handle;
 
             var mpvExe = Path.Combine(AppContext.BaseDirectory, "runtime", "mpv", "mpv.exe");
             _mpv = new MpvPlayer(mpvExe);
-
-            // Proof / dev hook: load a clip on launch if BECKY_REVIEW_TEST_VIDEO is set.
-            var testVideo = Environment.GetEnvironmentVariable("BECKY_REVIEW_TEST_VIDEO");
-            _mpv.Start(hwnd, string.IsNullOrWhiteSpace(testVideo) ? null : testVideo);
-
-            VideoPlaceholder.Visibility = string.IsNullOrWhiteSpace(testVideo)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            _mpv.PositionChanged += OnMpvPosition;
+            _mpv.Start(hwnd, null);
         }
         catch (Exception ex)
         {
@@ -148,184 +138,251 @@ public partial class MainWindow : Window
         }
     }
 
-    // --- folder + search -> the LEFT pane's list -----------------------------
+    /// <summary>Spawn the persistent becky-clip engine (warm index + parse cache).</summary>
+    private void StartEngine()
+    {
+        var bin = BeckyTools.BinDir;
+        var exe = bin != null
+            ? Path.Combine(bin, "becky-review-engine.exe")
+            : "becky-review-engine.exe";
+        _engine = new BeckyEngine(exe);
+        try
+        {
+            _engine.Start();
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = "Engine not available: " + ex.Message;
+        }
+    }
+
+    // --- mpv position -> page (timeline playhead) + live overlay timecode --------
+
+    private void OnMpvPosition(double pos, double dur)
+    {
+        _lastPos = pos;
+        // PositionChanged fires on a background thread; marshal to the UI thread.
+        Dispatcher.BeginInvoke(() =>
+        {
+            PostToPage(new { t = "time", pos, dur });
+            if (_overlayOn)
+            {
+                UpdateOverlay(pos);
+            }
+        });
+    }
+
+    // --- page -> host messages ---------------------------------------------------
+
+    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        JsonElement root;
+        try
+        {
+            using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+            root = doc.RootElement.Clone();
+        }
+        catch
+        {
+            return;
+        }
+
+        var t = root.TryGetProperty("t", out var tt) ? tt.GetString() : null;
+        switch (t)
+        {
+            case "call":
+                _ = HandleCallAsync(root);
+                break;
+            case "mpv":
+                HandleMpv(root);
+                break;
+        }
+    }
+
+    private async Task HandleCallAsync(JsonElement root)
+    {
+        var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+        var verb = root.TryGetProperty("verb", out var vEl) ? vEl.GetString() ?? "" : "";
+        object? args = root.TryGetProperty("args", out var aEl) && aEl.ValueKind != JsonValueKind.Undefined
+            ? aEl
+            : null;
+
+        JsonElement reply = default;
+        if (_engine != null)
+        {
+            reply = await _engine.CallAsync(verb, args);
+        }
+        PostReply(id, reply);
+    }
+
+    private void HandleMpv(JsonElement root)
+    {
+        if (_mpv == null)
+        {
+            return;
+        }
+        var op = root.TryGetProperty("op", out var opEl) ? opEl.GetString() : null;
+        switch (op)
+        {
+            case "play":
+            {
+                var file = Str(root, "file");
+                var at = Num(root, "at");
+                if (!string.IsNullOrWhiteSpace(file))
+                {
+                    Dispatcher.BeginInvoke(() => VideoPlaceholder.Visibility = Visibility.Collapsed);
+                    _ovFile = Path.GetFileName(file);
+                    _paused = false;
+                    _ = _mpv.PlayAtAsync(file, at, play: true);
+                }
+                break;
+            }
+            case "seek":
+                _ = _mpv.SeekAbsAsync(Num(root, "at"));
+                break;
+            case "pause":
+                _paused = true;
+                _ = _mpv.SetPauseAsync(true);
+                break;
+            case "resume":
+                _paused = false;
+                _ = _mpv.SetPauseAsync(false);
+                break;
+            case "toggle":
+                _paused = !_paused;
+                _ = _mpv.SetPauseAsync(_paused);
+                break;
+            case "frame":
+                _paused = true;
+                _ = Num(root, "dir") < 0 ? _mpv.FrameBackStepAsync() : _mpv.FrameStepAsync();
+                break;
+            case "overlay":
+                _overlayOn = root.TryGetProperty("on", out var onEl) && onEl.ValueKind == JsonValueKind.True;
+                var f = Str(root, "file");
+                if (f.Length > 0) { _ovFile = Path.GetFileName(f); }
+                _ovDate = Str(root, "date");
+                _ovLink = Str(root, "link");
+                var fps = Num(root, "fps");
+                _ovFps = fps > 0 ? fps : 30;
+                if (_overlayOn)
+                {
+                    UpdateOverlay(_lastPos);
+                }
+                else
+                {
+                    ClearOverlay();
+                }
+                break;
+        }
+    }
+
+    // --- the forensic lower-third, drawn by mpv (ASS via osd-overlay) ------------
+
+    private void UpdateOverlay(double pos)
+    {
+        var line1 = AssEscape(_ovFile);
+        var line2 = "ORIG TC " + Smpte(pos, _ovFps);
+        var meta = "";
+        if (_ovDate.Length > 0) { meta = _ovDate; }
+        if (_ovLink.Length > 0) { meta = meta.Length > 0 ? meta + "   " + _ovLink : _ovLink; }
+
+        // {\an1} = bottom-left; outline for legibility over any footage.
+        var ass = "{\\an1}{\\fs24}{\\bord2}{\\3c&H000000&}{\\1c&H14FF39&}" + line1 +
+                  "\\N{\\1c&HFFFFFF&}" + line2;
+        if (meta.Length > 0)
+        {
+            ass += "\\N{\\fs20}{\\1c&HD7D7D7&}" + AssEscape(meta);
+        }
+        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", ass, 0, 0, 0, false, false);
+    }
+
+    private void ClearOverlay()
+    {
+        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "none", "", 0, 0, 0, false, false);
+    }
+
+    // --- folder pick (native) -> engine open_folder -> push to the page ----------
 
     private async void PickFolderButton_Click(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFolderDialog { Title = "Pick a case folder" };
-        if (dlg.ShowDialog() == true)
-        {
-            _folder = dlg.FolderName;
-            await LoadFolderAsync();
-        }
-    }
-
-    /// <summary>Index the picked folder and show its videos in the LEFT pane.</summary>
-    private async Task LoadFolderAsync()
-    {
-        if (string.IsNullOrEmpty(_folder))
+        if (dlg.ShowDialog() != true)
         {
             return;
         }
+        _folder = dlg.FolderName;
         StatusLabel.Text = "Indexing " + _folder + " ...";
-        var (index, error) = await BeckyTools.ReviewIndexAsync(_folder, null);
-        if (index == null)
+        if (_engine == null)
         {
-            StatusLabel.Text = error ?? "Index failed";
+            StatusLabel.Text = "Engine not available.";
             return;
         }
-
-        var items = new List<object>(index.Videos.Count);
-        foreach (var v in index.Videos)
-        {
-            items.Add(new
-            {
-                inSec = 0.0,
-                label = v.Name,
-                src = v.HasTranscript ? "has transcript" : "no transcript",
-                file = v.Path,
-                badge = v.HasTranscript ? "txt" : null,
-            });
-        }
-        PostResults(items, $"{index.Videos.Count} videos");
-        StatusLabel.Text = $"{index.Videos.Count} videos - type to search transcripts";
+        var reply = await _engine.CallAsync("open_folder", new { folder = _folder });
+        PostToPage(new { t = "folder", reply = ReplyOrError(reply) });
+        StatusLabel.Text = BeckyEngine.Ok(reply) ? _folder! : "Could not open folder.";
     }
 
-    /// <summary>Run a transcript search over the picked folder and show ranked cue hits.</summary>
-    private async Task RunSearchAsync(string query)
+    // --- helpers -----------------------------------------------------------------
+
+    private void PostReply(string? id, JsonElement reply)
     {
-        if (string.IsNullOrEmpty(_folder))
-        {
-            StatusLabel.Text = "Pick a case folder first";
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            await LoadFolderAsync();
-            return;
-        }
-
-        StatusLabel.Text = $"Searching for \"{query}\" ...";
-        var (index, error) = await BeckyTools.ReviewIndexAsync(_folder, query);
-        if (index == null)
-        {
-            StatusLabel.Text = error ?? "Search failed";
-            return;
-        }
-
-        var items = new List<object>(index.Candidates.Count);
-        foreach (var c in index.Candidates)
-        {
-            items.Add(new
-            {
-                inSec = c.Timestamp,
-                label = c.Text,
-                src = c.Name,
-                file = c.Source,
-                badge = c.Terms.Count > 0 ? c.Terms[0] : "hit",
-            });
-        }
-        PostResults(items, $"{index.Candidates.Count} hits for \"{query}\"");
-        StatusLabel.Text = $"{index.Candidates.Count} hits for \"{query}\"";
+        PostToPage(new { t = "reply", id, reply = ReplyOrError(reply) });
     }
 
-    /// <summary>Push a result list into the page (the LEFT UI owns rendering).</summary>
-    private void PostResults(IReadOnlyList<object> items, string label)
+    /// <summary>A safe reply value: the engine envelope, or a synthetic error if missing.</summary>
+    private static object ReplyOrError(JsonElement reply)
+    {
+        if (reply.ValueKind == JsonValueKind.Object)
+        {
+            return reply;
+        }
+        return new { ok = false, error = "engine unavailable" };
+    }
+
+    private void PostToPage(object payload)
     {
         if (!_webReady)
         {
             return;
         }
-        var payload = JsonSerializer.Serialize(new { type = "results", items, label });
-        WebView.CoreWebView2.PostWebMessageAsJson(payload);
-    }
-
-    private void SearchBox_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
+        var json = JsonSerializer.Serialize(payload);
+        if (Dispatcher.CheckAccess())
         {
-            _ = RunSearchAsync(SearchBox.Text ?? string.Empty);
+            WebView.CoreWebView2.PostWebMessageAsJson(json);
+        }
+        else
+        {
+            Dispatcher.BeginInvoke(() => WebView.CoreWebView2.PostWebMessageAsJson(json));
         }
     }
 
-    // --- page -> host messages (play / search) -------------------------------
+    private static string Str(JsonElement root, string name)
+        => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() ?? "" : "";
 
-    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    private static double Num(JsonElement root, string name)
+        => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out var v) ? v : 0;
+
+    /// <summary>SMPTE HH:MM:SS:FF at the source fps (frame-accurate forensic timecode).</summary>
+    private static string Smpte(double seconds, double fps)
     {
-        string json;
-        try { json = e.WebMessageAsJson; }
-        catch { return; }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("type", out var typeEl))
-            {
-                return;
-            }
-            switch (typeEl.GetString())
-            {
-                case "play":
-                    HandlePlay(root);
-                    break;
-                case "search":
-                    var q = root.TryGetProperty("query", out var qEl) ? qEl.GetString() : "";
-                    _ = RunSearchAsync(q ?? string.Empty);
-                    break;
-            }
-        }
-        catch
-        {
-            // ignored: a malformed message must never crash the window.
-        }
+        if (seconds < 0) { seconds = 0; }
+        if (fps <= 0) { fps = 30; }
+        var total = (int)Math.Floor(seconds);
+        var h = total / 3600;
+        var m = (total % 3600) / 60;
+        var s = total % 60;
+        var fr = (int)Math.Floor((seconds - total) * fps);
+        return string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}:{2:00}:{3:00}", h, m, s, fr);
     }
 
-    /// <summary>Load+seek the libmpv pane to a clicked clip's exact in-point.</summary>
-    private void HandlePlay(JsonElement root)
-    {
-        var file = root.TryGetProperty("file", out var fEl) ? fEl.GetString() : null;
-        var t = root.TryGetProperty("t", out var tEl) && tEl.TryGetDouble(out var tv) ? tv : 0.0;
-        if (string.IsNullOrWhiteSpace(file) || _mpv == null)
-        {
-            return;
-        }
-        VideoPlaceholder.Visibility = Visibility.Collapsed;
-        _isPaused = false;
-        PlayPauseButton.Content = "⏸ pause";
-        StatusLabel.Text = $"Playing {Path.GetFileName(file)} @ {t:0.0}s";
-        _ = _mpv.PlayAtAsync(file!, t, play: true);
-    }
-
-    // --- transport (mouse-driven; mirrors the mpv arrow/space key bindings) ----
-
-    private void FrameBackButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_mpv == null) { return; }
-        _isPaused = true;
-        PlayPauseButton.Content = "▶ play";
-        _ = _mpv.FrameBackStepAsync();
-    }
-
-    private void FrameFwdButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_mpv == null) { return; }
-        _isPaused = true;
-        PlayPauseButton.Content = "▶ play";
-        _ = _mpv.FrameStepAsync();
-    }
-
-    private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_mpv == null) { return; }
-        _isPaused = !_isPaused;
-        PlayPauseButton.Content = _isPaused ? "▶ play" : "⏸ pause";
-        _ = _mpv.SetPauseAsync(_isPaused);
-    }
+    /// <summary>Escape text for an ASS event (backslash, braces, newlines).</summary>
+    private static string AssEscape(string s)
+        => s.Replace("\\", "\\\\").Replace("{", "\\{").Replace("}", "\\}").Replace("\r", "").Replace("\n", " ");
 
     protected override void OnClosed(EventArgs e)
     {
         _mpv?.Dispose();
+        _engine?.Dispose();
         base.OnClosed(e);
     }
 }
