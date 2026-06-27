@@ -667,3 +667,41 @@ func TestResolveLocalMatchExactSuffix(t *testing.T) {
 		t.Fatalf("localMatch should find clip_LOCAL.srt, got %q", got)
 	}
 }
+
+// TestIndex_PairsByYouTubeIDAcrossUnrecognizedSubfolder locks the fix for the
+// "0 playable, everything transcript-only" bug: a yt-dlp video in the root must
+// pair to its caption even when the caption sits in a subfolder the known-caption-
+// subdir rules don't recognise ("english/"), via the shared bracketed [id] token.
+func TestIndex_PairsByYouTubeIDAcrossUnrecognizedSubfolder(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "2026-02-26_Studio Serotonin 0%_[pNMS91b6Zqo].mp4"), "v")
+	// caption in an UNRECOGNISED subfolder, different name, SAME [id]:
+	capName := "2026-02-26_stream_390_[pNMS91b6Zqo].en.srt"
+	writeFile(t, filepath.Join(root, "english", capName), srtBody("penguin"))
+
+	idx, err := Index(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Videos) != 1 {
+		t.Fatalf("want 1 video, got %d", len(idx.Videos))
+	}
+	v := idx.Videos[0]
+	if !v.HasTranscript {
+		t.Fatalf("video should pair to the same-[id] caption in english/, but HasTranscript=false")
+	}
+	if filepath.Base(v.TranscriptPath) != capName {
+		t.Fatalf("paired the wrong transcript: %q", v.TranscriptPath)
+	}
+	if len(idx.Orphans) != 0 {
+		t.Fatalf("the paired caption must NOT be an orphan, got %d", len(idx.Orphans))
+	}
+	// it must surface as a PLAYABLE hit (Source = the video, not "").
+	cands := GrepTranscripts(idx, []string{"penguin"})
+	if len(cands) == 0 {
+		t.Fatalf("expected a playable 'penguin' hit")
+	}
+	if cands[0].Source == "" {
+		t.Fatalf("hit must carry the video source (playable), got empty source")
+	}
+}

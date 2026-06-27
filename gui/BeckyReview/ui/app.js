@@ -56,6 +56,8 @@
     activeSource: null,    // path currently loaded in mpv
     activeClipId: null,    // timeline clip whose source is playing (for the playhead)
     pos: 0, dur: 0,        // last {t:"time"} report
+    playheadComp: 0,       // current COMPILATION position (active clip start_sec + offset) - drives split (CHANGE 4)
+    selectedClipId: null,  // last-selected timeline clip - target for ripple delete via Del/Esc (CHANGE 5)
 
     transcribing: {},      // name -> true while a single transcribe runs
     transcribingAll: false,
@@ -79,6 +81,7 @@
   var $tPlay     = document.getElementById('tPlay');
   var $tFrameBack= document.getElementById('tFrameBack');
   var $tFrameFwd = document.getElementById('tFrameFwd');
+  var $tSplit    = document.getElementById('tSplit');     // split clip at playhead (CHANGE 4)
   var $tOverlay  = document.getElementById('tOverlay');
   var $tSave     = document.getElementById('tSave');
   var $tLoad     = document.getElementById('tLoad');
@@ -370,6 +373,15 @@
     query = (query || '').trim();
     state.query = query;
     if (!query) { state.mode = 'files'; renderFind(); return; }
+
+    // CHANGE 1: show a "Searching…" state the instant a non-empty search starts, so a slow
+    // or failed search is never a silent blank. The post-await logic below replaces this.
+    state.mode = 'results';
+    state.rows = [];
+    state.terms = [];
+    state.activeResultKey = null;
+    state.headerText = 'Searching for "' + query + '"…';
+    renderFind();
 
     var rep = await beckyCall('search', { query: query });
     // a newer search may have superseded this one
@@ -678,6 +690,7 @@
     };
     state.overlayOn = !!(state.timeline.overlay && state.timeline.overlay.enabled);
     if (state.activeClipId != null && !clipById(state.activeClipId)) { state.activeClipId = null; }
+    if (state.selectedClipId != null && !clipById(state.selectedClipId)) { state.selectedClipId = null; }  // CHANGE 5
     renderTimeline();
   }
 
@@ -716,7 +729,8 @@
     var w = clipW(dur);
     var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
     var tip = truncate(label, 80) + '  (' + mmss(dur) + ')';
-    return '<div class="clip" data-id="' + attr(clip.id) + '" style="width:' + w + 'px" title="' + attr(tip) + '">' +
+    var sel = (String(clip.id) === String(state.selectedClipId)) ? ' selected' : '';   // CHANGE 5
+    return '<div class="clip' + sel + '" data-id="' + attr(clip.id) + '" style="width:' + w + 'px" title="' + attr(tip) + '">' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
              '<div class="cbody"></div>' +
              '<button class="cx" data-act="remove" title="remove clip">×</button>' +
@@ -765,6 +779,12 @@
   function onTime(pos, dur) {
     state.pos = (typeof pos === 'number') ? pos : 0;
     state.dur = (typeof dur === 'number') ? dur : 0;
+    // CHANGE 4: when a timeline clip is the active source, the SOURCE pos maps to a COMPILATION
+    // position: clip.start_sec + (sourcePos - clip.in). Stored so "split at playhead" knows where.
+    if (state.activeClipId != null) {
+      var ac = clipById(state.activeClipId);
+      if (ac) { state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0)); }
+    }
     updatePlayhead();
   }
   function updatePlayhead() {
@@ -780,9 +800,71 @@
     playheadEl.style.display = 'block';
   }
 
+  /* ---- selection outline (CHANGE 5): toggle .selected on existing blocks without a re-render ---- */
+  function markSelectedClip() {
+    var blocks = trackEl.querySelectorAll('.clip');
+    for (var i = 0; i < blocks.length; i++) {
+      blocks[i].classList.toggle('selected', blocks[i].dataset.id === String(state.selectedClipId));
+    }
+  }
+
   async function onClipRemove(id) {
     var rep = await beckyCall('remove_clip', { id: id });
     if (rep.ok && rep.data) { applyTimeline(rep.data); }
+  }
+
+  /* ---- split / cut at the playhead (CHANGE 4): button + "s" key ----
+     The clip under the COMPILATION playhead (start_sec <= playheadComp < start_sec+dur) is cut
+     into two at the equivalent SOURCE time. There is no engine "split" verb, so we re-trim the
+     left half (set_trim) then add the right half (add_clip) and reorder it to sit right after. */
+  var splitting = false;
+  async function splitAtPlayhead() {
+    if (splitting) { return; }
+    var clips = state.timeline.clips || [];
+    if (!clips.length) { toast('Timeline is empty — add clips first.'); return; }
+    var ph = (typeof state.playheadComp === 'number') ? state.playheadComp : null;
+    if (ph == null) { toast('Play or scrub to a point on the timeline first.'); return; }
+
+    var clip = null;
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i], s = c.start_sec || 0, d = clipDur(c);
+      if (ph >= s && ph < s + d) { clip = c; break; }
+    }
+    if (!clip) { toast('No clip under the playhead.'); return; }
+
+    var srcSplit = (clip.in || 0) + (ph - (clip.start_sec || 0));
+    // must land strictly inside the clip, with a >= 0.1s margin on each side
+    if (srcSplit <= (clip.in || 0) + 0.1 || srcSplit >= (clip.out || 0) - 0.1) {
+      toast('Playhead is too close to a clip edge to split.');
+      return;
+    }
+
+    splitting = true;
+    try {
+      var leftId = clip.id;
+      var repL = await beckyCall('set_trim', { id: leftId, in: clip.in || 0, out: srcSplit });
+      if (!repL.ok) { toast('Split failed' + (repL.error ? ': ' + repL.error : '')); return; }
+      var repR = await beckyCall('add_clip', { source: clip.source, in: srcSplit, out: clip.out || 0, label: clip.label || '' });
+      if (!repR.ok || !repR.data) {
+        if (repL.data) { applyTimeline(repL.data); }
+        toast('Split failed' + (repR.error ? ': ' + repR.error : ''));
+        return;
+      }
+      applyTimeline(repR.data);
+
+      // add_clip appends to the END; move the new right half to just after the left half.
+      var now = state.timeline.clips || [];
+      var newClip = now.length ? now[now.length - 1] : null;   // appended clip is last
+      var leftIdx = -1;
+      for (var j = 0; j < now.length; j++) { if (String(now[j].id) === String(leftId)) { leftIdx = j; break; } }
+      if (newClip && leftIdx >= 0 && String(newClip.id) !== String(leftId)) {
+        var repO = await beckyCall('reorder', { id: newClip.id, to: leftIdx + 1 });
+        if (repO.ok && repO.data) { applyTimeline(repO.data); }
+      }
+      toast('Split clip');
+    } finally {
+      splitting = false;
+    }
   }
 
   /* ---- resize handles (pointer-drag the left/right edge) ---- */
@@ -890,6 +972,9 @@
     if (!clip) { return; }
     var offset = (clip.in || 0) + hit.frac * clipDur(clip);
     state.activeClipId = clip.id;
+    state.selectedClipId = clip.id;                // CHANGE 5: scrubbing also selects that clip
+    state.playheadComp = (clip.start_sec || 0) + hit.frac * clipDur(clip);  // CHANGE 4: keep comp pos exact
+    markSelectedClip();
     if (isStart || state.activeSource !== clip.source) {
       state.activeSource = clip.source;
       mpvPlay(clip.source, offset);               // load+seek+play (new source)
@@ -912,13 +997,15 @@
   $tPlay.addEventListener('click', function () { mpvSend('toggle'); });
   $tFrameBack.addEventListener('click', function () { mpvSend('frame', { dir: -1 }); });
   $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
+  if ($tSplit) { $tSplit.addEventListener('click', function () { splitAtPlayhead(); }); }  // CHANGE 4
 
-  /* ---- timeline zoom (CHANGE 5): buttons + Ctrl+mousewheel over the timeline ---- */
+  /* ---- timeline zoom: buttons + mousewheel over the timeline ---- */
   if ($tZoomIn)  { $tZoomIn.addEventListener('click',  function () { zoomBy(1.5); }); }
   if ($tZoomOut) { $tZoomOut.addEventListener('click', function () { zoomBy(1 / 1.5); }); }
   if (tlBodyEl) {
+    // CHANGE 2: PLAIN wheel over the timeline now zooms (up = in, down = out); no modifier needed
+    // (Ctrl+wheel zooms too). preventDefault stops the page/timeline from scrolling instead.
     tlBodyEl.addEventListener('wheel', function (e) {
-      if (!e.ctrlKey) { return; }     // plain wheel still scrolls; Ctrl+wheel zooms
       e.preventDefault();
       zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15);
     }, { passive: false });
@@ -978,6 +1065,44 @@
   });
 
   /* =======================================================================
+     GLOBAL KEYS (CHANGE 3/4/5) - guarded so typing in search/ask is untouched (CHANGE 8)
+     ===================================================================== */
+  function typingInField() {
+    var el = document.activeElement;
+    if (!el) { return false; }
+    var tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+  }
+
+  document.addEventListener('keydown', async function (e) {
+    if (typingInField()) { return; }   // never hijack keys while the user is typing (CHANGE 8)
+
+    // Space = play / pause (CHANGE 3)
+    if (e.key === ' ') {
+      e.preventDefault();
+      mpvSend('toggle');
+      return;
+    }
+    // s = split clip at the playhead (CHANGE 4)
+    if (e.key === 's' || e.key === 'S') {
+      e.preventDefault();
+      splitAtPlayhead();
+      return;
+    }
+    // Delete / Escape = ripple-delete the selected clip (CHANGE 5)
+    if ((e.key === 'Delete' || e.key === 'Escape') && state.selectedClipId != null) {
+      e.preventDefault();
+      var id = state.selectedClipId;
+      state.selectedClipId = null;
+      var rep = await beckyCall('remove_clip', { id: id });   // server-side remove auto-ripples start_sec
+      if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Removed clip'); }
+      else { toast('Could not remove clip' + (rep.error ? ': ' + rep.error : '')); }
+      markSelectedClip();
+      return;
+    }
+  });
+
+  /* =======================================================================
      BOOT
      ===================================================================== */
   async function boot() {
@@ -1013,6 +1138,7 @@
     doSearch: doSearch,
     reportVideoRect: reportVideoRect,
     setZoom: setZoom,
+    splitAtPlayhead: splitAtPlayhead,
     state: state
   };
 

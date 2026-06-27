@@ -46,7 +46,7 @@
   <!-- ============================ CHAT COLUMN: ask becky ======================== -->
   <section class="chat" aria-label="Ask becky">
     <header class="chathead">
-      <span class="chattitle"><span class="diamond sm" aria-hidden="true"></span>ask becky</span>
+      <span class="chattitle"><span class="robot" aria-hidden="true">&#129302;</span>ask becky</span>
       <label class="claude" title="Use Claude (online) instead of local Gemma">
         <input type="checkbox" id="useClaude">
         <span>use Claude</span>
@@ -59,7 +59,7 @@
 
     <div class="askbar">
       <input id="ask" type="text" placeholder="ask becky..." autocomplete="off" aria-label="Ask becky">
-      <button id="send" class="sendbtn" title="send">send</button>
+      <button id="send" class="sendbtn" title="send" aria-label="send">&#10148;</button>
     </div>
   </section>
 
@@ -77,6 +77,7 @@
         <button id="tFrameBack" class="tbtn2" title="previous frame" aria-label="previous frame">&#9204;</button>
         <button id="tPlay"      class="tbtn2" title="play / pause"    aria-label="play or pause">&#9199;</button>
         <button id="tFrameFwd"  class="tbtn2" title="next frame"      aria-label="next frame">&#9205;</button>
+        <button id="tSplit"     class="tbtn2" title="Split clip at playhead (s)" aria-label="split clip at playhead">&#9986;</button>
         <button id="tOverlay"   class="tbtn2" title="forensic lower-third on / off">overlay</button>
       </div>
       <div class="tlactions">

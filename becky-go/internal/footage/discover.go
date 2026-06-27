@@ -210,6 +210,44 @@ func idMatchInDir(dir, token string, claimed map[string]bool) string {
 	return best
 }
 
+// buildSubtitleIDIndex walks the whole case-folder tree ONCE and maps each yt-id
+// token (lowercased "[id]") to the best subtitle carrying it — preferring an English
+// (".en.") caption, else the lexically-first (WalkDir order is deterministic). This
+// powers Index's whole-tree id fallback so a video pairs to a same-id transcript no
+// matter which subfolder it lives in. Read-only; an unreadable subtree is skipped.
+func buildSubtitleIDIndex(root string) map[string]string {
+	out := map[string]string{}
+	en := map[string]bool{}
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !subtitleExts[strings.ToLower(filepath.Ext(path))] {
+			return nil
+		}
+		tok := videoIDToken(filepath.Base(path))
+		if tok == "" {
+			return nil
+		}
+		isEN := hasENMarker(filepath.Base(path))
+		if _, ok := out[tok]; !ok {
+			out[tok] = path
+			en[tok] = isEN
+		} else if isEN && !en[tok] {
+			out[tok] = path // upgrade a non-en pick to the .en caption
+			en[tok] = true
+		}
+		return nil
+	})
+	return out
+}
+
 // stemOf returns the file name without its extension. filepath.Base/Ext suffice
 // here because Index always feeds absolute, host-native paths (filepath.WalkDir
 // produces them); the resolver never receives a foreign-OS path literal.

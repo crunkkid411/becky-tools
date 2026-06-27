@@ -126,7 +126,39 @@ public sealed class BeckyEngine : IDisposable
         {
             _writeLock.Release();
         }
+
+        // Bound the wait so a stuck verb surfaces as a VISIBLE error instead of a silent
+        // never-resolving "no results". Model heavy verbs (transcribe/ask/export) get a long
+        // budget; quick verbs (search/open_folder/timeline/...) a short one.
+        var timeoutMs = TimeoutFor(verb);
+        var winner = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs, ct));
+        if (winner != tcs.Task)
+        {
+            _pending.TryRemove(id, out _);
+            return ErrorElement($"{verb} timed out after {timeoutMs / 1000}s");
+        }
         return await tcs.Task;
+    }
+
+    private static int TimeoutFor(string verb)
+    {
+        switch (verb)
+        {
+            case "transcribe":
+            case "transcribe_all":
+            case "ask":
+            case "export":
+                return 40 * 60 * 1000; // model/render verbs: up to 40 min
+            default:
+                return 90 * 1000;      // search/index/timeline edits: 90s
+        }
+    }
+
+    private static JsonElement ErrorElement(string message)
+    {
+        using var doc = JsonDocument.Parse(
+            JsonSerializer.Serialize(new { ok = false, error = message }));
+        return doc.RootElement.Clone();
     }
 
     /// <summary>True when a reply envelope reports success.</summary>

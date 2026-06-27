@@ -96,6 +96,8 @@ body {
   box-shadow: 0 0 12px var(--neon);
 }
 .diamond.sm { width: 10px; height: 10px; margin-right: 7px; box-shadow: 0 0 8px var(--neon); }
+/* chat-header robot mark (replaces the small diamond - CHANGE 6) */
+.robot { display: inline-block; font-size: 18px; line-height: 1; margin-right: 7px; }
 
 .brandbar {
   display: flex; align-items: baseline; gap: 12px;
@@ -313,10 +315,13 @@ body {
 }
 #ask:focus { border-color: var(--neon); box-shadow: 0 0 0 1px var(--neon-soft); }
 #ask::placeholder { color: var(--dim-2); }
+/* send button = the ➤ arrow (CHANGE 7): a compact, centered green square */
 .sendbtn {
-  flex: none; font-size: 15px; font-weight: 700; cursor: pointer;
+  flex: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 700; line-height: 1;
   background: var(--neon); color: #000; border: 1px solid var(--neon);
-  border-radius: 7px; padding: 11px 18px;
+  border-radius: 7px; padding: 0 16px; min-width: 48px; height: 44px;
 }
 .sendbtn:hover { box-shadow: 0 0 10px rgba(57,255,20,.4); }
 
@@ -385,6 +390,14 @@ body {
   transition: border-color .12s, box-shadow .12s, background .12s;
 }
 .clip:hover { border-color: var(--neon); background: rgba(57, 255, 20, 0.30); }
+
+/* the selected clip = ripple-delete target (Del/Esc): a bright neon-yellow outline that
+   stays distinct from the green hover/playhead so the selection is unmistakable (CHANGE 5) */
+.clip.selected {
+  border-color: var(--yellow);
+  box-shadow: 0 0 0 2px var(--yellow), 0 0 12px rgba(255, 215, 0, .55);
+  z-index: 3;
+}
 
 /* the empty fill between the two trim handles - forwards clicks to the scrubber */
 .clip .cbody { flex: 1; min-width: 0; }

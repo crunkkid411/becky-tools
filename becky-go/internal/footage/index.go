@@ -99,6 +99,14 @@ func Index(folder string) (FolderIndex, error) {
 	// deterministic, so claim order is stable.
 	claimed := map[string]bool{}
 
+	// Whole-tree yt-id index: maps each bracketed 11-char id token (e.g. "[pnms91b6zqo]")
+	// to the best subtitle carrying it, ANYWHERE under the case folder. yt-dlp writes the
+	// SAME id into a video and its caption, so this pairs a video to its transcript even
+	// when the transcript sits in an unrecognised subfolder (e.g. "english/", "subs_en/")
+	// that the same-dir / known-caption-subdir rules miss. The id is effectively unique, so
+	// this can never create a false pair — only recover real ones that were becoming orphans.
+	idIndex := buildSubtitleIDIndex(abs)
+
 	walkErr := filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// Unreadable entry/dir: skip its subtree but keep walking the rest.
@@ -124,6 +132,15 @@ func Index(folder string) (FolderIndex, error) {
 		sub := sidecar.FindSubtitle(path)
 		if sub == "" {
 			sub = resolveTranscript(path, claimed)
+		}
+		if sub == "" {
+			// Whole-tree yt-id fallback: pair by the shared bracketed id even across
+			// unrecognised subfolders (the case the other rules miss).
+			if tok := videoIDToken(filepath.Base(path)); tok != "" {
+				if cand, ok := idIndex[tok]; ok && !claimed[filepath.Clean(cand)] {
+					sub = cand
+				}
+			}
 		}
 		if sub != "" {
 			v.TranscriptPath = sub
