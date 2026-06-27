@@ -528,6 +528,15 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **iPhone-history -> verified-markdown archiver (2026-06-26, local):** Jordan's Chrome history (iPhone-
+  synced, the `Default` profile) is now archived to `Documents\Obsidian\browser_data\iPhone` as one verified
+  `.md` per page. Added **`becky-radar --list`** (the all-synced URL feed, not just model/tool hosts) and a
+  NEW **`becky-clipcheck`** that re-fetches each page and deterministically scores recall/precision to
+  confirm the `.md` actually CONTAINS the page (local Gemma-4 only on the borderline "partial" — AI only
+  where necessary). `scripts/clip-sync.ps1` chains radar->web2md->clipcheck one page at a time, idempotent
+  via a manifest; `scripts/register-clip-sync-task.ps1` installs the **daily 5 PM** task with missed-start
+  catch-up. Proven 8/8 on real pages; full 30-day backfill (207 pages) run one-at-a-time-verified.
+
 - **Fixed the 3 broken self-regulate siblings (2026-06-26, local):** becky-resolve, becky-presence,
   becky-case all COMPILED + unit-passed but were broken at RUNTIME on a real file. Root causes: a
   `becky-validate --variant <x>` flag that doesn't exist (so the Gemma ladder never escalated — in

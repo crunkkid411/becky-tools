@@ -10,6 +10,53 @@
 
 ---
 
+## 2026-06-26 (local) — iPhone-history -> verified-markdown archiver (becky-radar --list + becky-web2md + becky-clipcheck) + daily 5 PM task
+
+Jordan: "everything in my current iphone chrome browser history should be downloaded, one at a time, as a
+single .md file to `C:\Users\only1\Documents\Obsidian\browser_data\iPhone`" + a tool to "confirm that the
+downloaded markdown file doesn't just exist, but actually contains the same content that the webpage
+contains" + run daily at 5 PM (catch up on next boot if the PC was off) + "as deterministic as possible,
+only use ai for steps which are absolutely necesary, and us one of the local becky ai-models".
+
+**Grounding first (the count surprise).** Inspected the live Chrome History DB: the iPhone-synced pages
+live in the **Default** profile (`visit_source = 0` = SYNCED). Jordan's "~100" matched the last ~14 days
+(102); he chose **last 30 days** = **207** archivable pages (after junk-filtering 11 redirect/search hops).
+All-time synced is ~650.
+
+**Two real robustness gaps found + fixed (the existing tools were NOT enough alone):**
+1. `becky-radar` only surfaced model/tool hosts (HF/GitHub/arXiv) — it threw away ~90% of history. Added
+   **`becky-radar --list`** (new `internal/radar/list.go`): emits EVERY iPhone-synced page in a window as a
+   deterministic JSON URL feed (`SyncedVisits` joins `urls->visits->visit_source WHERE source=0`), deduped,
+   junk-filtered (`IsArchivable`), stably sorted. Offline + degrade-never-crash. Unit-tested.
+2. **Nothing verified the .md matched the page.** Built **`becky-clipcheck`** (new `cmd/clipcheck` +
+   `internal/clipcheck` + `internal/pyhelpers/clipfetch.py`): re-fetches the live page, deterministically
+   scores **recall** (did the clip drop content?) and **precision** (did it invent any?), verdict
+   pass/partial/fail/thin. Local **Gemma-4** adjudicates ONLY the borderline "partial" (AI where it is
+   absolutely necessary; reuses `internal/llmlocal`). Caught a real false-FAIL on GitHub (page footer
+   boilerplate counted as "missing content") and fixed it by **gating content blocks to the main text**
+   (a block only counts if >=60% of it is in trafilatura's article text) — regression-tested.
+
+**The pipeline + automation.** `scripts/clip-sync.ps1` runs the three tools ONE PAGE AT A TIME
+(radar --list -> for each NEW url: web2md -> clipcheck -> log verdict), idempotent via a
+`.clip-manifest.json` (canonicalized URLs, never re-downloads), writing `_SUMMARY.md` + per-run logs.
+`scripts/register-clip-sync-task.ps1` installs the **"Becky iPhone History Archive"** scheduled task:
+daily 17:00 + `StartWhenAvailable` (the missed-start catch-up = "run next time the PC is on"), hidden
+window, current user. Both `.ps1` are ASCII-only + PS 5.1 parse-clean.
+
+**Proven on real pages.** Engine ran on the real folder: a varied 8-page slice = **8/8 verified** (7 PASS
+recall ~1.0, 1 correctly THIN for a low-text shop page), nice title-based filenames + URL hash. The SPA
+(`toaster-radio.vercel.app`) was correctly SKIPPED by web2md (no extractable JS-rendered content) — exactly
+the case the verifier exists to catch. The full 207-page backfill was then launched one-at-a-time-verified;
+the daily task keeps it current after.
+
+**Gates:** `go build/vet/test ./...` green except the documented `cmd/tts` environmental FAIL; new files
+gofmt-clean (catalog.go's flag is pre-existing CRLF); `build-all-tools.bat` built all 79 tools incl
+`becky-clipcheck.exe`. New tool registered in `internal/catalog`.
+
+**Left for Jordan (hardware/eyes only):** open the Obsidian `browser_data\iPhone` folder and spot-check a
+few `.md` against the live pages; review anything in `_SUMMARY.md` under "Needs attention" (partial/fail/
+skipped). The daily 5 PM job needs no action — it runs itself.
+
 ## 2026-06-26 (local) — FIXED the 3 broken self-regulate siblings (becky-resolve/-presence/-case), proven on a real clip
 
 Jordan: "fix becky-resolve, fix any other tool that is not functional the way it's supposed to be." All

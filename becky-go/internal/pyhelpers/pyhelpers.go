@@ -31,6 +31,9 @@ var EmbedText []byte
 //go:embed web2md.py
 var Web2md []byte
 
+//go:embed clipfetch.py
+var Clipfetch []byte
+
 //go:embed face_embed.py
 var FaceEmbed []byte
 

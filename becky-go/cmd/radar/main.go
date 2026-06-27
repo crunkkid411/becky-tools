@@ -32,11 +32,35 @@ func main() {
 	profile := flag.String("profile", "", "Chrome profile to read (default: Default + any Profile N)")
 	days := flag.Int("days", 30, "how many days of history to scan")
 	userDataDir := flag.String("user-data-dir", "", "Chrome 'User Data' dir (default: from LOCALAPPDATA)")
+	list := flag.Bool("list", false, "emit EVERY iPhone-synced page in the window as a JSON URL feed (for becky-web2md), not the model/tool report")
+	clean := flag.Bool("clean", true, "in --list mode, drop redirect/search/tracking junk URLs")
 	flag.Parse()
 
 	if *days <= 0 {
 		fmt.Fprintln(os.Stderr, "usage: --days must be a positive number")
 		os.Exit(2)
+	}
+
+	// --list is the "archive everything from my phone" feed: all synced visits,
+	// not just the model/tool ones. It needs no freshness manifest.
+	if *list {
+		dir := *userDataDir
+		if dir == "" {
+			dir = radar.DefaultUserDataDir()
+		}
+		since := time.Now().AddDate(0, 0, -*days).UTC()
+		paths, profiles := radar.DiscoverDBs(dir, *profile)
+		rep := radar.BuildList(radar.ChromeSource{DBPaths: paths}, "chrome-local", *days, since, *clean, profiles)
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(rep); err != nil {
+			fmt.Fprintln(os.Stderr, "encode:", err)
+			os.Exit(1)
+		}
+		if rep.Degraded {
+			os.Exit(1)
+		}
+		return
 	}
 
 	deps, err := freshness.LoadManifest()
