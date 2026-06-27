@@ -10,6 +10,57 @@
 
 ---
 
+## `becky-otio-completion` — every interchange format built + the kdenlive engine render-proven (2026-06-27, local)
+
+**What landed.** `SPEC-BECKY-OTIO.md` is now COMPLETE: every `--format` the CLI advertises is
+implemented, value-tested, and the `.exe` builds. The cloud half (2026-06-26) shipped OTIO +
+vegas-list + EDL; this local pass added the two Phase-2 writers the spec's own §8 CLI listed but
+left unwired, plus the optional otioconvert escape hatch — then render-proved the MLT output through
+kdenlive's actual engine.
+
+- **`mlt` → `<name>.kdenlive`** (`internal/otio/mlt.go`). Reuses the proven `internal/kdenlive`
+  emitter (validated against melt 7.37 on real footage) rather than re-deriving MLT: a `edl.Reel`
+  becomes a `kdenlive.Project` (one validating-avformat producer per source + a playlist of the
+  ordered cuts). Cuts are placed in TIMELINE-fps frames (MLT conforms each source), so mixed-fps
+  sources stay time-accurate. Value test asserts 2 producers / exact entry frames `[1950,2204]`.
+- **`fcpxml` → `<name>.fcpxml`** (`internal/otio/fcpxml.go`). Flat FCPXML 1.10: `resources`
+  (one `<format>` per distinct fps, one `<asset>` with a `file://` `media-rep` per source) +
+  `library>event>project>sequence>spine` of `<asset-clip>`s. Rational frame times — `offset`/
+  `duration` in the SEQUENCE rate, `start` in the source's OWN rate (so `1950/30s` sits beside
+  `3000/25s`); NTSC rates emit exact `1001/x000` rationals (test covers 29.97 → `1001/30000s`).
+  Nominal `1920×1080` canvas + `hasVideo/hasAudio` assumed (documented review-fallback limits).
+- **`--via-otio-cli aaf,ale`** (`internal/otio/otiocli.go`). Shells `otioconvert` to reach adapters
+  becky doesn't write itself. Strictly degrade-never-crash: absent on PATH → keep the `.otio` + a
+  warning (the ONLY exec in the package; becky stays Python-free by default). Degrade path unit-tested
+  with an emptied `PATH`.
+- **CLI** (`cmd/becky-otio/main.go`): `--format` gained `fcpxml`,`mlt`; `all` now emits all five;
+  `--via-otio-cli` added; `--selftest` extended to **12 value assertions** (otio frames, mlt
+  producers+frames, fcpxml version+rational times, vegas-list line, edl events) — exits 0.
+
+**Proofs (deterministic, actually ran):**
+- `becky-otio --selftest` → 12/12 PASS, exit 0. `go build/vet/test ./...` green (lone `cmd/tts`
+  FAIL is the pre-existing model-present environmental inversion); gofmt clean (CRLF-only).
+  `build-all-tools.bat` → "Built 83 tools", exit 0, `bin\becky-otio.exe` (4 MB).
+- A real 3-clip Reel → `--format all --via-otio-cli aaf` wrote all five files (each 3 clips);
+  every output structurally validated offline (OTIO `1950@30/255`, FCPXML `1950/30s`+`3000/25s`,
+  seq `630/30s`; MLT 2 producers / 3 entries; 3 vegas lines; EDL events). via-otio-cli degraded
+  cleanly (otioconvert absent); offline-source warnings surfaced (clips still exported).
+- **MLT render-proof:** a real 20s test video + a 2-cut Reel ([2,5]=3s, [10,14]=4s) → `.kdenlive`
+  rendered headless via `melt.exe` (kdenlive's engine) at **exit 0 → exactly 210 frames = 7.0s**
+  (frame-exact, NOT the 2-frame "unknown length" collapse). A project melt renders is one kdenlive
+  opens → the kdenlive round-trip is closed deterministically, no GUI click.
+
+**Editor round-trip table (seed):** kdenlive (via melt engine) — ✅ frame-exact, 210f/7.0s.
+DaVinci Resolve & VEGAS Pro 18 — both installed on the PC; `.otio`/`.review.txt` are the inputs;
+**left as Jordan's human eyeball gate** (import + play). FCPXML/AAF need a Mac FCP / Premiere to
+eyeball; the XML is structurally valid + value-tested.
+
+**Left for Jordan (human "see" gate only):** open the `.otio` in DaVinci Resolve (File ▸ Import ▸
+Timeline) and run `/vegas/BeckyReviewTimeline.cs` on the `.review.txt` in VEGAS Pro 18, and say
+whether they play cleanly — that fills the last two rows of the round-trip table.
+
+---
+
 ## `proxy-snappiness` — intra-frame CFR scrub proxies (the real Shotcut-lag fix) (2026-06-27, local)
 
 **What landed (`HANDOFF-PROXY-SNAPPINESS.md` Steps 0–4).** becky can now build INTRA-FRAME,

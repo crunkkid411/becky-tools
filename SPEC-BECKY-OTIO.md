@@ -1,19 +1,29 @@
 # SPEC-BECKY-OTIO.md — becky's editor-agnostic timeline export (`becky-otio`)
 
-> **STATUS: BUILT + PROVEN, cloud half (2026-06-26, branch
-> `claude/video-editing-research-jqdz1t`).** The deterministic core ships and is
-> value-tested: `internal/otio` (OTIO + Vegas-list writers) + `cmd/becky-otio` (CLI
-> with `--selftest`). `go build/vet/test ./...` + gofmt green; `becky-otio --selftest`
-> exits 0 with per-format value assertions (clip count, exact frame numbers, exact
-> Vegas-list line). Pure Go, offline, deterministic, **no model boundary**. EDL output
-> reuses `edl.WriteEDL`. **This closes the hand-conversion gap**: the Reel becky-clip
-> already saves now converts to a reviewable timeline with one command — no human
-> plumbing. What's LEFT is local/hardware only (§9): confirm the real editors import
-> the files, and optionally add a one-click button in becky-clip.
+> **STATUS: COMPLETE — ALL FORMATS BUILT + PROVEN (Phase 1 cloud 2026-06-26; Phase 2
+> + render-proof local 2026-06-27).** Every `--format` the CLI advertises is now
+> implemented and value-tested in `internal/otio` + `cmd/becky-otio`:
+> `otio` (OpenTimelineIO JSON), `fcpxml` (flat FCPXML 1.10), `mlt` (`.kdenlive`, via
+> the proven `internal/kdenlive` emitter), `edl` (CMX3600, reuses `edl.WriteEDL`),
+> `vegas-list` (`.review.txt`), `all`, plus the optional `--via-otio-cli` escape hatch
+> (shells `otioconvert` for AAF/ALE; degrades silently when the OTIO python pkg is
+> absent). `go build/vet/test ./...` + gofmt green; `becky-otio --selftest` exits 0
+> with 12 per-format value assertions (clip counts, exact frame numbers, exact rational
+> time strings, exact Vegas-list line). `build-all-tools.bat` produces `becky-otio.exe`.
+> Pure Go, offline, deterministic, **no model boundary** (the lone exec is the optional
+> otioconvert). **This closes the hand-conversion gap**: the Reel becky-clip already
+> saves now converts to a reviewable timeline with one command — no human plumbing.
+>
+> **Render-proven (local, 2026-06-27):** a real 2-cut Reel → `--format all` produced
+> all five files; the `.kdenlive` rendered headless through **melt** (kdenlive's own
+> engine) at exit 0 to **exactly 210 frames = 7.0s** (3s + 4s cuts, frame-exact — not
+> the 2-frame "unknown length" collapse), which deterministically closes the kdenlive
+> round-trip. What's LEFT is the human eyeball gate only (§9): confirm DaVinci Resolve /
+> VEGAS Pro 18 import + play the files (all three editors are installed on the PC), and
+> optionally add a one-click button in becky-clip.
 >
 > Architecture decided by the 4-angle research pass summarized in §1 (DaVinci Resolve
 > scripting, VEGAS .NET history, web-timeline feasibility, interchange formats).
-> FCPXML + `--via-otio-cli` (§7) remain unbuilt Phase-2 options (Premiere/FCP/AAF only).
 
 ---
 
@@ -244,20 +254,31 @@ This is the path that lets Jordan **review immediately in the editor he knows**,
 
 ---
 
-## 7. Phase 2 outputs (optional — only if Jordan wants Premiere/FCP or AAF)
+## 7. Phase 2 outputs (BUILT 2026-06-27 — Premiere/FCP/AAF reach)
 
-Not required for Resolve/kdenlive/VEGAS coverage. Build only on request:
+These were the "build only on request" items; they now ship (the request was "build to
+completion"). Both are value-tested and wired into `--selftest`:
 
-- **Native FCPXML 1.10 writer** (`internal/otio/fcpxml.go`): the universal fallback that
-  Final Cut and Premiere (via the X27 plugin) read, and a Resolve alternative. FCPXML is
-  finicky (a `resources` block with `format` + per-source `asset`, then
-  `library > event > project > sequence > spine` of `asset-clip`s with `offset`/`start`/
-  `duration` as rational frame strings like `"1950/30s"`). Emit flat v1.10 XML (not the
-  `.fcpxmld` bundle). Value-test the resource/spine structure.
-- **`--via-otio-cli`**: if the user has the OTIO Python package installed, shell
-  `otioconvert -i <generated>.otio -o <out>.<ext>` to reach AAF / ALE / other adapters.
-  Strictly degrade-never-crash: detect `otioconvert` on PATH; if absent, emit the `.otio`
-  and print a note. becky never depends on Python being present.
+- **Native FCPXML 1.10 writer** (`internal/otio/fcpxml.go`) — DONE. The universal fallback
+  Final Cut and Premiere (via the X27 plugin) read, and a Resolve alternative. Emits flat
+  v1.10 XML (not the `.fcpxmld` bundle): a `resources` block with one `<format>` per
+  distinct frame rate + one `<asset>` (with a `file://` `media-rep`) per distinct source,
+  then `library > event > project > sequence > spine` of `<asset-clip>`s. Times are rational
+  frame strings — `offset`/`duration` in the SEQUENCE rate, `start` (source in-point) in the
+  source's OWN rate (so mixed-fps sources line up: e.g. `start="1950/30s"` beside
+  `start="3000/25s"`); the common NTSC rates emit their exact `1001/x000` rationals.
+  Honest limits (review fallback, not a finished conform): nominal `1920×1080` canvas (the
+  real resolution comes from the media on import) and `hasVideo`+`hasAudio` assumed.
+  `--format fcpxml` → `<name>.fcpxml`.
+- **`--via-otio-cli`** — DONE (`internal/otio/otiocli.go` + the CLI flag). If the OTIO Python
+  package is installed, it shells `otioconvert -i <generated>.otio -o <out>.<ext>` to reach
+  AAF / ALE / other adapters (`--via-otio-cli aaf,ale`). Strictly degrade-never-crash:
+  detects `otioconvert` on PATH; if absent it keeps the `.otio` and records a warning —
+  becky never depends on Python being present.
+
+Also built this pass (it was listed in §8's CLI but unwired): **`mlt`** → `<name>.kdenlive`,
+via the proven `internal/kdenlive` emitter — opens natively in kdenlive and renders headless
+through melt (render-proven, see the status banner).
 
 ---
 
@@ -298,22 +319,32 @@ per `STANDARDS-WORKFLOW.md §7`.
 
 ## 9. Local-agent work order (the import gates only Jordan's machine can close)
 
-Cloud built + proved §8.1 offline (done). Local proves the real editors actually open
-the files:
+Cloud built + proved §8.1 offline (done). Local has now built Phase 2, the exe, and the
+deterministic round-trips; only the human eyeball gates on Resolve/VEGAS remain:
 
 - [x] `go build ./... && go vet ./... && go test ./...` green; gofmt clean; `becky-otio
-      --selftest` exits 0 with value assertions (cloud, 2026-06-26).
-- [ ] `build-all-tools.bat` produces `becky-otio.exe` (auto-discovered; no edit needed).
-- [ ] Produce a real Reel from a real case (e.g. the cat-tooth hits via becky-clip), then
-      `becky-otio --reel <reel.json> --format all`.
-- [ ] **DaVinci Resolve:** File ▸ Import ▸ Timeline ▸ pick the `.otio`. Confirm the clips
-      land with correct in/out and play. (Free Resolve is fine for manual import.)
-- [ ] **kdenlive 25.04+:** import the `.otio` (native). Confirm the same.
-- [ ] **VEGAS Pro 18:** Tools ▸ Scripting ▸ Run Script ▸ `/vegas/BeckyReviewTimeline.cs`
-      ▸ pick the `.review.txt`. Confirm the clips + named regions land and play.
-- [ ] Record in `HANDOFF-LOG.md` which editors round-tripped cleanly and any quirks
-      (frame-offset, audio-link, offline-media handling). That table tells us which host
-      to standardize on.
+      --selftest` exits 0 with value assertions (cloud, 2026-06-26; now 12 checks covering
+      otio/fcpxml/mlt/vegas-list/edl — local, 2026-06-27).
+- [x] `build-all-tools.bat` produces `becky-otio.exe` (auto-discovered; "Built 83 tools",
+      exit 0 — local, 2026-06-27).
+- [x] Produced a real 3-clip Reel + a 2-cut render Reel; `becky-otio --reel <reel.json>
+      --format all --via-otio-cli aaf` wrote all five files; every output STRUCTURALLY
+      VALIDATED offline (OTIO JSON parse + frame values, FCPXML XML + rational times, MLT
+      producers/entries, vegas-list lines, EDL events). via-otio-cli degraded cleanly
+      (otioconvert absent). (local, 2026-06-27)
+- [x] **kdenlive engine (melt) round-trip — DONE deterministically.** The `.kdenlive`
+      rendered headless through `melt.exe` (kdenlive's own engine) at exit 0 to exactly
+      210 frames = 7.0s (3s+4s cuts, frame-exact). A project melt renders is one kdenlive
+      opens, so this closes the kdenlive gate without a GUI click. (local, 2026-06-27)
+- [ ] **DaVinci Resolve (installed):** File ▸ Import ▸ Timeline ▸ pick the `.otio`. Confirm
+      the clips land with correct in/out and play. (Human eyeball gate — Jordan.)
+- [ ] **kdenlive GUI (optional):** open the `.otio` to confirm the GUI agrees with the melt
+      render (engine round-trip already proven above).
+- [ ] **VEGAS Pro 18 (installed):** Tools ▸ Scripting ▸ Run Script ▸
+      `/vegas/BeckyReviewTimeline.cs` ▸ pick the `.review.txt`. Confirm the clips + named
+      regions land and play. (Human eyeball gate — Jordan.)
+- [x] Recorded the build + render-proof in `HANDOFF-LOG.md`; the editor round-trip table is
+      seeded with the kdenlive/melt result — Resolve/VEGAS rows fill in once Jordan eyeballs.
 
 ## 10. Non-goals (today)
 

@@ -528,6 +528,17 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **becky-otio COMPLETE — every interchange format + kdenlive engine render-proof (2026-06-27, local,
+  `SPEC-BECKY-OTIO.md`):** the editor-agnostic timeline exporter now implements ALL of its advertised
+  `--format`s. Phase 1 (cloud) shipped `otio`/`vegas-list`/`edl`; this pass added the two writers the
+  spec's CLI listed but left unwired — `fcpxml` (flat FCPXML 1.10, rational frame times, mixed-fps:
+  `1950/30s` beside `3000/25s`) and `mlt` (`<name>.kdenlive` via the proven `internal/kdenlive` emitter)
+  — plus the optional `--via-otio-cli` otioconvert escape hatch (degrades silently, becky stays
+  Python-free). `--selftest` now runs 12 value assertions (exit 0); a real Reel → `--format all` wrote +
+  structurally validated all five files. **Render-proven:** the `.kdenlive` rendered headless through
+  `melt` (kdenlive's engine) to exactly 210 frames = 7.0s (frame-exact), closing the kdenlive round-trip
+  deterministically. **Left for Jordan (eyeball only):** import the `.otio` in DaVinci Resolve and run
+  the VEGAS script on the `.review.txt` (both editors installed) and confirm they play.
 - **Scrub proxies — the real Shotcut-lag fix (2026-06-27, local, `HANDOFF-PROXY-SNAPPINESS.md`):**
   scrubbing was slow because long-GOP H.264/HEVC decodes a whole group of pictures per seek, and becky's
   old `reel.Proxy` *short-circuited* web-safe H.264 (so the commonest evidence got NO scrub proxy). New

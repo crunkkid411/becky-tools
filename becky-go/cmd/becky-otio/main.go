@@ -2,21 +2,26 @@
 // timeline files, so forensic hits can be reviewed in whatever snappy NLE the
 // user prefers WITHOUT becky being married to one editor:
 //
-//	becky-otio --reel <reel.json> [--format otio,edl,vegas-list,all] [--out dir] [--audio]
+//	becky-otio --reel <reel.json> [--format otio,edl,vegas-list,fcpxml,mlt,all] [--out dir] [--audio]
+//	becky-otio --reel <reel.json> --via-otio-cli aaf,ale   (needs the OTIO python pkg)
 //	becky-otio --selftest
 //
 //	otio        -> <name>.otio        (DaVinci Resolve / kdenlive 25.04+ import natively)
+//	fcpxml      -> <name>.fcpxml      (Final Cut / Premiere via plugin / Resolve — Phase 2 fallback)
+//	mlt         -> <name>.kdenlive    (kdenlive native; renders headless via melt)
 //	edl         -> <name>.edl         (CMX3600 — every editor; single track, lossy)
 //	vegas-list  -> <name>.review.txt  (fed to /vegas/BeckyReviewTimeline.cs on VEGAS Pro 18)
 //
 // JSON report to stdout, diagnostics to stderr, non-zero exit on fatal error.
-// Pure Go, offline, deterministic; source media is never modified. No models.
-// See SPEC-BECKY-OTIO.md.
+// Pure Go, offline, deterministic; source media is never modified. No models. The
+// only optional exec is --via-otio-cli (otioconvert), which degrades silently when
+// the OpenTimelineIO python package isn't installed. See SPEC-BECKY-OTIO.md.
 package main
 
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"os"
@@ -44,9 +49,10 @@ type report struct {
 func main() {
 	fs := flag.NewFlagSet("becky-otio", flag.ExitOnError)
 	reelPath := fs.String("reel", "", "path to a Reel JSON (internal/edl); '-' for stdin")
-	format := fs.String("format", "otio", "comma list: otio,edl,vegas-list,all")
+	format := fs.String("format", "otio", "comma list: otio,fcpxml,mlt,edl,vegas-list,all")
 	outDir := fs.String("out", "", "output directory (default: alongside the reel, or cwd for stdin)")
 	audio := fs.Bool("audio", false, "also emit a parallel audio track (otio)")
+	viaOtioCLI := fs.String("via-otio-cli", "", "after writing .otio, run otioconvert to also emit <name>.<ext> (comma list, e.g. aaf,ale); needs the OTIO python package on PATH, degrades silently if absent")
 	selftest := fs.Bool("selftest", false, "run the offline self-test (no files needed) and exit")
 	_ = fs.Parse(os.Args[1:])
 
@@ -76,6 +82,7 @@ func main() {
 	formats := expandFormats(*format)
 	rep := report{Reel: name}
 	opts := otio.Options{IncludeAudio: *audio}
+	var otioPath string // remembered so --via-otio-cli can convert from it
 
 	for _, f := range formats {
 		switch f {
@@ -87,7 +94,29 @@ func main() {
 				continue
 			}
 			rep.Written = append(rep.Written, written{"otio", path, countPlayable(r)})
+			otioPath = path
 			_ = n
+		case "fcpxml":
+			path := filepath.Join(dir, name+".fcpxml")
+			_, err := writeFile(path, func(b *bytes.Buffer) error { return otio.WriteFCPXML(b, r, opts) })
+			if err != nil {
+				rep.Warnings = append(rep.Warnings, "fcpxml: "+err.Error())
+				continue
+			}
+			rep.Written = append(rep.Written, written{"fcpxml", path, countPlayable(r)})
+		case "mlt":
+			path := filepath.Join(dir, name+".kdenlive")
+			var clips int
+			_, err := writeFile(path, func(b *bytes.Buffer) error {
+				c, e := otio.WriteMLT(b, r, opts)
+				clips = c
+				return e
+			})
+			if err != nil {
+				rep.Warnings = append(rep.Warnings, "mlt: "+err.Error())
+				continue
+			}
+			rep.Written = append(rep.Written, written{"mlt", path, clips})
 		case "vegas-list":
 			path := filepath.Join(dir, name+".review.txt")
 			var clips int
@@ -111,6 +140,43 @@ func main() {
 			rep.Written = append(rep.Written, written{"edl", path, countPlayable(r)})
 		default:
 			rep.Warnings = append(rep.Warnings, "unknown format: "+f)
+		}
+	}
+
+	// --via-otio-cli: optionally reach adapter formats (AAF/ALE/...) by shelling
+	// otioconvert against a generated .otio. Degrade-never-crash: if otioconvert
+	// isn't installed we keep the .otio and note it; becky never needs Python.
+	if strings.TrimSpace(*viaOtioCLI) != "" {
+		if otioPath == "" { // user didn't request otio; write a base one to convert
+			otioPath = filepath.Join(dir, name+".otio")
+			if _, err := writeFile(otioPath, func(b *bytes.Buffer) error { return otio.WriteOTIO(b, r, opts) }); err != nil {
+				rep.Warnings = append(rep.Warnings, "via-otio-cli: could not write base .otio: "+err.Error())
+				otioPath = ""
+			} else {
+				rep.Written = append(rep.Written, written{"otio", otioPath, countPlayable(r)})
+			}
+		}
+		switch {
+		case otioPath == "":
+			// already warned above
+		case !otio.OtioCLIAvailable():
+			rep.Warnings = append(rep.Warnings, "via-otio-cli requested but 'otioconvert' is not on PATH (install the OpenTimelineIO python package); kept the .otio only")
+		default:
+			for _, ext := range strings.Split(*viaOtioCLI, ",") {
+				ext = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ext), "."))
+				if ext == "" {
+					continue
+				}
+				outPath := filepath.Join(dir, name+"."+ext)
+				ran, err := otio.OtioConvert(otioPath, outPath)
+				if err != nil {
+					rep.Warnings = append(rep.Warnings, "via-otio-cli "+ext+": "+err.Error())
+					continue
+				}
+				if ran {
+					rep.Written = append(rep.Written, written{"otioconvert:" + ext, outPath, countPlayable(r)})
+				}
+			}
 		}
 	}
 
@@ -177,7 +243,7 @@ func sanitize(s string) string {
 
 func expandFormats(spec string) []string {
 	if strings.TrimSpace(spec) == "all" {
-		return []string{"otio", "edl", "vegas-list"}
+		return []string{"otio", "fcpxml", "mlt", "edl", "vegas-list"}
 	}
 	var out []string
 	for _, f := range strings.Split(spec, ",") {
@@ -269,9 +335,68 @@ func runSelftest() {
 	edlErr := edl.WriteEDL(&eb, r)
 	check("edl.writes", edlErr == nil && eb.Len() > 0, "")
 
+	// mlt: parse back, assert 2 producers/entries + clip A frames (timeline 30fps).
+	var mb bytes.Buffer
+	mClips, mWErr := otio.WriteMLT(&mb, r, otio.Options{})
+	var mdoc struct {
+		Producers []struct {
+			ID string `xml:"id,attr"`
+		} `xml:"producer"`
+		Playlists []struct {
+			Entries []struct {
+				In  int `xml:"in,attr"`
+				Out int `xml:"out,attr"`
+			} `xml:"entry"`
+		} `xml:"playlist"`
+	}
+	mErr := xml.Unmarshal(mb.Bytes(), &mdoc)
+	mEntries, mInA, mOutA := 0, -1, -1
+	if mErr == nil && len(mdoc.Playlists) == 1 {
+		mEntries = len(mdoc.Playlists[0].Entries)
+		if mEntries >= 1 {
+			mInA, mOutA = mdoc.Playlists[0].Entries[0].In, mdoc.Playlists[0].Entries[0].Out
+		}
+	}
+	check("mlt.valid_xml", mWErr == nil && mErr == nil, "")
+	check("mlt.clip_count", mClips == 2 && mEntries == 2 && len(mdoc.Producers) == 2,
+		fmt.Sprintf("(clips=%d entries=%d producers=%d, want 2/2/2)", mClips, mEntries, len(mdoc.Producers)))
+	check("mlt.clipA_frames", mInA == 1950 && mOutA == 2204, fmt.Sprintf("(in=%d out=%d, want 1950/2204)", mInA, mOutA))
+
+	// fcpxml: parse back, assert version + spine count + clip A rational times.
+	var fb bytes.Buffer
+	fWErr := otio.WriteFCPXML(&fb, r, otio.Options{})
+	var fdoc struct {
+		Version string `xml:"version,attr"`
+		Library struct {
+			Event struct {
+				Project struct {
+					Sequence struct {
+						Spine struct {
+							Clips []struct {
+								Start    string `xml:"start,attr"`
+								Duration string `xml:"duration,attr"`
+							} `xml:"asset-clip"`
+						} `xml:"spine"`
+					} `xml:"sequence"`
+				} `xml:"project"`
+			} `xml:"event"`
+		} `xml:"library"`
+	}
+	fErr := xml.Unmarshal(fb.Bytes(), &fdoc)
+	fClips := len(fdoc.Library.Event.Project.Sequence.Spine.Clips)
+	fStartA, fDurA := "", ""
+	if fClips >= 1 {
+		fStartA = fdoc.Library.Event.Project.Sequence.Spine.Clips[0].Start
+		fDurA = fdoc.Library.Event.Project.Sequence.Spine.Clips[0].Duration
+	}
+	check("fcpxml.valid_xml", fWErr == nil && fErr == nil && fdoc.Version == "1.10", fmt.Sprintf("(ver=%q)", fdoc.Version))
+	check("fcpxml.clip_count", fClips == 2, fmt.Sprintf("(got %d, want 2)", fClips))
+	check("fcpxml.clipA_times", fStartA == "1950/30s" && fDurA == "255/30s",
+		fmt.Sprintf("(start=%q dur=%q, want 1950/30s 255/30s)", fStartA, fDurA))
+
 	if fail {
 		fmt.Fprintln(os.Stderr, "selftest: FAIL")
 		os.Exit(1)
 	}
-	beckyio.PrintJSON(map[string]any{"selftest": "ok", "formats": []string{"otio", "vegas-list", "edl"}})
+	beckyio.PrintJSON(map[string]any{"selftest": "ok", "formats": []string{"otio", "fcpxml", "mlt", "vegas-list", "edl"}})
 }
