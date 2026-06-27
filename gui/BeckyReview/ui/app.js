@@ -951,10 +951,15 @@
     var tl = await beckyCall('timeline', {});         // restore any existing timeline
     if (tl.ok && tl.data) { applyTimeline(tl.data); }
 
+    // Default the chat to LOCAL Gemma (Jordan's rule): the box starts unchecked and we
+    // push that to the engine on boot, rather than adopting the engine's own default.
+    // Checking "use Claude" switches to Claude Code.
+    state.online = $useClaude.checked; // false by default
+    await beckyCall('set_online', { on: state.online });
+
     var st = await beckyCall('status', {});           // chat intro line
     if (st.ok && st.data) {
       setChatIntro(st.data.summary || 'becky is ready. Pick a case folder, then search or ask.');
-      if (typeof st.data.online === 'boolean') { state.online = st.data.online; $useClaude.checked = st.data.online; }
     } else {
       setChatIntro('becky is ready. Pick a case folder, then search or ask.');
     }
