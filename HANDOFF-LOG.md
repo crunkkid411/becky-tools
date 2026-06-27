@@ -10,6 +10,48 @@
 
 ---
 
+## `proxy-snappiness` — intra-frame CFR scrub proxies (the real Shotcut-lag fix) (2026-06-27, local)
+
+**What landed (`HANDOFF-PROXY-SNAPPINESS.md` Steps 0–4).** becky can now build INTRA-FRAME,
+constant-frame-rate SCRUB proxies, and both the becky-clip preview and the Shotcut-fork dock route
+through them. This targets the documented root cause of laggy scrubbing: long-GOP H.264/HEVC where every
+seek must decode a whole group of pictures (and VFR sources that make the editor recompute each frame).
+
+- **The bug, confirmed in code:** `internal/reel/proxy.go` only built a proxy when the source was NOT
+  already web-safe H.264 (the `webSafeCodecs` short-circuit), so the commonest evidence — long-GOP H.264 —
+  got NO scrub proxy at all; and when it did build one, `proxyArgs` used the default ~250-frame GOP (still
+  long-GOP). Proven on real footage: `interview-2026-05-14.mp4` is web-safe h264 but only **1 keyframe /
+  60 frames**, so the old `Proxy()` returned it unchanged → laggy frame-step.
+- **Step 3 (engine):** new `reel.ScrubProxy(source, outDir)` + pure `scrubProxyArgs` — does NOT
+  short-circuit on web-safe H.264; writes `<stem>.scrub.mp4` with all-intra H.264 (`-g 1 -keyint_min 1
+  -sc_threshold 0`), `scale=-2:540,fps=30` (downscale + CFR), `yuv420p +faststart aac`. Codec/res tunable
+  via `BECKY_PROXY_CODEC` (h264|dnxhr|mjpeg) / `BECKY_PROXY_RES`; a fresh proxy is cached by mtime so
+  repeat opens are instant. Value-asserting tests `TestScrubProxyArgs` / `TestScrubProxyArgsEnv` /
+  `TestScrubProxyPath` (assert the `-g 1` / `-sc_threshold 0` / `fps=30` values, the dnxhr/mjpeg recipes,
+  the res override + garbage-fallback, and the `.mp4`/`.mov` extension).
+- **Step 4 (wiring):** becky-clip's `(*App).ProxyFor` now calls `reel.ScrubProxy` (the all-intra H.264
+  proxy is web-playable so the WebView2 `<video>` benefits directly). New CLI **`cmd/becky-proxy`**
+  (`--src`/`--out`, `--selftest`) is the surface the Shotcut-fork dock shells out to; it ffprobe-verifies
+  its own output (`intra_frame`/`cfr` in the JSON). The Shotcut Step-4 choice (B: pre-generate `.scrub`,
+  point preview at it, keep the ORIGINAL for export) is recorded in `HANDOFF-SHOTCUT-FORK.md`.
+- **Proof (deterministic, actually ran):** `becky-proxy --selftest` synthesizes a long-GOP source (1
+  keyframe / 60) and builds a scrub proxy with **60/60 keyframes + CFR** → `pass: true`, exit 0. On the
+  real interview clip the proxy came out `intra_frame: true` (60/60) + `cfr: true`. So the proxy is
+  scrub-friendly *by construction* — every frame stands alone, so a seek decodes exactly one frame.
+- **Does the proxy fix resolve the Shotcut lag?** The CODEC mechanism is proven (intra-frame + CFR, on
+  real footage). What remains is perceptual — Jordan scrubbing the `.scrub` proxy in the fork and
+  confirming it FEELS smooth (Step 2's go/no-go is a human-vision gate I can't close). If it does, we keep
+  the Shotcut fork; if an all-intra CFR proxy is *still* laggy, the cause is elsewhere (GPU/MLT consumer /
+  preview repaint / disk) per the handoff's honest branch.
+- **Gates:** `go build/vet ./...` green; `go test ./...` green except the documented `cmd/tts`
+  environmental FAIL (the local TTS model is present, so its "degrades when no model" test inverts); the
+  new scrub tests pass; `gofmt` clean modulo the pre-existing repo-wide CRLF; `build-all-tools.bat` builds
+  (auto-discovers `cmd/becky-proxy`).
+- **Left for Jordan (one perceptual gate):** open a real laggy clip's `.scrub` proxy (or just preview a
+  clip in becky-clip, which now builds it automatically) and confirm scrubbing/frame-stepping feels smooth.
+
+---
+
 ## `claude/becky-review-app` — Becky Review: the one-window forensic video reviewer (2026-06-27, local)
 
 **What landed (Steps 0-7 of `HANDOFF-BECKY-REVIEW-APP.md`, built + screenshotted + on master).** A new

@@ -528,6 +528,15 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **Scrub proxies — the real Shotcut-lag fix (2026-06-27, local, `HANDOFF-PROXY-SNAPPINESS.md`):**
+  scrubbing was slow because long-GOP H.264/HEVC decodes a whole group of pictures per seek, and becky's
+  old `reel.Proxy` *short-circuited* web-safe H.264 (so the commonest evidence got NO scrub proxy). New
+  **`reel.ScrubProxy`** builds an INTRA-FRAME, constant-frame-rate proxy (`<stem>.scrub.mp4`: `-g 1
+  -sc_threshold 0`, `scale=-2:540,fps=30`; tunable via `BECKY_PROXY_CODEC`/`BECKY_PROXY_RES`; mtime-cached).
+  becky-clip's preview (`ProxyFor`) now routes through it, and new CLI **`becky-proxy`** (`--src`/`--selftest`)
+  is the surface the Shotcut dock shells out to (it ffprobe-verifies its own `intra_frame`/`cfr`). **Proven:**
+  `--selftest` + a real interview clip both yield a 60/60-keyframe, CFR proxy. Open gate = Jordan confirming
+  it *feels* smooth when scrubbed (a human-vision go/no-go that decides keep-the-fork vs not).
 - **Becky Review — the one-window forensic video reviewer (2026-06-27, local):** new native WPF (.NET 8)
   app `gui/BeckyReview` per `HANDOFF-BECKY-REVIEW-APP.md` (Steps 0-7 built + screenshotted). **LEFT** = a
   WebView2 HTML list/search loaded with **no TCP server** (`SetVirtualHostNameToFolderMapping`); **RIGHT**

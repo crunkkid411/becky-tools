@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"becky-go/internal/config"
@@ -86,6 +87,127 @@ func proxyArgs(source, out string) []string {
 // NOT web-safe). Exposed for testing the decision without ffprobe.
 func needsProxy(codec string) bool {
 	return !webSafeCodecs[strings.ToLower(strings.TrimSpace(codec))]
+}
+
+// ScrubProxy transcodes source to a low-res, INTRA-FRAME, constant-frame-rate
+// proxy in outDir and returns the proxy path. Unlike Proxy, it does NOT
+// short-circuit on web-safe H.264: long-GOP H.264 is exactly the evidence that
+// scrubs slowly — every seek must decode a whole group of pictures — so it still
+// needs a scrub proxy where every frame is a keyframe and the rate is constant
+// (a VFR source makes the editor "constantly recalculate the next frame"). The
+// source is opened READ-ONLY; only the proxy file is written. Use the ORIGINAL —
+// never this proxy — for any final/forensic export (export must stay
+// frame-accurate to the source). See HANDOFF-PROXY-SNAPPINESS.md.
+//
+// Codec and resolution are tunable WITHOUT a rebuild via env:
+//   - BECKY_PROXY_CODEC: h264 (default, all-intra .mp4, web-playable so
+//     becky-clip's <video> benefits too) | dnxhr (.mov) | mjpeg (.mov).
+//   - BECKY_PROXY_RES: scale height in px (default 540).
+//
+// A fresh proxy (exists, non-empty, mtime >= source) is reused so repeated
+// previews of the same clip are instant rather than re-transcoded each click.
+func ScrubProxy(source, outDir string) (string, error) {
+	cfg := config.Load()
+	si, err := os.Stat(source)
+	if err != nil {
+		return "", fmt.Errorf("source not found: %s", source)
+	}
+	if outDir == "" {
+		outDir = "."
+	}
+	out := scrubProxyPath(source, outDir)
+	if fi, e := os.Stat(out); e == nil && fi.Size() > 0 && !fi.ModTime().Before(si.ModTime()) {
+		return out, nil // fresh cached proxy — no re-transcode
+	}
+	if cfg.FFmpeg == "" || !available(cfg.FFmpeg) {
+		return "", fmt.Errorf("ffmpeg not available (config FFmpeg=%q); cannot build scrub proxy", cfg.FFmpeg)
+	}
+	if err := runFFmpeg(cfg.FFmpeg, false, scrubProxyArgs(source, out)); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(out); err != nil {
+		return "", fmt.Errorf("scrub proxy transcode produced no file: %s", out)
+	}
+	return out, nil
+}
+
+// scrubProxyPath builds "<stem>.scrub.<ext>" inside outDir, where ext follows the
+// configured scrub codec (.mp4 for h264, .mov for dnxhr/mjpeg). pathx.Base keeps
+// a Windows source path correct on any host.
+func scrubProxyPath(source, outDir string) string {
+	base := pathx.Base(source)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	if stem == "" {
+		stem = "proxy"
+	}
+	return mustAbs(filepath.Join(outDir, stem+".scrub"+scrubCodecFor(os.Getenv("BECKY_PROXY_CODEC")).ext))
+}
+
+// scrubProxyArgs builds the ffmpeg argv for an INTRA-FRAME, CONSTANT-frame-rate
+// scrub proxy: scaled down, fps-locked, every frame a keyframe (so a seek decodes
+// exactly one frame). Defaults to the all-intra H.264 recipe; honors
+// BECKY_PROXY_CODEC / BECKY_PROXY_RES. PURE (unit-tested).
+func scrubProxyArgs(source, out string) []string {
+	c := scrubCodecFor(os.Getenv("BECKY_PROXY_CODEC"))
+	vf := fmt.Sprintf("scale=-2:%d,fps=30", scrubProxyHeight())
+	args := []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-i", source,
+		"-vf", vf,
+	}
+	args = append(args, c.videoArgs...)
+	args = append(args, c.audioArgs...)
+	return append(args, out)
+}
+
+// scrubProxyHeight resolves BECKY_PROXY_RES to a scale height, defaulting to 540.
+// Garbage / non-positive values fall back to the default.
+func scrubProxyHeight() int {
+	if v := strings.TrimSpace(os.Getenv("BECKY_PROXY_RES")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 540
+}
+
+// scrubCodec is one intra-frame scrub-proxy recipe: output extension plus the
+// ffmpeg video/audio encoder args. Every option here is INTRA-FRAME so seeking
+// never decodes a group of pictures — the whole point of a scrub proxy.
+type scrubCodec struct {
+	ext       string
+	videoArgs []string
+	audioArgs []string
+}
+
+// scrubCodecFor maps BECKY_PROXY_CODEC to a recipe. Default is all-intra H.264
+// (.mp4, web-playable). dnxhr (DNxHR LB, the most reliable scrubber) and mjpeg
+// (weak-hardware fallback, biggest files) are .mov alternatives.
+func scrubCodecFor(name string) scrubCodec {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "dnxhr", "dnxhd", "dnxhr_lb":
+		return scrubCodec{
+			ext:       ".mov",
+			videoArgs: []string{"-c:v", "dnxhd", "-profile:v", "dnxhr_lb", "-pix_fmt", "yuv422p"},
+			audioArgs: []string{"-c:a", "pcm_s16le"},
+		}
+	case "mjpeg", "mjpg":
+		return scrubCodec{
+			ext:       ".mov",
+			videoArgs: []string{"-c:v", "mjpeg", "-q:v", "5", "-pix_fmt", "yuvj420p"},
+			audioArgs: []string{"-c:a", "pcm_s16le"},
+		}
+	default: // all-intra H.264: every frame a keyframe (-g 1), no scene-cut GOPs.
+		return scrubCodec{
+			ext: ".mp4",
+			videoArgs: []string{
+				"-c:v", libx264, "-preset", "veryfast", "-crf", "20",
+				"-g", "1", "-keyint_min", "1", "-sc_threshold", "0",
+				"-pix_fmt", "yuv420p", "-movflags", "+faststart",
+			},
+			audioArgs: []string{"-c:a", "aac"},
+		}
+	}
 }
 
 // videoCodec returns the first video stream's codec_name via ffprobe. An empty
