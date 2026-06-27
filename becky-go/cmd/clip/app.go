@@ -788,6 +788,14 @@ func (a *App) ensureRouter() *assistant.Router {
 	// claude CLI (Claude Code OAuth) path needs none of this.
 	ensureAnthropicKeyEnv(a.workDir)
 	localModel := strings.TrimSpace(os.Getenv("BECKY_CLIP_MODEL"))
+	if localModel == "" {
+		// Default the OFFLINE chat brain to local Gemma-4 E4B (Jordan's rule: local by
+		// default, Claude only when "use Claude" is on). Only affects the offline path —
+		// online still routes to Claude. BECKY_CLIP_MODEL overrides if set.
+		if m, _, _ := a.cfg.GemmaAVLM(); m != "" {
+			localModel = m
+		}
+	}
 	corrLog := filepath.Join(a.workDir, "corrections.jsonl")
 	a.router = assistant.NewDefaultRouter(
 		localModel,

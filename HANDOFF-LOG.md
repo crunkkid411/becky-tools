@@ -60,6 +60,45 @@ Timeline) and run `/vegas/BeckyReviewTimeline.cs` on the `.review.txt` in VEGAS 
 whether they play cleanly — that fills the last two rows of the round-trip table.
 
 ---
+## `claude/becky-review-fullui` — Becky Review rebuilt as the FULL becky-clip editor (2026-06-27, local)
+
+**Why.** The first Becky Review (the `HANDOFF-BECKY-REVIEW-APP.md` walking skeleton) was a minimal
+reviewer — but Jordan's actual ask is becky-clip **rebuilt faster + more robust** with the smooth mpv
+player. He flagged it was *slower* at search and missing the timeline, quotes, chat, overlay, and the
+in-app transcribe. Root cause of the slowness: the per-call `becky-review-index` re-indexed the whole
+folder + re-parsed every transcript on EVERY search; becky-clip keeps that warm in one process.
+
+**What landed.** Becky Review now reuses **becky-clip's entire engine + UI**, with only the video and the
+transport swapped to native mpv:
+
+- **Persistent engine.** New headless `becky-clip bridge` subcommand (`cmd/clip/main.go`) keeps ONE warm
+  `App` (folder index + transcript parse-cache) and exposes every bridge verb over stdin/stdout NDJSON.
+  Shipped as `becky-review-engine.exe` (a headless `go build ./cmd/clip`). Fixes the search slowness and
+  gives every feature for free. `BeckyEngine.cs` is the C# client (replies matched by id).
+- **Full-duplex mpv** (`MpvPlayer.cs`): mpv now streams `time-pos`/`duration` back (observe_property) for
+  the live timeline playhead + the overlay timecode; `--sub-auto=no --sid=no` so the `.srt` is NEVER
+  burned on the video (Jordan: "the text should not appear on screen").
+- **Thin host** (`MainWindow`): relays page↔engine (`call`) and page↔mpv (`play/seek/frame/toggle/
+  overlay`); draws the forensic lower-third on the video via mpv ASS `osd-overlay` (filename + LIVE
+  ORIG-TC + date/link from the beckymeta sidecar when present); pushes `{t:time}`/`{t:folder}`.
+- **Ported UI** (`ui/index.html`,`app.css`,`app.js`): the full becky-clip surface — file list with the
+  green "+" in-app transcribe (`becky-transcribe`), search with the exact `N quotes … M playable,
+  K transcript-only` header + highlighted terms, single-click=play / double-click=add-to-timeline, a
+  draggable/resizable/scrubbable timeline (save/load/export), and the becky chat. Chat **defaults to
+  local Gemma-4 E4B** (`app.go` defaults `BECKY_CLIP_MODEL` to `cfg.GemmaAVLM()`; the box starts
+  unchecked and boot pushes `set_online(false)`); **"use Claude"** switches to Claude Code.
+
+**Verified (CDP-driven, screenshotted) on a real folder+srt:** file list shows 2 videos (one with the
+green "+"); search "cat" → 2 highlighted hits with the exact header; single-click plays that moment in
+mpv with **no burned text**; double-click adds both to the timeline (2 clips · 0:06); ruler scrub seeks
+the right clip (playhead tracks); overlay draws the filename + live ORIG-TC on the video; the chat
+round-trips "turn the lower-third on" → a local-model reply; "use Claude" defaults OFF. Built + deployed
+to the main-tree Release output so the Desktop "Becky Review" shortcut opens the new app now.
+
+**Gates:** `go build/vet/test ./...` green (incl. the merged proxy + qwen work); the only `gofmt -l` hit
+is cosmetic Windows-CRLF. **Left (model/hardware boundary):** the green-"+" runs `becky-transcribe`
+(needs the Parakeet ASR model) and the chat's local Gemma needs llama-server + the GGUF — both wired,
+proven to fire + degrade gracefully, full runs are the usual model-boundary tap on real footage.
 
 ## `proxy-snappiness` — intra-frame CFR scrub proxies (the real Shotcut-lag fix) (2026-06-27, local)
 

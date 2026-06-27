@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -13,7 +14,8 @@ namespace BeckyReview;
 /// Drives a native mpv video pane embedded into a Win32 child window (<c>--wid</c>).
 /// Video is hardware-decoded and frame-exact (<c>--hr-seek=yes</c>) and never goes
 /// through the browser or any TCP server. becky controls it over mpv's JSON IPC
-/// (a local named pipe), so a clicked clip can load+seek to an exact moment.
+/// (a local named pipe), full-duplex: commands out, replies + property-change events
+/// back (so the overlay timecode and timeline scrubber track playback live).
 /// </summary>
 public sealed class MpvPlayer : IDisposable
 {
@@ -22,7 +24,17 @@ public sealed class MpvPlayer : IDisposable
     private Process? _proc;
     private NamedPipeClientStream? _pipe;
     private StreamWriter? _writer;
+    private StreamReader? _reader;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
+    private CancellationTokenSource? _readCts;
+    private int _nextRequestId = 100;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> _pending = new();
+
+    /// <summary>Raised (on a background thread) when playback position changes. Args: (timePos, duration).</summary>
+    public event Action<double, double>? PositionChanged;
+
+    private double _lastDuration;
 
     public MpvPlayer(string mpvExe, string pipeName = "beckympv")
     {
@@ -54,6 +66,7 @@ public sealed class MpvPlayer : IDisposable
         args.Append(" --idle=yes");              // stay alive with no file
         args.Append(" --force-window=yes");      // show the pane immediately
         args.Append(" --no-osc --osc=no");       // becky draws its own controls
+        args.Append(" --sub-auto=no --sid=no");  // never burn the sidecar .srt onto the video
         args.Append(" --no-config");             // deterministic: ignore user mpv config
         args.Append(" --pause=yes");             // start on a held frame
         args.Append(" --input-conf=\"").Append(InputConfPath()).Append('"');
@@ -94,36 +107,49 @@ public sealed class MpvPlayer : IDisposable
         {
             return;
         }
-
-        // mpv creates the pipe a moment after launch; retry briefly.
-        var client = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-        for (var attempt = 0; attempt < 50; attempt++)
+        await _connectLock.WaitAsync(ct);
+        try
         {
-            try
+            if (_writer != null)
             {
-                await client.ConnectAsync(200, ct);
-                break;
+                return;
             }
-            catch (Exception) when (attempt < 49)
-            {
-                await Task.Delay(100, ct);
-            }
-        }
 
-        _pipe = client;
-        _writer = new StreamWriter(client, new UTF8Encoding(false)) { AutoFlush = true };
+            // mpv creates the pipe a moment after launch; retry briefly.
+            var client = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            for (var attempt = 0; attempt < 50; attempt++)
+            {
+                try
+                {
+                    await client.ConnectAsync(200, ct);
+                    break;
+                }
+                catch (Exception) when (attempt < 49)
+                {
+                    await Task.Delay(100, ct);
+                }
+            }
+
+            _pipe = client;
+            _writer = new StreamWriter(client, new UTF8Encoding(false)) { AutoFlush = true };
+            _reader = new StreamReader(client, new UTF8Encoding(false));
+
+            _readCts = new CancellationTokenSource();
+            _ = Task.Run(() => ReadLoopAsync(_readCts.Token));
+
+            // Observe position so the overlay + timeline update live (events, not polling).
+            await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 1, "time-pos" } }), ct);
+            await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 2, "duration" } }), ct);
+        }
+        finally
+        {
+            _connectLock.Release();
+        }
     }
 
-    /// <summary>Send a single mpv JSON command: <c>{"command":[...]}</c>.</summary>
-    public async Task SendAsync(CancellationToken ct = default, params object[] command)
+    private async Task WriteRawAsync(string json, CancellationToken ct)
     {
-        await EnsurePipeAsync(ct);
-        if (_writer == null)
-        {
-            return;
-        }
-
-        var json = JsonSerializer.Serialize(new { command });
+        if (_writer == null) { return; }
         await _writeLock.WaitAsync(ct);
         try
         {
@@ -132,7 +158,6 @@ public sealed class MpvPlayer : IDisposable
         }
         catch (IOException)
         {
-            // pipe dropped (mpv closed) - reset so the next call reconnects
             _writer = null;
             _pipe?.Dispose();
             _pipe = null;
@@ -140,6 +165,88 @@ public sealed class MpvPlayer : IDisposable
         finally
         {
             _writeLock.Release();
+        }
+    }
+
+    private async Task ReadLoopAsync(CancellationToken ct)
+    {
+        var reader = _reader;
+        if (reader == null) { return; }
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync();
+                if (line == null) { break; }
+                if (line.Length == 0) { continue; }
+                HandleLine(line);
+            }
+        }
+        catch
+        {
+            // pipe closed / mpv exited - stop reading quietly
+        }
+    }
+
+    private void HandleLine(string line)
+    {
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(line); }
+        catch { return; }
+        using (doc)
+        {
+            var root = doc.RootElement;
+            // Command reply (matched by request_id).
+            if (root.TryGetProperty("request_id", out var ridEl) && ridEl.TryGetInt32(out var rid))
+            {
+                if (_pending.TryRemove(rid, out var tcs))
+                {
+                    if (root.TryGetProperty("data", out var data))
+                    {
+                        tcs.TrySetResult(data.Clone());
+                    }
+                    else
+                    {
+                        tcs.TrySetResult(default);
+                    }
+                }
+                return;
+            }
+            // Async property-change event.
+            if (root.TryGetProperty("event", out var evEl) && evEl.GetString() == "property-change")
+            {
+                var name = root.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
+                if (name == "duration" && root.TryGetProperty("data", out var dEl) && dEl.ValueKind == JsonValueKind.Number)
+                {
+                    _lastDuration = dEl.GetDouble();
+                }
+                else if (name == "time-pos" && root.TryGetProperty("data", out var tEl) && tEl.ValueKind == JsonValueKind.Number)
+                {
+                    PositionChanged?.Invoke(tEl.GetDouble(), _lastDuration);
+                }
+            }
+        }
+    }
+
+    /// <summary>Send a single mpv JSON command: <c>{"command":[...]}</c> (fire-and-forget).</summary>
+    public async Task SendAsync(CancellationToken ct = default, params object[] command)
+    {
+        await EnsurePipeAsync(ct);
+        await WriteRawAsync(JsonSerializer.Serialize(new { command }), ct);
+    }
+
+    /// <summary>Read an mpv property, awaiting the matching reply. Returns default on failure.</summary>
+    public async Task<JsonElement> GetPropertyAsync(string name, CancellationToken ct = default)
+    {
+        await EnsurePipeAsync(ct);
+        var id = Interlocked.Increment(ref _nextRequestId);
+        var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pending[id] = tcs;
+        await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "get_property", name }, request_id = id }), ct);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using (timeout.Token.Register(() => { if (_pending.TryRemove(id, out var t)) t.TrySetResult(default); }))
+        {
+            return await tcs.Task;
         }
     }
 
@@ -168,6 +275,8 @@ public sealed class MpvPlayer : IDisposable
 
     public void Dispose()
     {
+        try { _readCts?.Cancel(); } catch { /* ignore */ }
+        try { _reader?.Dispose(); } catch { /* ignore */ }
         try { _writer?.Dispose(); } catch { /* ignore */ }
         try { _pipe?.Dispose(); } catch { /* ignore */ }
         try
@@ -180,5 +289,6 @@ public sealed class MpvPlayer : IDisposable
         catch { /* ignore */ }
         _proc?.Dispose();
         _writeLock.Dispose();
+        _connectLock.Dispose();
     }
 }

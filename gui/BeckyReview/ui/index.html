@@ -4,167 +4,86 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>becky review</title>
-<style>
-  /* becky neon-on-dark forensic theme (matches becky-clip / becky-canvas).
-     High-contrast: neon-green #39FF14 on black is an accessibility AID. */
-  :root {
-    --neon: #39ff14; --neon-dim: #1e6a10; --blue: #00aeef; --yellow: #ffd700;
-    --crimson: #dc143c;
-    --bg: #000000; --panel: #0a0a0a; --chrome: #141414; --line: #262626;
-    --text: #ffffff; --dim: #8a8a8a; --r: 8px;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", system-ui, sans-serif; font-size: 15px; overflow: hidden;
-  }
-  ::-webkit-scrollbar { width: 12px; }
-  ::-webkit-scrollbar-thumb { background: #1c1c1c; border-radius: 6px; }
-  ::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
-
-  #wrap { display: flex; flex-direction: column; height: 100vh; }
-
-  .head {
-    display: flex; align-items: center; gap: 10px;
-    padding: 12px 14px; border-bottom: 1px solid var(--line);
-  }
-  .brand { font-weight: 700; font-size: 19px; letter-spacing: .3px; }
-  .brand .accent { color: var(--neon); }
-  .diamond {
-    display: inline-block; width: 12px; height: 12px; margin-right: 6px;
-    background: var(--neon); transform: rotate(45deg); vertical-align: middle;
-    box-shadow: 0 0 10px var(--neon);
-  }
-  .count { margin-left: auto; color: var(--dim); font-size: 14px; }
-
-  .search-row {
-    display: flex; align-items: center; gap: 8px; margin: 12px 14px;
-    padding: 9px 12px; background: #0e0e0e; border: 1px solid var(--line); border-radius: 6px;
-  }
-  .search-row:focus-within { border-color: var(--neon); box-shadow: 0 0 0 1px rgba(57,255,20,.25); }
-  #search { flex: 1; background: transparent; border: 0; color: var(--text); outline: none; font-size: 16px; }
-
-  #results { flex: 1; overflow-y: auto; padding: 0 14px 14px; }
-
-  .clip {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 14px; margin-bottom: 8px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
-    cursor: pointer; transition: border-color .12s, background .12s;
-  }
-  .clip:hover { border-color: var(--neon); background: #0f130c; }
-  .clip.active { border-color: var(--neon); box-shadow: 0 0 0 1px rgba(57,255,20,.35); }
-  .clip .tc {
-    font-variant-numeric: tabular-nums; color: var(--neon); font-weight: 700;
-    min-width: 70px; font-size: 16px;
-  }
-  .clip .body { flex: 1; min-width: 0; }
-  .clip .label { font-size: 16px; line-height: 1.35; }
-  .clip .src { color: var(--dim); font-size: 13px; margin-top: 3px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .clip .badge {
-    font-size: 12px; color: #000; background: var(--neon);
-    padding: 2px 7px; border-radius: 10px; font-weight: 700;
-  }
-
-  .empty { color: var(--dim); text-align: center; padding: 48px 16px; }
-  .empty .big { font-size: 40px; margin-bottom: 12px; }
-</style>
+<!--
+  Becky Review - LEFT pane of the WebView2 window.
+  The RIGHT pane is a NATIVE mpv player drawn by the C# host; there is deliberately
+  NO <video> element here. All backend access goes through window.chrome.webview
+  (see app.js beckyCall + the {t:"mpv"} message helpers). High-contrast neon-on-black
+  is an accessibility AID per ACCESSIBILITY.md - keep the color.
+-->
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-<div id="wrap">
-  <div class="head">
-    <span class="brand"><span class="diamond"></span>becky<span class="accent"> review</span></span>
-    <span id="count" class="count">no folder</span>
-  </div>
+<div id="app">
 
-  <div class="search-row">
-    <span>&#128269;</span>
-    <input id="search" type="text" placeholder="search the transcripts / results..." autocomplete="off">
-  </div>
+  <!-- ============== FIND COLUMN: brand + search + (files | quotes) ============== -->
+  <section class="find" aria-label="Find">
+    <header class="brandbar">
+      <span class="brand"><span class="diamond" aria-hidden="true"></span>becky<span class="accent">&nbsp;review</span></span>
+      <span class="sub">forensic video review</span>
+    </header>
 
-  <div id="results">
-    <div class="empty">
-      <div class="big">&#128193;</div>
-      <p>Pick a case folder, then search.<br>Click a result to play that exact moment on the right.</p>
+    <div class="searchbar">
+      <span class="mag" aria-hidden="true">&#128269;</span>
+      <input id="search" type="text" placeholder="search the transcripts..."
+             autocomplete="off" spellcheck="false" aria-label="Search transcripts">
+      <button id="searchClear" class="iconbtn" title="clear search" aria-label="clear search" hidden>&times;</button>
     </div>
-  </div>
+
+    <!-- File list (pre-search) OR ranked quote results render here -->
+    <div id="listScroll" class="listscroll" tabindex="0"></div>
+  </section>
+
+  <!-- ============================ CHAT COLUMN: ask becky ======================== -->
+  <section class="chat" aria-label="Ask becky">
+    <header class="chathead">
+      <span class="chattitle"><span class="diamond sm" aria-hidden="true"></span>ask becky</span>
+      <label class="claude" title="Use Claude (online) instead of local Gemma">
+        <input type="checkbox" id="useClaude">
+        <span>use Claude</span>
+      </label>
+    </header>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="askbar">
+      <input id="ask" type="text" placeholder="ask becky..." autocomplete="off" aria-label="Ask becky">
+      <button id="send" class="sendbtn" title="send">send</button>
+    </div>
+  </section>
+
+  <!-- ====================== TIMELINE STRIP (full width, bottom) ================= -->
+  <section class="timeline" aria-label="Timeline">
+    <header class="tlhead">
+      <span id="tlCount" class="tlcount">0 clips &middot; 0:00</span>
+      <div class="tlspacer"></div>
+      <div class="transport" role="group" aria-label="Transport">
+        <button id="tFrameBack" class="tbtn2" title="previous frame" aria-label="previous frame">&#9204;</button>
+        <button id="tPlay"      class="tbtn2" title="play / pause"    aria-label="play or pause">&#9199;</button>
+        <button id="tFrameFwd"  class="tbtn2" title="next frame"      aria-label="next frame">&#9205;</button>
+        <button id="tOverlay"   class="tbtn2" title="forensic lower-third on / off">overlay</button>
+      </div>
+      <div class="tlactions">
+        <button id="tSave"   class="btn"          title="save reel to a file">save</button>
+        <button id="tLoad"   class="btn"          title="load a reel from a file">load</button>
+        <button id="tExport" class="btn primary"  title="export the compilation">export</button>
+      </div>
+    </header>
+
+    <div class="tlbody">
+      <div class="tlinner">
+        <div id="ruler" class="ruler" title="click or drag to scrub"></div>
+        <div id="track" class="track"></div>
+      </div>
+    </div>
+  </section>
+
 </div>
 
-<script>
-  // ---- WebView2 bridge ----------------------------------------------------
-  // host -> page : PostWebMessageAsJson({type:'results'|'status', ...})
-  // page -> host : window.chrome.webview.postMessage({type:'play', file, t})
-  const $results = document.getElementById('results');
-  const $count = document.getElementById('count');
-  const $search = document.getElementById('search');
-  let items = [];      // current result set
-  let activeIdx = -1;
+<div id="toast" class="toast" hidden></div>
 
-  function fmtTc(sec) {
-    sec = Math.max(0, Math.floor(sec || 0));
-    const m = Math.floor(sec / 60), s = sec % 60;
-    return m + ':' + String(s).padStart(2, '0');
-  }
-
-  function render(list) {
-    $results.innerHTML = '';
-    if (!list || !list.length) {
-      $results.innerHTML = '<div class="empty"><div class="big">&#128269;</div><p>No results.</p></div>';
-      return;
-    }
-    list.forEach((it, i) => {
-      const el = document.createElement('div');
-      el.className = 'clip' + (i === activeIdx ? ' active' : '');
-      el.innerHTML =
-        '<span class="tc">' + fmtTc(it.inSec) + '</span>' +
-        '<span class="body"><span class="label"></span><span class="src"></span></span>' +
-        (it.badge ? '<span class="badge">' + it.badge + '</span>' : '');
-      el.querySelector('.label').textContent = it.label || '(no text)';
-      el.querySelector('.src').textContent = it.src || it.file || '';
-      el.addEventListener('click', () => play(i));
-      $results.appendChild(el);
-    });
-  }
-
-  function play(i) {
-    activeIdx = i;
-    const it = items[i];
-    document.querySelectorAll('.clip').forEach((e, j) => e.classList.toggle('active', j === i));
-    postHost({ type: 'play', file: it.file, t: it.inSec || 0 });
-  }
-
-  function postHost(msg) {
-    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(msg);
-  }
-
-  function setResults(list, label) {
-    items = list || [];
-    activeIdx = -1;
-    $count.textContent = label || (items.length + ' results');
-    render(items);
-  }
-
-  // host messages
-  if (window.chrome && window.chrome.webview) {
-    window.chrome.webview.addEventListener('message', (ev) => {
-      const m = ev.data || {};
-      if (m.type === 'results') setResults(m.items, m.label);
-      else if (m.type === 'status') $count.textContent = m.text || '';
-    });
-  }
-
-  // search -> host (host runs the engine and posts back 'results')
-  $search.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') postHost({ type: 'search', query: $search.value });
-  });
-
-  // expose for direct ExecuteScript / CDP verification
-  window.beckyReview = { setResults };
-
-  // Initial state: the empty hint already in #results stands until the host posts
-  // a folder's videos (pick a folder) or search hits.
-</script>
+<script src="app.js"></script>
 </body>
 </html>

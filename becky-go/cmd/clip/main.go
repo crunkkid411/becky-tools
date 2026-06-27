@@ -16,9 +16,13 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
+	"sync"
 
 	"becky-go/internal/beckyio"
 )
@@ -36,6 +40,8 @@ func main() {
 		cmdSearch(args[1:])
 	case "call":
 		cmdCall(args[1:])
+	case "bridge":
+		cmdBridge()
 	case "-h", "--help", "help":
 		banner()
 	default:
@@ -111,4 +117,77 @@ func cmdCall(argv []string) {
 	}
 	reply := app.Call(verb, argsJSON)
 	fmt.Fprintln(os.Stdout, reply)
+}
+
+// cmdBridge is the PERSISTENT engine: one long-lived App (so the folder index +
+// transcript parse cache stay WARM = fast repeat searches), driven over stdin/stdout
+// as newline-delimited JSON. This is what Becky Review (gui/BeckyReview) spawns once
+// per session and talks to — it gives the new WPF/mpv shell the entire becky-clip
+// engine (search, timeline, trim, transcribe, assistant, export — every bridge verb)
+// without a media server and without re-indexing on every call.
+//
+// Wire format (one JSON object per line):
+//
+//	stdin :  {"id":"r1","verb":"search","args":{"query":"cat"}}
+//	stdout:  {"id":"r1","reply":{"ok":true,"data":[...]}}        // reply = the App.Call envelope
+//
+// Each request runs on its own goroutine (a 30-min transcribe never blocks a search),
+// replies are tagged by id and may return out of order, and stdout writes are
+// serialized. Diagnostics still go to stderr. Matches the GUI bridge's async model
+// (window_gui.go) so App.Call concurrency behaves identically.
+func cmdBridge() {
+	app := NewApp()
+	out := bufio.NewWriter(os.Stdout)
+	var outMu sync.Mutex
+
+	write := func(id, envelope string) {
+		outMu.Lock()
+		defer outMu.Unlock()
+		idJSON, _ := json.Marshal(id)
+		out.WriteString(`{"id":`)
+		out.Write(idJSON)
+		out.WriteString(`,"reply":`)
+		if json.Valid([]byte(envelope)) {
+			out.WriteString(envelope)
+		} else {
+			out.WriteString(`{"ok":false,"error":"bad envelope"}`)
+		}
+		out.WriteString("}\n")
+		_ = out.Flush()
+	}
+
+	var wg sync.WaitGroup
+	scanner := bufio.NewScanner(os.Stdin)
+	// Allow large request lines (load_reel/save paths, long ask utterances).
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var req struct {
+			ID   string          `json:"id"`
+			Verb string          `json:"verb"`
+			Args json.RawMessage `json:"args"`
+		}
+		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			continue // ignore a malformed line rather than die
+		}
+		argsJSON := ""
+		if len(req.Args) > 0 {
+			argsJSON = string(req.Args)
+		}
+		wg.Add(1)
+		go func(id, verb, args string) {
+			defer wg.Done()
+			defer func() {
+				if rec := recover(); rec != nil {
+					write(id, fmt.Sprintf(`{"ok":false,"error":"internal error: %v"}`, rec))
+				}
+			}()
+			write(id, app.Call(verb, args))
+		}(req.ID, req.Verb, argsJSON)
+	}
+	// Drain in-flight verbs so no reply is lost when stdin closes (shutdown / piped use).
+	wg.Wait()
 }

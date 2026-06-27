@@ -21,6 +21,17 @@ if not exist "%ROOT%becky-go\bin\becky-review-index.exe" (
   )
 )
 
+REM 1b) The persistent engine (headless becky-clip bridge: warm search + all verbs).
+if not exist "%ROOT%becky-go\bin\becky-review-engine.exe" (
+  where go >nul 2>nul
+  if not errorlevel 1 (
+    echo First run: building the review engine...
+    pushd "%ROOT%becky-go"
+    go build -o bin\becky-review-engine.exe .\cmd\clip
+    popd
+  )
+)
+
 REM 2) The mpv video runtime (large; downloaded once).
 if not exist "%PROJ%\runtime\mpv\mpv.exe" (
   echo First run: fetching the mpv video runtime ^(one time, ~60 MB^)...
