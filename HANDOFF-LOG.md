@@ -10,6 +10,39 @@
 
 ---
 
+## `claude/qwen35-orchestrator` — Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local)
+
+**What landed.** Qwen3.5-4B (Unsloth **`UD-Q4_K_XL`**, the exact GGUF Jordan linked) was finally given a
+first-class home and wired through becky — it had been referenced by three tools via copy-pasted hardcoded
+`X:\HuggingFace\...` path consts (violating "tools never hardcode paths"), with no config home, no freshness
+entry, and no role in the corroboration ladder. Now:
+
+- **Config home (`internal/config`):** new `QwenModel`/`QwenMMProj` fields + a `config.Qwen()` resolver
+  (label `qwen3.5-4b-UD-Q4_K_XL`), `BECKY_QWEN_MODEL` override, on-disk default = the UD-Q4_K_XL. The three
+  hardcoded paths (`cmd/ask/run.go`, `cmd/scout/model.go`, `cmd/new-tool/models.go`) now all resolve through it.
+- **Cross-family corroboration ladder (`internal/forensicrun`):** the forced validate ladder was Gemma echoing
+  itself (E4B → 12B). It is now **Gemma-4 E4B → Qwen3.5-4B → Gemma-4 12B** — a DIFFERENT family in the middle,
+  so an agreeing Gemma+Qwen watch is two INDEPENDENT sources (rule 1), real corroboration. `NewGemmaLadder` →
+  `NewValidateLadder` (+ back-compat alias); `becky-presence`/`becky-resolve` ladder depth raised 2→3.
+- **Vision corroboration (`cmd/validate`):** new **`--backend qwen35-local`** — an IMAGE-ONLY second opinion via
+  `avlm` with a new `Options.NoAudio` (Qwen3.5-4B is image-capable via its own F16 mmproj; that projector has no
+  audio encoder). **THE NUANCE (corrected this session):** the model is **Qwen3.5-4B, NOT a "Qwen3.5-VL"** — no
+  such model exists; the separate heavy **Qwen3-VL** is only for a dedicated VL job. Comments/docs scrubbed of
+  the wrong "3.5-VL" label.
+- **Freshness + docs + fetch:** new `qwen3.5-4b` entry in `internal/freshness/manifest.json`; `scripts/get-qwen35.ps1`
+  (hf CLI, ASCII-only); SKILL.md models table + AV-models section + ladder build-spec updated.
+
+**Proof (grounded, not "compiles").** (1) `llama-cli` loads the UD-Q4_K_XL on the 3070 (43/43 layers, ~90 tok/s).
+(2) `becky-validate --backend qwen35-local` on `2-speakers-test.mp4` returned `model: qwen3.5-4b-UD-Q4_K_XL` and a
+real image description ("a woman with long white hair… a person with bright green hair on a yellow couch holding a
+white sign") in 4.4s, image-only, exit 0. (3) `go build/vet ./...` green; `go test ./...` green except the
+documented `cmd/tts` environmental inversion; `build-all-tools.bat` produced all `.exe`s. New value-asserting tests:
+`config` (`Qwen()`/label/env), `forensicrun` (`TestLadder_CrossFamilyEscalation`, `TestLadder_QwenCorroboratesAtLevel2`).
+
+**Left for Jordan:** nothing required — it's integrated, built, and verified. To pull the exact pinned GGUFs on a
+fresh machine: `powershell -File scripts\get-qwen35.ps1`. (becky-ask's TUI routing now uses Qwen3.5; the model
+loads + the config resolution are proven, the interactive TUI wasn't driven by hand.)
+
 ## 2026-06-27 (local) — becky-regrab: Gemma-4 recovery for missed pages + a hardened fetch (the real fix)
 
 Jordan: "i need becky-tools to be able to manually re-grab pages that get missed. gemma4 is smart enough

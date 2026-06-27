@@ -65,7 +65,7 @@ func main() {
 	file := flag.String("file", "", "the media file to resolve identities for")
 	identifyJSON := flag.String("identify", "", "use this becky-identify JSON instead of running it")
 	kbFlag := flag.String("kb", "", "knowledge-base dir for naming (default: BECKY_KB env, else kb-final)")
-	maxLevel := flag.Int("max-level", 2, "escalation ladder depth (1=E4B, 2=+12B)")
+	maxLevel := flag.Int("max-level", 3, "escalation ladder depth (1=Gemma-4 E4B, 2=+Qwen3.5-4B, 3=+Gemma-4 12B)")
 	flag.Parse()
 	if *file == "" && *identifyJSON == "" {
 		fmt.Fprintln(os.Stderr, "becky-resolve: need --file (or --identify <json>)")
@@ -77,10 +77,11 @@ func main() {
 	claims := forensic.IdentifyToClaims(raw)
 
 	// The forced ladder runs only when we have a real file to re-watch (not the --identify JSON path,
-	// and not after a degrade). NewGemmaLadder is the single correct implementation (env variant).
+	// and not after a degrade). NewValidateLadder is the single correct implementation: a CROSS-FAMILY
+	// ladder (Gemma-4 E4B -> Qwen3.5-4B -> Gemma-4 12B; the 12B via the BECKY_AVLM_VARIANT env).
 	var ex orchestrate.Executor
 	if *identifyJSON == "" && degraded == "" && *file != "" {
-		ex = forensicrun.NewGemmaLadder(*file)
+		ex = forensicrun.NewValidateLadder(*file)
 	}
 	res := orchestrate.Resolve(claims, orchestrate.DefaultRules(), ex, *maxLevel)
 

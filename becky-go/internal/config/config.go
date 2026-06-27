@@ -36,15 +36,27 @@ type Config struct {
 	GemmaMMProj    string `json:"gemma_mmproj"`     // BF16 multimodal projector GGUF (vision + audio)
 	GemmaModel12B  string `json:"gemma_model_12b"`  // ALTERNATE AVLM: Gemma-4 12B-it QAT GGUF (select via BECKY_AVLM_VARIANT=12b)
 	GemmaMMProj12B string `json:"gemma_mmproj_12b"` // BF16 multimodal projector GGUF for the 12B model
-	LlamaMtmdCLI   string `json:"llama_mtmd_cli"`   // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
-	LlamaServer    string `json:"llama_server"`     // llama-server.exe (becky-validate spawns/reuses this for multimodal inference)
-	Web2mdPython   string `json:"web2md_python"`    // interpreter with trafilatura/markdownify/bs4/pyyaml/lxml
-	FacePython     string `json:"face_python"`      // interpreter with insightface + onnxruntime + cv2
-	FacePyLib      string `json:"face_pylib"`       // extra site-packages dir put on PYTHONPATH for face deps
-	FaceModelRoot  string `json:"face_model_root"`  // insightface root (holds models/<name>/)
-	FaceModelName  string `json:"face_model_name"`  // insightface model pack, e.g. buffalo_l
-	Codec          string `json:"codec"`            // h264_nvenc (never libx264)
-	Device         string `json:"device"`           // cpu or cuda
+	// Qwen3.5-4B (Unsloth GGUF) — becky's GENERATIVE orchestrator/router AND the
+	// independent CROSS-FAMILY corroborator. It is a DIFFERENT model family than
+	// Gemma-4, so an agreeing Qwen+Gemma signal is real corroboration (rule 1),
+	// not Gemma echoing a bigger Gemma. Drives: becky-ask intent routing,
+	// becky-scout's proposer, becky-new-tool reasoning, and becky-validate's
+	// qwen35-local vision backend + the orchestrate ladder's level-2 watch.
+	// Apache-2.0, image-text-to-text (Qwen3.5-4B is itself IMAGE-CAPABLE via the
+	// F16 mmproj — it is NOT a separate "Qwen3.5-VL", which does not exist; the
+	// distinct heavy Qwen3-VL is only for a dedicated VL job). Text-only uses skip
+	// the mmproj. Paths are read here, NEVER hardcoded in a tool.
+	QwenModel     string `json:"qwen_model"`      // Qwen3.5-4B GGUF (UD-Q4_K_XL): text routing/reasoning + corroboration
+	QwenMMProj    string `json:"qwen_mmproj"`     // Qwen3.5-4B's own F16 image projector (image corroboration; NOT a "Qwen3.5-VL")
+	LlamaMtmdCLI  string `json:"llama_mtmd_cli"`  // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
+	LlamaServer   string `json:"llama_server"`    // llama-server.exe (becky-validate spawns/reuses this for multimodal inference)
+	Web2mdPython  string `json:"web2md_python"`   // interpreter with trafilatura/markdownify/bs4/pyyaml/lxml
+	FacePython    string `json:"face_python"`     // interpreter with insightface + onnxruntime + cv2
+	FacePyLib     string `json:"face_pylib"`      // extra site-packages dir put on PYTHONPATH for face deps
+	FaceModelRoot string `json:"face_model_root"` // insightface root (holds models/<name>/)
+	FaceModelName string `json:"face_model_name"` // insightface model pack, e.g. buffalo_l
+	Codec         string `json:"codec"`           // h264_nvenc (never libx264)
+	Device        string `json:"device"`          // cpu or cuda
 }
 
 // GemmaAVLM resolves the ACTIVE audio-visual model (GGUF path, BF16 mmproj path,
@@ -61,6 +73,40 @@ func (c Config) GemmaAVLM() (model, mmproj, label string) {
 		return c.GemmaModel12B, mp, gemmaLabel(c.GemmaModel12B)
 	}
 	return c.GemmaModel, c.GemmaMMProj, gemmaLabel(c.GemmaModel)
+}
+
+// Qwen resolves the ACTIVE generative orchestrator model (GGUF path, vision
+// mmproj path, display label) used for becky-ask routing, becky-scout's
+// proposer, becky-new-tool reasoning, and becky-validate's qwen35-local vision
+// backend / the orchestrate corroboration ladder. BECKY_QWEN_MODEL overrides the
+// configured path (testing/relocation); the mmproj is only needed for the vision
+// backend (text-only routing skips it). Mirrors GemmaAVLM(): config drives it,
+// nothing hardcodes the path — so the model can be retargeted in one place.
+func (c Config) Qwen() (model, mmproj, label string) {
+	model = c.QwenModel
+	if v := strings.TrimSpace(os.Getenv("BECKY_QWEN_MODEL")); v != "" {
+		model = v
+	}
+	return model, c.QwenMMProj, qwenLabel(model)
+}
+
+// qwenLabel derives a short, honest display label from a Qwen GGUF filename so a
+// report/source names the model that actually ran.
+func qwenLabel(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return "qwen3.5-4b"
+	}
+	base := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.Contains(base, "qwen3.5") && strings.Contains(base, "ud-q4_k_xl"):
+		return "qwen3.5-4b-UD-Q4_K_XL"
+	case strings.Contains(base, "qwen3.5"):
+		return "qwen3.5-4b"
+	case strings.Contains(base, "qwen3-4b-instruct"):
+		return "qwen3-4b-instruct-2507"
+	default:
+		return "qwen-4b"
+	}
 }
 
 // gemmaLabel derives a short, honest display label from a GGUF filename so a
@@ -162,6 +208,22 @@ func defaults() Config {
 		GemmaMMProj12B: firstExisting(
 			`X:\AI-2\becky-tools\models\gemma4\mmproj-12B-BF16.gguf`,
 			`X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf`,
+		),
+		// Qwen3.5-4B orchestrator/router + cross-family corroborator. The Unsloth
+		// UD-Q4_K_XL is THE model (Jordan pinned this exact GGUF — the Dynamic-2.0
+		// quant from the link he gave); the plain Q4_K_M is a smaller fallback; the
+		// Qwen3-4B-Instruct-2507 in models/ is the legacy on-disk last resort so
+		// SOMETHING resolves if the 3.5 dir is absent. Qwen3.5-4B is IMAGE-CAPABLE
+		// via its OWN F16 mmproj (= the qwen35-local watch); it is NOT "Qwen3.5-VL"
+		// (no such model). Override the dir with BECKY_QWEN_MODEL. Downloaded via
+		// scripts/get-qwen35.ps1 (hf CLI -> X:\HuggingFace\models\unsloth).
+		QwenModel: firstExisting(
+			`X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf`,
+			`X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-Q4_K_M.gguf`,
+			`X:\AI-2\becky-tools\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf`,
+		),
+		QwenMMProj: firstExisting(
+			`X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\mmproj-F16.gguf`,
 		),
 		LlamaMtmdCLI: resolve("llama-mtmd-cli", `C:\llama.cpp\build\bin\llama-mtmd-cli.exe`),
 		LlamaServer:  resolve("llama-server", `C:\llama.cpp\build\bin\llama-server.exe`),
@@ -313,6 +375,12 @@ func merge(base, over Config) Config {
 	}
 	if over.GemmaMMProj12B != "" {
 		base.GemmaMMProj12B = over.GemmaMMProj12B
+	}
+	if over.QwenModel != "" {
+		base.QwenModel = over.QwenModel
+	}
+	if over.QwenMMProj != "" {
+		base.QwenMMProj = over.QwenMMProj
 	}
 	if over.LlamaMtmdCLI != "" {
 		base.LlamaMtmdCLI = over.LlamaMtmdCLI

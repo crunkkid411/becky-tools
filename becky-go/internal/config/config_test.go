@@ -49,6 +49,50 @@ func TestGemmaAVLM12BFallsBackWhenMissing(t *testing.T) {
 	}
 }
 
+func TestQwenLabel(t *testing.T) {
+	cases := map[string]string{
+		`X:\m\Qwen3.5-4B-Q4_K_M.gguf`:             "qwen3.5-4b",
+		`X:\m\Qwen3.5-4B-UD-Q4_K_XL.gguf`:         "qwen3.5-4b-UD-Q4_K_XL",
+		`X:\m\Qwen3-4B-Instruct-2507-Q4_K_M.gguf`: "qwen3-4b-instruct-2507",
+		``: "qwen3.5-4b",
+	}
+	for path, want := range cases {
+		if got := qwenLabel(path); got != want {
+			t.Errorf("qwenLabel(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestQwenResolvesConfiguredModelAndMMProj(t *testing.T) {
+	t.Setenv("BECKY_QWEN_MODEL", "")
+	c := Config{
+		QwenModel:  `X:\m\Qwen3.5-4B-Q4_K_M.gguf`,
+		QwenMMProj: `X:\m\mmproj-F16.gguf`,
+	}
+	model, mmproj, label := c.Qwen()
+	if model != c.QwenModel {
+		t.Errorf("model = %q, want configured %q", model, c.QwenModel)
+	}
+	if mmproj != c.QwenMMProj {
+		t.Errorf("mmproj = %q, want configured %q", mmproj, c.QwenMMProj)
+	}
+	if label != "qwen3.5-4b" {
+		t.Errorf("label = %q, want qwen3.5-4b", label)
+	}
+}
+
+func TestQwenEnvOverrideWins(t *testing.T) {
+	t.Setenv("BECKY_QWEN_MODEL", `X:\override\Qwen3.5-4B-UD-Q4_K_XL.gguf`)
+	c := Config{QwenModel: `X:\m\Qwen3.5-4B-Q4_K_M.gguf`}
+	model, _, label := c.Qwen()
+	if model != `X:\override\Qwen3.5-4B-UD-Q4_K_XL.gguf` {
+		t.Errorf("BECKY_QWEN_MODEL must win, got %q", model)
+	}
+	if label != "qwen3.5-4b-UD-Q4_K_XL" {
+		t.Errorf("label must follow the override file, got %q", label)
+	}
+}
+
 func TestGemmaAVLM12BSelectedWhenPresent(t *testing.T) {
 	t.Setenv("BECKY_AVLM_VARIANT", "12b")
 	dir := t.TempDir()

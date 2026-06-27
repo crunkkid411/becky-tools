@@ -85,12 +85,13 @@ func main() {
 	claims := orchestrate.CorrelatePresence(*subject, sigs, *gap)
 
 	// The forced WATCH ladder runs only with a real file. A presence window concludes ONLY where a
-	// model actually watched the subject (forensicrun's subject-aware ladder).
+	// model actually watched the subject (forensicrun's subject-aware CROSS-FAMILY ladder:
+	// Gemma-4 E4B -> Qwen3.5-4B -> Gemma-4 12B, depth 3).
 	var ex orchestrate.Executor
 	if *file != "" {
-		ex = forensicrun.NewGemmaLadder(*file)
+		ex = forensicrun.NewValidateLadder(*file)
 	}
-	res := orchestrate.Resolve(claims, orchestrate.DefaultRules(), ex, 2)
+	res := orchestrate.Resolve(claims, orchestrate.DefaultRules(), ex, 3)
 
 	doc := resultDoc{Subject: *subject, OnScreen: res.Concluded, Candidate: append(res.Candidates, res.Unknown...), Audit: res.Audit}
 	b, _ := json.MarshalIndent(doc, "", "  ")

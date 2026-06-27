@@ -40,6 +40,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"becky-go/internal/config"
 )
 
 // openRouterModelsURL is the LIVE models endpoint. We query it every run — we never
@@ -55,17 +57,29 @@ const (
 	defaultORFallback = "moonshotai/kimi-k2.6:free"
 )
 
-// knownOnDiskGGUF are specific on-disk model files the briefing calls out by name.
-// We stat them (not assume) and only record those that truly exist.
-var knownOnDiskGGUF = []struct {
+// knownOnDiskGGUF lists the specific on-disk model files the protocol verifies by
+// presence. The PATHS come from config (config.Qwen() for the Qwen3.5-4B
+// orchestrator, config.GemmaAVLM() for the Gemma-4 AVLM) — NEVER hardcoded here,
+// so a single config edit retargets every tool. We stat them (not assume) and
+// only record those that truly exist.
+func knownOnDiskGGUF() []struct {
 	id   string // the publisher/repo identity
 	path string
 	note string
-}{
-	{"unsloth/Qwen3.5-4B-GGUF", `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-Q4_K_M.gguf`,
-		"Qwen current line is 3.5/3.6/3.7 (NOT qwen3); 4B Instruct GGUF fits the 8GB RTX 3070"},
-	{"google/gemma-4-E4B-it (local)", `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-Q4_K_M.gguf`,
-		"Gemma-4 E4B-it audio-visual model already used by becky-validate; reuse before adding anything"},
+} {
+	cfg := config.Load()
+	qwen, _, _ := cfg.Qwen()
+	gemma, _, _ := cfg.GemmaAVLM()
+	return []struct {
+		id   string
+		path string
+		note string
+	}{
+		{"unsloth/Qwen3.5-4B-GGUF", qwen,
+			"Qwen's current small line is 3.5 (NOT qwen3); the Unsloth Qwen3.5-4B UD-Q4_K_XL GGUF is becky's orchestrator + cross-family corroborator and is image-capable (NOT a separate Qwen3.5-VL); fits the 8GB RTX 3070"},
+		{"google/gemma-4-E4B-it (local)", gemma,
+			"Gemma-4 E4B-it audio-visual model already used by becky-validate; reuse before adding anything"},
+	}
 }
 
 // orModel is the subset of the OpenRouter models API we read.
@@ -141,7 +155,7 @@ func checkLocalHF(ctx context.Context, now string) []ModelCheck {
 		Verified:  hfPresent,
 	})
 
-	for _, m := range knownOnDiskGGUF {
+	for _, m := range knownOnDiskGGUF() {
 		present := fileExists(m.path)
 		checks = append(checks, ModelCheck{
 			Purpose:        "local-reuse-candidate",

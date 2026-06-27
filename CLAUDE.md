@@ -528,6 +528,15 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local):** the model
+  Jordan linked (Unsloth **`UD-Q4_K_XL`**) now has a real config home (`config.Qwen()` + `BECKY_QWEN_MODEL`)
+  instead of three copy-pasted hardcoded paths, and is the INDEPENDENT cross-family voice in the validate
+  ladder (**Gemma-4 E4B → Qwen3.5-4B → Gemma-4 12B** — a different family, so agreement is real corroboration,
+  not Gemma echoing itself). New `becky-validate --backend qwen35-local` gives an IMAGE-ONLY second opinion
+  (Qwen3.5-4B is image-capable via its own F16 mmproj — it is **NOT a "Qwen3.5-VL"**; the separate heavy
+  Qwen3-VL is only for a dedicated VL job). Manifest entry + `scripts/get-qwen35.ps1` + SKILL.md added.
+  **Proven live:** `becky-validate --backend qwen35-local` described a real clip's frames in 4.4s
+  (`model: qwen3.5-4b-UD-Q4_K_XL`). Routes `becky-ask`/`becky-scout`/`becky-new-tool` too.
 - **becky-regrab + hardened fetch (2026-06-27, local):** pages the archiver missed are now re-grabbed.
   The real fix was a fetch bug — `trafilatura.fetch_url` returned brotli/zstd **garbage** for some sites,
   so web2md extracted nothing; `web2md.py`/`clipfetch.py` now validate the fetch + fall back to a clean
