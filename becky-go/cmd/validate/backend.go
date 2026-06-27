@@ -64,10 +64,12 @@ func newBackend(name string) (Backend, error) {
 		return mockBackend{}, nil
 	case "gemma4-local", "gemma4", "local":
 		return gemma4LocalBackend{}, nil
+	case "qwen35-local", "qwen35", "qwen3.5":
+		return qwen35LocalBackend{}, nil
 	case "fusion":
 		return fusionBackend{}, nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (use gemma4-local, fusion, or mock)", name)
+		return nil, fmt.Errorf("unknown backend %q (use gemma4-local, qwen35-local, fusion, or mock)", name)
 	}
 }
 
@@ -174,6 +176,83 @@ func validateFramesDir(clip string) string {
 		stem = "clip"
 	}
 	return filepath.Join(os.TempDir(), "becky-validate-frames", stem)
+}
+
+// ---------------------------------------------------------------------------
+// qwen35-local backend — the INDEPENDENT cross-family image watcher.
+//
+// Qwen3.5-4B (Unsloth UD-Q4_K_XL) is a DIFFERENT model family than Gemma-4, so
+// its observations are a genuine second opinion: in the orchestrate ladder a
+// Gemma watch + a Qwen watch that AGREE are two distinct sources -> real
+// corroboration (rule 1), not Gemma echoing a bigger Gemma. Qwen3.5-4B is
+// IMAGE-CAPABLE via its OWN F16 mmproj (it is NOT a "Qwen3.5-VL" — no such
+// model; the separate heavy Qwen3-VL is only for a dedicated VL job). That image
+// projector has no audio encoder, so this backend runs IMAGE-ONLY (avlm
+// NoAudio). Same degrade-never-crash contract as gemma4-local: a missing
+// model/server -> note + no observations, exit 0.
+// ---------------------------------------------------------------------------
+
+type qwen35LocalBackend struct{}
+
+func (qwen35LocalBackend) Name() string { return "qwen35-local" }
+
+func (qwen35LocalBackend) Validate(ctx context.Context, cfg config.Config, in validateInput) (validateResult, error) {
+	logf := func(format string, a ...any) { beckyio.Logf(in.Verbose, format, a...) }
+	model, mmproj, label := cfg.Qwen()
+	runner := avlm.New(model, mmproj, cfg.LlamaServer, in.ServerURL, cfg.FFmpeg, cfg.FFprobe, logf)
+
+	if err := runner.Ready(); err != nil {
+		return validateResult{
+			Model: label,
+			Note:  "qwen35-local skipped (no Qwen3.5 model/mmproj available): " + err.Error(),
+		}, nil
+	}
+
+	// Image-only cross-modal pass: frames + optional case context + the same
+	// question set, with audio explicitly disabled (Qwen3.5-4B's image projector
+	// has no audio encoder). Tone is therefore never asserted by this backend.
+	preamble := buildContextPreamble(in.Transcript, in.Events, in.Identify)
+	noteHdr := "NOTE: this is an IMAGE-ONLY second opinion from Qwen3.5-4B (a different model " +
+		"family than Gemma-4, for cross-family corroboration). Audio is NOT analyzed here."
+	prompt := buildUserPrompt(strings.TrimSpace(preamble+"\n"+noteHdr), in.Questions)
+
+	res, err := runner.Analyze(ctx, avlm.Options{
+		Clip:         in.File,
+		Prompt:       prompt,
+		SystemPrompt: systemPrompt,
+		WindowStart:  in.WindowStart,
+		WindowSec:    in.WindowSec,
+		FPS:          in.FPS,
+		MaxTokens:    768,
+		Temperature:  0.2,
+		Seed:         42,
+		NoAudio:      true, // Qwen3.5-4B's image projector has no audio encoder
+		Verbose:      in.Verbose,
+	})
+	if err != nil {
+		return validateResult{
+			Model: label,
+			Note:  "qwen35-local degraded: " + err.Error(),
+		}, nil
+	}
+
+	obs, ok := parseObservations(res.Text)
+	if !ok {
+		return validateResult{
+			Model: label,
+			Note:  "qwen35-local degraded: model output was not a JSON array: " + tail(res.Text),
+		}, nil
+	}
+	// Image-only: this backend never asserts audio tone.
+	for i := range obs {
+		obs[i].AudioTone = "(qwen35: image-only, audio not analyzed)"
+	}
+	logf("qwen35-local: parsed %d observation(s) from %d frame(s), image-only", len(obs), res.FrameCount)
+	return validateResult{
+		Observations: obs,
+		Model:        label,
+		Note:         "qwen35-local: image-only cross-family second opinion (Qwen3.5-4B); audio not analyzed.",
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

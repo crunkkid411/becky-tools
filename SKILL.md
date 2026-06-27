@@ -1,18 +1,17 @@
 # becky-tools — forensic video toolkit — **START HERE**
 
-This is THE one file for *using* becky-tools. Agents and humans: read this; ignore the other
-scattered `.md` (PROGRESS / OVERNIGHT / *-SPEC / NOTE-* are build & working notes, not usage).
+This is THE one file for *building* becky-tools, not for the forensic agent **USING** them. The forensic agent carries a mountain of legal context and must spend **zero** of it on becky internals.
 
 ## What it is
 Offline command-line tools that ingest a video/audio file and tell you **WHO is in it, WHAT is
 said (with timestamps), WHAT happens on screen, and WHERE** — for human-reviewed investigation.
 Everything runs locally; nothing is uploaded. It does **not** conclude guilt — but it DOES reach
 **confident, corroborated conclusions** when multiple signals agree (voice + face → "it's Shelby"),
-instead of dumping maybes for you to sort. A lone weak signal stays "unknown." (See
+instead of dumping maybes for users to sort. A lone weak signal stays "unknown." (See
 `FORENSIC-OUTPUT-PHILOSOPHY.md`.)
 
 ## Where it is
-- Tools: `X:\AI-2\becky-tools\becky-go\bin\becky-*.exe` (24 binaries; new: `ocr`, `cluster`, `motion`).
+- Tools: `X:\AI-2\becky-tools\becky-go\bin\becky-*.exe` (24+ binaries; new: `ocr`, `cluster`, `motion`).
 - Friendly entry point: **`becky.exe`** (the orchestrator). Call by full path or add `bin\` to PATH.
   (`becky-ask` — a double-click chat front-door — is being added; see `SPEC-BECKY-ASK.md`.)
 - The case "knowledge base" of known people (built from the wiki): `X:\AI-2\becky-tools\becky-go\kb-final`
@@ -21,9 +20,6 @@ instead of dumping maybes for you to sort. A lone weak signal stays "unknown." (
   `X:\AI-2\becky-tools\start-embed-server.bat`. Transcribe/diarize/identify/enroll do **not**.
 
 ## ARCHITECTURE — becky is SELF-ORCHESTRATING (Jordan, 2026-06-26; the load-bearing decision)
-
-> This file is for the agent **BUILDING** becky-tools, not for the forensic agent **USING** them. The
-> forensic agent carries a mountain of legal context and must spend **zero** of it on becky internals.
 
 **How the forensic agent uses becky: ONE dumb call.** It runs `becky-transcribe <file>` (or whatever the
 request is), or — if there's no specific tool — asks **`becky-ask "<plain English>"`**. That is the entire
@@ -71,8 +67,10 @@ gate in **`becky-go/internal/orchestrate`**. Use it; do not re-implement the rul
 2. mapping each tool's JSON output into `orchestrate.Signal`s tagged to `orchestrate.Claim`s (e.g. a
    `becky-identify` hit → `KindPrint`; a `becky-validate` watch → `KindWatched`; a transcript mention →
    `KindMention`), carrying through any caller-supplied facts (known speakers);
-3. implementing `orchestrate.Executor.Validate` to call **Gemma-4 E4B then 12B** locally for low-confidence
-   claims (the models live on the PC);
+3. implementing `orchestrate.Executor.Validate` as the **CROSS-FAMILY ladder** — **Gemma-4 E4B → Qwen3.5-4B
+   → Gemma-4 12B** locally for low-confidence claims (Qwen3.5 is a DIFFERENT model family, so an agreeing
+   Gemma+Qwen watch is two INDEPENDENT sources — real corroboration, not Gemma echoing a bigger Gemma; use
+   `forensicrun.NewValidateLadder`, which drives `becky-validate --backend qwen35-local` for the Qwen tier);
 4. returning `orchestrate.Resolve(...)` — the final corroborated output. The forensic agent sees only this.
 The engine + its rules are cloud-built and proven; steps 1–4 are the local model wiring.
 
@@ -99,7 +97,7 @@ This is the recipe the suite is BUILT for, and the one most often done wrong. Th
 deterministic building blocks; **YOU (the agent) chain them.** A job like "find the clip where the cat
 shows its chipped tooth" is NOT one tool — it is this chain. **Nothing is "on screen" until a vision
 model actually WATCHED the segment and said so.** (Verified 2026-06-24: `becky-validate` watches a clip's
-frames+audio with Gemma-4 and returns per-frame observations in ~30s — the capability is real; use it.)
+frames+audio with Gemma-4 and returns per-frame observations in ~30s — the capability is real; use it. This is **MANDATORY**)
 
 ### Evidence hierarchy — know what each signal actually proves
 | Signal | Tool | Proves | Does NOT prove |
@@ -140,7 +138,7 @@ frames+audio with Gemma-4 and returns per-frame observations in ~30s — the cap
 **If you (or a tool) looked at a window and the subject is NOT there, you DROP it. You never put an
 unverified or contradicted clip on a timeline "anyway."** A transcript mention or a motion peak is NEVER
 enough to claim the subject is on screen. "Not sure" -> say **unknown**, don't ship it. Wide, unverified
-windows that waste a human's review time are a TOOL-USE FAILURE, not a near-miss.
+windows that waste a human's review time are a TOOL-USE FAILURE, not a near-miss. Multiple corroborated data points make decisions, never just one.
 
 ## The easy way — the `becky` command (plain language)
 ```
@@ -185,20 +183,28 @@ On-screen text is searchable in the SAME `becky find` as speech (addresses live 
 ## Vision / audio-visual models (the eyes + ears)
 Two separate tools, two different llama.cpp paths, **one model on the GPU at a time** (8 GB RTX 3070):
 
-- **`becky-vision`** — describe / read text off ONE still image. Default = the fast LFM2.5-VL **450M**
+- **`becky-vision`** — describe / read text off ONE still image. Default = the fast LFM2.5-VL **1.6B**
   via **`llama-mtmd-cli.exe`** (image-only, deterministic). Add **`--gemma`** to instead run the strong
   Gemma-4 on the SAME still via `llama-server` — use it for fine detail the tiny model gets wrong.
 - **`becky-validate`** — Gemma-4 **audio-visual** pass over a short VIDEO CLIP via **`llama-server.exe`**
   (it ffmpeg-samples frames + 16 kHz mono audio, then asks cross-modal questions). This is the ONLY tool
   that understands AUDIO, and the one that WATCHES a segment. (Do not point the default LFM path
   `llama-mtmd-cli` at Gemma — it hard-crashes 0xC0000409; that is why `--gemma` uses `llama-server`.)
+  `--backend qwen35-local` runs the **Qwen3.5-4B** image-only second opinion instead (a DIFFERENT family
+  for cross-family corroboration; audio is not analyzed there).
+- **Qwen3.5-4B orchestrator** (Unsloth `UD-Q4_K_XL`) — becky's GENERATIVE brain + ask-router: it routes
+  `becky-ask` (act-vs-discuss), proposes in `becky-scout`, and is the **independent cross-family
+  corroborator** in the validate ladder (Gemma E4B → **Qwen3.5** → Gemma 12B). It is **image-capable** via
+  its own F16 mmproj, so it corroborates VISION too — but it is **NOT a "Qwen3.5-VL"** (no such model);
+  reach for the separate heavy **Qwen3-VL** only for a dedicated VL job. One model on the GPU at a time.
+  Resolved by `config.Qwen()` (`BECKY_QWEN_MODEL` overrides); fetched by `scripts/get-qwen35.ps1`.
 
 ### Models on disk (full paths)
 | Model | Role | GGUF | mmproj |
 |---|---|---|---|
-| LFM2.5-VL **450M** (default for `becky-vision`) | fastest still-image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-450m\LFM2.5-VL-450M-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-450m-Q8_0.gguf` |
-| LFM2.5-VL **1.6B** | higher-quality still image | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
-| **Qwen3-4B-Instruct** (text/reason; handles images via a VL mmproj if supplied) | text reasoning helper | `X:\AI-2\becky-tools\models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | (none bundled) |
+| LFM2.5-VL **450M** | fastest still-image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-450m\LFM2.5-VL-450M-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-450m-Q8_0.gguf` |
+| LFM2.5-VL **1.6B** (default for `becky-vision`) | fast higher-quality still image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
+| **Qwen3.5-4B** (Unsloth) ← *orchestrator + ask-router + cross-family corroborator; image-capable, NOT a "Qwen3.5-VL"* | routes becky-ask, proposes in becky-scout, image-only `becky-validate --backend qwen35-local` watch | `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf` | `…\mmproj-F16.gguf` (image) |
 | **Gemma-4 E4B-it QAT** ← *default AVLM* | AV clip analysis (vision **+ audio**) | `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | `X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf` |
 | **Gemma-4 12B-it QAT** ← *re-verify tier (downloaded + verified 2026-06-24)* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(6.3 GB, present)* | `…\mmproj-12B-BF16.gguf` *(present)* |
 

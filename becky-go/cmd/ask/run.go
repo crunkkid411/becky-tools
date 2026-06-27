@@ -22,19 +22,26 @@ import (
 	"time"
 )
 
-// defaultIntentModel is the user's Qwen3.5-4B GGUF, verified on disk 2026-06-08.
-// It is the model the brief REQUIRES (no substitution). BECKY_ASK_MODEL overrides
-// it for testing / relocation. The mmproj sibling is not needed: intent is
-// text-only.
-const defaultIntentModel = `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-Q4_K_M.gguf`
+// defaultIntentModel is the LAST-RESORT on-disk path for the local intent model,
+// used only when config.Qwen() resolves nothing. The real source is config (the
+// becky-wide Qwen3.5-4B orchestrator, Unsloth UD-Q4_K_XL). BECKY_ASK_MODEL
+// overrides everything. The mmproj sibling is not needed here: intent routing is
+// text-only (Qwen3.5-4B is image-capable, but routing doesn't use that — the
+// qwen35-local validate backend does).
+const defaultIntentModel = `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf`
 
 // resolveIntentModel returns the GGUF path for the local intent model. Order:
-// the BECKY_ASK_MODEL env override, then the verified on-disk default. It does NOT
-// fall back to a different model — per the Model Verification Protocol, becky-ask
-// uses the user's Qwen3.5 or degrades to the keyword catalog, never a substitute.
+// the BECKY_ASK_MODEL env override, then the becky-wide Qwen3.5-4B orchestrator
+// from config.Qwen() (so EVERY tool shares ONE configured model — no per-tool
+// hardcoded path), then the on-disk default const. Per the Model Verification
+// Protocol, becky-ask uses the user's Qwen3.5 or degrades to the keyword
+// catalog, never a substitute.
 func resolveIntentModel() string {
 	if v := strings.TrimSpace(os.Getenv("BECKY_ASK_MODEL")); v != "" {
 		return v
+	}
+	if m := strings.TrimSpace(resolveQwenModel()); m != "" {
+		return m
 	}
 	return defaultIntentModel
 }

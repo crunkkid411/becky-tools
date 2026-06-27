@@ -260,6 +260,9 @@ func PickProposeModels(ctx context.Context) (scout.Proposer, []scout.Judge, func
 
 	qwenPath := strings.TrimSpace(os.Getenv("BECKY_SCOUT_PROPOSE_MODEL"))
 	if qwenPath == "" {
+		qwenPath, _, _ = cfg.Qwen() // becky-wide Qwen3.5-4B orchestrator (UD-Q4_K_XL), not a hardcoded path
+	}
+	if qwenPath == "" {
 		qwenPath = defaultProposeModel
 	}
 	judgePath := strings.TrimSpace(os.Getenv("BECKY_SCOUT_JUDGE_MODEL"))
@@ -286,9 +289,10 @@ func PickProposeModels(ctx context.Context) (scout.Proposer, []scout.Judge, func
 	return proposer, judges, cleanup, true, ""
 }
 
-// defaultProposeModel is the same Qwen GGUF becky-ask uses for intent. Override
-// with BECKY_SCOUT_PROPOSE_MODEL.
-const defaultProposeModel = `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-Q4_K_M.gguf`
+// defaultProposeModel is the LAST-RESORT path when config.Qwen() resolves
+// nothing — the SAME becky-wide Qwen3.5-4B orchestrator (Unsloth UD-Q4_K_XL)
+// becky-ask uses for intent. Override with BECKY_SCOUT_PROPOSE_MODEL.
+const defaultProposeModel = `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf`
 
 // ---- tiny HTTP/port helpers (same approach as cmd/ask/llama.go) ----------------
 
