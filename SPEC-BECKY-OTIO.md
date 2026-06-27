@@ -1,12 +1,19 @@
 # SPEC-BECKY-OTIO.md — becky's editor-agnostic timeline export (`becky-otio`)
 
-> **STATUS: SPEC / design-only (2026-06-26, cloud agent, branch
-> `claude/video-editing-research-jqdz1t`). NOT built.** Awaiting Jordan's go/no-go.
+> **STATUS: BUILT + PROVEN, cloud half (2026-06-26, branch
+> `claude/video-editing-research-jqdz1t`).** The deterministic core ships and is
+> value-tested: `internal/otio` (OTIO + Vegas-list writers) + `cmd/becky-otio` (CLI
+> with `--selftest`). `go build/vet/test ./...` + gofmt green; `becky-otio --selftest`
+> exits 0 with per-format value assertions (clip count, exact frame numbers, exact
+> Vegas-list line). Pure Go, offline, deterministic, **no model boundary**. EDL output
+> reuses `edl.WriteEDL`. **This closes the hand-conversion gap**: the Reel becky-clip
+> already saves now converts to a reviewable timeline with one command — no human
+> plumbing. What's LEFT is local/hardware only (§9): confirm the real editors import
+> the files, and optionally add a one-click button in becky-clip.
+>
 > Architecture decided by the 4-angle research pass summarized in §1 (DaVinci Resolve
-> scripting, VEGAS .NET history, web-timeline feasibility, interchange formats). This
-> spec is the canonical contract the build agent codes against. The deterministic core
-> is pure Go, offline, and value-tested; there is **no model boundary** — this tool
-> never calls an LLM.
+> scripting, VEGAS .NET history, web-timeline feasibility, interchange formats).
+> FCPXML + `--via-otio-cli` (§7) remain unbuilt Phase-2 options (Premiere/FCP/AAF only).
 
 ---
 
@@ -291,11 +298,12 @@ per `STANDARDS-WORKFLOW.md §7`.
 
 ## 9. Local-agent work order (the import gates only Jordan's machine can close)
 
-Cloud builds + proves §8.1 offline. Local proves the real editors actually open the files:
+Cloud built + proved §8.1 offline (done). Local proves the real editors actually open
+the files:
 
-- [ ] `go build ./... && go vet ./... && go test ./... && gofmt -l .` green; `becky-otio
-      --selftest` exits 0 (paste output).
-- [ ] `build-all-tools.bat` produces `becky-otio.exe`.
+- [x] `go build ./... && go vet ./... && go test ./...` green; gofmt clean; `becky-otio
+      --selftest` exits 0 with value assertions (cloud, 2026-06-26).
+- [ ] `build-all-tools.bat` produces `becky-otio.exe` (auto-discovered; no edit needed).
 - [ ] Produce a real Reel from a real case (e.g. the cat-tooth hits via becky-clip), then
       `becky-otio --reel <reel.json> --format all`.
 - [ ] **DaVinci Resolve:** File ▸ Import ▸ Timeline ▸ pick the `.otio`. Confirm the clips
