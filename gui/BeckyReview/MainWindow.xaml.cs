@@ -12,10 +12,10 @@ namespace BeckyReview;
 
 /// <summary>
 /// Becky Review main window — a thin shell over becky-clip's engine + native mpv.
-/// LEFT  = WebView2 HTML UI (find / quotes / timeline / chat), loaded with NO server.
-/// RIGHT = native mpv video (frame-exact, GPU-decoded; the overlay is drawn by mpv).
-/// The page talks to the persistent engine (BeckyEngine) and the video (MpvPlayer)
-/// only through host messages relayed here.
+/// The WebView2 UI fills the window (find | video-hole | chat + timeline); the native
+/// mpv pane is OVERLAID on the page's #videoHole, positioned from the page's
+/// {t:"videoRect"} message. Page talks to the persistent engine (BeckyEngine) and
+/// the video (MpvPlayer) only through host messages relayed here.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -28,12 +28,14 @@ public partial class MainWindow : Window
     private bool _paused = true;
     private string? _folder;
 
-    // Host-drawn forensic lower-third state (mpv osd-overlay).
+    // Host-drawn forensic lower-third state (mpv osd-overlay), sized to the real video.
     private bool _overlayOn;
     private string _ovFile = "";
     private string _ovDate = "";
     private string _ovLink = "";
     private double _ovFps = 30;
+    private int _ovW;
+    private int _ovH;
     private double _lastPos;
 
     public MainWindow()
@@ -97,24 +99,23 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Verify/dev hook: once the UI has loaded, auto-open the folder named by
-    /// BECKY_REVIEW_FOLDER (so the window is self-drivable without the native dialog).
-    /// Normal use leaves it unset and the user clicks "Pick folder...".
+    /// After the UI loads, auto-open the remembered folder (or the BECKY_REVIEW_FOLDER
+    /// override) so Jordan doesn't re-pick it every launch.
     /// </summary>
     private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         var auto = Environment.GetEnvironmentVariable("BECKY_REVIEW_FOLDER");
-        if (string.IsNullOrWhiteSpace(auto) || !Directory.Exists(auto) || _engine == null)
+        if (string.IsNullOrWhiteSpace(auto))
         {
-            return;
+            auto = LoadLastFolder();
         }
-        _folder = auto;
-        var reply = await _engine.CallAsync("open_folder", new { folder = _folder });
-        PostToPage(new { t = "folder", reply = ReplyOrError(reply) });
-        StatusLabel.Text = BeckyEngine.Ok(reply) ? _folder! : "Could not open folder.";
+        if (!string.IsNullOrWhiteSpace(auto) && Directory.Exists(auto))
+        {
+            await OpenFolderAsync(auto!);
+        }
     }
 
-    /// <summary>Embed mpv into a black WinForms panel on the RIGHT and stream its position back.</summary>
+    /// <summary>Embed mpv into a black WinForms panel and stream its position back.</summary>
     private void StartVideo()
     {
         try
@@ -161,7 +162,6 @@ public partial class MainWindow : Window
     private void OnMpvPosition(double pos, double dur)
     {
         _lastPos = pos;
-        // PositionChanged fires on a background thread; marshal to the UI thread.
         Dispatcher.BeginInvoke(() =>
         {
             PostToPage(new { t = "time", pos, dur });
@@ -196,6 +196,9 @@ public partial class MainWindow : Window
             case "mpv":
                 HandleMpv(root);
                 break;
+            case "videoRect":
+                HandleVideoRect(root);
+                break;
         }
     }
 
@@ -215,6 +218,27 @@ public partial class MainWindow : Window
         PostReply(id, reply);
     }
 
+    /// <summary>Position the native mpv pane over the page's #videoHole (CSS px == DIP at 100% zoom).</summary>
+    private void HandleVideoRect(JsonElement root)
+    {
+        var x = Num(root, "x");
+        var y = Num(root, "y");
+        var w = Num(root, "w");
+        var h = Num(root, "h");
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (w < 2 || h < 2)
+            {
+                VideoHost.Visibility = Visibility.Collapsed;
+                return;
+            }
+            VideoHost.Margin = new Thickness(x, y, 0, 0);
+            VideoHost.Width = w;
+            VideoHost.Height = h;
+            VideoHost.Visibility = Visibility.Visible;
+        });
+    }
+
     private void HandleMpv(JsonElement root)
     {
         if (_mpv == null)
@@ -230,10 +254,9 @@ public partial class MainWindow : Window
                 var at = Num(root, "at");
                 if (!string.IsNullOrWhiteSpace(file))
                 {
-                    Dispatcher.BeginInvoke(() => VideoPlaceholder.Visibility = Visibility.Collapsed);
                     _ovFile = Path.GetFileName(file);
                     _paused = false;
-                    _ = _mpv.PlayAtAsync(file, at, play: true);
+                    _ = PlayAndMeasureAsync(file, at);
                 }
                 break;
             }
@@ -263,37 +286,55 @@ public partial class MainWindow : Window
                 _ovDate = Str(root, "date");
                 _ovLink = Str(root, "link");
                 var fps = Num(root, "fps");
-                _ovFps = fps > 0 ? fps : 30;
-                if (_overlayOn)
-                {
-                    UpdateOverlay(_lastPos);
-                }
-                else
-                {
-                    ClearOverlay();
-                }
+                if (fps > 0) { _ovFps = fps; }
+                if (_overlayOn) { UpdateOverlay(_lastPos); } else { ClearOverlay(); }
                 break;
         }
     }
 
+    /// <summary>Load+seek+play, then read the real video dimensions for an exactly-sized overlay.</summary>
+    private async Task PlayAndMeasureAsync(string file, double at)
+    {
+        if (_mpv == null) { return; }
+        await _mpv.PlayAtAsync(file, at, play: true);
+        try
+        {
+            var w = await _mpv.GetPropertyAsync("width");
+            var h = await _mpv.GetPropertyAsync("height");
+            var fps = await _mpv.GetPropertyAsync("container-fps");
+            if (w.ValueKind == JsonValueKind.Number) { _ovW = w.GetInt32(); }
+            if (h.ValueKind == JsonValueKind.Number) { _ovH = h.GetInt32(); }
+            if (fps.ValueKind == JsonValueKind.Number) { var v = fps.GetDouble(); if (v > 0) { _ovFps = v; } }
+        }
+        catch { /* dims are best-effort; overlay falls back to 1280x720 */ }
+    }
+
     // --- the forensic lower-third, drawn by mpv (ASS via osd-overlay) ------------
+    // Sized to the REAL video (res_x/res_y = video w/h) so it scales correctly and
+    // never overflows the frame; font is small (~h/26); the filename is capped.
 
     private void UpdateOverlay(double pos)
     {
-        var line1 = AssEscape(_ovFile);
+        var w = _ovW > 0 ? _ovW : 1280;
+        var h = _ovH > 0 ? _ovH : 720;
+        var fs = Math.Max(14, (int)Math.Round(h / 26.0));
+        var meta2 = Math.Max(12, fs * 5 / 6);
+
+        var name = _ovFile.Length > 54 ? _ovFile.Substring(0, 51) + "..." : _ovFile;
+        var line1 = AssEscape(name);
         var line2 = "ORIG TC " + Smpte(pos, _ovFps);
         var meta = "";
         if (_ovDate.Length > 0) { meta = _ovDate; }
         if (_ovLink.Length > 0) { meta = meta.Length > 0 ? meta + "   " + _ovLink : _ovLink; }
 
-        // {\an1} = bottom-left; outline for legibility over any footage.
-        var ass = "{\\an1}{\\fs24}{\\bord2}{\\3c&H000000&}{\\1c&H14FF39&}" + line1 +
+        // {\an1} bottom-left; outline for legibility; sized in the video's own coordinate space.
+        var ass = "{\\an1}{\\bord2}{\\3c&H000000&}{\\fs" + fs + "}{\\1c&H14FF39&}" + line1 +
                   "\\N{\\1c&HFFFFFF&}" + line2;
         if (meta.Length > 0)
         {
-            ass += "\\N{\\fs20}{\\1c&HD7D7D7&}" + AssEscape(meta);
+            ass += "\\N{\\fs" + meta2 + "}{\\1c&HD7D7D7&}" + AssEscape(meta);
         }
-        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", ass, 0, 0, 0, false, false);
+        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", ass, w, h, 0, false, false);
     }
 
     private void ClearOverlay()
@@ -301,7 +342,7 @@ public partial class MainWindow : Window
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "none", "", 0, 0, 0, false, false);
     }
 
-    // --- folder pick (native) -> engine open_folder -> push to the page ----------
+    // --- folder open (native pick OR remembered) ---------------------------------
 
     private async void PickFolderButton_Click(object sender, RoutedEventArgs e)
     {
@@ -310,34 +351,63 @@ public partial class MainWindow : Window
         {
             return;
         }
-        _folder = dlg.FolderName;
-        StatusLabel.Text = "Indexing " + _folder + " ...";
+        await OpenFolderAsync(dlg.FolderName);
+    }
+
+    private async Task OpenFolderAsync(string folder)
+    {
+        _folder = folder;
+        StatusLabel.Text = "Indexing " + folder + " ...";
         if (_engine == null)
         {
             StatusLabel.Text = "Engine not available.";
             return;
         }
-        var reply = await _engine.CallAsync("open_folder", new { folder = _folder });
+        var reply = await _engine.CallAsync("open_folder", new { folder });
         PostToPage(new { t = "folder", reply = ReplyOrError(reply) });
-        StatusLabel.Text = BeckyEngine.Ok(reply) ? _folder! : "Could not open folder.";
+        if (BeckyEngine.Ok(reply))
+        {
+            StatusLabel.Text = folder;
+            SaveLastFolder(folder);
+        }
+        else
+        {
+            StatusLabel.Text = "Could not open folder.";
+        }
+    }
+
+    // --- last-folder persistence -------------------------------------------------
+
+    private static string SettingsPath()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BeckyReview");
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "last-folder.txt");
+    }
+
+    private static void SaveLastFolder(string folder)
+    {
+        try { File.WriteAllText(SettingsPath(), folder); } catch { /* best-effort */ }
+    }
+
+    private static string? LoadLastFolder()
+    {
+        try
+        {
+            var p = SettingsPath();
+            return File.Exists(p) ? File.ReadAllText(p).Trim() : null;
+        }
+        catch { return null; }
     }
 
     // --- helpers -----------------------------------------------------------------
 
     private void PostReply(string? id, JsonElement reply)
-    {
-        PostToPage(new { t = "reply", id, reply = ReplyOrError(reply) });
-    }
+        => PostToPage(new { t = "reply", id, reply = ReplyOrError(reply) });
 
-    /// <summary>A safe reply value: the engine envelope, or a synthetic error if missing.</summary>
     private static object ReplyOrError(JsonElement reply)
-    {
-        if (reply.ValueKind == JsonValueKind.Object)
-        {
-            return reply;
-        }
-        return new { ok = false, error = "engine unavailable" };
-    }
+        => reply.ValueKind == JsonValueKind.Object ? reply : new { ok = false, error = "engine unavailable" };
 
     private void PostToPage(object payload)
     {
@@ -362,7 +432,6 @@ public partial class MainWindow : Window
     private static double Num(JsonElement root, string name)
         => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out var v) ? v : 0;
 
-    /// <summary>SMPTE HH:MM:SS:FF at the source fps (frame-accurate forensic timecode).</summary>
     private static string Smpte(double seconds, double fps)
     {
         if (seconds < 0) { seconds = 0; }
@@ -375,7 +444,6 @@ public partial class MainWindow : Window
         return string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}:{2:00}:{3:00}", h, m, s, fr);
     }
 
-    /// <summary>Escape text for an ASS event (backslash, braces, newlines).</summary>
     private static string AssEscape(string s)
         => s.Replace("\\", "\\\\").Replace("{", "\\{").Replace("}", "\\}").Replace("\r", "").Replace("\n", " ");
 

@@ -5,11 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>becky review</title>
 <!--
-  Becky Review - LEFT pane of the WebView2 window.
-  The RIGHT pane is a NATIVE mpv player drawn by the C# host; there is deliberately
-  NO <video> element here. All backend access goes through window.chrome.webview
-  (see app.js beckyCall + the {t:"mpv"} message helpers). High-contrast neon-on-black
-  is an accessibility AID per ACCESSIBILITY.md - keep the color.
+  Becky Review - the HTML UI of the WebView2 window (find | video | chat + timeline).
+  The CENTER column is an EMPTY #videoHole: a NATIVE mpv player is drawn by the C#
+  host ON TOP of that reserved rectangle. We report its geometry to the host with
+  {t:"videoRect", x, y, w, h} (see app.js reportVideoRect) so the native surface
+  lands exactly over the hole. There is deliberately NO <video> element here. All
+  backend access goes through window.chrome.webview (see app.js beckyCall + the
+  {t:"mpv"} message helpers). High-contrast neon-on-black is an accessibility AID
+  per ACCESSIBILITY.md - keep the color.
 -->
 <link rel="stylesheet" href="app.css">
 </head>
@@ -33,6 +36,12 @@
     <!-- File list (pre-search) OR ranked quote results render here -->
     <div id="listScroll" class="listscroll" tabindex="0"></div>
   </section>
+
+  <!-- ===================== VIDEO COLUMN: reserved native-mpv hole ==============
+       Intentionally EMPTY. The C# host overlays a native mpv surface on top of
+       this rect; app.js reports its geometry via {t:"videoRect", x, y, w, h}.
+       Do NOT put children or text here - it must read as a transparent/black hole. -->
+  <div id="videoHole" aria-label="Video preview" role="img"></div>
 
   <!-- ============================ CHAT COLUMN: ask becky ======================== -->
   <section class="chat" aria-label="Ask becky">
@@ -58,6 +67,11 @@
   <section class="timeline" aria-label="Timeline">
     <header class="tlhead">
       <span id="tlCount" class="tlcount">0 clips &middot; 0:00</span>
+      <div class="tlzoom" role="group" aria-label="Timeline zoom">
+        <button id="tZoomOut" class="tbtn2" title="zoom out (Ctrl+scroll)" aria-label="zoom timeline out">&minus;</button>
+        <span id="tZoom" class="tlzoomval" title="timeline scale">8 px/s</span>
+        <button id="tZoomIn" class="tbtn2" title="zoom in (Ctrl+scroll)" aria-label="zoom timeline in">+</button>
+      </div>
       <div class="tlspacer"></div>
       <div class="transport" role="group" aria-label="Transport">
         <button id="tFrameBack" class="tbtn2" title="previous frame" aria-label="previous frame">&#9204;</button>

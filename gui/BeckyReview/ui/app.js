@@ -1,29 +1,33 @@
 /* =============================================================================
    Becky Review - LEFT pane logic (vanilla JS, no libraries, no network).
 
-   Runs inside WebView2. The RIGHT pane is a NATIVE mpv player owned by the C#
-   host - there is NO <video> here. Everything reaches the backend through the
-   host bridge:
+   Runs inside WebView2. The CENTER column (#videoHole) is an EMPTY rect; a NATIVE
+   mpv player owned by the C# host is overlaid on top of it - there is NO <video>
+   here. Everything reaches the backend through the host bridge:
 
      page -> host : window.chrome.webview.postMessage(obj)   (structured-cloned)
      host -> page : window.chrome.webview.addEventListener('message', e => e.data)
 
    Message kinds (see HANDOFF-BECKY-REVIEW-APP.md + BeckyEngine.cs):
-     OUT {t:"call", id, verb, args}   -> IN {t:"reply", id, reply:{ok,data,error}}
-     OUT {t:"mpv", op:..., ...}        (load/seek/pause/frame/overlay - fire+forget)
-     IN  {t:"time", pos, dur}          (continuous playback position from mpv)
-     IN  {t:"folder", reply}           (host pushed a FolderView after Pick folder)
+     OUT {t:"call", id, verb, args}    -> IN {t:"reply", id, reply:{ok,data,error}}
+     OUT {t:"mpv", op:..., ...}         (load/seek/pause/frame/overlay - fire+forget)
+     OUT {t:"videoRect", x, y, w, h}    (where to put the native video - rounded CSS px)
+     IN  {t:"time", pos, dur}           (continuous playback position from mpv)
+     IN  {t:"folder", reply}            (host pushed a FolderView after Pick folder)
    ========================================================================== */
 
 (function () {
   'use strict';
 
   /* ----------------------------- constants -------------------------------- */
-  var PXPS = 5;            // px per second of timeline (matches --pxps in app.css)
-  var MINW = 96;           // min clip-block width in px
+  var DEFAULT_PXPS = 8;    // default timeline scale (px per second) - see state.pxPerSec
+  var ZOOM_MIN = 2;        // zoom clamp (px per second) - standard-NLE timeline zoom
+  var ZOOM_MAX = 120;
+  var MINW = 96;           // base/cap for the min clip-block width; the live floor scales with zoom
   var MAX_ROWS = 400;      // cap rendered quote rows (search can return many)
   var CALL_TIMEOUT_MS = 35 * 60 * 1000;   // 35-minute safety timeout per spec
   var DBL_GUARD_MS = 220;  // single-click wait so a double-click can cancel it
+  var RECT_THROTTLE_MS = 60;   // max rate we report the video-hole rect to the host
 
   var CHIPS = [
     'find every threat to the host family',
@@ -47,6 +51,7 @@
 
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
     overlayOn: false,
+    pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
     activeSource: null,    // path currently loaded in mpv
     activeClipId: null,    // timeline clip whose source is playing (for the playhead)
@@ -78,7 +83,12 @@
   var $tSave     = document.getElementById('tSave');
   var $tLoad     = document.getElementById('tLoad');
   var $tExport   = document.getElementById('tExport');
+  var $tZoomIn   = document.getElementById('tZoomIn');
+  var $tZoomOut  = document.getElementById('tZoomOut');
+  var $tZoom     = document.getElementById('tZoom');
 
+  var videoHoleEl = document.getElementById('videoHole');
+  var tlBodyEl    = document.querySelector('.tlbody');
   var rulerEl = document.getElementById('ruler');
   var trackEl = document.getElementById('track');
   var $toast  = document.getElementById('toast');
@@ -141,6 +151,40 @@
         case 'folder': onFolder(m.reply);    break;
       }
     });
+  }
+
+  /* =======================================================================
+     VIDEO-HOLE GEOMETRY  (CHANGE 2 - REQUIRED)
+     The center column (#videoHole) is left empty; the C# host overlays a NATIVE
+     mpv surface on top of it. The host can only place that surface if we tell it
+     where the hole is, so we post {t:"videoRect", x, y, w, h} (rounded CSS px) on
+     load, on window resize, and whenever the hole itself resizes. Throttled to
+     <= one message / RECT_THROTTLE_MS so layout churn can't flood the host.
+     ===================================================================== */
+  var rectTimer = null;
+  var rectLastSent = 0;
+  function postVideoRectNow() {
+    if (!videoHoleEl) { return; }
+    var r = videoHoleEl.getBoundingClientRect();
+    post({ t: 'videoRect', x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
+  }
+  function reportVideoRect() {
+    var now = Date.now();
+    var since = now - rectLastSent;
+    if (since >= RECT_THROTTLE_MS) {
+      rectLastSent = now;
+      postVideoRectNow();
+    } else if (!rectTimer) {
+      rectTimer = setTimeout(function () {
+        rectTimer = null;
+        rectLastSent = Date.now();
+        postVideoRectNow();
+      }, RECT_THROTTLE_MS - since);
+    }
+  }
+  window.addEventListener('resize', reportVideoRect);
+  if (window.ResizeObserver && videoHoleEl) {
+    try { new ResizeObserver(reportVideoRect).observe(videoHoleEl); } catch (_) {}
   }
 
   /* =======================================================================
@@ -637,23 +681,45 @@
     renderTimeline();
   }
 
+  /* ---- zoom (CHANGE 5): one px-per-second scale drives clip widths + the ruler ---- */
+  function minClipW() {
+    // The floor keeps a clip grabbable (two 8px trim handles + a body) and SCALES with
+    // zoom, but is capped at MINW so zooming still spreads the timeline.
+    return Math.max(24, Math.min(MINW, state.pxPerSec * 4));
+  }
+  function clipW(dur) { return Math.max(minClipW(), (dur || 0) * state.pxPerSec); }
+  function updateZoomLabel() { if ($tZoom) { $tZoom.textContent = state.pxPerSec + ' px/s'; } }
+  function setZoom(px) {
+    var v = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(px)));
+    if (v === state.pxPerSec) { updateZoomLabel(); return; }
+    state.pxPerSec = v;
+    renderTimeline();   // re-render clip widths + ruler at the new scale
+  }
+  function zoomBy(factor) { setZoom(state.pxPerSec * factor); }
+
+  /* Scale the ruler ticks + the track grid lines to the current zoom
+     (1-second minor ticks, 5-second major ticks). */
+  function applyTimelineScale() {
+    var s = state.pxPerSec, maj = s * 5;
+    rulerEl.style.backgroundImage =
+      'repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px ' + s + 'px),' +
+      'repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px ' + maj + 'px)';
+    trackEl.style.backgroundImage =
+      'repeating-linear-gradient(90deg, transparent 0 ' + (maj - 1) + 'px, var(--line-2) ' + (maj - 1) + 'px ' + maj + 'px)';
+  }
+
+  /* A clip is a SOLID block with NO visible text (CHANGE 3): label + duration ride
+     in the title= tooltip only. Keeps the two trim handles + a hover-only remove "x".
+     The empty .cbody fills between the handles and forwards clicks to the scrubber. */
   function clipBlockHTML(clip) {
     var dur = clipDur(clip);
-    var w = Math.max(MINW, dur * PXPS);
+    var w = clipW(dur);
     var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
-    return '<div class="clip" data-id="' + attr(clip.id) + '" draggable="true" style="width:' + w + 'px" title="' + attr(label) + '">' +
+    var tip = truncate(label, 80) + '  (' + mmss(dur) + ')';
+    return '<div class="clip" data-id="' + attr(clip.id) + '" style="width:' + w + 'px" title="' + attr(tip) + '">' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
+             '<div class="cbody"></div>' +
              '<button class="cx" data-act="remove" title="remove clip">×</button>' +
-             '<div class="cmid">' +
-               '<div class="clabel">' + escapeHtml(truncate(label, 80)) + '</div>' +
-               '<div class="crow">' +
-                 '<span class="cdur">' + escapeHtml(mmss(dur)) + '</span>' +
-                 '<span class="cnudge">' +
-                   '<button data-act="nudge-dec" title="0.5s shorter">−</button>' +
-                   '<button data-act="nudge-inc" title="0.5s longer">+</button>' +
-                 '</span>' +
-               '</div>' +
-             '</div>' +
              '<div class="rh rh-r" data-edge="r" title="trim out"></div>' +
            '</div>';
   }
@@ -663,6 +729,8 @@
     var dur = state.timeline.duration_sec || sumDur(clips);
     $tlCount.textContent = clips.length + ' clip' + (clips.length === 1 ? '' : 's') + ' · ' + mmss(dur);
     updateOverlayBtn();
+    updateZoomLabel();
+    applyTimelineScale();
 
     if (!clips.length) {
       trackEl.innerHTML = '<div class="tlempty">No clips yet — double-click a quote to add one to the timeline.</div>';
@@ -712,72 +780,66 @@
     playheadEl.style.display = 'block';
   }
 
-  /* ---- play a whole clip from its in-point (click the block body) ---- */
-  function onClipPlay(id) {
-    var clip = clipById(id);
-    if (!clip) { return; }
-    state.activeClipId = id;
-    state.activeSource = clip.source;
-    mpvPlay(clip.source, clip.in || 0);
-    updatePlayhead();
-  }
-
   async function onClipRemove(id) {
     var rep = await beckyCall('remove_clip', { id: id });
-    if (rep.ok && rep.data) { applyTimeline(rep.data); }
-  }
-
-  async function onNudge(btn) {
-    var id = btn.closest('.clip').dataset.id;
-    var clip = clipById(id);
-    if (!clip) { return; }
-    var delta = (btn.dataset.act === 'nudge-inc') ? 0.5 : -0.5;
-    var nOut = Math.max((clip.in || 0) + 0.5, (clip.out || 0) + delta);
-    var rep = await beckyCall('set_trim', { id: id, in: clip.in || 0, out: nOut });
     if (rep.ok && rep.data) { applyTimeline(rep.data); }
   }
 
   /* ---- resize handles (pointer-drag the left/right edge) ---- */
   var resizing = null;     // active resize gesture
   var justResized = false; // suppress the click that fires right after a resize
+  var justScrubbed = false;// suppress the click that fires right after a scrub gesture
 
   trackEl.addEventListener('pointerdown', function (e) {
+    // 1) a trim handle -> resize gesture (stops here so scrubbing never starts)
     var h = e.target.closest('.rh');
-    if (!h) { return; }
-    e.preventDefault();         // also stops the native HTML5 drag from starting
-    e.stopPropagation();
-    var block = h.closest('.clip');
-    var id = block.dataset.id;
-    var clip = clipById(id);
-    if (!clip) { return; }
-    var w = block.offsetWidth;
-    var dur = Math.max(0.001, clipDur(clip));
-    resizing = {
-      id: id, edge: h.dataset.edge, startX: e.clientX,
-      block: block, pxPerSec: w / dur,
-      origIn: clip.in || 0, origOut: clip.out || 0,
-      newIn: clip.in || 0, newOut: clip.out || 0
-    };
-    try { h.setPointerCapture(e.pointerId); } catch (_) {}
+    if (h) {
+      e.preventDefault();         // also stops the native HTML5 drag from starting
+      e.stopPropagation();
+      var block = h.closest('.clip');
+      var id = block.dataset.id;
+      var clip = clipById(id);
+      if (!clip) { return; }
+      var w = block.offsetWidth;
+      var dur = Math.max(0.001, clipDur(clip));
+      resizing = {
+        id: id, edge: h.dataset.edge, startX: e.clientX,
+        block: block, pxPerSec: w / dur,
+        origIn: clip.in || 0, origOut: clip.out || 0,
+        newIn: clip.in || 0, newOut: clip.out || 0
+      };
+      try { h.setPointerCapture(e.pointerId); } catch (_) {}
+      return;
+    }
+    // 2) the hover remove "x" -> let the click handler deal with it
+    if (e.target.closest('[data-act="remove"]')) { return; }
+    // 3) ANYWHERE else on the track (a clip body OR empty space) -> scrub/seek (CHANGE 4)
+    if (!(state.timeline.clips || []).length) { return; }
+    e.preventDefault();              // keep the pointer drag clean (no text selection)
+    scrubbing = true;
+    try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
+    scrubTo(e, true);
   });
 
   trackEl.addEventListener('pointermove', function (e) {
-    if (!resizing) { return; }
-    var dSec = (e.clientX - resizing.startX) / resizing.pxPerSec;   // px -> sec via block width/dur
-    var nIn = resizing.origIn, nOut = resizing.origOut;
-    if (resizing.edge === 'l') {
-      nIn = resizing.origIn + dSec;
-      nIn = Math.max(0, Math.min(nIn, resizing.origOut - 0.5));     // in >= 0, out-in >= 0.5
-    } else {
-      nOut = resizing.origOut + dSec;
-      nOut = Math.max(nOut, resizing.origIn + 0.5);
+    if (resizing) {
+      var dSec = (e.clientX - resizing.startX) / resizing.pxPerSec;   // px -> sec via block width/dur
+      var nIn = resizing.origIn, nOut = resizing.origOut;
+      if (resizing.edge === 'l') {
+        nIn = resizing.origIn + dSec;
+        nIn = Math.max(0, Math.min(nIn, resizing.origOut - 0.5));     // in >= 0, out-in >= 0.5
+      } else {
+        nOut = resizing.origOut + dSec;
+        nOut = Math.max(nOut, resizing.origIn + 0.5);
+      }
+      resizing.newIn = nIn; resizing.newOut = nOut;
+      var newDur = nOut - nIn;
+      resizing.block.style.width = Math.max(minClipW(), newDur * resizing.pxPerSec) + 'px';
+      resizing.block.title = (resizing.block.title || '').replace(/\s*\([^)]*\)\s*$/, '') + '  (' + mmss(newDur) + ')';
+      updatePlayhead();
+      return;
     }
-    resizing.newIn = nIn; resizing.newOut = nOut;
-    var newDur = nOut - nIn;
-    resizing.block.style.width = Math.max(MINW, newDur * resizing.pxPerSec) + 'px';
-    var dl = resizing.block.querySelector('.cdur');
-    if (dl) { dl.textContent = mmss(newDur); }
-    updatePlayhead();
+    if (scrubbing) { scrubTo(e, false); }   // free scrub anywhere on the track (CHANGE 4)
   });
 
   async function endResize() {
@@ -790,59 +852,23 @@
     var rep = await beckyCall('set_trim', { id: r.id, in: r.newIn, out: r.newOut });
     if (rep.ok && rep.data) { applyTimeline(rep.data); } else { renderTimeline(); }
   }
-  trackEl.addEventListener('pointerup', endResize);
-  trackEl.addEventListener('pointercancel', endResize);
+  function endScrub() {
+    if (!scrubbing) { return; }
+    scrubbing = false;
+    justScrubbed = true;                         // eat the click that follows a scrub gesture
+    setTimeout(function () { justScrubbed = false; }, 350);
+  }
+  trackEl.addEventListener('pointerup', function () { endResize(); endScrub(); });
+  trackEl.addEventListener('pointercancel', function () { endResize(); endScrub(); });
 
-  /* ---- clip clicks: remove / nudge / play ---- */
+  /* ---- clip clicks: only the hover remove "x" (seek/scrub is on pointer events) ---- */
   trackEl.addEventListener('click', function (e) {
-    if (justResized) { return; }                 // a resize just happened - eat this click
+    if (justResized || justScrubbed) { return; } // a resize/scrub just happened - eat this click
     var remove = e.target.closest('[data-act="remove"]');
-    if (remove) { e.stopPropagation(); onClipRemove(remove.closest('.clip').dataset.id); return; }
-    var nudge = e.target.closest('[data-act^="nudge"]');
-    if (nudge) { e.stopPropagation(); onNudge(nudge); return; }
-    var block = e.target.closest('.clip');
-    if (block) { onClipPlay(block.dataset.id); }
+    if (remove) { e.stopPropagation(); onClipRemove(remove.closest('.clip').dataset.id); }
   });
 
-  /* ---- drag-to-reorder (HTML5 drag) ---- */
-  var dragId = null;
-  trackEl.addEventListener('dragstart', function (e) {
-    var clip = e.target.closest('.clip');
-    if (!clip) { return; }
-    if (resizing) { e.preventDefault(); return; }   // a resize takes priority over reorder
-    dragId = clip.dataset.id;
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', dragId); } catch (_) {}
-    clip.classList.add('dragging');
-  });
-  trackEl.addEventListener('dragend', function (e) {
-    var clip = e.target.closest('.clip');
-    if (clip) { clip.classList.remove('dragging'); }
-    dragId = null;
-  });
-  trackEl.addEventListener('dragover', function (e) {
-    if (!dragId) { return; }
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  });
-  trackEl.addEventListener('drop', async function (e) {
-    if (!dragId) { return; }
-    e.preventDefault();
-    var rect = trackEl.getBoundingClientRect();
-    var dropX = e.clientX - rect.left;             // track has no horizontal padding -> layout coord
-    var blocks = Array.prototype.slice.call(trackEl.querySelectorAll('.clip'))
-      .filter(function (b) { return b.dataset.id !== dragId; });
-    var to = 0;
-    for (var i = 0; i < blocks.length; i++) {
-      var center = blocks[i].offsetLeft + blocks[i].offsetWidth / 2;
-      if (center < dropX) { to++; }
-    }
-    var id = dragId; dragId = null;
-    var rep = await beckyCall('reorder', { id: id, to: to });
-    if (rep.ok && rep.data) { applyTimeline(rep.data); }
-  });
-
-  /* ---- free scrub on the ruler ---- */
+  /* ---- free scrub (shared by the ruler AND the whole track - CHANGE 4) ---- */
   var scrubbing = false;
   function findClipAtX(x) {
     var blocks = trackEl.querySelectorAll('.clip');
@@ -886,6 +912,17 @@
   $tPlay.addEventListener('click', function () { mpvSend('toggle'); });
   $tFrameBack.addEventListener('click', function () { mpvSend('frame', { dir: -1 }); });
   $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
+
+  /* ---- timeline zoom (CHANGE 5): buttons + Ctrl+mousewheel over the timeline ---- */
+  if ($tZoomIn)  { $tZoomIn.addEventListener('click',  function () { zoomBy(1.5); }); }
+  if ($tZoomOut) { $tZoomOut.addEventListener('click', function () { zoomBy(1 / 1.5); }); }
+  if (tlBodyEl) {
+    tlBodyEl.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey) { return; }     // plain wheel still scrolls; Ctrl+wheel zooms
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    }, { passive: false });
+  }
 
   $tOverlay.addEventListener('click', async function () {
     state.overlayOn = !state.overlayOn;
@@ -948,6 +985,10 @@
     renderFind();       // empty hint until a folder loads
     renderTimeline();   // empty track
 
+    // Tell the host where the native video pane goes - once now, once after layout settles.
+    reportVideoRect();
+    setTimeout(reportVideoRect, 200);
+
     var tl = await beckyCall('timeline', {});         // restore any existing timeline
     if (tl.ok && tl.data) { applyTimeline(tl.data); }
 
@@ -970,6 +1011,8 @@
     applyTimeline: applyTimeline,
     applyFolder: applyFolder,
     doSearch: doSearch,
+    reportVideoRect: reportVideoRect,
+    setZoom: setZoom,
     state: state
   };
 

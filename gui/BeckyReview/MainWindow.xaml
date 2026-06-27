@@ -3,11 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:wf="clr-namespace:System.Windows.Forms.Integration;assembly=WindowsFormsIntegration"
-        Title="Becky Review" Height="860" Width="1500"
-        Background="#000000" WindowStartupLocation="CenterScreen"
-        Loaded="Window_Loaded">
+        Title="Becky Review" Height="900" Width="1600"
+        WindowState="Maximized" WindowStartupLocation="CenterScreen"
+        Background="#000000" Loaded="Window_Loaded">
 
-    <!-- High-contrast, large text (ACCESSIBILITY.md: color is an aid, keep it). -->
     <Window.Resources>
         <Style TargetType="Button">
             <Setter Property="FontSize" Value="16" />
@@ -22,7 +21,7 @@
 
     <DockPanel>
 
-        <!-- Top bar: pick a case folder (native dialog) + status. Search/everything else is in the UI. -->
+        <!-- Top bar: pick a case folder (native dialog) + status. -->
         <DockPanel DockPanel.Dock="Top" Background="#0A0A0A" LastChildFill="True">
             <Button x:Name="PickFolderButton" Content="Pick folder..." DockPanel.Dock="Left"
                     Click="PickFolderButton_Click" />
@@ -32,29 +31,16 @@
             <TextBlock />
         </DockPanel>
 
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="3*" MinWidth="520" />
-                <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="2*" MinWidth="420" />
-            </Grid.ColumnDefinitions>
-
-            <!-- LEFT: the full WebView2 UI (find + quotes + timeline + chat). No server. -->
-            <wv2:WebView2 x:Name="WebView" Grid.Column="0" />
-
-            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch"
-                          Background="#1A1A1A" ResizeBehavior="PreviousAndNext" />
-
-            <!-- RIGHT: native libmpv video pane (the smooth, frame-exact player). -->
-            <Border Grid.Column="2" Background="#000000">
-                <Grid>
-                    <wf:WindowsFormsHost x:Name="VideoHostElement" />
-                    <TextBlock x:Name="VideoPlaceholder"
-                               Text="Click a result on the left to play that moment here."
-                               Foreground="#5A5A5A" FontSize="18" HorizontalAlignment="Center"
-                               VerticalAlignment="Center" IsHitTestVisible="False"
-                               TextWrapping="Wrap" TextAlignment="Center" Margin="20" />
-                </Grid>
+        <!-- The WebView2 UI fills the whole content area (find | video-hole | chat + timeline).
+             The native mpv pane is OVERLAID on top of the page's #videoHole via VideoHost, whose
+             position+size are set from the page's {t:"videoRect"} message. A native HWND always
+             renders above the WebView2 in its rectangle, so it covers the (empty) center hole only. -->
+        <Grid x:Name="ContentGrid" ClipToBounds="True">
+            <wv2:WebView2 x:Name="WebView" />
+            <Border x:Name="VideoHost" Background="#000000"
+                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Width="0" Height="0" Visibility="Collapsed">
+                <wf:WindowsFormsHost x:Name="VideoHostElement" />
             </Border>
         </Grid>
     </DockPanel>
