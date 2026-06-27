@@ -528,6 +528,17 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **Becky Review round-4 fixes — timeline + overlay + forensic re-transcribe naming (2026-06-27, local,
+  `claude/becky-review-fixes2`):** all five of Jordan's round-4 items, CDP/screenshot-verified on a real
+  folder then deployed to the main tree (Desktop "Becky Review" runs them). (a) clip **drag-reorder
+  restored** without losing click-to-seek (one `#track` pointer state machine, `DRAG_PX`=6, drop index =
+  `App.Reorder`'s remove-then-insert index); (b) edge-**snap reeled in** (`SNAP_PX`=8, exact position
+  elsewhere); (c) **extend-clip clamps to its own source** (cached `probe` duration, never a neighbour);
+  (d) **overlay no longer off-screen** — drawn in the HOST canvas (mpv's osd-overlay maps to the window,
+  not the letterbox video rect), proven on a 1080×1920 portrait clip; (e) **FORENSIC**: re-transcribe
+  writes a SEPARATE `<stem>_parakeet_transcription.srt` (shared const `footage.LocalTranscriptMarker`)
+  and ↻ FORCES a fresh Parakeet pass even when an official transcript exists — original never touched.
+  Regression test added; transcribe/footage tests + tooltips updated, all green.
 - **becky-otio COMPLETE — every interchange format + kdenlive engine render-proof (2026-06-27, local,
   `SPEC-BECKY-OTIO.md`):** the editor-agnostic timeline exporter now implements ALL of its advertised
   `--format`s. Phase 1 (cloud) shipped `otio`/`vegas-list`/`edl`; this pass added the two writers the

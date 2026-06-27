@@ -10,6 +10,55 @@
 
 ---
 
+## `becky-review-fixes2` — round-4 timeline + overlay + forensic re-transcribe naming (2026-06-27, local; on master `f934708`)
+
+**What landed.** Jordan's round-4 feedback on Becky Review (the becky-clip-rebuild reviewer; see
+`[[becky-review-app]]`), all five items fixed, built, and CDP/screenshot-verified on a real folder, then
+FF-merged to master.
+
+- **(a) Clip drag-reorder restored WITHOUT losing click-to-seek** (`gui/BeckyReview/ui/app.js` +
+  `app.css`). One pointer state-machine on `#track`: a `.rh` handle → RESIZE; a clip body → PENDING (a
+  press stays a CLICK=seek+select until the pointer travels > `DRAG_PX`=6, then becomes a REORDER drag
+  with a blue `.dropmark` insertion line); empty track → SCRUB. Drop index = count of OTHER clips left of
+  the cursor centre = exactly `App.Reorder`'s stable remove-then-insert index (inserting at rest-index
+  `from` reproduces the original, so the `to !== from` guard is a correct no-op check). CDP-verified:
+  synthetic drag of c1 past c3 → `[c2,c3,c1]`; a no-move click seeks + selects, order unchanged.
+- **(b) Edge-snap reeled in** — `findClipAtX` snaps a seek to a clip's in/out ONLY within `SNAP_PX`=8 px
+  of that edge; everywhere else inside the clip it seeks the EXACT clicked position (was snapping across
+  ~half the clip).
+- **(c) Extend-clip clamps to its OWN source** — resize-right bounds `out` to `maxOutFor(clip)` = the
+  source's true duration (lazy `probe` verb → `ProbeResult.duration`, cached per source path), never to a
+  neighbouring timeline clip. Fixes "extending bleeds into the next search result."
+- **(d) Overlay no longer drifts off-screen** (`gui/BeckyReview/MainWindow.xaml.cs`). Root cause: mpv's
+  `osd-overlay` coordinate space (res_x/res_y) maps to the WINDOW/OSD, NOT the letterbox-aware video rect —
+  so passing the video's own w/h drove the text off-screen whenever the clip aspect differed from the
+  panel (portrait clip in a wide panel). Now drawn in the HOST canvas: `_hostW/_hostH` captured from the
+  `{t:"videoRect"}` message, `{\an1}` bottom-left, font ~host_h/22 (clamped 13–40), filename truncated to
+  the host width. **Screenshot-proven on a 1080×1920 portrait clip:** "portrait.mp4 / ORIG TC
+  00:00:07:29" sits readable at the bottom-left, fully on-screen.
+- **(e) FORENSIC re-transcribe rename** (`becky-go/cmd/clip/transcribe.go` + `internal/footage/discover.go`).
+  Local ASR now writes `<stem>_parakeet_transcription.srt` (was `_LOCAL.srt`) via the single shared
+  exported const `footage.LocalTranscriptMarker`, so the becky-made transcript ALWAYS names itself.
+  Underscore (not a dot) so it can't be mistaken for a `<stem>.<lang>.srt` official subtitle. The ↻
+  re-transcribe action — a video that already indexes `has_transcript=true` (the "+" shows only for
+  untranscribed videos) — now FORCES a fresh Parakeet pass into that SEPARATE sidecar even when an
+  official transcript exists (previously it short-circuited on `use_official` and wrote nothing). The
+  original is never touched or replaced (the `officialSrtExists` interlock stays). New regression test
+  `TestReTranscribe_OfficialPresent_ForcesParakeetSecondaryKeepsOriginal`; all transcribe/footage tests
+  + tooltips (`ui/app.js` and `cmd/clip/assets/app.js`) updated and green.
+
+**Gates.** `go build ./...` clean; `internal/footage` + `cmd/clip` tests green; all changed Go files
+gofmt-clean (ignoring the repo-wide Windows-CRLF noise); WPF builds (0 warnings). The lone `cmd/tts`
+`TestRun_DegradesWhenNoModel` FAIL is the documented pre-existing/environmental one (the TTS model is
+present). **Deployed to the main tree:** rebuilt `becky-review-engine.exe` + `becky-review-index.exe` in
+`becky-go/bin` and the Release WPF exe, so the Desktop "Becky Review" shortcut runs the fixes.
+
+**Left for Jordan (model boundary only):** the ↻ re-transcribe runs real Parakeet ASR (verified by unit
+tests; the actual GPU pass is the usual model boundary) and the chat's local Gemma needs llama-server +
+GGUF. Everything else is verified in-hand.
+
+---
+
 ## `becky-otio-completion` — every interchange format built + the kdenlive engine render-proven (2026-06-27, local)
 
 **What landed.** `SPEC-BECKY-OTIO.md` is now COMPLETE: every `--format` the CLI advertises is
