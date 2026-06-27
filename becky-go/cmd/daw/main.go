@@ -50,6 +50,8 @@ func run(args []string) int {
 		return cmdDrumGrid(rest)
 	case "edit":
 		return cmdEdit(rest)
+	case "ask":
+		return cmdAsk(rest)
 	case "-h", "--help", "help":
 		usage()
 		return exitOK
@@ -67,6 +69,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  becky-daw drumgrid --in drums.mid --track ID --clip NAME [--json]")
 	fmt.Fprintln(os.Stderr, "  becky-daw edit     --in song.mid --out edited.mid --op OP [flags] [--json]")
 	fmt.Fprintln(os.Stderr, "  ops: addnote move resize setvel delete quantize transpose gain pan mute solo")
+	fmt.Fprintln(os.Stderr, "  becky-daw ask      --in project.json --do \"mute the bass\" --do \"set tempo to 128\" --out edited.json")
 }
 
 // cmdLoad parses a .mid into the model and reports its structure.

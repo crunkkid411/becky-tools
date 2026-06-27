@@ -135,6 +135,72 @@ func TestParseKeyword_Recognized(t *testing.T) {
 	}
 }
 
+func TestParseKeyword_RouteAndSidechain(t *testing.T) {
+	t.Run("route to music bus", func(t *testing.T) {
+		arr := testArr()
+		b := ParseKeyword("route the lead to the music bus", arr)
+		if len(b.Edits) != 1 || b.Edits[0].Op != ctledit.OpRouteTo {
+			t.Fatalf("got %+v, want one route_to", b)
+		}
+		if b.Edits[0].Target != "lead" || b.Edits[0].BusID != "bus.music" {
+			t.Errorf("got target=%q bus=%q, want lead/bus.music", b.Edits[0].Target, b.Edits[0].BusID)
+		}
+		next, res, _ := ctledit.Apply(arr, b, nil)
+		if res.Applied != 1 || res.Skipped != 0 {
+			t.Fatalf("apply route: %d/%d", res.Applied, res.Skipped)
+		}
+		if tr, _ := next.TrackByID("lead"); tr.Strip.Bus != "bus.music" {
+			t.Errorf("lead bus = %q, want bus.music", tr.Strip.Bus)
+		}
+	})
+
+	t.Run("send to drums bus disambiguates track vs bus", func(t *testing.T) {
+		// "lead" is the track, "drums" names the destination bus — not the drums track.
+		b := ParseKeyword("send the lead to the drums bus", testArr())
+		if len(b.Edits) != 1 || b.Edits[0].Target != "lead" || b.Edits[0].BusID != "bus.drums" {
+			t.Fatalf("got %+v, want route lead -> bus.drums", b)
+		}
+	})
+
+	t.Run("sidechain bass to kick", func(t *testing.T) {
+		arr := testArr()
+		b := ParseKeyword("sidechain the bass to the kick", arr)
+		if len(b.Edits) != 1 || b.Edits[0].Op != ctledit.OpAddSidechain {
+			t.Fatalf("got %+v, want one add_sidechain", b)
+		}
+		// bass's bus (bus.808) ducked by the drums track (kick maps to drums).
+		if b.Edits[0].BusID != "bus.808" || b.Edits[0].SidechainSource != "drums" {
+			t.Errorf("got bus=%q source=%q, want bus.808/drums", b.Edits[0].BusID, b.Edits[0].SidechainSource)
+		}
+		next, res, _ := ctledit.Apply(arr, b, nil)
+		if res.Applied != 1 || res.Skipped != 0 {
+			t.Fatalf("apply sidechain: %d/%d", res.Applied, res.Skipped)
+		}
+		bus := busByID(next, "bus.808")
+		if bus == nil || len(bus.Sidechain) != 1 || bus.Sidechain[0] != "drums" {
+			t.Errorf("bus.808 sidechain = %+v, want [drums]", bus)
+		}
+	})
+
+	t.Run("duck music under the kick", func(t *testing.T) {
+		b := ParseKeyword("duck the music under the kick", testArr())
+		// "music" isn't a track id here, so this should decline cleanly (no wrong edit).
+		// chords/counter/lead route to bus.music but there's no track literally named music.
+		if len(b.Edits) != 0 {
+			t.Fatalf("expected no edit for unresolved victim, got %+v", b)
+		}
+	})
+}
+
+func busByID(a *dawmodel.Arrangement, id string) *dawmodel.Bus {
+	for i := range a.Buses {
+		if a.Buses[i].ID == id {
+			return &a.Buses[i]
+		}
+	}
+	return nil
+}
+
 func TestParseKeyword_AppliesChangeTheState(t *testing.T) {
 	arr := testArr()
 
