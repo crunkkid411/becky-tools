@@ -461,6 +461,8 @@ load-bearing rules, in brief:
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
 - `SPEC-BECKY-ASK.md`, `SPEC-BECKY-NEW-TOOL.md`, `SPEC-OCR.md`,
+  `SPEC-OCR-ENSEMBLE.md` (PROPOSAL, cloud 2026-06-27 — multi-model OCR ensemble +
+  adversarial ≥2-engine corroboration; additive enhancement to `becky-ocr`/`SPEC-OCR.md`),
   `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`,
   `SPEC-BECKY-COMPOSE.md` (BUILT — `becky-compose`: deterministic genre→multi-track
   MIDI; genre DB in `internal/music/profiles/`).
@@ -521,6 +523,14 @@ load-bearing rules, in brief:
 > When you finish a branch: write the detailed entry to the **TOP of `HANDOFF-LOG.md`** and update
 > the short summary here. **Do NOT let this section grow back into a full log** — an accumulating
 > §6 is exactly what pushed CLAUDE.md past the prompt-size limit (fixed 2026-06-22).
+
+### Pending cloud branch (not yet merged)
+
+- **`claude/ocr-ensemble-corroboration` — REVIEW REQUESTED, do NOT auto-merge.** Adds
+  `SPEC-OCR-ENSEMBLE.md` (multi-model OCR ensemble + adversarial ≥2-engine corroboration;
+  adds Unlimited-OCR long-doc slot; GLM-OCR↔PaddleOCR-VL A/B; mandatory leaderboard-sweep
+  process fix) + claim/INBOX-3 in `COLLAB-PROTOCOL.md`. Docs only. *Left for local:* ratify,
+  decide §10 open questions, then either build `internal/ocrfuse` or hand it back to cloud.
 
 ### Current state of master (as of 2026-06-27)
 

@@ -10,6 +10,33 @@
 
 ---
 
+## `claude/ocr-ensemble-corroboration` — multi-model OCR ensemble + adversarial corroboration (2026-06-27, cloud)
+
+**What landed (docs only, REVIEW-REQUESTED — do NOT auto-merge; ratify first).** Jordan asked for
+multiple small specialist OCR models, each for its strength, with adversarial confirmation on
+low-confidence reads, and asked why a better OCR model could be "missed" when every tool is
+researched first. Researched the current OCR landscape (HF + OmniDocBench/OCRBench) and wrote
+`SPEC-OCR-ENSEMBLE.md`: an additive enhancement to the BUILT `becky-ocr` (NOT a rewrite of
+`SPEC-OCR.md`).
+
+- **Design:** PP-OCR stays the deterministic **anchor**; a deterministic **router** picks an
+  escalation specialist by input class — PaddleOCR-VL-1.6 / GLM-OCR (single-page docs, A/B),
+  **Unlimited-OCR** (NEW: long multi-page PDFs/books, 3B/500M-active MoE, MIT, GGUF, flat KV),
+  LFM2.5-VL-1.6B-Extract (doc→JSON, already in `becky-vision`). **Adversarial corroboration:** a
+  low-confidence or forensically-critical span (dates/plates/IDs/amounts/KB-names) is *concluded*
+  only when **≥2 independent engines agree**; else a `candidate` showing both reads — corroborate-
+  then-conclude applied to OCR, additive to the existing `low_confidence_lines` logic. Output schema
+  is additive/back-compat; degrade-never-crash (PP-OCR-only ⇒ today's behavior exactly).
+- **Process fix (root cause of "how did we miss it"):** make a **leaderboard sweep** mandatory in
+  `SPEC-BECKY-NEW-TOOL.md` research, and extend `becky-freshness` from "newer version of what we
+  use?" to "**outscored** on the leaderboard we care about?" — with the caveat that leaderboards
+  disagree/saturate, so always verify top candidates on becky's own frames.
+- **Routed via protocol:** `COLLAB-PROTOCOL.md` registry row + INBOX-3 to local; claimed to avoid an
+  R4 dupe. **Left for local:** ratify, settle the §10 open decisions (doc-slot A/B, threshold T,
+  critical classes, long-doc in v1?, agreement tol, escalate-only vs --thorough), then either build
+  the deterministic `internal/ocrfuse` core (router + agreement/status logic + fake-engine tests,
+  kept out of `cmd/ocr`) or hand it back to cloud — cloud can build that core with no models.
+
 ## `becky-otio-completion` — every interchange format built + the kdenlive engine render-proven (2026-06-27, local)
 
 **What landed.** `SPEC-BECKY-OTIO.md` is now COMPLETE: every `--format` the CLI advertises is
