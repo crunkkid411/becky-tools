@@ -537,17 +537,21 @@ pre-existing/environmental — the local TTS model is present, so "degrades when
   is the surface the Shotcut dock shells out to (it ffprobe-verifies its own `intra_frame`/`cfr`). **Proven:**
   `--selftest` + a real interview clip both yield a 60/60-keyframe, CFR proxy. Open gate = Jordan confirming
   it *feels* smooth when scrubbed (a human-vision go/no-go that decides keep-the-fork vs not).
-- **Becky Review — the one-window forensic video reviewer (2026-06-27, local):** new native WPF (.NET 8)
-  app `gui/BeckyReview` per `HANDOFF-BECKY-REVIEW-APP.md` (Steps 0-7 built + screenshotted). **LEFT** = a
-  WebView2 HTML list/search loaded with **no TCP server** (`SetVirtualHostNameToFolderMapping`); **RIGHT**
-  = native **mpv** embedded via `--wid`, GPU-decoded + frame-exact (video never goes through the browser).
-  New thin tool **`becky-review-index`** (`cmd/review-index`, JSON wrapper over `internal/footage` — no DB/
-  model) drives folder-list + transcript search; pick folder → list videos, search a term → ranked cue
-  hits with exact in-points, click a hit → the player seeks+plays that moment (the "cat" use case, proven
-  end to end). CDP self-verify works (`BECKY_REVIEW_CDP_PORT` → an agent read the DOM + clicked). One-click
-  `Open Becky Review.bat` + Desktop "Becky Review" shortcut (first run fetches the git-ignored mpv runtime
-  via `fetch-mpv.ps1`). **Left:** Step 8 (libmpv render API for a becky-drawn playhead + thumbnail strip)
-  and the `internal/reel` scrub-proxy fix — both polish; `--wid` already scrubs smoothly.
+- **Becky Review = becky-clip rebuilt as the FULL editor on a persistent engine + native mpv (2026-06-27,
+  local):** `gui/BeckyReview` (native WPF) is now the real forensic editor, not the minimal reviewer. It
+  **reuses becky-clip's entire engine + UI** — only the video + transport are swapped to native mpv. A new
+  headless **`becky-clip bridge`** (shipped as `becky-review-engine.exe`) keeps ONE warm `App` (folder
+  index + transcript parse-cache) over stdin/stdout NDJSON = fast repeat search (fixes the slowness) + every
+  bridge verb. **LEFT** = WebView2 UI (no TCP server): file list with green-"+" in-app transcribe, search
+  (exact `N quotes … playable` header + highlights), single-click=play / double-click=add-to-timeline, a
+  drag/resize/scrub timeline (save/load/export), and the becky chat. **RIGHT** = native mpv (frame-exact,
+  GPU; `.srt` never burned on the video). The **overlay** lower-third (filename + LIVE ORIG-TC + date/link)
+  is drawn by mpv's ASS osd-overlay. Chat **defaults to local Gemma-4 E4B**; "use Claude" → Claude Code.
+  Verified CDP-driven on a real folder (search/play/timeline/scrub/overlay/chat). One-click `Open Becky
+  Review.bat` + Desktop shortcut (first run builds the engine + fetches the git-ignored mpv runtime). The
+  earlier thin `becky-review-index` tool remains for scripted folder-index/search. **Left (model boundary):**
+  green-"+" `becky-transcribe` (Parakeet ASR) + the chat's local Gemma (llama-server + GGUF) — wired +
+  degrade-proven; full runs are the usual tap on real footage.
 - **Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local):** the model
 - **Qwen3.5-4B wired in as the orchestrator + SINGLE-IMAGE corroborator (2026-06-27, local):** the model
   Jordan linked (Unsloth **`UD-Q4_K_XL`**) now has a real config home (`config.Qwen()` + `BECKY_QWEN_MODEL`)
