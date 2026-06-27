@@ -1,19 +1,22 @@
 # Append-only logbook files.
 #
 # Two agents (cloud on claude/* branches, local on master) both append handoff
-# notes to CLAUDE.md section 6 and rows to the COLLAB-PROTOCOL.md work registry.
-# The actual code never collides (each tool is its own cmd/ + internal/ dir), but
-# these two text files collided on EVERY non-fast-forward merge — which is exactly
-# what made the one-click "Get Becky Updates" button punt to the assistant every
-# time once more than one cloud branch was waiting.
+# notes to CLAUDE.md section 6, the HANDOFF-LOG.md history, and rows to the
+# COLLAB-PROTOCOL.md work registry. The actual code never collides (each tool is
+# its own cmd/ + internal/ dir), but these text files collided on EVERY
+# non-fast-forward merge — which is exactly what made the one-click "Get Becky
+# Updates" button punt to the assistant once more than one branch was waiting.
 #
 # git's built-in `union` merge driver resolves an overlapping change by keeping
 # BOTH sides' lines instead of raising a conflict. For append-only narrative logs
 # that is the correct behaviour: nobody loses a handoff note, and the button can
 # merge unattended. (Tradeoff: if both sides edit the *same existing* line, union
 # keeps both copies — a visible duplicate a human can trim, never a lost edit.)
+# HANDOFF-LOG.md was missing here and collided on 2026-06-27 (two sessions each
+# prepended a top entry); adding it makes that auto-resolve like CLAUDE.md §6.
 CLAUDE.md            merge=union
 COLLAB-PROTOCOL.md   merge=union
+HANDOFF-LOG.md       merge=union
 
 # Golden test fixtures must stay LF so byte-compare tests pass on Windows checkouts.
 *.golden.md text eol=lf
