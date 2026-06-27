@@ -50,6 +50,35 @@ smoothly, so this is polish. The "in parallel" **scrub-proxy fix** (`HANDOFF-PRO
 scrubs the common cases well. Gates: `go build/vet/test ./...` green; the only `gofmt -l` hit is the
 cosmetic Windows-CRLF one (committed content is LF).
 
+## `claude/qwen35-singleimage-fix` — CORRECTION: Qwen3.5 is single-image only (reverted from the video ladder) (2026-06-27, local)
+
+**Why.** Jordan caught that the prior `claude/qwen35-orchestrator` work (entry below) MISUSED Qwen3.5: it put
+Qwen in the VIDEO validate ladder and added a `becky-validate --backend qwen35-local` that fed Qwen a clip's
+frame sequence. Qwen3.5-4B does **single still images only** — no multi-frame/temporal understanding, no
+audio. The ONLY models becky runs that watch video+audio are Gemma-4 E4B → 12B. Treating a Qwen reading as a
+presence "watch" was a forensic-correctness bug.
+
+**What changed (this branch).**
+- **Reverted** the video misuse to the pre-Qwen state: `internal/forensicrun` ladder is Gemma-only again
+  (E4B → 12B, `NewGemmaLadder`, depth 2); the `qwen35-local` backend + its registration were removed from
+  `cmd/validate`; `avlm.Options.NoAudio` removed (unused); `becky-presence`/`becky-resolve` depth back to 2;
+  the cross-family ladder tests reverted to the original 2-level escalation test.
+- **Kept (correct):** the `config.Qwen()` home + the three hardcoded-path removals (becky-ask/scout/new-tool
+  TEXT routing) — none of that touches video.
+- **Added the RIGHT vision role:** `becky-vision --qwen` — Qwen3.5-4B as a SINGLE-STILL second opinion via
+  `avlm.AnalyzeImage` (one image, no frames, no audio), mirroring the existing `--gemma` still path. A
+  different family than LFM/Gemma, so an agreeing read on one image is real corroboration.
+- Docs re-scoped (config comments, manifest `used_by` becky-validate→becky-vision, `get-qwen35.ps1`, SKILL.md,
+  the memory note): Qwen = text orchestration + single image; **never video**; video stays Gemma-only.
+
+**Proof.** `becky-vision --qwen --image <still>` returned `model: qwen3.5-4b-UD-Q4_K_XL`, `engine: Qwen3.5-4B`,
+a detailed accurate one-image description in 6.3s via the `single-still` path (no frames, no audio). Gemma-only
+ladder tests + config tests green; `go build/vet ./...` green; `build-all-tools.bat` rebuilds all `.exe`s.
+
+**Left for Jordan:** nothing. Qwen3.5 is now correctly confined to text + single images; video understanding
+remains Gemma-4 E4B → 12B. (The entry below documents the original wiring; the video-ladder parts of it are
+superseded by this correction.)
+
 ## `claude/qwen35-orchestrator` — Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local)
 
 **What landed.** Qwen3.5-4B (Unsloth **`UD-Q4_K_XL`**, the exact GGUF Jordan linked) was finally given a

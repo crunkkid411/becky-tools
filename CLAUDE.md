@@ -540,14 +540,17 @@ pre-existing/environmental — the local TTS model is present, so "degrades when
   via `fetch-mpv.ps1`). **Left:** Step 8 (libmpv render API for a becky-drawn playhead + thumbnail strip)
   and the `internal/reel` scrub-proxy fix — both polish; `--wid` already scrubs smoothly.
 - **Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local):** the model
+- **Qwen3.5-4B wired in as the orchestrator + SINGLE-IMAGE corroborator (2026-06-27, local):** the model
   Jordan linked (Unsloth **`UD-Q4_K_XL`**) now has a real config home (`config.Qwen()` + `BECKY_QWEN_MODEL`)
-  instead of three copy-pasted hardcoded paths, and is the INDEPENDENT cross-family voice in the validate
-  ladder (**Gemma-4 E4B → Qwen3.5-4B → Gemma-4 12B** — a different family, so agreement is real corroboration,
-  not Gemma echoing itself). New `becky-validate --backend qwen35-local` gives an IMAGE-ONLY second opinion
-  (Qwen3.5-4B is image-capable via its own F16 mmproj — it is **NOT a "Qwen3.5-VL"**; the separate heavy
-  Qwen3-VL is only for a dedicated VL job). Manifest entry + `scripts/get-qwen35.ps1` + SKILL.md added.
-  **Proven live:** `becky-validate --backend qwen35-local` described a real clip's frames in 4.4s
-  (`model: qwen3.5-4b-UD-Q4_K_XL`). Routes `becky-ask`/`becky-scout`/`becky-new-tool` too.
+  instead of three copy-pasted hardcoded paths. It is the TEXT brain (routes `becky-ask`, proposes in
+  `becky-scout`, reasons in `becky-new-tool`) and a SINGLE-IMAGE corroborator via **`becky-vision --qwen`**
+  (one still, a different family than LFM/Gemma). **Qwen3.5-4B does NOT watch video** — no multi-frame/audio
+  understanding; ALL video+audio watching stays Gemma-4 (E4B→12B, `becky-validate`). Image-capable via its
+  own F16 mmproj but **NOT a "Qwen3.5-VL"** (no such model; the separate heavy Qwen3-VL is only for a
+  dedicated VL job). Manifest entry + `scripts/get-qwen35.ps1` + SKILL.md added. **Proven live:**
+  `becky-vision --qwen` described a real still in 6.3s (`model: qwen3.5-4b-UD-Q4_K_XL`, single-image path).
+  (An earlier same-day pass wrongly put Qwen in the video validate ladder + a `qwen35-local` video backend;
+  reverted — Jordan caught that Qwen3.5 is image-only.)
 - **becky-regrab + hardened fetch (2026-06-27, local):** pages the archiver missed are now re-grabbed.
   The real fix was a fetch bug — `trafilatura.fetch_url` returned brotli/zstd **garbage** for some sites,
   so web2md extracted nothing; `web2md.py`/`clipfetch.py` now validate the fetch + fall back to a clean

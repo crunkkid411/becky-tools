@@ -75,7 +75,6 @@ type Options struct {
 	MaxTokens    int     // generation cap (default 512)
 	Temperature  float64 // low for determinism (default 0.2)
 	Seed         int     // RNG seed for reproducibility (default 42)
-	NoAudio      bool    // skip audio entirely for image-only model paths (the Qwen3.5-4B image projector has no audio encoder, unlike Gemma-4)
 	Verbose      bool    // progress to the provided Logf
 }
 
@@ -219,11 +218,8 @@ func (r *Runner) Analyze(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	// --- Audio ------------------------------------------------------------
-	// Skipped entirely for image-only model paths (opts.NoAudio): the Qwen3.5-4B
-	// image projector has no audio encoder (unlike Gemma-4's BF16 mmproj), so
-	// sending an input_audio part would error/degrade.
 	var audioPath string
-	if info.HasAudio && !opts.NoAudio {
+	if info.HasAudio {
 		audioSec := window
 		if audioSec > MaxAudioSeconds {
 			audioSec = MaxAudioSeconds

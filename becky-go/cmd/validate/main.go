@@ -11,7 +11,7 @@
 //	  --events <json>        becky-events JSON (optional context)
 //	  --identify <json>      becky-identify JSON (optional speaker/face names)
 //	  --motion <json>        becky-motion JSON; targets analysis at the highest-scored burst
-//	  --backend <type>       gemma4-local (default) | qwen35-local | fusion | mock
+//	  --backend <type>       gemma4-local (default) | fusion | mock
 //	  --server-url <url>     reuse a running multimodal llama-server (default: spawn per call)
 //	  --window <sec>         AV window length, <= 60 (default 30; overridden by --motion)
 //	  --fps <float>          frame sample rate (default 1.0; overridden by --motion to 4.0)
@@ -60,7 +60,7 @@ func main() {
 	eventsPath := flag.String("events", "", "path to becky-events JSON (optional context)")
 	identifyPath := flag.String("identify", "", "path to becky-identify JSON (optional names)")
 	motionPath := flag.String("motion", "", "path to becky-motion JSON; targets analysis at the highest-scored burst window")
-	backendName := flag.String("backend", "gemma4-local", "backend: gemma4-local, qwen35-local (Qwen3.5 image-only cross-family second opinion), fusion, mock")
+	backendName := flag.String("backend", "gemma4-local", "backend: gemma4-local, fusion, mock")
 	serverURL := flag.String("server-url", "", "reuse a running multimodal llama-server (default: spawn one per call)")
 	window := flag.Float64("window", 30, "AV window length in seconds (<= 60); overridden by --motion")
 	fps := flag.Float64("fps", 1.0, "frame sample rate; overridden by --motion to 4.0 for a short targeted burst")
@@ -71,7 +71,7 @@ func main() {
 
 	clip := parsePositional()
 	if clip == "" {
-		beckyio.Fatalf("usage: becky-validate <clip> [--question ...] [--backend gemma4-local|qwen35-local|fusion|mock] [options]")
+		beckyio.Fatalf("usage: becky-validate <clip> [--question ...] [--backend gemma4-local|fusion|mock] [options]")
 	}
 	if _, err := os.Stat(clip); err != nil {
 		beckyio.Fatalf("clip not found: %s", clip)

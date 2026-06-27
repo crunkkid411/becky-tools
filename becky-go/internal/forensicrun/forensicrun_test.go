@@ -154,16 +154,11 @@ func TestRunAndReport_DegradesWhenToolsMissing(t *testing.T) {
 	}
 }
 
-// The ladder is CROSS-FAMILY: L1 Gemma-4 E4B (gemma4-local) -> L2 Qwen3.5-4B (qwen35-local, a
-// DIFFERENT family) -> L3 Gemma-4 12B (BECKY_AVLM_VARIANT=12b — env, not a flag). Here only the 12B
-// watch corroborates, so all three levels run IN ORDER and the 12B concludes Alex.
-func TestLadder_CrossFamilyEscalation(t *testing.T) {
+// The escalation env is the REAL mechanism (the becky-resolve --variant bug fixed): level 2
+// selects the 12B model via BECKY_AVLM_VARIANT=12b, not a flag.
+func TestLadder_EscalatesViaVariantEnv(t *testing.T) {
 	id := `{"identifications":[{"type":"voice","name":"Alex","confidence":0.8}]}`
-	type call struct {
-		args []string
-		env  []string
-	}
-	var validateCalls []call
+	var validateEnvs [][]string
 	var identifyArgs []string
 	runner := func(ctx context.Context, tool string, args, env []string) ([]byte, error) {
 		switch tool {
@@ -171,9 +166,8 @@ func TestLadder_CrossFamilyEscalation(t *testing.T) {
 			identifyArgs = args
 			return []byte(id), nil
 		case "becky-validate":
-			validateCalls = append(validateCalls, call{args: args, env: env})
-			// Only the 12B (variant env) corroborates; the E4B and the Qwen watch find
-			// nothing, so the ladder runs all three levels in order.
+			validateEnvs = append(validateEnvs, env)
+			// L1 (no env) does NOT corroborate; L2 (12b env) does.
 			if envHas(env, "BECKY_AVLM_VARIANT=12b") {
 				return []byte(`{"observations":[{"confidence":0.8}]}`), nil
 			}
@@ -189,58 +183,17 @@ func TestLadder_CrossFamilyEscalation(t *testing.T) {
 	if !envHas(identifyArgs, "--kb") || !envHas(identifyArgs, "kb-final") {
 		t.Errorf("becky-identify must be called with --kb kb-final, got args %v", identifyArgs)
 	}
-	if len(validateCalls) != 3 {
-		t.Fatalf("cross-family ladder must try ALL three levels (E4B -> Qwen3.5 -> 12B), got %d validate calls", len(validateCalls))
+	if len(validateEnvs) != 2 {
+		t.Fatalf("ladder must try BOTH levels (E4B then 12B), got %d validate calls", len(validateEnvs))
 	}
-	// L1: Gemma-4 E4B via gemma4-local, no variant env.
-	if backendOf(validateCalls[0].args) != "gemma4-local" || envHas(validateCalls[0].env, "BECKY_AVLM_VARIANT=12b") {
-		t.Errorf("L1 must be gemma4-local with no variant env, got backend=%q env=%v", backendOf(validateCalls[0].args), validateCalls[0].env)
+	if envHas(validateEnvs[0], "BECKY_AVLM_VARIANT=12b") {
+		t.Errorf("level 1 must run the default E4B (no variant env), got %v", validateEnvs[0])
 	}
-	// L2: Qwen3.5-4B via qwen35-local (the DIFFERENT family), no variant env.
-	if backendOf(validateCalls[1].args) != "qwen35-local" {
-		t.Errorf("L2 must be the cross-family qwen35-local backend, got backend=%q", backendOf(validateCalls[1].args))
-	}
-	if envHas(validateCalls[1].env, "BECKY_AVLM_VARIANT=12b") {
-		t.Errorf("L2 (Qwen) must NOT carry the 12B variant env, got %v", validateCalls[1].env)
-	}
-	// L3: Gemma-4 12B via gemma4-local + the variant env.
-	if backendOf(validateCalls[2].args) != "gemma4-local" || !envHas(validateCalls[2].env, "BECKY_AVLM_VARIANT=12b") {
-		t.Errorf("L3 must escalate to gemma4-local with BECKY_AVLM_VARIANT=12b, got backend=%q env=%v", backendOf(validateCalls[2].args), validateCalls[2].env)
+	if !envHas(validateEnvs[1], "BECKY_AVLM_VARIANT=12b") {
+		t.Errorf("level 2 must escalate via BECKY_AVLM_VARIANT=12b, got %v", validateEnvs[1])
 	}
 	if !hasClaim(rep.Names, "person=Alex") {
 		t.Errorf("the 12B watch corroborated Alex, so it must be a stated name; Names=%v", rep.Names)
-	}
-}
-
-// The headline win the user asked for: cross-family corroboration. When Gemma-4 (L1) finds nothing
-// but Qwen3.5 (L2) corroborates, the one-signal name is promoted at L2 — a DIFFERENT family — and the
-// ladder STOPS before the 12B. This is real corroboration (two independent families), not Gemma echo.
-func TestLadder_QwenCorroboratesAtLevel2(t *testing.T) {
-	id := `{"identifications":[{"type":"voice","name":"Alex","confidence":0.8}]}`
-	var backends []string
-	runner := func(ctx context.Context, tool string, args, env []string) ([]byte, error) {
-		switch tool {
-		case "becky-identify":
-			return []byte(id), nil
-		case "becky-validate":
-			b := backendOf(args)
-			backends = append(backends, b)
-			if b == "qwen35-local" {
-				return []byte(`{"observations":[{"confidence":0.8}]}`), nil // the cross-family watch agrees
-			}
-			return []byte(`{"observations":[]}`), nil // Gemma-4 E4B found nothing
-		default:
-			return nil, errors.New("unused")
-		}
-	}
-
-	rep := runAndReport(context.Background(), "clip.mp4", "", "kb-final", 1, nil, runner)
-
-	if !hasClaim(rep.Names, "person=Alex") {
-		t.Fatalf("Qwen3.5 corroborated Alex (cross-family) — it must be a stated name; Names=%v Held=%v", rep.Names, rep.Held)
-	}
-	if len(backends) != 2 || backends[0] != "gemma4-local" || backends[1] != "qwen35-local" {
-		t.Fatalf("ladder must stop after Qwen corroborates at L2 (no 12B), got backends=%v", backends)
 	}
 }
 
@@ -325,14 +278,4 @@ func envHas(env []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// backendOf returns the value following "--backend" in a becky-validate argv (or "").
-func backendOf(args []string) string {
-	for i, a := range args {
-		if a == "--backend" && i+1 < len(args) {
-			return args[i+1]
-		}
-	}
-	return ""
 }

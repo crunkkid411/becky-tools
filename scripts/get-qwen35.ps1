@@ -1,10 +1,11 @@
 # get-qwen35.ps1 - download the Qwen3.5-4B orchestrator GGUFs becky uses.
 #
-# Qwen3.5-4B (Unsloth) is becky's GENERATIVE orchestrator + ask-routing model AND
-# the independent CROSS-FAMILY corroborator (a DIFFERENT family than Gemma-4, so an
-# agreeing Qwen+Gemma watch is real corroboration, not Gemma echoing itself). It is
-# IMAGE-CAPABLE via its OWN F16 mmproj - it is NOT a separate "Qwen3.5-VL" (no such
-# model; the distinct heavy Qwen3-VL is only for a dedicated VL job). The pinned
+# Qwen3.5-4B (Unsloth) is becky's GENERATIVE orchestrator + ask-routing model AND a
+# SINGLE-IMAGE corroborator (a DIFFERENT family than Gemma-4/LFM, so an agreeing read
+# on ONE still is real corroboration). It does NOT watch video and has NO audio - all
+# video+audio watching stays Gemma-4 (becky-validate). It is IMAGE-CAPABLE via its OWN
+# F16 mmproj - it is NOT a separate "Qwen3.5-VL" (no such model; the distinct heavy
+# Qwen3-VL is only for a dedicated VL job). The pinned
 # GGUF is the Unsloth UD-Q4_K_XL (Dynamic-2.0 quant), the exact file Jordan linked:
 #   https://huggingface.co/unsloth/Qwen3.5-4B-GGUF
 #
@@ -72,4 +73,5 @@ if ($IncludeQ4KM) {
 
 Write-Host ""
 Write-Host "Done. becky picks these up automatically (config.Qwen() resolves UD-Q4_K_XL first)."
-Write-Host "Used by: becky-ask routing, becky-scout proposer, becky-new-tool, and becky-validate --backend qwen35-local."
+Write-Host "Used by: becky-ask routing, becky-scout proposer, becky-new-tool (text), and becky-vision --qwen (SINGLE images only)."
+Write-Host "NOTE: Qwen3.5-4B does NOT watch video - all video+audio is Gemma-4 (becky-validate)."
