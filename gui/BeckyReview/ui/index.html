@@ -160,15 +160,11 @@
     if (e.key === 'Enter') postHost({ type: 'search', query: $search.value });
   });
 
-  // expose for direct ExecuteScript / Step-1 self-test
+  // expose for direct ExecuteScript / CDP verification
   window.beckyReview = { setResults };
 
-  // ---- Step 1 self-test: render a fake list so the page proves out.
-  setResults([
-    { inSec: 12, label: 'cat near the camera (sample)', src: 'sample/clip01.mp4', badge: 'demo' },
-    { inSec: 78, label: 'second sample moment', src: 'sample/clip01.mp4' },
-    { inSec: 240, label: 'third sample moment', src: 'sample/clip02.mp4' }
-  ], 'fake list (Step 1)');
+  // Initial state: the empty hint already in #results stands until the host posts
+  // a folder's videos (pick a folder) or search hits.
 </script>
 </body>
 </html>
