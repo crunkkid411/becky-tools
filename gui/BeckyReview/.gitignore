@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+
+# WebView2 runtime profile (created next to the exe at run time)
+webview2-data/
+
+# mpv video runtime (large prebuilt binaries - install with fetch-mpv.ps1)
+runtime/mpv/*.exe
+runtime/mpv/*.com
+runtime/mpv/*.dll
+runtime/mpv/*.a
+runtime/mpv/becky-input.conf
+runtime/mpv/include/
