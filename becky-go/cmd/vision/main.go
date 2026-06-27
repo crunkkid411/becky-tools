@@ -44,24 +44,29 @@ func main() {
 	ngl := flag.Int("ngl", vision.DefaultNGL, "GPU layers to offload (99 = full)")
 	asJSON := flag.Bool("json", false, "emit JSON instead of a plain-language report")
 	gemma := flag.Bool("gemma", false, "use the stronger Gemma-4 model (via llama-server) for this still, instead of the fast LFM2.5-VL (better for fine detail the tiny model gets wrong)")
-	serverURL := flag.String("server-url", "", "(with --gemma) reuse a running multimodal llama-server instead of spawning one per call")
-	timeoutSec := flag.Int("timeout", 240, "(with --gemma) per-image inference timeout in seconds")
-	verbose := flag.Bool("verbose", false, "show progress on stderr (used by --gemma)")
+	qwen := flag.Bool("qwen", false, "use Qwen3.5-4B (a DIFFERENT family, for SINGLE-IMAGE corroboration) via llama-server instead of LFM2.5-VL; image-only, NEVER video (video+audio is becky-validate/Gemma-4)")
+	serverURL := flag.String("server-url", "", "(with --gemma/--qwen) reuse a running multimodal llama-server instead of spawning one per call")
+	timeoutSec := flag.Int("timeout", 240, "(with --gemma/--qwen) per-image inference timeout in seconds")
+	verbose := flag.Bool("verbose", false, "show progress on stderr (used by --gemma/--qwen)")
 	flag.Parse()
 
 	if *image == "" {
-		fmt.Fprintln(os.Stderr, "usage: becky-vision --image <path> [--prompt \"...\"] [--gemma] [--json] [options]")
+		fmt.Fprintln(os.Stderr, "usage: becky-vision --image <path> [--prompt \"...\"] [--gemma|--qwen] [--json] [options]")
 		os.Exit(2)
 	}
 
-	// Two routes, same vision.Result shape: the fast LFM2.5-VL still describer
-	// (default), or the stronger Gemma-4 via llama-server (--gemma) for the
-	// fine-detail reads the tiny model gets wrong (e.g. a chipped tooth on a
-	// chosen frame). For WATCHING a video segment with audio, use becky-validate.
+	// Three routes, same vision.Result shape, ALL single-image: the fast LFM2.5-VL
+	// still describer (default); the stronger Gemma-4 via llama-server (--gemma) for
+	// fine-detail reads the tiny model gets wrong; or Qwen3.5-4B (--qwen), a DIFFERENT
+	// family for single-image corroboration. None of these watch video — for WATCHING
+	// a video segment with audio, use becky-validate (Gemma-4 E4B->12B).
 	var res vision.Result
-	if *gemma {
+	switch {
+	case *qwen:
+		res = describeWithQwen(*image, *prompt, *serverURL, *timeoutSec, *verbose)
+	case *gemma:
 		res = describeWithGemma(*image, *prompt, *serverURL, *timeoutSec, *verbose)
-	} else {
+	default:
 		res = vision.Describe(vision.Options{
 			Image:    *image,
 			Model:    *model,
@@ -115,6 +120,43 @@ func describeWithGemma(image, prompt, serverURL string, timeoutSec int, verbose 
 		Image:  image,
 		Model:  label, // a model NAME, not a path; Provenance shows it as-is
 		Engine: "Gemma-4",
+		Prompt: prompt,
+	}
+	logf := func(format string, a ...any) { beckyio.Logf(verbose, format, a...) }
+	runner := avlm.New(model, mmproj, cfg.LlamaServer, serverURL, cfg.FFmpeg, cfg.FFprobe, logf)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	out, err := runner.AnalyzeImage(ctx, image, avlm.ImageOptions{Prompt: prompt, Verbose: verbose})
+	if err != nil {
+		res.Degraded = true
+		res.Error = err.Error()
+		return res
+	}
+	res.Description = out.Text
+	return res
+}
+
+// describeWithQwen runs ONE still through Qwen3.5-4B via llama-server
+// (internal/avlm.AnalyzeImage) — a DIFFERENT model family than Gemma-4/LFM, for
+// SINGLE-IMAGE corroboration (an agreeing read across families is real evidence).
+// Same vision.Result shape as the other paths so --json and printReport are
+// unchanged. Model paths come from config.Qwen() (BECKY_QWEN_MODEL overrides).
+// IMAGE-ONLY by construction (AnalyzeImage sends exactly one still, no frames, no
+// audio) — Qwen3.5-4B never watches video; that is becky-validate/Gemma-4's job.
+// Every failure degrades to Result{Degraded:true} — never a panic.
+func describeWithQwen(image, prompt, serverURL string, timeoutSec int, verbose bool) vision.Result {
+	if prompt == "" {
+		prompt = "Describe this image factually and in detail."
+	}
+	cfg := config.Load()
+	model, mmproj, label := cfg.Qwen()
+	res := vision.Result{
+		Tool:   vision.ToolName,
+		Image:  image,
+		Model:  label, // a model NAME, not a path; Provenance shows it as-is
+		Engine: "Qwen3.5-4B",
 		Prompt: prompt,
 	}
 	logf := func(format string, a ...any) { beckyio.Logf(verbose, format, a...) }

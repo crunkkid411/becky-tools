@@ -200,10 +200,15 @@ func (a *App) GrabFrame(source string, t float64) (string, error) {
 	return out, nil
 }
 
-// ProxyFor returns a web-playable path for a source: the original if its codec is
-// already browser-safe (h264/vp8/vp9/av1), else a freshly-built H.264 proxy in
-// the work dir. Used so the <video> preview can decode exotic forensic codecs.
-// The source must be in the open folder. ffprobe/ffmpeg absence is a clear error.
+// ProxyFor returns a web-playable, SCRUB-FRIENDLY path for a source: a low-res,
+// intra-frame, constant-frame-rate proxy built in the work dir (the all-intra
+// H.264 scrub proxy is yuv420p+faststart, so the WebView2 <video> plays it and
+// frame-stepping is snappy). Unlike a plain web proxy this does NOT pass through
+// long-GOP H.264 — that codec is exactly what scrubs slowly, since every seek
+// must decode a whole group of pictures (HANDOFF-PROXY-SNAPPINESS.md). The
+// source must be in the open folder and is opened READ-ONLY; final export still
+// uses the ORIGINAL, never this proxy. ffmpeg absence is a clear error (the
+// caller falls back to the original URL so preview still attempts to play).
 func (a *App) ProxyFor(source string) (string, error) {
 	v, ok := a.resolveSource(source)
 	if !ok {
@@ -215,7 +220,7 @@ func (a *App) ProxyFor(source string) (string, error) {
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return "", fmt.Errorf("create work dir: %w", err)
 	}
-	return reel.Proxy(v.Path, work)
+	return reel.ScrubProxy(v.Path, work)
 }
 
 // writeTextFile creates path and runs fn against a buffered writer, flushing on

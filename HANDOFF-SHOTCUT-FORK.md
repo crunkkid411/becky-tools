@@ -5,6 +5,31 @@
 > finish the build to completion, and if context fills, hand off here and continue in a new loop.
 > This doc is the resumable state: check the boxes, read the live log at the bottom, continue.
 
+## SCRUB PROXY DECISION (2026-06-27) — becky pre-generates intra-frame `.scrub` proxies
+
+Per `HANDOFF-PROXY-SNAPPINESS.md` Step 4, the chosen Shotcut-fork proxy approach is
+**(B) becky pre-generates `.scrub` files; the dock points the PREVIEW producer at them** —
+NOT Shotcut's built-in Proxy feature. Reason: Shotcut's default proxy is plain long-GOP
+H.264, which "still scrubs slowly"; the fix is an **intra-frame, constant-frame-rate** proxy
+(every frame a keyframe → a seek decodes one frame), which becky now builds the same way for
+both this fork and becky-clip.
+
+- **Tool:** `becky-proxy --src <clip> [--out <cache dir>]` (`cmd/becky-proxy`) → writes
+  `<stem>.scrub.mp4` (all-intra H.264, web/MLT-playable) and prints JSON incl. `intra_frame`,
+  `cfr`. Engine: `reel.ScrubProxy` (`internal/reel/proxy.go`). Tunable via `BECKY_PROXY_CODEC`
+  (`h264`|`dnxhr`|`mjpeg`) / `BECKY_PROXY_RES`. A fresh proxy is cached (mtime check) so repeat
+  opens are instant.
+- **Wiring (remaining, local/host work):** in `beckydock.cpp`, when a clip is opened for
+  PREVIEW/timeline, shell out to `becky-proxy --src <clip> --out <case>/.beckyproxy`, read the
+  `proxy` path from the JSON, and open THAT producer in the preview. **Keep the ORIGINAL path on
+  the timeline clip for render/export** — forensic export must be frame-accurate to the source,
+  never the low-res proxy. (This mirrors becky-clip, where `ProxyFor` already routes preview
+  through `reel.ScrubProxy`.)
+- **Proven (2026-06-27):** `becky-proxy --selftest` and a run on a real interview clip
+  (`interview-2026-05-14.mp4`: web-safe h264 but 1 keyframe/60 frames → the old `Proxy()`
+  short-circuited it) both confirm becky's proxy is `intra_frame: true` (60/60 keyframes) +
+  `cfr: true`. The only open gate is Jordan confirming it *feels* smooth when scrubbed in the fork.
+
 ## ✅ SESSION 3 (2026-06-23) — IN-PROCESS Gemma-4 (llama.dll) + dimensions fix + the verb map
 
 Two of Jordan's three asks DONE + verified; the third (remaining HostCommand verbs) has an

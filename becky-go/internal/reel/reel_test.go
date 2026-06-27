@@ -368,6 +368,83 @@ func TestProxyPath(t *testing.T) {
 	}
 }
 
+// TestScrubProxyArgs asserts the scrub proxy is INTRA-FRAME (every frame a
+// keyframe) and CONSTANT-frame-rate — the actual fix for laggy scrubbing. It
+// checks VALUES (the GOP/scene-cut/fps flags), not that the slice is non-empty.
+func TestScrubProxyArgs(t *testing.T) {
+	t.Setenv("BECKY_PROXY_CODEC", "")
+	t.Setenv("BECKY_PROXY_RES", "")
+	joined := strings.Join(scrubProxyArgs(`X:\c\longgop.mp4`, `X:\out\longgop.scrub.mp4`), " ")
+	for _, want := range []string{
+		"-g 1",                // every frame is a keyframe
+		"-keyint_min 1",       // ...minimum too, so no encoder GOP coalescing
+		"-sc_threshold 0",     // no scene-cut GOPs
+		"scale=-2:540,fps=30", // downscale + CONSTANT 30fps (kills VFR frame-step lag)
+		"-c:v libx264", "-crf 20", "-movflags +faststart", "-c:a aac",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("scrubProxyArgs missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+// TestScrubProxyArgsEnv covers the env-tunable codec/resolution paths so the
+// dnxhr/mjpeg recipes and BECKY_PROXY_RES override don't silently regress.
+func TestScrubProxyArgsEnv(t *testing.T) {
+	t.Run("dnxhr", func(t *testing.T) {
+		t.Setenv("BECKY_PROXY_CODEC", "dnxhr")
+		t.Setenv("BECKY_PROXY_RES", "")
+		joined := strings.Join(scrubProxyArgs(`X:\c\src.mp4`, `X:\out\src.scrub.mov`), " ")
+		for _, want := range []string{"-c:v dnxhd", "-profile:v dnxhr_lb", "-pix_fmt yuv422p", "-c:a pcm_s16le", "scale=-2:540,fps=30"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("dnxhr scrubProxyArgs missing %q in:\n%s", want, joined)
+			}
+		}
+	})
+	t.Run("mjpeg", func(t *testing.T) {
+		t.Setenv("BECKY_PROXY_CODEC", "mjpeg")
+		t.Setenv("BECKY_PROXY_RES", "")
+		joined := strings.Join(scrubProxyArgs(`X:\c\src.mp4`, `X:\out\src.scrub.mov`), " ")
+		for _, want := range []string{"-c:v mjpeg", "-q:v 5", "-pix_fmt yuvj420p"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("mjpeg scrubProxyArgs missing %q in:\n%s", want, joined)
+			}
+		}
+	})
+	t.Run("res override", func(t *testing.T) {
+		t.Setenv("BECKY_PROXY_CODEC", "")
+		t.Setenv("BECKY_PROXY_RES", "720")
+		joined := strings.Join(scrubProxyArgs(`X:\c\src.mp4`, `X:\out\src.scrub.mp4`), " ")
+		if !strings.Contains(joined, "scale=-2:720,fps=30") {
+			t.Fatalf("BECKY_PROXY_RES=720 not honored in:\n%s", joined)
+		}
+	})
+	t.Run("garbage res falls back to 540", func(t *testing.T) {
+		t.Setenv("BECKY_PROXY_CODEC", "")
+		t.Setenv("BECKY_PROXY_RES", "notanumber")
+		joined := strings.Join(scrubProxyArgs(`X:\c\src.mp4`, `X:\out\src.scrub.mp4`), " ")
+		if !strings.Contains(joined, "scale=-2:540,fps=30") {
+			t.Fatalf("garbage BECKY_PROXY_RES should fall back to 540 in:\n%s", joined)
+		}
+	})
+}
+
+// TestScrubProxyPath asserts the .scrub stem and the codec-driven extension.
+func TestScrubProxyPath(t *testing.T) {
+	t.Run("h264 default -> .mp4", func(t *testing.T) {
+		t.Setenv("BECKY_PROXY_CODEC", "")
+		if got := scrubProxyPath(`X:\c\long gop.mp4`, `X:\out`); !strings.HasSuffix(got, "long gop.scrub.mp4") {
+			t.Fatalf("scrubProxyPath = %q, want suffix long gop.scrub.mp4", got)
+		}
+	})
+	t.Run("dnxhr -> .mov", func(t *testing.T) {
+		t.Setenv("BECKY_PROXY_CODEC", "dnxhr")
+		if got := scrubProxyPath(`X:\c\long gop.mp4`, `X:\out`); !strings.HasSuffix(got, "long gop.scrub.mov") {
+			t.Fatalf("scrubProxyPath = %q, want suffix long gop.scrub.mov", got)
+		}
+	})
+}
+
 func TestEscapeHelpers(t *testing.T) {
 	if got := escapeFontPath(`C:\Windows\Fonts\consola.ttf`); got != `'C\:/Windows/Fonts/consola.ttf'` {
 		t.Fatalf("escapeFontPath = %q", got)

@@ -87,19 +87,19 @@
     },
     {
       "id": "qwen3.5-4b",
-      "name": "Qwen3.5-4B (Unsloth GGUF) - orchestrator/router + cross-family corroborator",
+      "name": "Qwen3.5-4B (Unsloth GGUF) - orchestrator/router + single-image corroborator",
       "used_by": [
         "becky-ask",
         "becky-scout",
         "becky-new-tool",
-        "becky-validate"
+        "becky-vision"
       ],
       "pinned": "UD-Q4_K_XL + F16 image mmproj (Apache-2.0)",
       "upstream": {
         "type": "hf-model",
         "ref": "unsloth/Qwen3.5-4B-GGUF"
       },
-      "note": "becky's GENERATIVE orchestrator + ask-routing model AND the independent cross-family corroborator: a DIFFERENT model family than Gemma-4, so an agreeing Qwen+Gemma signal is real corroboration (rule 1), not Gemma echoing itself. Drives becky-ask intent routing, becky-scout's proposer, becky-new-tool model reasoning, and becky-validate's qwen35-local IMAGE-ONLY backend (the orchestrate validate ladder's level-2 watch: Gemma E4B -> Qwen3.5 -> Gemma 12B). Qwen3.5-4B is IMAGE-CAPABLE via its OWN F16 mmproj - it is NOT a separate 'Qwen3.5-VL' (no such model); the distinct heavy Qwen3-VL is only for a dedicated VL job. Resolved by config.Qwen() (BECKY_QWEN_MODEL overrides the path); downloaded via scripts/get-qwen35.ps1. The pinned GGUF is the Unsloth UD-Q4_K_XL (Dynamic-2.0 quant), the exact file Jordan linked."
+      "note": "becky's GENERATIVE orchestrator + ask-routing model AND a SINGLE-IMAGE corroborator. Drives becky-ask intent routing, becky-scout's proposer, becky-new-tool model reasoning (TEXT), and becky-vision's --qwen single-still second opinion (a DIFFERENT family than Gemma-4/LFM, so an agreeing read is real corroboration). IMPORTANT: Qwen3.5-4B does ONE still image at a time - it does NOT watch video and has NO audio; ALL video+audio watching stays Gemma-4 (E4B -> 12B, becky-validate). It is IMAGE-CAPABLE via its OWN F16 mmproj - NOT a separate 'Qwen3.5-VL' (no such model); the distinct heavy Qwen3-VL is only for a dedicated VL job. Resolved by config.Qwen() (BECKY_QWEN_MODEL overrides); downloaded via scripts/get-qwen35.ps1. The pinned GGUF is the Unsloth UD-Q4_K_XL (Dynamic-2.0 quant), the exact file Jordan linked."
     },
     {
       "id": "qwen3-embed-4b",

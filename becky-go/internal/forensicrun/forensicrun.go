@@ -34,11 +34,8 @@ import (
 // on-screen window (matches becky-case's correlation window).
 const presenceMergeGap = 2.0
 
-// maxLadderLevel is the depth of the forced validate ladder. It alternates MODEL FAMILIES so
-// corroboration is genuine: level 1 = Gemma-4 E4B, level 2 = Qwen3.5-4B (a DIFFERENT family — an
-// agreeing Gemma+Qwen watch is two INDEPENDENT sources, rule 1, not Gemma echoing a bigger Gemma),
-// level 3 = Gemma-4 12B (escalation for the hardest claims).
-const maxLadderLevel = 3
+// maxLadderLevel is the depth of the forced validate ladder: level 1 = Gemma-4 E4B, level 2 = 12B.
+const maxLadderLevel = 2
 
 // ForensicReport is the single corroborated forensic output a self-regulating entry returns.
 // Only Names/OnScreen are STATED facts (each is a Concluded verdict); Held holds the
@@ -176,10 +173,9 @@ func runAndReport(ctx context.Context, file, subject, kb string, speakers int, t
 	return rep
 }
 
-// gemmaLadder is the real CROSS-FAMILY validate Executor (rule 4). Up the ladder it alternates
-// model families: L1 Gemma-4 E4B -> L2 Qwen3.5-4B (the qwen35-local backend, a DIFFERENT family
-// for genuine corroboration) -> L3 Gemma-4 12B (BECKY_AVLM_VARIANT=12b — chosen by env, not a
-// --variant flag becky-validate lacks). It WATCHES the clip with becky-validate; for a presence
+// gemmaLadder is the real validate Executor (rule 4): level 1 = Gemma-4 E4B (default), level 2 =
+// 12B selected via the BECKY_AVLM_VARIANT=12b env (NOT a --variant flag — becky-validate has
+// none; the model is chosen by config). It WATCHES the clip with becky-validate; for a presence
 // claim it returns KindWatched (the proof rule 3 requires), for an identity claim KindPrint (a
 // corroborating re-check). becky-validate never crashes (it degrades to JSON + a note on a
 // missing model), so a no-corroboration result keeps the claim a candidate, never a false name.
@@ -189,21 +185,12 @@ type gemmaLadder struct {
 }
 
 func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signal, error) {
-	// Alternate model FAMILIES up the ladder so corroboration is real (rule 1):
-	//   L1 Gemma-4 E4B  ->  L2 Qwen3.5-4B (a DIFFERENT family, the cross-family
-	//   second opinion, via the qwen35-local backend)  ->  L3 Gemma-4 12B (escalation).
-	// orchestrate.Corroborate counts DISTINCT sources, so an agreeing L1+L2 is two
-	// independent families — not Gemma echoing a bigger Gemma. The 12B is still
-	// chosen by the BECKY_AVLM_VARIANT env (becky-validate has no --variant flag).
-	model, backend := "gemma4-e4b", "gemma4-local"
+	model := "gemma4-e4b"
 	var env []string
-	switch {
-	case level >= 3:
-		model, backend, env = "gemma4-12b", "gemma4-local", []string{"BECKY_AVLM_VARIANT=12b"}
-	case level == 2:
-		model, backend = "qwen35-4b", "qwen35-local"
+	if level >= 2 {
+		model, env = "gemma4-12b", []string{"BECKY_AVLM_VARIANT=12b"}
 	}
-	out, err := g.run(context.Background(), "becky-validate", []string{g.file, "--backend", backend}, env)
+	out, err := g.run(context.Background(), "becky-validate", []string{g.file, "--backend", "gemma4-local"}, env)
 	if err != nil {
 		// The binary itself failed (absent/crashed) — return an error so the ladder STOPS (it
 		// would fail identically at the next level). A model that RAN but found nothing is handled
@@ -225,19 +212,13 @@ func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signa
 	return orchestrate.Signal{Source: model, Kind: kind, Confidence: conf}, nil
 }
 
-// NewValidateLadder returns the real CROSS-FAMILY validate-ladder Executor for a clip — the SINGLE
-// correct model call entry tools share (becky-transcribe/ask/case/resolve/presence) instead of each
-// re-deriving it: it alternates Gemma-4 E4B -> Qwen3.5-4B -> Gemma-4 12B (a DIFFERENT family in the
-// middle, so an agreeing watch is genuine corroboration), via the qwen35-local backend + the
-// BECKY_AVLM_VARIANT env; a presence claim's watch is subject-aware. Degrade-never-crash (a missing
-// binary errors -> claim stays held; a present-but-modelless backend exits 0 with nothing -> escalates).
-func NewValidateLadder(file string) orchestrate.Executor {
+// NewGemmaLadder returns the real validate-ladder Executor for a clip — the SINGLE correct model
+// call entry tools share (becky-transcribe/ask/case/resolve/presence) instead of each re-deriving
+// it (and mis-flagging it): it escalates E4B->12B via the BECKY_AVLM_VARIANT env, and a presence
+// claim's watch is subject-aware. Degrade-never-crash (a missing binary errors -> claim stays held).
+func NewGemmaLadder(file string) orchestrate.Executor {
 	return gemmaLadder{file: file, run: realRunner}
 }
-
-// NewGemmaLadder is the former name of NewValidateLadder, kept as a compatibility alias (the ladder
-// is now cross-family — Gemma-4 E4B -> Qwen3.5-4B -> Gemma-4 12B — no longer Gemma-only).
-func NewGemmaLadder(file string) orchestrate.Executor { return NewValidateLadder(file) }
 
 // presenceSubjectFromKey pulls "<subject>" out of an "onscreen=<subject>@[t0-t1]" claim key.
 func presenceSubjectFromKey(key string) string {

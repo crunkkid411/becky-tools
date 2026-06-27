@@ -67,10 +67,9 @@ gate in **`becky-go/internal/orchestrate`**. Use it; do not re-implement the rul
 2. mapping each tool's JSON output into `orchestrate.Signal`s tagged to `orchestrate.Claim`s (e.g. a
    `becky-identify` hit → `KindPrint`; a `becky-validate` watch → `KindWatched`; a transcript mention →
    `KindMention`), carrying through any caller-supplied facts (known speakers);
-3. implementing `orchestrate.Executor.Validate` as the **CROSS-FAMILY ladder** — **Gemma-4 E4B → Qwen3.5-4B
-   → Gemma-4 12B** locally for low-confidence claims (Qwen3.5 is a DIFFERENT model family, so an agreeing
-   Gemma+Qwen watch is two INDEPENDENT sources — real corroboration, not Gemma echoing a bigger Gemma; use
-   `forensicrun.NewValidateLadder`, which drives `becky-validate --backend qwen35-local` for the Qwen tier);
+3. implementing `orchestrate.Executor.Validate` to call **Gemma-4 E4B then 12B** locally for low-confidence
+   claims — these are the ONLY models that watch VIDEO+AUDIO; Qwen3.5 is text/single-image only and is NOT
+   in this ladder (the models live on the PC; `forensicrun.NewGemmaLadder`);
 4. returning `orchestrate.Resolve(...)` — the final corroborated output. The forensic agent sees only this.
 The engine + its rules are cloud-built and proven; steps 1–4 are the local model wiring.
 
@@ -188,23 +187,24 @@ Two separate tools, two different llama.cpp paths, **one model on the GPU at a t
   Gemma-4 on the SAME still via `llama-server` — use it for fine detail the tiny model gets wrong.
 - **`becky-validate`** — Gemma-4 **audio-visual** pass over a short VIDEO CLIP via **`llama-server.exe`**
   (it ffmpeg-samples frames + 16 kHz mono audio, then asks cross-modal questions). This is the ONLY tool
-  that understands AUDIO, and the one that WATCHES a segment. (Do not point the default LFM path
-  `llama-mtmd-cli` at Gemma — it hard-crashes 0xC0000409; that is why `--gemma` uses `llama-server`.)
-  `--backend qwen35-local` runs the **Qwen3.5-4B** image-only second opinion instead (a DIFFERENT family
-  for cross-family corroboration; audio is not analyzed there).
+  that understands AUDIO, and the one that WATCHES a segment — **Gemma-4 E4B → 12B are the only models that
+  watch video**. (Do not point the default LFM path `llama-mtmd-cli` at Gemma — it hard-crashes 0xC0000409;
+  that is why `--gemma` uses `llama-server`.)
 - **Qwen3.5-4B orchestrator** (Unsloth `UD-Q4_K_XL`) — becky's GENERATIVE brain + ask-router: it routes
-  `becky-ask` (act-vs-discuss), proposes in `becky-scout`, and is the **independent cross-family
-  corroborator** in the validate ladder (Gemma E4B → **Qwen3.5** → Gemma 12B). It is **image-capable** via
-  its own F16 mmproj, so it corroborates VISION too — but it is **NOT a "Qwen3.5-VL"** (no such model);
-  reach for the separate heavy **Qwen3-VL** only for a dedicated VL job. One model on the GPU at a time.
-  Resolved by `config.Qwen()` (`BECKY_QWEN_MODEL` overrides); fetched by `scripts/get-qwen35.ps1`.
+  `becky-ask` (act-vs-discuss), proposes in `becky-scout`, and reasons in `becky-new-tool` (all **TEXT**).
+  It is also **image-capable** via its own F16 mmproj, so **`becky-vision --qwen`** gives a SINGLE-STILL
+  second opinion (a DIFFERENT family than LFM/Gemma — agreement on one image is real corroboration). It
+  does **ONE still at a time — it does NOT watch video and has NO audio**; all video+audio watching stays
+  Gemma-4 (`becky-validate`). It is **NOT a "Qwen3.5-VL"** (no such model); reach for the separate heavy
+  **Qwen3-VL** only for a dedicated VL job. Resolved by `config.Qwen()` (`BECKY_QWEN_MODEL`); fetched by
+  `scripts/get-qwen35.ps1`.
 
 ### Models on disk (full paths)
 | Model | Role | GGUF | mmproj |
 |---|---|---|---|
 | LFM2.5-VL **450M** | fastest still-image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-450m\LFM2.5-VL-450M-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-450m-Q8_0.gguf` |
 | LFM2.5-VL **1.6B** (default for `becky-vision`) | fast higher-quality still image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
-| **Qwen3.5-4B** (Unsloth) ← *orchestrator + ask-router + cross-family corroborator; image-capable, NOT a "Qwen3.5-VL"* | routes becky-ask, proposes in becky-scout, image-only `becky-validate --backend qwen35-local` watch | `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf` | `…\mmproj-F16.gguf` (image) |
+| **Qwen3.5-4B** (Unsloth) ← *orchestrator + ask-router + SINGLE-IMAGE corroborator; image-capable, NOT a "Qwen3.5-VL"; never video* | routes becky-ask, proposes in becky-scout, `becky-vision --qwen` single still | `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf` | `…\mmproj-F16.gguf` (image) |
 | **Gemma-4 E4B-it QAT** ← *default AVLM* | AV clip analysis (vision **+ audio**) | `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | `X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf` |
 | **Gemma-4 12B-it QAT** ← *re-verify tier (downloaded + verified 2026-06-24)* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(6.3 GB, present)* | `…\mmproj-12B-BF16.gguf` *(present)* |
 
