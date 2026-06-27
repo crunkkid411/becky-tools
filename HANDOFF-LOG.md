@@ -10,6 +10,46 @@
 
 ---
 
+## `claude/becky-review-app` — Becky Review: the one-window forensic video reviewer (2026-06-27, local)
+
+**What landed (Steps 0-7 of `HANDOFF-BECKY-REVIEW-APP.md`, built + screenshotted + on master).** A new
+native WPF (.NET 8) app `gui/BeckyReview` that splits the two hard jobs the research doc settled: the
+**LEFT pane is WebView2** (HTML UI loaded via `SetVirtualHostNameToFolderMapping` — a virtual
+`https://beckyreview.local/` origin with **NO TCP server**), and the **RIGHT pane is native mpv**
+embedded via the `--wid` child-window handle, driven over a JSON IPC pipe. Video never goes through the
+browser (that path can't seek without a server) — so it stays GPU-decoded + frame-exact.
+
+- **Walking skeleton first (Steps 0-3):** empty two-pane high-contrast window → WebView2 shows local HTML
+  with no server → mpv plays + frame-steps a real clip → both panes coexist. Proven with values:
+  `hwdec-current = d3d11va` (GPU decode on the 3070), playback advances (0→1.2s), frame-step 0→1→2→3→4,
+  frame-exact seek (6.5 → 6.500000).
+- **The product loop (Steps 4-6):** new thin tool **`becky-review-index`** (`cmd/review-index`) — a JSON
+  wrapper over the existing `internal/footage` engine (reimplements nothing): lists a folder's videos +
+  transcripts and ranks transcript cue hits for a search, fully offline (no DB/model). Pick folder → LEFT
+  lists real videos; type a term → LEFT lists ranked hits with exact in-points; click a hit → mpv loads +
+  seeks + plays that moment. Proven on a real clip+srt: search "cat" → 2 hits (0:01, 0:05); clicking the
+  0:05 hit seeked there and mpv showed the matching cue burned in. `BeckyTools.cs` resolves `becky-go/bin`
+  and shells the tool (degrade-never-crash, like becky-window).
+- **CDP self-verify (Step 7):** `BECKY_REVIEW_CDP_PORT` exposes the WebView2 over CDP. Proven: an external
+  script attached, **read the DOM** (`count:2, first:"The cat walked right up to the camera."`) and clicked
+  the first hit → the video seeked. This is the verification loop that was impossible on Gio (no DOM tree).
+- **Transport + launcher:** mouse-driven frame-back / play-pause / frame-fwd buttons (3 clicks → frame 3,
+  verified) mirroring the mpv arrow/space bindings. `Open Becky Review.bat` + a Desktop "Becky Review"
+  shortcut (first run builds the app + index tool and fetches the mpv runtime via `fetch-mpv.ps1`; mpv
+  binaries are git-ignored). Verified the shortcut's exact target launches the polished empty state.
+
+**Collision note (two agents, one tree).** A concurrent local agent held the shared working tree on
+`claude/qwen35-orchestrator` mid-session and advanced `master` to `9e67d73`. My work was safe on its own
+branch; I finished in an isolated **git worktree**, merged the (fully disjoint) master into my branch,
+verified green, and FF-pushed `master` (`9e67d73..bbbd979`). No files overlapped — the merge was clean.
+
+**Left for later (documented, not blocking).** Step 8 (libmpv **render API** so becky draws its own
+playhead/markers + a sprite-sheet thumbnail strip) — the `--wid` embed already plays/scrubs/frame-steps
+smoothly, so this is polish. The "in parallel" **scrub-proxy fix** (`HANDOFF-PROXY-SNAPPINESS.md`
+`ScrubProxy` in `internal/reel`) is still open — helps very-long-GOP footage; libmpv's GPU decode already
+scrubs the common cases well. Gates: `go build/vet/test ./...` green; the only `gofmt -l` hit is the
+cosmetic Windows-CRLF one (committed content is LF).
+
 ## `claude/qwen35-orchestrator` — Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local)
 
 **What landed.** Qwen3.5-4B (Unsloth **`UD-Q4_K_XL`**, the exact GGUF Jordan linked) was finally given a

@@ -528,6 +528,17 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **Becky Review — the one-window forensic video reviewer (2026-06-27, local):** new native WPF (.NET 8)
+  app `gui/BeckyReview` per `HANDOFF-BECKY-REVIEW-APP.md` (Steps 0-7 built + screenshotted). **LEFT** = a
+  WebView2 HTML list/search loaded with **no TCP server** (`SetVirtualHostNameToFolderMapping`); **RIGHT**
+  = native **mpv** embedded via `--wid`, GPU-decoded + frame-exact (video never goes through the browser).
+  New thin tool **`becky-review-index`** (`cmd/review-index`, JSON wrapper over `internal/footage` — no DB/
+  model) drives folder-list + transcript search; pick folder → list videos, search a term → ranked cue
+  hits with exact in-points, click a hit → the player seeks+plays that moment (the "cat" use case, proven
+  end to end). CDP self-verify works (`BECKY_REVIEW_CDP_PORT` → an agent read the DOM + clicked). One-click
+  `Open Becky Review.bat` + Desktop "Becky Review" shortcut (first run fetches the git-ignored mpv runtime
+  via `fetch-mpv.ps1`). **Left:** Step 8 (libmpv render API for a becky-drawn playhead + thumbnail strip)
+  and the `internal/reel` scrub-proxy fix — both polish; `--wid` already scrubs smoothly.
 - **Qwen3.5-4B wired in as the orchestrator + cross-family corroborator (2026-06-27, local):** the model
   Jordan linked (Unsloth **`UD-Q4_K_XL`**) now has a real config home (`config.Qwen()` + `BECKY_QWEN_MODEL`)
   instead of three copy-pasted hardcoded paths, and is the INDEPENDENT cross-family voice in the validate
