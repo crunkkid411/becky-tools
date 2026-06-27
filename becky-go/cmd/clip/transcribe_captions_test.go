@@ -5,9 +5,9 @@ package main
 // (runCaptions) and the becky-transcribe exec (runTranscribe) are faked. It
 // proves the two forensic-critical branches:
 //
-//   - use_official  → NO local ASR runs, NO "_LOCAL.srt" is written, and any
+//   - use_official  → NO local ASR runs, NO "_parakeet_transcription.srt" is written, and any
 //     existing official ".en.srt" is left byte-for-byte untouched.
-//   - local_needed  → local ASR writes "<stem>_LOCAL.srt" (NOT "<stem>.srt"),
+//   - local_needed  → local ASR writes "<stem>_parakeet_transcription.srt" (NOT "<stem>.srt"),
 //     and an existing original ".en.srt" beside it is left byte-for-byte
 //     untouched (originals are sacred).
 //
@@ -69,7 +69,7 @@ func newClipFolder(t *testing.T) (*App, string, string) {
 }
 
 // TestTranscribe_UseOfficial_NoLocalWritten: becky-captions says use_official (a
-// complete official .en.srt is in place) → no _LOCAL is written and the original
+// complete official .en.srt is in place) → no _parakeet_transcription is written and the original
 // .en.srt is unchanged.
 func TestTranscribe_UseOfficial_NoLocalWritten(t *testing.T) {
 	app, dir, name := newClipFolder(t)
@@ -100,8 +100,8 @@ func TestTranscribe_UseOfficial_NoLocalWritten(t *testing.T) {
 	if transCalls != 0 {
 		t.Fatalf("use_official must NOT run local ASR, ran %d", transCalls)
 	}
-	if fileExists(filepath.Join(dir, "stream_[ABCDEFGHIJK]_LOCAL.srt")) {
-		t.Fatalf("use_official must NOT write a _LOCAL sidecar")
+	if fileExists(filepath.Join(dir, "stream_[ABCDEFGHIJK]_parakeet_transcription.srt")) {
+		t.Fatalf("use_official must NOT write a _parakeet_transcription sidecar")
 	}
 	if after := sha256Of(t, official); after != before {
 		t.Fatalf("the original .en.srt was modified: %s -> %s", before, after)
@@ -114,7 +114,7 @@ func TestTranscribe_UseOfficial_NoLocalWritten(t *testing.T) {
 
 // TestTranscribe_LocalNeeded_WritesLocalKeepsOriginal: becky-captions says
 // local_needed (e.g. the stream was edited) while an original .en.srt is still
-// present → local ASR writes "<stem>_LOCAL.srt" and the original .en.srt is
+// present → local ASR writes "<stem>_parakeet_transcription.srt" and the original .en.srt is
 // byte-for-byte unchanged. This is the core forensic proof, in a unit test.
 func TestTranscribe_LocalNeeded_WritesLocalKeepsOriginal(t *testing.T) {
 	app, dir, name := newClipFolder(t)
@@ -142,12 +142,12 @@ func TestTranscribe_LocalNeeded_WritesLocalKeepsOriginal(t *testing.T) {
 		t.Fatalf("Transcribe: %v", err)
 	}
 
-	wantLocal := filepath.Join(dir, "stream_[ABCDEFGHIJK]_LOCAL.srt")
+	wantLocal := filepath.Join(dir, "stream_[ABCDEFGHIJK]_parakeet_transcription.srt")
 	if filepath.Clean(gotOut) != filepath.Clean(wantLocal) {
 		t.Fatalf("local ASR output path = %q, want %q", gotOut, wantLocal)
 	}
 	if !fileExists(wantLocal) {
-		t.Fatalf("expected _LOCAL sidecar at %s", wantLocal)
+		t.Fatalf("expected _parakeet_transcription sidecar at %s", wantLocal)
 	}
 	if after := sha256Of(t, official); after != before {
 		t.Fatalf("FORENSIC VIOLATION: original .en.srt changed: %s -> %s", before, after)
@@ -157,7 +157,7 @@ func TestTranscribe_LocalNeeded_WritesLocalKeepsOriginal(t *testing.T) {
 // TestRetranscribe_BareSrt_NeverOverwritten is the exact-complaint test: a video
 // with a BARE "<stem>.srt" (not ".en.srt"), the user hits "re-transcribe" (the ↻
 // button), local ASR runs — and the original "<stem>.srt" is byte-for-byte
-// unchanged while a SEPARATE "<stem>_LOCAL.srt" is written. The tooltip's old
+// unchanged while a SEPARATE "<stem>_parakeet_transcription.srt" is written. The tooltip's old
 // "overwrites the .srt" claim was false; this proves it.
 func TestRetranscribe_BareSrt_NeverOverwritten(t *testing.T) {
 	app, dir, name := newClipFolder(t)
@@ -185,12 +185,12 @@ func TestRetranscribe_BareSrt_NeverOverwritten(t *testing.T) {
 		t.Fatalf("Transcribe: %v", err)
 	}
 
-	wantLocal := filepath.Join(dir, "stream_[ABCDEFGHIJK]_LOCAL.srt")
+	wantLocal := filepath.Join(dir, "stream_[ABCDEFGHIJK]_parakeet_transcription.srt")
 	if filepath.Clean(gotOut) != filepath.Clean(wantLocal) {
-		t.Fatalf("local ASR output = %q, want the _LOCAL sidecar %q", gotOut, wantLocal)
+		t.Fatalf("local ASR output = %q, want the _parakeet_transcription sidecar %q", gotOut, wantLocal)
 	}
 	if !fileExists(wantLocal) {
-		t.Fatalf("expected a separate _LOCAL sidecar at %s", wantLocal)
+		t.Fatalf("expected a separate _parakeet_transcription sidecar at %s", wantLocal)
 	}
 	if after := sha256Of(t, bare); after != before {
 		t.Fatalf("FORENSIC VIOLATION: re-transcribe modified the original .srt: %s -> %s", before, after)
@@ -198,7 +198,7 @@ func TestRetranscribe_BareSrt_NeverOverwritten(t *testing.T) {
 }
 
 // TestTranscribe_CaptionsAbsent_GoesLocal: with NO becky-captions resolvable, the
-// sequence skips straight to local ASR and writes "<stem>_LOCAL.srt".
+// sequence skips straight to local ASR and writes "<stem>_parakeet_transcription.srt".
 func TestTranscribe_CaptionsAbsent_GoesLocal(t *testing.T) {
 	app, dir, name := newClipFolder(t)
 
@@ -225,8 +225,8 @@ func TestTranscribe_CaptionsAbsent_GoesLocal(t *testing.T) {
 	if _, err := app.Transcribe(name); err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
-	if !fileExists(filepath.Join(dir, "stream_[ABCDEFGHIJK]_LOCAL.srt")) {
-		t.Fatalf("captions-absent should produce a _LOCAL sidecar")
+	if !fileExists(filepath.Join(dir, "stream_[ABCDEFGHIJK]_parakeet_transcription.srt")) {
+		t.Fatalf("captions-absent should produce a _parakeet_transcription sidecar")
 	}
 }
 
@@ -257,16 +257,82 @@ func TestTranscribe_CaptionsErrors_DegradesToLocal(t *testing.T) {
 	if _, err := app.Transcribe(name); err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
-	if !fileExists(filepath.Join(dir, "stream_[ABCDEFGHIJK]_LOCAL.srt")) {
-		t.Fatalf("captions-error should degrade to a _LOCAL sidecar")
+	if !fileExists(filepath.Join(dir, "stream_[ABCDEFGHIJK]_parakeet_transcription.srt")) {
+		t.Fatalf("captions-error should degrade to a _parakeet_transcription sidecar")
 	}
 }
 
-// TestLocalSrtSidecarPath confirms the path construction is exactly "<stem>_LOCAL.srt".
+// TestLocalSrtSidecarPath confirms the path construction is exactly "<stem>_parakeet_transcription.srt".
 func TestLocalSrtSidecarPath(t *testing.T) {
 	got := localSrtSidecarPath(filepath.Join("E:", "f", "vid_[ID000000001].mp4"))
-	want := filepath.Join("E:", "f", "vid_[ID000000001]_LOCAL.srt")
+	want := filepath.Join("E:", "f", "vid_[ID000000001]_parakeet_transcription.srt")
 	if got != want {
 		t.Fatalf("localSrtSidecarPath = %q, want %q", got, want)
+	}
+}
+
+// TestReTranscribe_OfficialPresent_ForcesParakeetSecondaryKeepsOriginal is the
+// "↻ re-transcribe" forensic contract: when a video ALREADY indexes as having a
+// transcript (an official .en.srt is in place before the folder is opened), hitting
+// re-transcribe forces a fresh Parakeet pass — it does NOT short-circuit on the
+// official. The result is a SEPARATE "<stem>_parakeet_transcription.srt", the
+// becky-captions check is skipped entirely, and the original .en.srt is byte-for-byte
+// unchanged. (Contrast TestTranscribe_UseOfficial_NoLocalWritten, where the folder is
+// opened BEFORE the official lands, so the video indexes WITHOUT a transcript and the
+// caption-first "+" path runs instead.)
+func TestReTranscribe_OfficialPresent_ForcesParakeetSecondaryKeepsOriginal(t *testing.T) {
+	dir := t.TempDir()
+	name := "stream_[ABCDEFGHIJK].mp4"
+	mustWrite(t, filepath.Join(dir, name), "not-real-video-bytes")
+	// The official transcript is in place BEFORE indexing, so the video indexes as
+	// has_transcript=true — exactly the state in which the GUI shows the ↻ button.
+	official := filepath.Join(dir, "stream_[ABCDEFGHIJK].en.srt")
+	mustWrite(t, official, cannedSRT)
+	before := sha256Of(t, official)
+
+	app := NewApp()
+	app.workDir = t.TempDir()
+	if _, err := app.OpenFolder(dir); err != nil {
+		t.Fatalf("OpenFolder: %v", err)
+	}
+	if v, ok := pickVideo(app.folderView(), name); !ok || !v.HasTranscript {
+		t.Fatalf("precondition: video should index WITH a transcript, got %+v", v)
+	}
+
+	// A forced re-transcribe must NOT consult becky-captions at all.
+	origCap := runCaptions
+	t.Cleanup(func() { runCaptions = origCap })
+	runCaptions = func(_ context.Context, _bin, _video string, _offline bool) (captions.Decision, error) {
+		t.Fatalf("re-transcribe (forceLocal) must NOT call becky-captions")
+		return captions.Decision{}, nil
+	}
+	fakeCapBin := filepath.Join(t.TempDir(), captionsExeName())
+	mustWrite(t, fakeCapBin, "x")
+	t.Setenv("BECKY_CAPTIONS", fakeCapBin)
+
+	origRun := runTranscribe
+	t.Cleanup(func() { runTranscribe = origRun })
+	gotOut := ""
+	runTranscribe = func(_ context.Context, _bin, _video, srtOut string) error {
+		gotOut = srtOut
+		return os.WriteFile(srtOut, []byte("fresh parakeet pass content"), 0o644)
+	}
+	tBin := filepath.Join(t.TempDir(), transcribeExeName())
+	mustWrite(t, tBin, "x")
+	t.Setenv("BECKY_TRANSCRIBE", tBin)
+
+	if _, err := app.Transcribe(name); err != nil {
+		t.Fatalf("Transcribe (re-transcribe): %v", err)
+	}
+
+	wantSecondary := filepath.Join(dir, "stream_[ABCDEFGHIJK]_parakeet_transcription.srt")
+	if filepath.Clean(gotOut) != filepath.Clean(wantSecondary) {
+		t.Fatalf("forced re-transcribe output = %q, want the separate secondary %q", gotOut, wantSecondary)
+	}
+	if !fileExists(wantSecondary) {
+		t.Fatalf("expected a separate parakeet secondary at %s", wantSecondary)
+	}
+	if after := sha256Of(t, official); after != before {
+		t.Fatalf("FORENSIC VIOLATION: re-transcribe modified the original .en.srt: %s -> %s", before, after)
 	}
 }

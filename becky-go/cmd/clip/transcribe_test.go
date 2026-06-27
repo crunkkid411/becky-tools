@@ -74,8 +74,8 @@ func TestTranscribeOneFlipsHasTranscript(t *testing.T) {
 	}
 
 	// The LOCAL-ASR sidecar landed NEXT TO the source as the becky-owned
-	// "kitchen_LOCAL.srt" — never the video, and never an official "kitchen.srt".
-	srt := filepath.Join(filepath.Dir(after.Path), "kitchen_LOCAL.srt")
+	// "kitchen_parakeet_transcription.srt" — never the video, and never an official "kitchen.srt".
+	srt := filepath.Join(filepath.Dir(after.Path), "kitchen_parakeet_transcription.srt")
 	if !fileExists(srt) {
 		t.Fatalf("expected local-ASR sidecar at %s", srt)
 	}

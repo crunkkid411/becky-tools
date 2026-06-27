@@ -68,8 +68,9 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "transcribe":
 		// Run the caption sequence on one video: prefer a complete official .srt
 		// (present or fetched via becky-captions); else local ASR to
-		// <stem>_LOCAL.srt (never overwriting an original) → re-index.
-		// Long-running (the GUI shows a spinner).
+		// <stem>_parakeet_transcription.srt (never overwriting an original) →
+		// re-index. A video that already has a transcript forces a fresh local pass
+		// (the "↻ re-transcribe" intent). Long-running (the GUI shows a spinner).
 		return a.Transcribe(argString(args, "name"))
 	case "transcribe_all":
 		// Transcribe every indexed video lacking a transcript (degrade per video).

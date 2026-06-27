@@ -399,6 +399,16 @@ body {
   z-index: 3;
 }
 
+/* the clip currently being dragged to a new slot (CHANGE A): lifted + dimmed so the
+   eye follows it, tinted blue to read apart from the green hover + yellow selection */
+.clip.dragging {
+  opacity: .55;
+  border-color: var(--blue);
+  box-shadow: 0 0 10px rgba(0, 174, 239, .5);
+  cursor: grabbing;
+  z-index: 4;
+}
+
 /* the empty fill between the two trim handles - forwards clicks to the scrubber */
 .clip .cbody { flex: 1; min-width: 0; }
 
@@ -428,6 +438,15 @@ body {
   content: ""; position: absolute; top: 0; left: -4px;
   border-left: 5px solid transparent; border-right: 5px solid transparent;
   border-top: 6px solid var(--neon);
+}
+
+/* reorder drop indicator (CHANGE A): a bright insertion line marking where the
+   dragged clip will land. Blue keeps it distinct from the green playhead + the
+   yellow selection; z-index sits above both while a drag is in progress. */
+.dropmark {
+  position: absolute; top: 0; bottom: 0; width: 3px;
+  background: var(--blue); box-shadow: 0 0 8px var(--blue);
+  pointer-events: none; z-index: 6;
 }
 
 /* ============================ TOAST ======================================== */

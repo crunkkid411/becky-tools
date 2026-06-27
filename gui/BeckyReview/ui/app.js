@@ -29,6 +29,11 @@
   var DBL_GUARD_MS = 220;  // single-click wait so a double-click can cancel it
   var RECT_THROTTLE_MS = 60;   // max rate we report the video-hole rect to the host
 
+  // Timeline gesture tuning (CHANGE A/B/C):
+  var DRAG_PX  = 6;     // a clip-body pointer must travel > this to become a REORDER drag (else it's a click=seek)
+  var SNAP_PX  = 8;     // a seek snaps to a clip edge ONLY within this many px of it (tight, never the whole clip)
+  var MIN_CLIP = 0.3;   // a clip's trimmed (in,out) window may never be shorter than this many seconds
+
   var CHIPS = [
     'find every threat to the host family',
     'compile every time he offered money for the cat',
@@ -300,9 +305,9 @@
     if (busy) {
       btn = '<button class="tbtn busy" disabled title="transcribing…"><span class="spin"></span></button>';
     } else if (v.has_transcript) {
-      btn = '<button class="tbtn done" data-name="' + attr(v.name) + '" title="re-transcribe this video">⟳</button>';
+      btn = '<button class="tbtn done" data-name="' + attr(v.name) + '" title="re-transcribe locally — writes a SEPARATE <name>_parakeet_transcription.srt; your original transcript is never touched">⟳</button>';
     } else {
-      btn = '<button class="tbtn add" data-name="' + attr(v.name) + '" title="transcribe this video">+</button>';
+      btn = '<button class="tbtn add" data-name="' + attr(v.name) + '" title="transcribe this video (local Parakeet ASR)">+</button>';
     }
     var sub = [v.date, v.person, v.location].filter(Boolean).join(' · ');
     return '<div class="file" data-name="' + attr(v.name) + '">' +
@@ -753,6 +758,7 @@
     }
     trackEl.appendChild(playheadEl);
     updatePlayhead();
+    prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
   }
 
   function updateOverlayBtn() {
@@ -867,63 +873,93 @@
     }
   }
 
-  /* ---- resize handles (pointer-drag the left/right edge) ---- */
-  var resizing = null;     // active resize gesture
-  var justResized = false; // suppress the click that fires right after a resize
-  var justScrubbed = false;// suppress the click that fires right after a scrub gesture
+  /* =======================================================================
+     TIMELINE POINTER GESTURES (CHANGE A/B/C)
 
-  trackEl.addEventListener('pointerdown', function (e) {
-    // 1) a trim handle -> resize gesture (stops here so scrubbing never starts)
-    var h = e.target.closest('.rh');
-    if (h) {
-      e.preventDefault();         // also stops the native HTML5 drag from starting
-      e.stopPropagation();
-      var block = h.closest('.clip');
-      var id = block.dataset.id;
-      var clip = clipById(id);
-      if (!clip) { return; }
-      var w = block.offsetWidth;
-      var dur = Math.max(0.001, clipDur(clip));
-      resizing = {
-        id: id, edge: h.dataset.edge, startX: e.clientX,
-        block: block, pxPerSec: w / dur,
-        origIn: clip.in || 0, origOut: clip.out || 0,
-        newIn: clip.in || 0, newOut: clip.out || 0
-      };
-      try { h.setPointerCapture(e.pointerId); } catch (_) {}
-      return;
+     ONE pointer model on the track tells three intents apart by WHERE the press
+     lands and (for a clip body) by how far it then MOVES:
+
+       .rh handle    -> RESIZE  (trim/extend this clip's OWN source window)
+       clip BODY     -> PENDING : a CLICK (moves <= DRAG_PX) seeks + selects;
+                                  a DRAG  (moves >  DRAG_PX) reorders the clip
+       empty track   -> SCRUB   (free seek, same as the ruler)
+
+     Pointer capture keeps a drag/scrub tracking even after it leaves the element,
+     so a click-vs-drag is never lost mid-gesture. Clips keep draggable=false; this
+     is all pointer events, so it composes cleanly with scrubbing.
+     ===================================================================== */
+  var resizing     = null;   // active RESIZE gesture (one clip's own in/out)
+  var clipGesture  = null;   // pending CLIP-BODY gesture: click=seek OR drag=reorder
+  var justResized  = false;  // suppress the click that fires right after a resize
+  var justScrubbed = false;  // suppress the click that fires right after a scrub / drag
+
+  /* ---- source-duration cache (CHANGE C) ----
+     Each clip is an INDEPENDENT (in,out) window into its OWN source. Extending the
+     right edge may reveal more of that source up to its TRUE duration, and NEVER
+     clamps to a neighbouring timeline clip. The duration is looked up lazily via
+     the probe verb and cached per source path, so the bound is ready on the next
+     drag. Unknown/0 duration -> a generous ceiling, never a neighbour. */
+  var sourceDur = new Map();    // source path -> duration (sec); 0 = unknown / not probe-able
+  var sourceDurPending = {};    // source path -> true while a probe is in flight
+  function knownSourceDuration(source) {
+    var d = source ? sourceDur.get(source) : 0;
+    return (typeof d === 'number' && d > 0) ? d : 0;
+  }
+  async function ensureSourceDuration(source) {
+    if (!source || sourceDur.has(source) || sourceDurPending[source]) { return; }
+    sourceDurPending[source] = true;
+    var rep = await beckyCall('probe', { source: source });
+    delete sourceDurPending[source];
+    var d = (rep && rep.ok && rep.data && typeof rep.data.duration === 'number') ? rep.data.duration : 0;
+    sourceDur.set(source, d > 0 ? d : 0);
+  }
+  function prefetchSourceDurations() {
+    var clips = state.timeline.clips || [];
+    for (var i = 0; i < clips.length; i++) { ensureSourceDuration(clips[i].source); }
+  }
+  // The most a clip's OUT may grow to: its source's true duration if known, else a
+  // generous ceiling. CRITICAL: this depends only on the clip's OWN source.
+  function maxOutFor(clip) {
+    var d = knownSourceDuration(clip.source);
+    return d > 0 ? d : (clip.out || 0) + 3600;
+  }
+
+  /* ---- RESIZE: trim/extend a clip's OWN source window (CHANGE C) ---- */
+  function startResize(handle, e) {
+    e.preventDefault();          // also stops any native HTML5 drag from starting
+    e.stopPropagation();         // a handle never starts a scrub or a reorder
+    var block = handle.closest('.clip');
+    var clip = block && clipById(block.dataset.id);
+    if (!clip) { return; }
+    ensureSourceDuration(clip.source);   // warm THIS source's bound for the drag
+    var w = block.offsetWidth;
+    var dur = Math.max(0.001, clipDur(clip));
+    resizing = {
+      id: clip.id, edge: handle.dataset.edge, startX: e.clientX,
+      block: block, clip: clip, pxPerSec: w / dur,
+      origIn: clip.in || 0, origOut: clip.out || 0,
+      newIn: clip.in || 0, newOut: clip.out || 0
+    };
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+  function moveResize(e) {
+    var r = resizing;
+    var dSec = (e.clientX - r.startX) / r.pxPerSec;   // px -> sec via this block's own scale
+    var nIn = r.origIn, nOut = r.origOut;
+    if (r.edge === 'l') {
+      // LEFT edge moves IN, bounded by THIS clip only: 0 <= in <= out - MIN_CLIP.
+      nIn = Math.max(0, Math.min(r.origIn + dSec, r.origOut - MIN_CLIP));
+    } else {
+      // RIGHT edge moves OUT, bounded by THIS source's duration (NOT the next clip):
+      // in + MIN_CLIP <= out <= sourceDuration.
+      nOut = Math.max(r.origIn + MIN_CLIP, Math.min(r.origOut + dSec, maxOutFor(r.clip)));
     }
-    // 2) the hover remove "x" -> let the click handler deal with it
-    if (e.target.closest('[data-act="remove"]')) { return; }
-    // 3) ANYWHERE else on the track (a clip body OR empty space) -> scrub/seek (CHANGE 4)
-    if (!(state.timeline.clips || []).length) { return; }
-    e.preventDefault();              // keep the pointer drag clean (no text selection)
-    scrubbing = true;
-    try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
-    scrubTo(e, true);
-  });
-
-  trackEl.addEventListener('pointermove', function (e) {
-    if (resizing) {
-      var dSec = (e.clientX - resizing.startX) / resizing.pxPerSec;   // px -> sec via block width/dur
-      var nIn = resizing.origIn, nOut = resizing.origOut;
-      if (resizing.edge === 'l') {
-        nIn = resizing.origIn + dSec;
-        nIn = Math.max(0, Math.min(nIn, resizing.origOut - 0.5));     // in >= 0, out-in >= 0.5
-      } else {
-        nOut = resizing.origOut + dSec;
-        nOut = Math.max(nOut, resizing.origIn + 0.5);
-      }
-      resizing.newIn = nIn; resizing.newOut = nOut;
-      var newDur = nOut - nIn;
-      resizing.block.style.width = Math.max(minClipW(), newDur * resizing.pxPerSec) + 'px';
-      resizing.block.title = (resizing.block.title || '').replace(/\s*\([^)]*\)\s*$/, '') + '  (' + mmss(newDur) + ')';
-      updatePlayhead();
-      return;
-    }
-    if (scrubbing) { scrubTo(e, false); }   // free scrub anywhere on the track (CHANGE 4)
-  });
-
+    r.newIn = nIn; r.newOut = nOut;
+    var newDur = nOut - nIn;
+    r.block.style.width = Math.max(minClipW(), newDur * r.pxPerSec) + 'px';   // live optimistic width
+    r.block.title = (r.block.title || '').replace(/\s*\([^)]*\)\s*$/, '') + '  (' + mmss(newDur) + ')';
+    updatePlayhead();
+  }
   async function endResize() {
     if (!resizing) { return; }
     var r = resizing; resizing = null;
@@ -934,32 +970,149 @@
     var rep = await beckyCall('set_trim', { id: r.id, in: r.newIn, out: r.newOut });
     if (rep.ok && rep.data) { applyTimeline(rep.data); } else { renderTimeline(); }
   }
+
+  /* ---- REORDER drop indicator (CHANGE A): an insertion line between clips ---- */
+  var dropmarkEl = document.createElement('div');
+  dropmarkEl.className = 'dropmark';
+  dropmarkEl.style.display = 'none';
+
+  function clipIndexById(id) {
+    var clips = state.timeline.clips || [];
+    for (var i = 0; i < clips.length; i++) { if (String(clips[i].id) === String(id)) { return i; } }
+    return -1;
+  }
+  function eventTrackX(e) { return e.clientX - trackEl.getBoundingClientRect().left; }
+  // The reorder destination = how many OTHER clips sit left of the cursor centre.
+  // That is exactly the engine's stable remove-then-insert index (App.Reorder).
+  function dropInsertIndex(id, x) {
+    var blocks = trackEl.querySelectorAll('.clip');
+    var insert = 0;
+    for (var i = 0; i < blocks.length; i++) {
+      if (blocks[i].dataset.id === String(id)) { continue; }
+      if (x > blocks[i].offsetLeft + blocks[i].offsetWidth / 2) { insert++; }
+    }
+    return insert;
+  }
+  function positionDropmark(id, x) {
+    var others = [], all = trackEl.querySelectorAll('.clip');
+    for (var i = 0; i < all.length; i++) { if (all[i].dataset.id !== String(id)) { others.push(all[i]); } }
+    var insert = dropInsertIndex(id, x), leftPx;
+    if (!others.length) { leftPx = 0; }
+    else if (insert <= 0) { leftPx = others[0].offsetLeft - 2; }
+    else if (insert >= others.length) {
+      var last = others[others.length - 1];
+      leftPx = last.offsetLeft + last.offsetWidth + 1;
+    } else {
+      var a = others[insert - 1], b = others[insert];
+      leftPx = (a.offsetLeft + a.offsetWidth + b.offsetLeft) / 2 - 1;
+    }
+    dropmarkEl.style.left = Math.max(0, leftPx) + 'px';
+    dropmarkEl.style.display = 'block';
+  }
+
+  /* ---- CLIP-BODY gesture: PENDING -> click (seek) OR drag (reorder) (CHANGE A) ---- */
+  function startClipGesture(block, e) {
+    e.preventDefault();                  // keep the drag clean (no text selection)
+    clipGesture = { id: block.dataset.id, block: block, startX: e.clientX, dragging: false };
+    try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+  function moveClipGesture(e) {
+    var g = clipGesture;
+    if (!g.dragging) {
+      if (Math.abs(e.clientX - g.startX) <= DRAG_PX) { return; }   // below threshold -> still a click
+      g.dragging = true;                                           // crossed it -> become a reorder drag
+      g.block.classList.add('dragging');
+      trackEl.appendChild(dropmarkEl);
+    }
+    positionDropmark(g.id, eventTrackX(e));
+  }
+  async function endClipGesture(e) {
+    if (!clipGesture) { return; }
+    var g = clipGesture; clipGesture = null;
+    if (g.block) { g.block.classList.remove('dragging'); }
+    if (dropmarkEl.parentNode) { dropmarkEl.parentNode.removeChild(dropmarkEl); }
+    dropmarkEl.style.display = 'none';
+    justScrubbed = true;                              // eat the trailing click in BOTH cases
+    setTimeout(function () { justScrubbed = false; }, 350);
+
+    if (g.dragging) {
+      // a DRAG happened -> reorder, but only when the target index truly differs.
+      var to = dropInsertIndex(g.id, eventTrackX(e));
+      var from = clipIndexById(g.id);
+      if (from >= 0 && to !== from) {
+        var rep = await beckyCall('reorder', { id: g.id, to: to });
+        if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Reordered clip'); }
+        else { renderTimeline(); toast('Could not reorder' + (rep.error ? ': ' + rep.error : '')); }
+      } else {
+        renderTimeline();                             // no change -> just clear the drag visuals
+      }
+    } else {
+      // a CLICK (moved <= DRAG_PX) -> seek the playhead + select the clip.
+      scrubTo(e, true);
+    }
+  }
+
+  /* ---- the unified track pointer handlers ---- */
+  trackEl.addEventListener('pointerdown', function (e) {
+    if (e.button !== undefined && e.button !== 0) { return; }   // left button only
+    var h = e.target.closest('.rh');
+    if (h) { startResize(h, e); return; }                       // 1) trim handle -> RESIZE
+    if (e.target.closest('[data-act="remove"]')) { return; }    // 2) remove "x" -> the click handler
+    if (!(state.timeline.clips || []).length) { return; }
+    var block = e.target.closest('.clip');
+    if (block) { startClipGesture(block, e); return; }          // 3) clip body -> click | drag
+    // 4) empty track space (gaps / the ends) -> free scrub, exactly like the ruler.
+    e.preventDefault();
+    scrubbing = true;
+    try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
+    scrubTo(e, true);
+  });
+
+  trackEl.addEventListener('pointermove', function (e) {
+    if (resizing)    { moveResize(e);      return; }
+    if (clipGesture) { moveClipGesture(e); return; }
+    if (scrubbing)   { scrubTo(e, false); }   // free scrub anywhere on the track
+  });
+
   function endScrub() {
     if (!scrubbing) { return; }
     scrubbing = false;
     justScrubbed = true;                         // eat the click that follows a scrub gesture
     setTimeout(function () { justScrubbed = false; }, 350);
   }
-  trackEl.addEventListener('pointerup', function () { endResize(); endScrub(); });
-  trackEl.addEventListener('pointercancel', function () { endResize(); endScrub(); });
+  trackEl.addEventListener('pointerup', function (e) { endResize(); endClipGesture(e); endScrub(); });
+  trackEl.addEventListener('pointercancel', function (e) { endResize(); endClipGesture(e); endScrub(); });
 
-  /* ---- clip clicks: only the hover remove "x" (seek/scrub is on pointer events) ---- */
+  /* ---- clip clicks: only the hover remove "x" (seek/drag are on pointer events) ---- */
   trackEl.addEventListener('click', function (e) {
-    if (justResized || justScrubbed) { return; } // a resize/scrub just happened - eat this click
+    if (justResized || justScrubbed) { return; } // a resize / scrub / drag just happened - eat this click
     var remove = e.target.closest('[data-act="remove"]');
     if (remove) { e.stopPropagation(); onClipRemove(remove.closest('.clip').dataset.id); }
   });
 
-  /* ---- free scrub (shared by the ruler AND the whole track - CHANGE 4) ---- */
+  /* ---- seek mapping (shared by the ruler AND the track) ----
+     CHANGE B: snap a seek to a clip edge ONLY within SNAP_PX of it; everywhere else
+     inside a clip it seeks to the EXACT clicked position (no whole-clip snapping). */
   var scrubbing = false;
   function findClipAtX(x) {
     var blocks = trackEl.querySelectorAll('.clip');
-    var best = null, bestDist = Infinity;
+    // 1) inside a clip: exact frac, snapping to an edge ONLY within SNAP_PX of it.
     for (var i = 0; i < blocks.length; i++) {
       var b = blocks[i], l = b.offsetLeft, w = b.offsetWidth, r = l + w;
-      if (x >= l && x <= r) { return { id: b.dataset.id, frac: (x - l) / Math.max(1, w) }; }
-      var c = l + w / 2, d = Math.abs(c - x);
-      if (d < bestDist) { bestDist = d; best = { id: b.dataset.id, frac: x < c ? 0 : 1 }; }
+      if (x >= l && x <= r) {
+        var frac;
+        if (x - l <= SNAP_PX) { frac = 0; }             // within 8px of IN  -> snap to in
+        else if (r - x <= SNAP_PX) { frac = 1; }         // within 8px of OUT -> snap to out
+        else { frac = (x - l) / Math.max(1, w); }        // otherwise the exact clicked position
+        return { id: b.dataset.id, frac: frac };
+      }
+    }
+    // 2) outside every clip (a gap or the empty ends): seek to the NEAREST edge.
+    var best = null, bestDist = Infinity;
+    for (var j = 0; j < blocks.length; j++) {
+      var bb = blocks[j], ll = bb.offsetLeft, rr = ll + bb.offsetWidth;
+      if (Math.abs(ll - x) < bestDist) { bestDist = Math.abs(ll - x); best = { id: bb.dataset.id, frac: 0 }; }
+      if (Math.abs(rr - x) < bestDist) { bestDist = Math.abs(rr - x); best = { id: bb.dataset.id, frac: 1 }; }
     }
     return best;
   }
@@ -972,7 +1125,7 @@
     if (!clip) { return; }
     var offset = (clip.in || 0) + hit.frac * clipDur(clip);
     state.activeClipId = clip.id;
-    state.selectedClipId = clip.id;                // CHANGE 5: scrubbing also selects that clip
+    state.selectedClipId = clip.id;                // CHANGE 5: scrubbing/clicking also selects that clip
     state.playheadComp = (clip.start_sec || 0) + hit.frac * clipDur(clip);  // CHANGE 4: keep comp pos exact
     markSelectedClip();
     if (isStart || state.activeSource !== clip.source) {

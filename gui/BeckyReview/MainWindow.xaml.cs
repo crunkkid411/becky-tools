@@ -28,7 +28,10 @@ public partial class MainWindow : Window
     private bool _paused = true;
     private string? _folder;
 
-    // Host-drawn forensic lower-third state (mpv osd-overlay), sized to the real video.
+    // Host-drawn forensic lower-third state (mpv osd-overlay). The overlay is sized in
+    // the HOST/window coordinate space (mpv's OSD maps to the window, NOT the
+    // letterbox-aware video rect), so it never drifts off-screen on a portrait/odd
+    // aspect clip. _ovW/_ovH (the real video dims) are kept only as a fallback.
     private bool _overlayOn;
     private string _ovFile = "";
     private string _ovDate = "";
@@ -36,6 +39,8 @@ public partial class MainWindow : Window
     private double _ovFps = 30;
     private int _ovW;
     private int _ovH;
+    private int _hostW;   // the mpv window (videoHost) size in DIPs — the overlay canvas
+    private int _hostH;
     private double _lastPos;
 
     public MainWindow()
@@ -236,6 +241,10 @@ public partial class MainWindow : Window
             VideoHost.Width = w;
             VideoHost.Height = h;
             VideoHost.Visibility = Visibility.Visible;
+            // The mpv --wid window IS this panel, so its size is the overlay's canvas.
+            _hostW = (int)Math.Round(w);
+            _hostH = (int)Math.Round(h);
+            if (_overlayOn) { UpdateOverlay(_lastPos); }   // re-fit the lower-third to the new size
         });
     }
 
@@ -310,24 +319,39 @@ public partial class MainWindow : Window
     }
 
     // --- the forensic lower-third, drawn by mpv (ASS via osd-overlay) ------------
-    // Sized to the REAL video (res_x/res_y = video w/h) so it scales correctly and
-    // never overflows the frame; font is small (~h/26); the filename is capped.
+    // CRITICAL: mpv's osd-overlay coordinate space (res_x/res_y) maps to the WINDOW
+    // (the --wid host panel), NOT the letterbox-aware video rect. Passing the video's
+    // own w/h here made the text drift far off-screen whenever the clip aspect didn't
+    // match the panel (e.g. a portrait phone clip in a wide panel). So we render in the
+    // HOST canvas: {\an1} bottom-left then always sits at the window's bottom-left, the
+    // font is a fraction of the host HEIGHT (the predictable short dimension for a
+    // lower-third), and the filename is truncated to the host WIDTH so line 1 can't run
+    // off the right edge.
 
     private void UpdateOverlay(double pos)
     {
-        var w = _ovW > 0 ? _ovW : 1280;
-        var h = _ovH > 0 ? _ovH : 720;
-        var fs = Math.Max(14, (int)Math.Round(h / 26.0));
-        var meta2 = Math.Max(12, fs * 5 / 6);
+        // Overlay canvas = the host window. Fall back to the video dims, then 1280x720.
+        var w = _hostW > 0 ? _hostW : (_ovW > 0 ? _ovW : 1280);
+        var h = _hostH > 0 ? _hostH : (_ovH > 0 ? _ovH : 720);
 
-        var name = _ovFile.Length > 54 ? _ovFile.Substring(0, 51) + "..." : _ovFile;
+        // Font ~1/22 of the host height, clamped to a sane on-screen range.
+        var fs = Math.Min(40, Math.Max(13, (int)Math.Round(h / 22.0)));
+        var meta2 = Math.Max(11, fs * 5 / 6);
+
+        // Truncate the filename so it fits the host width at this font size (a glyph is
+        // ~0.55*fs wide on average; leave a margin of ~2 glyphs each side).
+        var glyph = Math.Max(1.0, fs * 0.55);
+        var maxChars = Math.Max(8, (int)((w - 4 * glyph) / glyph));
+        var name = _ovFile.Length > maxChars
+            ? _ovFile.Substring(0, Math.Max(1, maxChars - 1)) + "…"
+            : _ovFile;
         var line1 = AssEscape(name);
         var line2 = "ORIG TC " + Smpte(pos, _ovFps);
         var meta = "";
         if (_ovDate.Length > 0) { meta = _ovDate; }
         if (_ovLink.Length > 0) { meta = meta.Length > 0 ? meta + "   " + _ovLink : _ovLink; }
 
-        // {\an1} bottom-left; outline for legibility; sized in the video's own coordinate space.
+        // {\an1} bottom-left; outline for legibility; sized in the host window's space.
         var ass = "{\\an1}{\\bord2}{\\3c&H000000&}{\\fs" + fs + "}{\\1c&H14FF39&}" + line1 +
                   "\\N{\\1c&HFFFFFF&}" + line2;
         if (meta.Length > 0)

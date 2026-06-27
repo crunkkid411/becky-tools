@@ -17,13 +17,13 @@ package main
 //  3. If it says local_needed (no official transcript, none available online, or
 //     the official one is short because the stream was edited) — OR becky-captions
 //     is not installed — we run the real local ASR (becky-transcribe), writing to
-//     a SEPARATE "<stem>_LOCAL.srt" sidecar. We NEVER overwrite an official
-//     ".srt"/".en.srt"; the original transcript stays byte-for-byte intact, and we
-//     keep two versions exactly as he asked.
+//     a SEPARATE "<stem>_parakeet_transcription.srt" sidecar. We NEVER overwrite an
+//     official ".srt"/".en.srt"; the original transcript stays byte-for-byte intact,
+//     and we keep two versions exactly as he asked.
 //
 // HARD INVARIANTS (CLAUDE.md §2, Jordan's project conditions): the original video
 // AND any original/official .srt are NEVER written — local ASR only ever produces
-// the becky-owned "<stem>_LOCAL.srt". Degrade-never-crash: a missing
+// the becky-owned "<stem>_parakeet_transcription.srt". Degrade-never-crash: a missing
 // becky-transcribe binary is a typed error; a missing becky-captions binary is not
 // fatal (we just go straight to local ASR); one failed video in a batch is
 // recorded and skipped. The real execs (becky-captions, becky-transcribe) sit
@@ -60,7 +60,7 @@ const captionsTimeout = 10 * time.Minute
 //	becky-transcribe <videoPath> --format srt --output <srtOut>
 //
 // writing the subtitle sidecar to srtOut (which is the becky-owned
-// "<stem>_LOCAL.srt" beside the source video). It defaults to the real
+// "<stem>_parakeet_transcription.srt" beside the source video). It defaults to the real
 // exec.CommandContext; tests override it with a fake that writes a canned .srt so
 // the whole transcribe→re-index flow is exercised offline. Production never
 // reassigns it.
@@ -206,13 +206,15 @@ func captionsExeName() string {
 	return "becky-captions"
 }
 
-// localSrtSidecarPath returns the LOCAL-ASR subtitle sidecar path for a video:
-// "<stem>_LOCAL.srt" in the SAME directory as the source (separator-safe). The
-// "_LOCAL" suffix is the forensic guarantee: local re-transcription NEVER touches
-// an original/official "<stem>.srt" or "<stem>.en.srt" — it writes a clearly
-// becky-generated, separate file, so the case always has both versions and the
-// original transcript is provably unaltered. The indexer recognises it as a
-// transcript (footage.discover) while still preferring an official .srt.
+// localSrtSidecarPath returns the LOCAL-ASR (Parakeet) subtitle sidecar path for a
+// video: "<stem>_parakeet_transcription.srt" in the SAME directory as the source
+// (separator-safe). The "_parakeet_transcription" suffix is the forensic guarantee:
+// local re-transcription NEVER touches an original/official "<stem>.srt" or
+// "<stem>.en.srt" — it writes a clearly becky-generated, separate file that ALWAYS
+// names itself, so the case always has both versions and the original transcript is
+// provably unaltered. The suffix is the single shared constant
+// footage.LocalTranscriptMarker, so the writer here and the indexer
+// (footage.discover) can never drift apart.
 func localSrtSidecarPath(videoPath string) string {
 	dir := filepath.Dir(videoPath)
 	base := filepath.Base(videoPath)
@@ -220,15 +222,15 @@ func localSrtSidecarPath(videoPath string) string {
 	if stem == "" {
 		stem = base
 	}
-	return filepath.Join(dir, stem+"_LOCAL.srt")
+	return filepath.Join(dir, stem+footage.LocalTranscriptMarker+".srt")
 }
 
 // officialSrtExists reports whether an ORIGINAL/official subtitle (<stem>.en.srt
-// or <stem>.srt — NOT a _LOCAL one) sits next to the video. It is the safety
-// interlock for the forensic invariant: before local ASR writes anything, we
-// confirm we are not about to clobber an original. (We only ever write to the
-// _LOCAL path, but this guard documents and enforces "originals are sacred" even
-// if a future change altered the output path.)
+// or <stem>.srt — NOT a _parakeet_transcription one) sits next to the video. It is
+// the safety interlock for the forensic invariant: before local ASR writes
+// anything, we confirm we are not about to clobber an original. (We only ever write
+// to the _parakeet_transcription path, but this guard documents and enforces
+// "originals are sacred" even if a future change altered the output path.)
 func officialSrtExists(videoPath string) bool {
 	return fileExists(captions.OfficialSRTPath(videoPath)) ||
 		fileExists(bareSrtPath(videoPath))
@@ -268,34 +270,44 @@ func captionsContext(parent context.Context) (context.Context, context.CancelFun
 
 // transcribeOne runs the caption sequence for one indexed video:
 //
-//  1. If becky-captions is available, ask it. On "use_official" the official .srt
-//     is already in place — return nil (the caller re-indexes; nothing was made,
-//     nothing was overwritten).
-//  2. Otherwise (local_needed, or becky-captions absent / errored) run local ASR
-//     to "<stem>_LOCAL.srt" via the runTranscribe seam — NEVER over an official
-//     ".srt"/".en.srt". transcribeBin is the pre-resolved becky-transcribe path.
+//  1. forceLocal (the "↻ re-transcribe" intent) skips the caption check entirely
+//     and goes straight to local ASR — the user explicitly wants a fresh Parakeet
+//     pass even when an official transcript already exists, written to the SEPARATE
+//     "<stem>_parakeet_transcription.srt" so the original is never touched.
+//  2. Otherwise, if becky-captions is available, ask it. On "use_official" the
+//     official .srt is already in place — return nil (the caller re-indexes;
+//     nothing was made, nothing was overwritten).
+//  3. Otherwise (local_needed, or becky-captions absent / errored) run local ASR
+//     to "<stem>_parakeet_transcription.srt" via the runTranscribe seam — NEVER
+//     over an official ".srt"/".en.srt". transcribeBin is the pre-resolved
+//     becky-transcribe path.
 //
 // It does NOT re-index — the caller re-indexes once after a batch.
-func (a *App) transcribeOne(transcribeBin string, v footage.Video) error {
-	// (1) Caption decision (optional tool — absence is not fatal).
-	if capBin, ok := resolveCaptionsBin(); ok {
-		cctx, ccancel := captionsContext(context.Background())
-		dec, err := runCaptions(cctx, capBin, v.Path, false)
-		ccancel()
-		if err == nil && dec.Action == captions.ActionUseOfficial {
-			// A complete official transcript already exists / was fetched beside the
-			// video. Do not run local ASR; do not touch the original. Done.
-			return nil
+func (a *App) transcribeOne(transcribeBin string, v footage.Video, forceLocal bool) error {
+	// (1) Caption decision (optional tool — absence is not fatal). Skipped for a
+	// forced re-transcribe, which always wants a fresh local Parakeet secondary.
+	if !forceLocal {
+		if capBin, ok := resolveCaptionsBin(); ok {
+			cctx, ccancel := captionsContext(context.Background())
+			dec, err := runCaptions(cctx, capBin, v.Path, false)
+			ccancel()
+			if err == nil && dec.Action == captions.ActionUseOfficial {
+				// A complete official transcript already exists / was fetched beside the
+				// video. Do not run local ASR; do not touch the original. Done.
+				return nil
+			}
+			// On err or local_needed we fall through to local ASR. (becky-captions
+			// already logged its reasoning to stderr.)
 		}
-		// On err or local_needed we fall through to local ASR. (becky-captions
-		// already logged its reasoning to stderr.)
 	}
 
-	// (2) Local ASR → the becky-owned _LOCAL sidecar. Never overwrite an official.
+	// (2) Local ASR → the becky-owned _parakeet_transcription sidecar. Never
+	// overwrite an official.
 	srtOut := localSrtSidecarPath(v.Path)
 	if officialSrtExists(v.Path) && filepath.Clean(srtOut) == filepath.Clean(captions.OfficialSRTPath(v.Path)) {
-		// Defensive: localSrtSidecarPath is always "_LOCAL", so this can never be an
-		// official path — but guard anyway so the invariant can't be broken silently.
+		// Defensive: localSrtSidecarPath is always "_parakeet_transcription", so this
+		// can never be an official path — but guard anyway so the invariant can't be
+		// broken silently.
 		return fmt.Errorf("refusing to overwrite an original transcript at %s", srtOut)
 	}
 	ctx, cancel := transcribeContext(context.Background())
@@ -310,9 +322,11 @@ func (a *App) transcribeOne(transcribeBin string, v footage.Video) error {
 }
 
 // Transcribe runs the caption sequence (official-first, local fallback to
-// "<stem>_LOCAL.srt") for the video named name (basename) in the open folder,
-// then re-indexes and returns the fresh FolderView (so the UI sees has_transcript
-// flip to true). It NEVER overwrites an original/official transcript. This is
+// "<stem>_parakeet_transcription.srt") for the video named name (basename) in the
+// open folder, then re-indexes and returns the fresh FolderView (so the UI sees
+// has_transcript flip to true). When the video already has a transcript it is a
+// re-transcribe and a fresh Parakeet pass is forced into that separate sidecar.
+// It NEVER overwrites an original/official transcript. This is
 // synchronous and long-running (the GUI shows a spinner). becky-transcribe must be
 // resolvable for the local-ASR path; becky-captions is optional (its absence just
 // skips the official check and goes straight to local ASR).
@@ -325,7 +339,11 @@ func (a *App) Transcribe(name string) (FolderView, error) {
 	if err != nil {
 		return FolderView{}, err
 	}
-	if err := a.transcribeOne(bin, v); err != nil {
+	// A video that already indexes as having a transcript means this is the GUI's
+	// "↻ re-transcribe" action (the "+" button shows only for untranscribed videos),
+	// so force a fresh Parakeet pass into the SEPARATE _parakeet_transcription
+	// sidecar instead of short-circuiting on an existing official transcript.
+	if err := a.transcribeOne(bin, v, v.HasTranscript); err != nil {
 		return FolderView{}, err
 	}
 	return a.Reindex(), nil
@@ -350,8 +368,9 @@ type TranscribeFailure struct {
 // TranscribeAll runs the per-video caption sequence for every indexed video that
 // lacks a transcript, then re-indexes once and returns the fresh FolderView with
 // counts. Each video either keeps/fetches its complete official .srt
-// (use_official) or gets a becky-owned "<stem>_LOCAL.srt" (local_needed) — never
-// an overwritten original. Degrade-never-crash: one video's failure is recorded in
+// (use_official) or gets a becky-owned "<stem>_parakeet_transcription.srt"
+// (local_needed) — never an overwritten original. Degrade-never-crash: one video's
+// failure is recorded in
 // Errors and the batch continues; a missing becky-transcribe binary is a single
 // clear error before any work. Videos that already have a transcript are skipped
 // (use per-video Transcribe to force a re-transcribe).
@@ -372,7 +391,9 @@ func (a *App) TranscribeAll() (TranscribeAllResult, error) {
 
 	res := TranscribeAllResult{}
 	for _, v := range pending {
-		if err := a.transcribeOne(bin, v); err != nil {
+		// Batch only fills in MISSING transcripts (pending = !HasTranscript), so the
+		// caption-first path is always correct here — never a forced re-transcribe.
+		if err := a.transcribeOne(bin, v, false); err != nil {
 			res.Failed++
 			res.Errors = append(res.Errors, TranscribeFailure{Name: v.Name, Error: firstLine(err)})
 			continue
