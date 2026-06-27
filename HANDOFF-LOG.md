@@ -10,6 +10,40 @@
 
 ---
 
+## 2026-06-27 (cloud -> local) — becky-otio: Reel -> editor-agnostic timeline (OTIO/EDL/VEGAS) + video-editing host research
+
+Integrated cloud branch **`claude/video-editing-research-jqdz1t`** into `master`. The branch was created
+from `104fed4` (one commit *before* the 2026-06-26 iPhone archiver `b88de88`), so its diff-vs-tip *looked*
+like it deleted the archiver — but the merge-base lacks those files and **no cloud commit touches them**, so
+the 3-way merge was purely additive (1931 insertions, 0 deletions): the iPhone archiver stayed intact and
+the video-editing work landed beside it.
+
+**What landed (5 cloud commits):**
+- **`becky-otio`** — pure-Go, offline, deterministic NLE-bridge: a becky **Reel** (`internal/edl` clip-list)
+  -> `.otio` (DaVinci Resolve / kdenlive 25.04+ native import), CMX3600 `.edl` (every editor, single-track),
+  and `<name>.review.txt` (fed to the VEGAS script). Source media never modified, no models.
+  `cmd/becky-otio/main.go` + `internal/otio/{otio.go,otio_test.go}`. Rationale: review forensic hits in
+  whatever snappy NLE Jordan prefers without marrying becky to one editor.
+- `SPEC-BECKY-OTIO.md`; `vegas/BeckyReviewTimeline.cs` (+ `vegas/README.md`) — a VEGAS Pro 18 script that
+  builds a review timeline from the `.review.txt`, agent-drivable via `BECKY_REVIEW_LIST`.
+- `research/gui-embedding-revisit-2026-06.md` (GUI-embedding + timeline-snappiness decision doc).
+- `HANDOFF-BECKY-REVIEW-APP.md` + `HANDOFF-PROXY-SNAPPINESS.md` — work orders for the future one-window
+  "Becky Review" reviewer app and the proxy/snappiness work.
+
+**Verification (local, on the merged tree):** `go build ./...` ✓, `go vet ./...` ✓, `go test ./...` ✓
+(only the documented `cmd/tts` environmental FAIL), `gofmt` clean (committed blobs gofmt-clean; local
+flags are Windows-CRLF cosmetic only), and **`becky-otio --selftest` passes** (otio/edl/vegas-list all
+PASS, exit 0). Landed via the hook-safe "assemble on a branch, then FF master" pattern; pushed to `origin/master`.
+
+**Left for local (future, hardware/GUI):** build the one-window "Becky Review" reviewer app + the
+proxy/timeline-snappiness work per the two handoff docs. The deterministic `becky-otio` core is done + proven.
+
+**Aside (not merged):** a prior local session's unfinished `becky-regrab` tool + clip-pipeline tweaks were
+found uncommitted on `claude/becky-regrab`; preserved as commit `9fcc54f` on that branch (builds clean), not
+merged to master.
+
+---
+
 ## 2026-06-26 (local) — iPhone-history -> verified-markdown archiver (becky-radar --list + becky-web2md + becky-clipcheck) + daily 5 PM task
 
 Jordan: "everything in my current iphone chrome browser history should be downloaded, one at a time, as a

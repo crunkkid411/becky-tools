@@ -522,11 +522,23 @@ load-bearing rules, in brief:
 > the short summary here. **Do NOT let this section grow back into a full log** — an accumulating
 > §6 is exactly what pushed CLAUDE.md past the prompt-size limit (fixed 2026-06-22).
 
-### Current state of master (as of 2026-06-26)
+### Current state of master (as of 2026-06-27)
 
 Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` test FAIL is
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+
+- **becky-otio + video-editing host research (2026-06-27, cloud `claude/video-editing-research-jqdz1t`
+  -> integrated local):** new **`becky-otio`** (pure-Go, offline, deterministic) turns a becky **Reel**
+  (`internal/edl` clip-list) into editor-agnostic timeline files — `.otio` (DaVinci/kdenlive 25.04+),
+  CMX3600 `.edl` (every editor), and a `.review.txt` for `/vegas/BeckyReviewTimeline.cs` on **VEGAS Pro 18**
+  — so forensic hits review in whatever snappy NLE Jordan prefers without marrying becky to one editor
+  (`cmd/becky-otio` + `internal/otio` + tests; `becky-otio --selftest` passes). Also landed: `SPEC-BECKY-OTIO.md`,
+  the VEGAS script + `vegas/README.md`, `research/gui-embedding-revisit-2026-06.md`, and two work-order docs
+  (`HANDOFF-BECKY-REVIEW-APP.md`, `HANDOFF-PROXY-SNAPPINESS.md`). The cloud branch was based on `104fed4`
+  (before the iPhone archiver) so it's disjoint from `b88de88` — merged additively, archiver intact. **Left
+  for local:** build the one-window "Becky Review" reviewer app + the proxy/timeline-snappiness work per those
+  two handoff docs (future GUI/host task; the deterministic `becky-otio` core is done + proven).
 
 - **iPhone-history -> verified-markdown archiver (2026-06-26, local):** Jordan's Chrome history (iPhone-
   synced, the `Default` profile) is now archived to `Documents\Obsidian\browser_data\iPhone` as one verified
