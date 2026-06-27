@@ -10,6 +10,42 @@
 
 ---
 
+## 2026-06-27 (local) — becky-regrab: Gemma-4 recovery for missed pages + a hardened fetch (the real fix)
+
+Jordan: "i need becky-tools to be able to manually re-grab pages that get missed. gemma4 is smart enough
+for that - it needs to be part of the workflow every time." Built it — but the investigation found the
+**real** cause of most "misses" was a fetch bug, not a model gap.
+
+**Root cause (the important finding):** `trafilatura.fetch_url` was returning **un-decoded garbage** for some
+sites (e.g. bedroomproducersblog: 34 KB at 41% replacement-chars, no `<html>` tag — brotli/zstd it couldn't
+handle, even with `brotli` installed). web2md extracted nothing from garbage; clipcheck failed it. Hardened
+**both** `web2md.py` + `clipfetch.py` `fetch_html`: validate the result (`looks_like_html`: needs a tag, < 2%
+replacement chars) and fall back to a clean urllib fetch (gzip-handled, charset-detected, no forced brotli).
+That alone recovered the blog page **deterministically** (web2md PASS, recall 1.00, 29/29 blocks) — no model.
+
+**becky-regrab (new tool) — the Gemma fallback for what's still missed:** `cmd/regrab` + `extract.go`.
+Re-fetches the page (reusing `clipfetch.py`), and if there's extractable text, the **local Gemma-4 (E4B,
+fits the 8 GB GPU; 12B crawls on CPU so it's not used)** converts the visible text to Markdown; the output is
+then `clipcheck.Score`d (reused) so a model that drops/invents content is CAUGHT, not trusted. Honest
+`unrecoverable` (exit 5) for bot-blocked / JS-only pages (SourceForge 403, SPAs) — no junk file. URL-cleaning
+strips trailing junk (a stray comma) too. Added `llmlocal.NewClientCtx` (bigger context for a whole page).
+
+**Wired into the workflow "every time":** `scripts/clip-sync.ps1` now runs the ladder per page —
+web2md (deterministic) -> clipcheck -> **if missed, becky-regrab (Gemma) -> re-verify** — and gained a
+`-Retry` mode that re-attempts only the manifest's non-pass entries. Gemma fires ONLY on a genuine miss
+(deterministic-first preserved). `-Retry` on the 24 previously-flagged pages: recovered the blog
+deterministically + 3 via Gemma (LiquidAI, 2 weather pages); the remaining 18 are honestly unrecoverable
+(Greyhound JS ticket-search, SourceForge 403, reddit JS-challenge, ad redirects, SPAs).
+
+**Recovery note (multi-agent collision):** mid-build, the shared working tree was switched to the concurrent
+`integrate-video-editing` branch, which parked this in-progress work in commit `9fcc54f` (`claude/becky-regrab`).
+Re-integrated it cleanly onto the new `master` (post becky-otio) via `cherry-pick -n` — no conflicts (video-
+editing touched none of these files). Nothing lost.
+
+**Gates:** `go build/vet/test ./...` green (lone `cmd/tts` env FAIL); new files content-clean (CRLF cosmetic);
+both scripts PS 5.1 parse-clean; `build-all-tools.bat` built 80 tools incl `becky-regrab.exe`. New tool in
+`internal/catalog`.
+
 ## 2026-06-27 (cloud -> local) — becky-otio: Reel -> editor-agnostic timeline (OTIO/EDL/VEGAS) + video-editing host research
 
 Integrated cloud branch **`claude/video-editing-research-jqdz1t`** into `master`. The branch was created

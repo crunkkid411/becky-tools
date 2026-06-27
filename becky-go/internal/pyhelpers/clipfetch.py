@@ -33,13 +33,34 @@ def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+def looks_like_html(s):
+    """True when s is decodable HTML, not garbage. trafilatura.fetch_url
+    occasionally returns un-decompressed / mis-decoded bytes (e.g. brotli/zstd it
+    can't handle) — a high replacement-char ratio with no tags. We detect that and
+    fall back to a clean fetch instead of feeding garbage downstream."""
+    if not s or len(s) < 50:
+        return False
+    head = s[:6000].lower()
+    if "<html" not in head and "<body" not in head and "<!doctype" not in head:
+        return False
+    return (s.count("\ufffd") / len(s)) < 0.02
+
+
 def fetch_html(url, timeout):
-    """Fetch raw HTML — same path as web2md.py so the two tools see the same page."""
+    """Fetch raw HTML — same path as web2md.py so the two tools see the same page.
+    Validates the result and falls back to a clean urllib fetch when trafilatura
+    returns garbage."""
     import trafilatura
     downloaded = trafilatura.fetch_url(url)
-    if downloaded:
+    if looks_like_html(downloaded):
         return downloaded
+    return _plain_fetch(url, timeout)
+
+
+def _plain_fetch(url, timeout):
+    """A clean fetch: no forced compression, gzip handled, charset detected."""
     import urllib.request
+    import gzip
     req = urllib.request.Request(
         url,
         headers={
@@ -49,14 +70,25 @@ def fetch_html(url, timeout):
                 "Chrome/124.0 Safari/537.36"
             ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Encoding": "gzip, identity",
         },
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read()
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode("latin-1", errors="replace")
+        charset = resp.headers.get_content_charset()
+        if resp.headers.get("Content-Encoding", "").lower() == "gzip" or raw[:2] == b"\x1f\x8b":
+            try:
+                raw = gzip.decompress(raw)
+            except OSError:
+                pass
+    for cs in (charset, "utf-8", "latin-1"):
+        if not cs:
+            continue
+        try:
+            return raw.decode(cs)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 def soup_of(html):

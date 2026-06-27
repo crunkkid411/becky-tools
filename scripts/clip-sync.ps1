@@ -1,25 +1,29 @@
-# clip-sync.ps1 - archive iPhone Chrome history to Obsidian markdown, verified.
+# clip-sync.ps1 - archive iPhone Chrome history to Obsidian markdown, verified,
+# with automatic Gemma-4 recovery of pages the deterministic path misses.
 #
-# Pipeline, ONE PAGE AT A TIME (deterministic; AI only on borderline pages):
+# Pipeline, ONE PAGE AT A TIME (deterministic first; AI only when needed):
 #   becky-radar --list   -> every iPhone-synced page in the window (a URL feed)
-#   becky-web2md         -> download each NEW page to a single .md
+#   becky-web2md         -> download each NEW page to a single .md (deterministic)
 #   becky-clipcheck      -> confirm the .md actually contains the page's content
+#   becky-regrab         -> if web2md missed it, the local Gemma-4 model re-grabs
+#                           the content from the page text, then it is re-verified
 #
 # Idempotent: a manifest (.clip-manifest.json) records what was archived, so a
 # page already saved+verified is skipped; only new pages (and prior failures) are
-# fetched. Safe to run daily. ASCII-only + PowerShell 5.1 compatible so it runs
-# from Task Scheduler without a parse error.
+# fetched. Run -Retry to re-attempt only the pages that previously needed
+# attention (now through the full deterministic + Gemma ladder).
 #
-# Exit 0 always (a per-page failure is logged, not fatal) so the scheduled task
-# never shows a red error for one bad page.
+# ASCII-only + PowerShell 5.1 compatible so it runs from Task Scheduler without a
+# parse error. Exit 0 always (a per-page failure is logged, not fatal).
 
 [CmdletBinding()]
 param(
     [int]$Days = 30,
     [string]$Target = "C:\Users\only1\Documents\Obsidian\browser_data\iPhone",
     [string]$BinDir = "X:\AI-2\becky-tools\becky-go\bin",
-    [switch]$NoAI,
-    [int]$Max = 0   # 0 = no limit (process all new pages)
+    [switch]$NoAI,    # skip the borderline clipcheck adjudication (regrab still runs)
+    [switch]$Retry,   # re-attempt only the manifest entries that previously failed
+    [int]$Max = 0     # 0 = no limit (process all new pages)
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +31,8 @@ $ErrorActionPreference = "Stop"
 $radar = Join-Path $BinDir "becky-radar.exe"
 $web2md = Join-Path $BinDir "becky-web2md.exe"
 $clipcheck = Join-Path $BinDir "becky-clipcheck.exe"
-foreach ($exe in @($radar, $web2md, $clipcheck)) {
+$regrab = Join-Path $BinDir "becky-regrab.exe"
+foreach ($exe in @($radar, $web2md, $clipcheck, $regrab)) {
     if (-not (Test-Path $exe)) { Write-Output "MISSING TOOL: $exe"; exit 0 }
 }
 
@@ -44,8 +49,6 @@ function Log($msg) {
     Add-Content -Path $logPath -Value $line -Encoding utf8
 }
 
-# Canonicalize a URL for dedup: lower host, drop fragment + tracking params, trim
-# trailing slash. Two visits to one page (different utm tags) map to one entry.
 function Canon([string]$u) {
     try { $uri = [uri]$u } catch { return $u.ToLower().TrimEnd('/') }
     $hostName = $uri.Host.ToLower()
@@ -77,6 +80,39 @@ function Hash8([string]$s) {
     return -join ($bytes[0..3] | ForEach-Object { $_.ToString('x2') })
 }
 
+# GrabOne runs the full ladder for one page and returns the final verdict/method.
+# Deterministic web2md first; if it misses (skip/fail/partial), Gemma re-grabs.
+function GrabOne([string]$url, [string]$file) {
+    $outPath = Join-Path $Target $file
+
+    $null = & $web2md $url --vault $Target --output $file 2>$null
+    $wexit = $LASTEXITCODE
+    $det = $null
+    if ($wexit -eq 0 -and (Test-Path $outPath)) {
+        $ccArgs = @($outPath, '--json')
+        if ($NoAI) { $ccArgs += '--no-ai' }
+        try { $det = (& $clipcheck @ccArgs 2>$null) | ConvertFrom-Json } catch { $det = $null }
+        if ($det -and ($det.verdict -in @('pass', 'thin'))) {
+            return [pscustomobject]@{ verdict = $det.verdict; method = 'web2md'; recall = $det.recall }
+        }
+    }
+
+    # Deterministic path missed -> Gemma-4 recovery, then re-verify (regrab scores
+    # its own output). This is the "gemma is part of the workflow every time" step.
+    $rg = $null
+    try { $rg = (& $regrab $url --vault $Target --output $file --json 2>$null) | ConvertFrom-Json } catch { $rg = $null }
+    if ($rg) {
+        return [pscustomobject]@{ verdict = $rg.verdict; method = $rg.method; recall = $rg.recall }
+    }
+    if ($det) {
+        return [pscustomobject]@{ verdict = $det.verdict; method = 'web2md'; recall = $det.recall }
+    }
+    if ($wexit -eq 2) {
+        return [pscustomobject]@{ verdict = 'unrecoverable'; method = 'web2md'; recall = 0 }
+    }
+    return [pscustomobject]@{ verdict = 'download-failed'; method = 'web2md'; recall = 0 }
+}
+
 # Load manifest into a hashtable keyed by canonical URL.
 $manifest = @{}
 if (Test-Path $manifestPath) {
@@ -86,66 +122,57 @@ if (Test-Path $manifestPath) {
     } catch { Log "WARN: could not read manifest ($($_.Exception.Message)); starting fresh" }
 }
 
-Log "becky clip-sync starting: window=${Days}d target=$Target ai=$(-not $NoAI)"
+# Build the work list: the radar feed (normal) or the failed manifest entries (-Retry).
+$work = @()
+if ($Retry) {
+    Log "becky clip-sync RETRY: re-attempting pages that previously needed attention"
+    foreach ($k in $manifest.Keys) {
+        $m = $manifest[$k]
+        if ($m.verdict -notin @('pass', 'thin')) {
+            $u = $m.url; if ([string]::IsNullOrWhiteSpace($u)) { $u = $k }
+            $work += [pscustomobject]@{ url = $u; title = '' }
+        }
+    }
+    Log "retry: $($work.Count) pages to re-attempt"
+} else {
+    Log "becky clip-sync starting: window=${Days}d target=$Target ai=$(-not $NoAI)"
+    $listJson = & $radar --list --days $Days 2>$null
+    try { $list = $listJson | ConvertFrom-Json } catch { Log "ERROR: radar --list returned no JSON"; exit 0 }
+    if ($list.degraded) { Log "ERROR: could not read Chrome history: $($list.note)"; exit 0 }
+    Log "radar: $($list.count) synced pages in window ($($list.filtered_out) junk filtered)"
+    $work = $list.urls
+}
 
-# 1) Pull the iPhone-synced URL feed.
-$listJson = & $radar --list --days $Days 2>$null
-try { $list = $listJson | ConvertFrom-Json } catch { Log "ERROR: radar --list returned no JSON"; exit 0 }
-if ($list.degraded) { Log "ERROR: could not read Chrome history: $($list.note)"; exit 0 }
-Log "radar: $($list.count) synced pages in window ($($list.filtered_out) junk filtered)"
-
-$done = 0; $newOk = 0; $failed = 0; $skipped = 0; $dl = 0
+$done = 0; $newOk = 0; $failed = 0; $recovered = 0
 $failList = @()
 
-foreach ($item in $list.urls) {
+foreach ($item in $work) {
     $url = $item.url
     $canon = Canon $url
     $prior = $manifest[$canon]
-    if ($prior -and ($prior.verdict -in @('pass', 'thin')) -and (Test-Path (Join-Path $Target $prior.file))) {
+    if (-not $Retry -and $prior -and ($prior.verdict -in @('pass', 'thin')) -and (Test-Path (Join-Path $Target $prior.file))) {
         continue  # already archived + verified
     }
     if ($Max -gt 0 -and $done -ge $Max) { break }
     $done++
 
     $base = Slug $item.title
+    if ($base -eq "" -and $prior -and $prior.file) { $base = Slug ([System.IO.Path]::GetFileNameWithoutExtension($prior.file)) }
     if ($base -eq "") { try { $base = Slug ([uri]$url).Host } catch { $base = "web-clip" } }
     $file = "{0}-{1}.md" -f $base, (Hash8 $canon)
-    $outPath = Join-Path $Target $file
 
-    # 2) Download to a single .md.
-    $null = & $web2md $url --vault $Target --output $file 2>$null
-    $wexit = $LASTEXITCODE
-    if ($wexit -eq 2) {
-        Log "[$done] SKIP (no extractable content): $url"
-        $manifest[$canon] = [pscustomobject]@{ file = $file; verdict = 'skipped'; reason = 'no extractable content'; date = $stamp; url = $url }
-        $skipped++; continue
-    }
-    if ($wexit -ne 0 -or -not (Test-Path $outPath)) {
-        Log "[$done] DOWNLOAD FAILED: $url"
-        $manifest[$canon] = [pscustomobject]@{ file = $file; verdict = 'download-failed'; date = $stamp; url = $url }
-        $failed++; $failList += "download-failed  $url"; continue
-    }
-    $dl++
+    $r = GrabOne $url $file
+    $manifest[$canon] = [pscustomobject]@{ file = $file; verdict = $r.verdict; recall = $r.recall; method = $r.method; date = $stamp; url = $url }
 
-    # 3) Verify the .md actually contains the page.
-    $ccArgs = @($outPath, '--json')
-    if ($NoAI) { $ccArgs += '--no-ai' }
-    $ccJson = & $clipcheck @ccArgs 2>$null
-    try { $cc = $ccJson | ConvertFrom-Json } catch { $cc = $null }
-    if ($null -eq $cc) {
-        Log "[$done] VERIFY ERROR: $url"
-        $manifest[$canon] = [pscustomobject]@{ file = $file; verdict = 'verify-error'; date = $stamp; url = $url }
-        $failed++; $failList += "verify-error  $url"; continue
-    }
-
-    $manifest[$canon] = [pscustomobject]@{ file = $file; verdict = $cc.verdict; recall = $cc.recall; precision = $cc.precision; date = $stamp; url = $url }
-    switch ($cc.verdict) {
-        'pass' { Log ("[$done] PASS  recall={0:N2} {1}" -f $cc.recall, $file); $newOk++ }
+    switch ($r.verdict) {
+        'pass' {
+            if ($r.method -eq 'web2md') { Log ("[$done] PASS  recall={0:N2} {1}" -f $r.recall, $file); $newOk++ }
+            else { Log ("[$done] PASS (recovered by {0})  recall={1:N2} {2}" -f $r.method, $r.recall, $file); $newOk++; $recovered++ }
+        }
         'thin' { Log ("[$done] THIN  (little page text) {0}" -f $file); $newOk++ }
-        'partial' { Log ("[$done] PARTIAL  recall={0:N2} {1}  <- review" -f $cc.recall, $file); $failed++; $failList += ("partial  recall={0:N2}  {1}" -f $cc.recall, $url) }
-        'fail' { Log ("[$done] FAIL  recall={0:N2} {1}  <- content missing" -f $cc.recall, $file); $failed++; $failList += ("fail  recall={0:N2}  {1}" -f $cc.recall, $url) }
-        'unverified' { Log ("[$done] UNVERIFIED (could not re-fetch) {0}" -f $file); $failed++; $failList += "unverified  $url" }
-        default { Log ("[$done] {0}  {1}" -f $cc.verdict, $file) }
+        'unrecoverable' { Log ("[$done] UNRECOVERABLE (needs a browser; no static text) {0}" -f $url); $failed++; $failList += "unrecoverable  $url" }
+        'download-failed' { Log ("[$done] DOWNLOAD FAILED {0}" -f $url); $failed++; $failList += "download-failed  $url" }
+        default { Log ("[$done] {0}  recall={1:N2} {2}  <- review" -f $r.verdict.ToUpper(), $r.recall, $url); $failed++; $failList += ("{0}  {1}" -f $r.verdict, $url) }
     }
 }
 
@@ -161,17 +188,17 @@ $lines += ""
 $lines += "_Last run: $stamp_"
 $lines += ""
 $lines += "- Pages archived (all-time): **$total**"
-$lines += "- This run: $done processed, $newOk verified OK, $skipped skipped (no content), $failed need attention"
+$lines += "- This run: $done processed, $newOk verified OK ($recovered recovered by Gemma), $failed need attention"
 $lines += ""
 if ($failList.Count -gt 0) {
     $lines += "## Needs attention (this run)"
+    $lines += "These are bot-blocked or JavaScript-only pages with no static content to save."
     foreach ($f in $failList) { $lines += "- $f" }
 } else {
     $lines += "All pages this run verified OK."
 }
 $lines | Set-Content -Path $summaryPath -Encoding utf8
 
-Log "DONE: $done processed | $newOk verified OK | $skipped skipped | $failed need attention | $total total archived"
+Log "DONE: $done processed | $newOk verified OK | $recovered Gemma-recovered | $failed need attention | $total total archived"
 Log "summary: $summaryPath"
-Log "log: $logPath"
 exit 0

@@ -528,6 +528,14 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **becky-regrab + hardened fetch (2026-06-27, local):** pages the archiver missed are now re-grabbed.
+  The real fix was a fetch bug — `trafilatura.fetch_url` returned brotli/zstd **garbage** for some sites,
+  so web2md extracted nothing; `web2md.py`/`clipfetch.py` now validate the fetch + fall back to a clean
+  urllib fetch, which recovers most misses **deterministically**. New **`becky-regrab`** is the Gemma-4
+  fallback for what's still missed (local E4B converts the page text to Markdown, then it's clipcheck-verified
+  so the model can't drop/invent content; honest "unrecoverable" for bot-blocked/JS-only pages). Wired into
+  `clip-sync.ps1` as the automatic per-page ladder (web2md -> clipcheck -> regrab) + a `-Retry` mode.
+
 - **becky-otio + video-editing host research (2026-06-27, cloud `claude/video-editing-research-jqdz1t`
   -> integrated local):** new **`becky-otio`** (pure-Go, offline, deterministic) turns a becky **Reel**
   (`internal/edl` clip-list) into editor-agnostic timeline files — `.otio` (DaVinci/kdenlive 25.04+),

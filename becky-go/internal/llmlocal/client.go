@@ -94,6 +94,18 @@ func NewWarmClient(model, server string, logf func(string, ...any)) *Client {
 	return c
 }
 
+// NewClientCtx is NewClient with a larger context window. A short classifier is
+// fine at the 4096 default, but page-recovery (becky-regrab feeds a whole page's
+// text to the model) needs room for input + output, so it spawns the server with
+// a bigger -c. ctxLen <= 0 keeps the 4096 default.
+func NewClientCtx(model, server string, ctxLen int, logf func(string, ...any)) *Client {
+	c := NewClient(model, server, logf)
+	if ctxLen > 0 {
+		c.ctxLen = ctxLen
+	}
+	return c
+}
+
 // Available reports whether the model GGUF and the llama-server binary both
 // exist (a descriptive error otherwise — never panics). Callers use it to
 // degrade to a deterministic path without attempting a spawn. (Mirrors
