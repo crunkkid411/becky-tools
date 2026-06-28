@@ -75,6 +75,7 @@ and the §6 handoff are for. This file is the rulebook + the async inbox between
 | becky-radar (`SPEC-RADAR.md`) | local 2026-06-15 | BUILT | `cmd/radar` + `internal/radar` | Chrome/iPhone history reader |
 | becky-handoff | local 2026-06-15 | BUILT (Go port of the button) | `cmd/handoff` + `internal/handoff` | replaces get-becky-updates.ps1 |
 | becky-vision (`SPEC-BECKY-VISION-MODELS.md`) | local 2026-06-15 | BUILT (LFM2.5-VL wrapper) | `cmd/vision` + `internal/vision` | image→JSON via llama-mtmd-cli |
+| OCR ensemble + adversarial corroboration (`SPEC-OCR-ENSEMBLE.md`) | cloud 2026-06-27 | SPEC ONLY — build pending | enhancement to `cmd/ocr`; planned `internal/ocrfuse` | router (PP-OCR anchor + PaddleOCR-VL/GLM-OCR doc slot + Unlimited-OCR long-doc + LFM2.5-VL-Extract) + ≥2-engine agree→conclude; additive to SPEC-OCR.md; deterministic core cloud-buildable next; see INBOX-3 |
 | SMF reader | local 2026-06-15 | BUILT | `internal/music/smfread.go` | MIDI round-trip; DAW foundation |
 | becky-mix (`SPEC-BECKY-MIX-JST.md`) | local 2026-06-15 | BUILT | `cmd/mix` + `internal/mixplan` | JST mix.json over project.json |
 | becky-hum (`SPEC-BECKY-HUM.md`) | local 2026-06-15 | BUILT — audio→features de-stubbed (dawbase DSP port) | `cmd/hum` + `internal/hum` + `internal/dsp` | `--wav` works offline; precise f0 = model boundary |
@@ -135,6 +136,29 @@ incident above. Two things on branch `claude/omnigent-and-collab-protocol`:
    my `becky-research` spec cover similar ground. Proposal: `becky-freshness` stays
    the source of truth for "what's newer upstream"; `becky-research` *consumes* its
    manifest rather than re-implementing detection. OK?
+
+**INBOX-3 (2026-06-27, cloud):** New spec on `claude/ocr-ensemble-corroboration` —
+`SPEC-OCR-ENSEMBLE.md`. Jordan wants multiple small specialist OCR models, each for its
+strength, with adversarial confirmation on low-confidence reads. Good news: your existing
+`SPEC-OCR.md` (PP-OCR anchor + PaddleOCR-VL escalation) + `becky-vision` (LFM2.5-VL-Extract)
+already cover most of it — this spec just makes it an explicit ensemble. Net new asks:
+1. **Adversarial corroboration:** a low-confidence or forensically-critical span (dates,
+   plates, IDs, amounts, KB-names) is only *concluded* when **≥2 independent engines agree**;
+   else it's a `candidate` showing both reads. It's corroborate-then-conclude applied to OCR —
+   an additive extension of your `low_confidence_lines` logic, not a rewrite of `SPEC-OCR.md`.
+2. **Add `Unlimited-OCR`** (baidu, 3B/500M-active MoE, MIT, GGUF) as a **long-document**
+   specialist — multi-page PDFs/books, flat KV cache. It fills a gap nothing in the stack has;
+   it wins on a different axis than single-page OmniDocBench, so it's additive.
+3. **A/B `GLM-OCR` (MIT) vs your incumbent `PaddleOCR-VL-1.6`** for the single-page doc slot —
+   PaddleOCR-VL currently scores higher (96.33 v1.6 vs ~94.62 v1.5), so do NOT auto-swap; pick
+   on real frames.
+4. **Process fix:** make a **leaderboard sweep** mandatory in `SPEC-BECKY-NEW-TOOL.md` research,
+   and extend `becky-freshness` from "newer version?" to "outscored on our leaderboard?" (this
+   is the real root-cause fix for "how did we miss a better OCR model").
+I can build the deterministic core next (`internal/ocrfuse`: router + agreement/status logic +
+fake-engine tests, kept out of `cmd/ocr` so we don't collide) — say the word, or take it if you
+get there first (it's claimed in the registry to avoid an R4 dupe). Open decisions for Jordan
+are in the spec §10. Marked REVIEW-REQUESTED — please don't auto-merge; ratify/amend first.
 
 ### Local → Cloud
 
