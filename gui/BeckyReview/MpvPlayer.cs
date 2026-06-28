@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -265,11 +266,24 @@ public sealed class MpvPlayer : IDisposable
     public Task FrameBackStepAsync(CancellationToken ct = default)
         => SendAsync(ct, "frame-back-step");
 
-    /// <summary>Load a file and pause on an exact moment (a clicked clip's in-point).</summary>
+    /// <summary>
+    /// Load a file and begin at an EXACT moment (a clicked search hit or clip
+    /// in-point), race-free. mpv's <c>loadfile</c> is asynchronous: it returns the
+    /// instant the command is accepted, not when the file is loaded. Issuing a
+    /// separate <c>seek</c> right after therefore races the load and is silently
+    /// dropped, so the new file plays from 0 — the "plays from the beginning instead
+    /// of the timestamp" bug. The fix passes the position as the per-file
+    /// <c>start</c> option, so mpv seeks as PART of loading (atomic, no race window);
+    /// <c>--hr-seek=yes</c> keeps it frame-exact. The number MUST be formatted with the
+    /// invariant culture — a locale comma decimal would split mpv's option list.
+    /// </summary>
     public async Task PlayAtAsync(string file, double seconds, bool play, CancellationToken ct = default)
     {
-        await LoadAsync(file, ct);
-        await SeekAbsAsync(seconds, ct);
+        var at = seconds > 0 ? seconds : 0;
+        var startOpt = "start=" + at.ToString(CultureInfo.InvariantCulture);
+        // mpv >= 0.38 loadfile signature: <url> <flags> <index> <options>. Index 0 is
+        // ignored for the "replace" flag; <options> applies to THIS file only.
+        await SendAsync(ct, "loadfile", file, "replace", 0, startOpt);
         await SetPauseAsync(!play, ct);
     }
 
