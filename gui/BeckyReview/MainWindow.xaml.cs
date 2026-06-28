@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     private string _ovDate = "";
     private string _ovLink = "";
     private double _ovFps = 30;
+    private double _ovTcOffset = 0; // add to mpv pos -> SOURCE timecode (clip.in - clip.start_sec during EDL playback)
     private int _ovW;
     private int _ovH;
     private int _hostW;   // the mpv window (videoHost) size in DIPs — the overlay canvas
@@ -333,6 +334,7 @@ public partial class MainWindow : Window
                 if (f.Length > 0) { _ovFile = Path.GetFileName(f); }
                 _ovDate = Str(root, "date");
                 _ovLink = Str(root, "link");
+                _ovTcOffset = Num(root, "tc_off");   // 0 for a single-source preview; set during EDL playback
                 var fps = Num(root, "fps");
                 if (fps > 0) { _ovFps = fps; }
                 if (_overlayOn) { UpdateOverlay(_lastPos); } else { ClearOverlay(); }
@@ -377,22 +379,30 @@ public partial class MainWindow : Window
         var fs = Math.Min(40, Math.Max(13, (int)Math.Round(h / 22.0)));
         var meta2 = Math.Max(11, fs * 5 / 6);
 
-        // Truncate the filename so it fits the host width at this font size (a glyph is
-        // ~0.55*fs wide on average; leave a margin of ~2 glyphs each side).
-        var glyph = Math.Max(1.0, fs * 0.55);
-        var maxChars = Math.Max(8, (int)((w - 4 * glyph) / glyph));
-        var name = _ovFile.Length > maxChars
-            ? _ovFile.Substring(0, Math.Max(1, maxChars - 1)) + "…"
-            : _ovFile;
-        var line1 = AssEscape(name);
-        var line2 = "ORIG TC " + Smpte(pos, _ovFps);
+        // NEVER truncate the filename — a detective needs the WHOLE name (especially
+        // the suffix before the extension that distinguishes duplicates). Instead,
+        // scale the filename's OWN font down so the entire name fits the video width
+        // on one line (a glyph is ~0.55*font wide; keep a ~20px margin each side). The
+        // floor keeps it legible; if it ends up small, Jordan can widen the panel.
+        var nameFs = fs;
+        if (_ovFile.Length > 0)
+        {
+            var fit = (int)((w - 40) / (_ovFile.Length * 0.55));
+            nameFs = Math.Max(9, Math.Min(fs, fit));
+        }
+        var line1 = AssEscape(_ovFile);
+        // ORIG TC is the timecode in the SOURCE. During seamless EDL playback mpv's
+        // position is the COMPILATION time, so _ovTcOffset (clip.in - clip.start_sec,
+        // sent by the page) maps it back to the current clip's real source time.
+        var line2 = "ORIG TC " + Smpte(pos + _ovTcOffset, _ovFps);
         var meta = "";
         if (_ovDate.Length > 0) { meta = _ovDate; }
         if (_ovLink.Length > 0) { meta = meta.Length > 0 ? meta + "   " + _ovLink : _ovLink; }
 
         // {\an1} bottom-left; outline for legibility; sized in the host window's space.
-        var ass = "{\\an1}{\\bord2}{\\3c&H000000&}{\\fs" + fs + "}{\\1c&H14FF39&}" + line1 +
-                  "\\N{\\1c&HFFFFFF&}" + line2;
+        // The filename uses its fitted font, then line 2 + meta reset to the base sizes.
+        var ass = "{\\an1}{\\bord2}{\\3c&H000000&}{\\fs" + nameFs + "}{\\1c&H14FF39&}" + line1 +
+                  "\\N{\\fs" + fs + "}{\\1c&HFFFFFF&}" + line2;
         if (meta.Length > 0)
         {
             ass += "\\N{\\fs" + meta2 + "}{\\1c&HD7D7D7&}" + AssEscape(meta);

@@ -888,6 +888,27 @@
     return {};
   }
 
+  // Push the forensic lower-third's content to the host for the CURRENT clip. During
+  // seamless EDL playback mpv has "timeline.edl" loaded, so we must send the real
+  // clip's source filename + a tc_off (clip.in - clip.start_sec) so the overlay shows
+  // the right name and the SOURCE timecode. For a single-source preview, tc_off = 0.
+  var lastOverlayClipId = null;
+  function sendOverlayUpdate() {
+    var file = '', date = '', link = '', fps = 30, tcOff = 0, clipId = null;
+    if (isTimelineLoaded()) {
+      var clip = clipById(state.activeClipId) || clipAtComp(state.playheadComp || 0);
+      if (clip) {
+        file = clip.source || ''; date = clip.date || ''; link = clip.link || '';
+        fps = clip.source_fps || 30; tcOff = (clip.in || 0) - (clip.start_sec || 0); clipId = clip.id;
+      }
+    } else {
+      file = state.activeSource || '';
+      var m = activeMeta(); date = m.date || ''; link = m.link || ''; fps = m.fps || 30;
+    }
+    lastOverlayClipId = clipId;
+    mpvSend('overlay', { on: state.overlayOn, file: file, date: date, link: link, fps: fps, tc_off: tcOff });
+  }
+
   /* ---- seamless timeline playback via an mpv EDL --------------------------------
      The whole reel loads as ONE mpv EDL (a virtual gapless source), so playing it
      plays exactly the trimmed clips back-to-back with NO per-clip reload and no
@@ -956,6 +977,8 @@
       state.playheadComp = state.pos;                 // EDL position IS the compilation position
       var c = clipAtComp(state.pos);
       state.activeClipId = c ? c.id : null;
+      // as the seamless compilation crosses a cut, refresh the overlay to the new clip's name + TC
+      if (state.overlayOn && state.activeClipId !== lastOverlayClipId) { sendOverlayUpdate(); }
     } else if (state.activeClipId != null) {
       var ac = clipById(state.activeClipId);
       if (ac) { state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0)); }
@@ -1359,16 +1382,10 @@
   $tOverlay.addEventListener('click', async function () {
     state.overlayOn = !state.overlayOn;
     updateOverlayBtn();
-    var rep = await beckyCall('set_overlay', { field: 'enabled', value: state.overlayOn });
-    if (rep.ok && rep.data) { applyTimeline(rep.data); }   // re-syncs the stored overlay state
-    var meta = activeMeta();
-    mpvSend('overlay', {
-      on: state.overlayOn,
-      file: state.activeSource || '',
-      date: meta.date || '',
-      link: meta.link || '',
-      fps: meta.fps || 30
-    });
+    await beckyCall('set_overlay', { field: 'enabled', value: state.overlayOn });
+    // Don't re-applyTimeline here (it would needlessly invalidate the loaded EDL);
+    // the stored overlay flag is persisted server-side and re-synced on the next load.
+    sendOverlayUpdate();   // push the CURRENT clip's name + source TC (handles EDL playback)
   });
 
   $tSave.addEventListener('click', async function () {
