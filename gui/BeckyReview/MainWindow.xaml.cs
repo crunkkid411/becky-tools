@@ -269,6 +269,21 @@ public partial class MainWindow : Window
                 }
                 break;
             }
+            case "loadAt":
+            {
+                // Navigate to a moment WITHOUT auto-playing: load + exact-seek, then hold
+                // the frame paused. The timeline uses this so a click moves the playhead and
+                // shows the frame but never starts playback (that's the ▶ / spacebar job).
+                var file = Str(root, "file");
+                var at = Num(root, "at");
+                if (!string.IsNullOrWhiteSpace(file))
+                {
+                    _ovFile = Path.GetFileName(file);
+                    _paused = true;
+                    _ = PlayAndMeasureAsync(file, at, play: false);
+                }
+                break;
+            }
             case "seek":
                 _ = _mpv.SeekAbsAsync(Num(root, "at"));
                 break;
@@ -302,10 +317,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Load+seek+play, then read the real video dimensions for an exactly-sized overlay.</summary>
-    private async Task PlayAndMeasureAsync(string file, double at)
+    private async Task PlayAndMeasureAsync(string file, double at, bool play = true)
     {
         if (_mpv == null) { return; }
-        await _mpv.PlayAtAsync(file, at, play: true);
+        await _mpv.PlayAtAsync(file, at, play: play);
         try
         {
             var w = await _mpv.GetPropertyAsync("width");

@@ -215,13 +215,18 @@ func atof(s string) float64 {
 	return f
 }
 
-// dedupRolling collapses YouTube's rolling-caption overlap into clean segments.
+// dedupRolling collapses YouTube's rolling-caption TEXT overlap into clean
+// segments WITHOUT ever altering the cue timings.
 //
 // Auto-subs emit each line twice: once as it "rolls in" (overlapping the prior
 // cue's window) and once settled. Consecutive cues therefore share leading text
 // and overlap in time. For each cue we drop any prefix words already emitted by
-// the previous segment, keep only the genuinely new tail, and clamp the start so
-// segments stay time-ordered and non-overlapping. Empty residue is skipped.
+// the previous segment and keep only the genuinely new tail; a cue whose text is
+// wholly a duplicate is dropped. The cue's ORIGINAL .srt start/end is preserved
+// verbatim — we never clamp or interpolate the time. A search hit therefore seeks
+// to exactly the timestamp the .srt lists (deterministic), and seeking to the cue
+// start is always safe: you land at the beginning of the line, never past the
+// quote. (Overlapping cue windows are fine for search, seek, and add_clip.)
 func dedupRolling(segs []Segment) []Segment {
 	if len(segs) == 0 {
 		return []Segment{}
@@ -230,30 +235,21 @@ func dedupRolling(segs []Segment) []Segment {
 
 	out := make([]Segment, 0, len(segs))
 	var prevWords []string
-	var lastEnd float64
 	for _, s := range segs {
 		words := strings.Fields(s.Text)
 		newWords := dropCommonPrefix(prevWords, words)
 		text := strings.Join(newWords, " ")
-		if text == "" {
-			// Fully contained in the previous cue: still advance the time cursor.
-			if s.End > lastEnd {
-				lastEnd = s.End
-			}
-			prevWords = words
-			continue
-		}
-		start := s.Start
-		if start < lastEnd {
-			start = lastEnd
-		}
-		end := s.End
-		if end < start {
-			end = start
-		}
-		out = append(out, Segment{Start: round3(start), End: round3(end), Text: text})
-		lastEnd = end
 		prevWords = words
+		if text == "" {
+			continue // wholly a duplicate of the previous cue: drop the line
+		}
+		// Keep the cue's literal .srt timing. End is only floored to Start as a
+		// guard against a malformed (end < start) cue; the start is never moved.
+		end := s.End
+		if end < s.Start {
+			end = s.Start
+		}
+		out = append(out, Segment{Start: round3(s.Start), End: round3(end), Text: text})
 	}
 	if len(out) == 0 {
 		return []Segment{}

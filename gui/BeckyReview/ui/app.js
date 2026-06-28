@@ -142,6 +142,7 @@
     post(m);
   }
   function mpvPlay(file, at) { post({ t: 'mpv', op: 'play', file: file || '', at: at || 0 }); }
+  function mpvLoadAt(file, at) { post({ t: 'mpv', op: 'loadAt', file: file || '', at: at || 0 }); } // load + seek, stay PAUSED (navigate, no autoplay)
   function mpvSeek(at)       { post({ t: 'mpv', op: 'seek', at: at || 0 }); }
 
   // Receive host -> page messages.
@@ -1128,11 +1129,16 @@
     state.selectedClipId = clip.id;                // CHANGE 5: scrubbing/clicking also selects that clip
     state.playheadComp = (clip.start_sec || 0) + hit.frac * clipDur(clip);  // CHANGE 4: keep comp pos exact
     markSelectedClip();
-    if (isStart || state.activeSource !== clip.source) {
+    // Navigating the timeline NEVER auto-plays (that's the ▶/space job). A new source
+    // loads + seeks and holds the frame PAUSED; the same source just seeks, and a FRESH
+    // click/scrub-start (isStart) also pauses so a click can never start playback.
+    // (Search-result clicks still play — that's mpvPlay, a separate path.)
+    if (state.activeSource !== clip.source) {
       state.activeSource = clip.source;
-      mpvPlay(clip.source, offset);               // load+seek+play (new source)
+      mpvLoadAt(clip.source, offset);             // new source: load + seek, stay paused
     } else {
-      mpvSeek(offset);                            // exact seek within the same source
+      mpvSeek(offset);                            // same source already loaded: exact seek
+      if (isStart) { mpvSend('pause'); }          // a fresh click/scrub never auto-plays
     }
     updatePlayhead();
   }

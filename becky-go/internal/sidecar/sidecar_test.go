@@ -62,8 +62,14 @@ func TestRollingDedup(t *testing.T) {
 	if out[1].Text != "live streams. We're making it happen." {
 		t.Errorf("seg1 text = %q, want the incremental tail", out[1].Text)
 	}
-	if out[1].Start < out[0].End {
-		t.Errorf("seg1 start %v overlaps seg0 end %v", out[1].Start, out[0].End)
+	// Timestamps come straight from the .srt: the deduped tail keeps its cue's
+	// ORIGINAL start (7.27), it is NOT clamped forward to the previous cue's end.
+	// A search hit must seek to exactly the timestamp the .srt lists.
+	if out[0].Start != 4.96 {
+		t.Errorf("seg0 start = %v, want the literal .srt cue start 4.96", out[0].Start)
+	}
+	if out[1].Start != 7.27 {
+		t.Errorf("seg1 start = %v, want the literal .srt cue start 7.27 (never clamped)", out[1].Start)
 	}
 }
 
