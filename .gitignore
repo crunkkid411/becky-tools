@@ -5,6 +5,7 @@ bin/
 # Linux/macOS tool binaries built in becky-go root by `go build ./cmd/<name>/`
 becky-go/ask
 becky-go/becky
+becky-go/becky-reaper
 becky-go/canvas
 becky-go/cluster
 becky-go/compose

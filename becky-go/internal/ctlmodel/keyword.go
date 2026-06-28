@@ -45,6 +45,10 @@ func ParseKeyword(instruction string, arr *dawmodel.Arrangement) ctledit.BeckyEd
 	switch {
 	case isTempo(s):
 		return parseTempo(s)
+	case isSidechain(s):
+		return parseSidechain(s, arr)
+	case isRoute(s):
+		return parseRoute(s, arr)
 	case strings.Contains(s, "transpose") || isMelodicMove(s):
 		return parseTranspose(s, arr)
 	case strings.Contains(s, "pan"):
@@ -233,6 +237,76 @@ func parseGain(s string, arr *dawmodel.Arrangement) ctledit.BeckyEditBatch {
 	return noEdits(`say louder or quieter (or "set ` + track + ` gain to 0.8")`)
 }
 
+// ─── routing ───────────────────────────────────────────────────────────────────
+
+func isRoute(s string) bool {
+	return (strings.Contains(s, "route") || strings.Contains(s, "send")) && strings.Contains(s, "bus")
+}
+
+// parseRoute handles "route/send the X to the Y bus". The track and the destination
+// bus are read from the two halves of " to " so a track and a bus that share a word
+// (e.g. the "drums" track vs the "bus.drums" bus) don't collide.
+func parseRoute(s string, arr *dawmodel.Arrangement) ctledit.BeckyEditBatch {
+	left, right, ok := splitOn(s, " to ")
+	if !ok {
+		return noEdits(`say where to route it, e.g. "route the lead to the music bus"`)
+	}
+	track := findTrackID(left, arr)
+	bus := findBusID(right, arr)
+	if track == "" || bus == "" {
+		return noEdits(`couldn't resolve the track and the destination bus — try "send the lead to the drums bus"`)
+	}
+	return batch(fmt.Sprintf("route %s to %s", track, bus),
+		ctledit.BeckyEdit{Op: ctledit.OpRouteTo, Target: track, BusID: bus})
+}
+
+// ─── sidechain ─────────────────────────────────────────────────────────────────
+
+func isSidechain(s string) bool {
+	return strings.Contains(s, "sidechain") || strings.Contains(s, "side-chain") || strings.Contains(s, "duck")
+}
+
+// parseSidechain handles "sidechain the X to the Y" and "duck the X under the Y": the
+// VICTIM bus (X's bus) is ducked by the TRIGGER track Y. Drum words (kick/snare/…)
+// resolve to the drums track since dawmodel models drums as one track.
+func parseSidechain(s string, arr *dawmodel.Arrangement) ctledit.BeckyEditBatch {
+	sep := " under "
+	if !strings.Contains(s, sep) {
+		sep = " to "
+	}
+	left, right, ok := splitOn(s, sep)
+	if !ok {
+		return noEdits(`say what ducks what, e.g. "sidechain the bass to the kick" or "duck the music under the kick"`)
+	}
+	victim := findTrackID(left, arr)
+	trigger := resolveTrigger(right, arr)
+	if victim == "" || trigger == "" {
+		return noEdits(`couldn't resolve both tracks — try "sidechain the bass to the kick"`)
+	}
+	victimBus := trackBus(arr, victim)
+	if victimBus == "" {
+		return noEdits(fmt.Sprintf("track %q has no bus to duck", victim))
+	}
+	return batch(fmt.Sprintf("duck %s (%s) under %s", victim, victimBus, trigger),
+		ctledit.BeckyEdit{Op: ctledit.OpAddSidechain, BusID: victimBus, SidechainSource: trigger})
+}
+
+// resolveTrigger finds the trigger track, mapping common drum words to the drums track
+// (dawmodel has no per-drum sub-tracks — the kit lives on one percussion track).
+func resolveTrigger(text string, arr *dawmodel.Arrangement) string {
+	if id := findTrackID(text, arr); id != "" {
+		return id
+	}
+	for _, w := range []string{"kick", "snare", "hat", "hihat", "clap", "drum", "beat"} {
+		if containsWord(text, w) {
+			if id := drumsTrackID(arr); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
 // ─── arrangement grounding ─────────────────────────────────────────────────────
 
 // findTrackID returns the track whose ID is mentioned in s (longest match wins, so
@@ -252,6 +326,80 @@ func findTrackID(s string, arr *dawmodel.Arrangement) string {
 		}
 	}
 	return best
+}
+
+// findBusID returns the bus whose descriptive token (the part after the last '.', e.g.
+// "drums" in "bus.drums") or a known synonym appears in text. Empty when none matches.
+func findBusID(text string, arr *dawmodel.Arrangement) string {
+	if arr == nil {
+		return ""
+	}
+	// synonyms → the token to look for on a bus id.
+	syn := map[string]string{"low": "808", "bass": "808", "synth": "music", "keys": "music", "beat": "drums", "drum": "drums"}
+	best, bestLen := "", 0
+	for _, b := range arr.Buses {
+		tok := strings.ToLower(b.ID)
+		if i := strings.LastIndexByte(tok, '.'); i >= 0 && i+1 < len(tok) {
+			tok = tok[i+1:]
+		}
+		if tok == "" {
+			continue
+		}
+		match := containsWord(text, tok)
+		if !match {
+			for word, t := range syn {
+				if t == tok && containsWord(text, word) {
+					match = true
+					break
+				}
+			}
+		}
+		if match && len(tok) > bestLen {
+			best, bestLen = b.ID, len(tok)
+		}
+	}
+	return best
+}
+
+// trackBus returns the destination bus of a track, or "".
+func trackBus(arr *dawmodel.Arrangement, trackID string) string {
+	if arr == nil {
+		return ""
+	}
+	for _, t := range arr.Tracks {
+		if t.ID == trackID {
+			return t.Strip.Bus
+		}
+	}
+	return ""
+}
+
+// drumsTrackID returns the percussion/drums track ID (channel 9 or an id containing
+// "drum"), or "".
+func drumsTrackID(arr *dawmodel.Arrangement) string {
+	if arr == nil {
+		return ""
+	}
+	for _, t := range arr.Tracks {
+		if strings.Contains(strings.ToLower(t.ID), "drum") {
+			return t.ID
+		}
+		for _, c := range t.Clips {
+			if c.Channel == 9 {
+				return t.ID
+			}
+		}
+	}
+	return ""
+}
+
+// splitOn splits s into the text before and after the first occurrence of sep.
+func splitOn(s, sep string) (left, right string, ok bool) {
+	i := strings.Index(s, sep)
+	if i < 0 {
+		return "", "", false
+	}
+	return s[:i], s[i+len(sep):], true
 }
 
 func firstMIDITrackID(arr *dawmodel.Arrangement) string {
