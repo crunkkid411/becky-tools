@@ -531,20 +531,33 @@ load-bearing rules, in brief:
 > the short summary here. **Do NOT let this section grow back into a full log** — an accumulating
 > §6 is exactly what pushed CLAUDE.md past the prompt-size limit (fixed 2026-06-22).
 
-### Pending cloud branch (not yet merged)
+### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
 
-- **`claude/ocr-ensemble-corroboration` — REVIEW REQUESTED, do NOT auto-merge.** Adds
-  `SPEC-OCR-ENSEMBLE.md` (multi-model OCR ensemble + adversarial ≥2-engine corroboration;
-  adds Unlimited-OCR long-doc slot; GLM-OCR↔PaddleOCR-VL A/B; mandatory leaderboard-sweep
-  process fix) + claim/INBOX-3 in `COLLAB-PROTOCOL.md`. Docs only. *Left for local:* ratify,
-  decide §10 open questions, then either build `internal/ocrfuse` or hand it back to cloud.
+- **OCR ensemble + adversarial corroboration (`SPEC-OCR-ENSEMBLE.md`, landed 2026-06-28).** The
+  *spec* is on master (multi-model OCR ensemble + adversarial ≥2-engine corroboration; adds the
+  Unlimited-OCR long-doc slot; GLM-OCR↔PaddleOCR-VL A/B; a mandatory leaderboard-sweep process fix;
+  claim/INBOX-3 in `COLLAB-PROTOCOL.md`). It is design only — **nothing is built yet.** Before
+  anyone codes `internal/ocrfuse`, Jordan ratifies and settles the §10 open decisions (doc-slot A/B,
+  threshold T, critical classes, long-doc in v1?, agreement tol, escalate-only vs `--thorough`);
+  then cloud can build the deterministic core with no models.
 
-### Current state of master (as of 2026-06-27)
+### Current state of master (as of 2026-06-28)
 
-Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` test FAIL is
-pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
-`build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
+blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
+FAIL is pre-existing/environmental (the local TTS model is present, so "degrades when no model"
+inverts); `build-all-tools.bat` builds all 84 `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **becky-daw ask + becky-reaper song — the AI-music loop RUNS end-to-end headless (2026-06-28, cloud,
+  `claude/becky-tool-continue-f7m0yq`):** plain-English → openable, audible REAPER session, no GUI/GPU.
+  `becky-daw ask` (`cmd/daw/ask.go`) loads a session (becky-compose `project.json`, raw `arrangement.json`,
+  or `.mid`), turns each `--do "…"` into a `ctledit` batch via `ctlmodel.PickProposer()`, applies it, writes
+  the edited arrangement back. `internal/ctlmodel` keyword parser broadened (route/send-to-bus, sidechain/duck
+  on top of tempo/mute/solo/pan/gain/transpose). `becky-reaper song` (`cmd/becky-reaper/song.go`) collapses
+  compose→ask→build into ONE command. **VERIFIED on this box:** `becky-reaper song --genre crunkcore --seed 7
+  --do "set tempo to 96" --do "mute the sfx"` wrote a `.rpp` carrying `TEMPO 96` + `sfx … MUTESOLO 1`; tests
+  pass; both `.exe`s build. (Integration note: cloud accidentally committed a 10MB `becky-go/becky-reaper`
+  ELF — dropped on merge + `.gitignore` patched so it can't recur. No "left for local".)
 - **becky-imagegen — DEFAULT local text→image gen via Krea-2 (2026-06-28, cloud,
   `claude/default-local-image-gen-lyw127`):** new single-purpose tool (`cmd/imagegen` +
   `internal/imagegen`) — prompt → PNG, generated on-device by **stable-diffusion.cpp's `sd-cli`**

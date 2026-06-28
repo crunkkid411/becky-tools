@@ -10,6 +10,39 @@
 
 ---
 
+## Cloud-queue drain — imagegen + becky-daw/reaper + OCR-ensemble spec (2026-06-28, local integration)
+
+**What landed.** The "Get Becky Updates" button launched the local agent to drain three unmerged
+cloud branches. All three integrated additively onto master, gates re-run green on this box, real
+`.exe`s rebuilt (84 tools), and the runnable claims re-verified in hand:
+
+- **`claude/default-local-image-gen-lyw127` → becky-imagegen** (FF-merge, clean). New single-purpose
+  tool (`cmd/imagegen` + `internal/imagegen`, 295-line core test): prompt → PNG via stable-diffusion.cpp
+  `sd-cli` running FLUX "Krea-2". Re-verified locally: `becky-imagegen --selftest` = **10/10 PASS**
+  (deterministic argv plan; the actual GGUF generation is the model boundary — `scripts/get-krea2.ps1`
+  + a real PNG is Jordan's "see it" gate, `SPEC-BECKY-IMAGEGEN.md §8`).
+- **`claude/becky-tool-continue-f7m0yq` → becky-daw ask + becky-reaper song** (merge). Plain-English →
+  openable REAPER session, headless. Re-verified locally: `becky-reaper song --genre crunkcore --seed 7
+  --do "set tempo to 96" --do "mute the sfx"` wrote a `.rpp` carrying `TEMPO 96` + `sfx … MUTESOLO 1`;
+  `becky-daw ask --help` wired; `cmd/becky-reaper`/`cmd/daw`/`internal/ctlmodel` tests pass.
+  **Integration fix:** the branch had accidentally committed a **10MB `becky-go/becky-reaper` Linux ELF**
+  (the `.gitignore` listed every other tool's bare binary but not this one). Dropped the binary on merge
+  and added `becky-go/becky-reaper` to `.gitignore` so it can't recur. Its verbose CLAUDE.md §6 draft was
+  discarded in favor of the short §6 line + this entry (CLAUDE.md was NOT re-bloated).
+- **`claude/ocr-ensemble-corroboration` → SPEC-OCR-ENSEMBLE.md** (merge, docs only). Spec + COLLAB
+  registry row + INBOX-3 landed; **nothing built** — building `internal/ocrfuse` awaits Jordan's go/no-go
+  on the §10 decisions (see its own log entry below + CLAUDE.md §6 "Awaiting Jordan's go/no-go").
+
+**Gates (local, this box):** `go build ./...` ✅ · `go vet ./...` ✅ · `go test ./...` ✅ except the
+documented `cmd/tts TestRun_DegradesWhenNoModel` (local TTS model present → correctly doesn't degrade →
+the no-model test inverts) · `gofmt` clean-modulo-CRLF (the whole repo's `.go` blobs are CRLF — confirmed
+via `git cat-file`; cosmetic on Windows per CLAUDE.md §4, CI-green on Linux — NOT "fixed" to avoid a
+repo-wide noise diff) · `build-all-tools.bat` = "Done. Built 84 tools", exit 0 (`WARN: audio daw-engine`
+is the documented best-effort cgo variant, non-blocking). Branches were assembled on an integration branch
+then fast-forwarded onto master (the pre-commit hook blocks direct commits to master).
+
+---
+
 ## `becky-review-fixes2` — round-4 timeline + overlay + forensic re-transcribe naming (2026-06-27, local; on master `f934708`)
 
 **What landed.** Jordan's round-4 feedback on Becky Review (the becky-clip-rebuild reviewer; see
