@@ -27,18 +27,25 @@ look AT footage; this makes pictures. They share the Qwen family name by acciden
 Krea-2 happens to use **Qwen3-VL-4B as its text encoder**, which is an internal
 component of the generator, not a becky reader.
 
-**Krea-2 has three local pieces** (docs/krea2.md):
-| Piece | sd-cli flag | Source |
-|---|---|---|
-| Krea-2 diffusion transformer (Raw=quality default, Turbo=fewer steps) | `--diffusion-model` | `realrebelai/KREA-2_GGUFs` (BASE / TURBO) |
-| Wan 2.1 VAE | `--vae` | `Comfy-Org/Wan_2.1_ComfyUI_repackaged` |
-| Qwen3-VL-4B-Instruct text encoder | `--llm` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` |
+**Krea-2 has three local pieces** (docs/krea2.md). DEFAULT = **Turbo Q4_K_M** —
+krea's own model card marks the Raw/Base weights *"not recommended for inference"*
+(a fine-tuning foundation); **Turbo** is the distilled ~8-step RELEASE model, so it
+is the right default. Q4_K_M (~7.2 GB) is the quality/size sweet spot for an 8 GB
+GPU (Q8_0 ~13.6 GB is overkill with `--offload-to-cpu`). Verified vs the live HF
+repos + krea2.md (2026-06-28). **LICENSE: krea-2-community-license + AUP, NOT
+apache-2.0** (the GGUF repo mis-tags it) — mind the AUP for public/commercial use.
 
-The verified-good invocation from the doc (cloud reproduced it into `BuildArgs`):
+| Piece | sd-cli flag | Source (in-repo path) |
+|---|---|---|
+| Krea-2 diffusion transformer — **default `TURBO/Krea-2-Turbo-Q4_K_M.gguf`** (Raw/Base = opt-in experiment) | `--diffusion-model` | `realrebelai/KREA-2_GGUFs` (TURBO / BASE) |
+| Wan 2.1 VAE | `--vae` | `Comfy-Org/Wan_2.1_ComfyUI_repackaged` → `split_files/vae/wan_2.1_vae.safetensors` |
+| Qwen3-VL-4B-Instruct text encoder (Q8_0; no `mmproj` needed) | `--llm` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` → `Qwen3VL-4B-Instruct-Q8_0.gguf` |
+
+The verified-good invocation (cloud reproduced it into `BuildArgs`; default = Turbo):
 ```
-sd-cli --diffusion-model Krea-2-Raw-Q8_0.gguf --llm Qwen3-VL-4B-Instruct-Q4_K_M.gguf \
+sd-cli --diffusion-model Krea-2-Turbo-Q4_K_M.gguf --llm Qwen3VL-4B-Instruct-Q8_0.gguf \
        --vae wan_2.1_vae.safetensors -p "a lovely cat holding a sign says 'krea2.cpp'" \
-       --diffusion-fa -v --offload-to-cpu
+       --steps 8 --diffusion-fa -v --offload-to-cpu
 ```
 
 ## 2. becky invariants this honours
@@ -59,8 +66,9 @@ becky-imagegen --selftest          # OFFLINE, no-hardware argv proof (cloud ran 
 becky-imagegen --dry-run -p "..."  # print the sd-cli command, do not run it
 becky-imagegen --prompt "..." --json
 ```
-Defaults: 1024x1024, seed 42, sampler `euler`, Raw=28 steps / Turbo=8 steps,
-`--cfg-scale 1`, `--guidance 4.5`, `--diffusion-fa` on, `--offload-to-cpu` on.
+Defaults: Turbo variant, 1024x1024, seed 42, sampler `euler`, 8 steps (Turbo is
+auto-detected from the model filename; Raw/Base = 28), `--cfg-scale 1`,
+`--guidance 4.5`, `--diffusion-fa` on, `--offload-to-cpu` on.
 
 ## 4. Files
 
@@ -72,7 +80,7 @@ Defaults: 1024x1024, seed 42, sampler `euler`, Raw=28 steps / Turbo=8 steps,
 | `becky-go/internal/imagegen/imagegen_test.go` | value-asserting tests (argv, defaults, variant, every degrade path, happy path, Plan purity) |
 | `becky-go/internal/config/config.go` | `SDCli` + `Krea2{Model,ModelTurbo,VAE,TextEncoder}` fields + `ImageGen()` resolver |
 | `becky-go/internal/freshness/manifest.json` | `stable-diffusion-cpp` + `krea-2` dependency rows |
-| `scripts/get-krea2.ps1` | downloads the three (or four, with `-IncludeTurbo`) model files into the config dir |
+| `scripts/get-krea2.ps1` | downloads the three model files (Turbo default) into the config dir; `-StepUp` adds the Q6_K quality step-up, `-IncludeRaw` adds the Raw/Base experiment file |
 
 ## 5. Determinism + the model boundary
 
@@ -105,10 +113,10 @@ tools — record good defaults in `~/.becky/config.json` once dialled in.
 - [ ] **1. Build / obtain `sd-cli`** (stable-diffusion.cpp, CUDA build). Verify:
   `sd-cli --help` prints usage. Put its path in `~/.becky/config.json` as `"sd_cli"`
   (or rely on the default `C:\stable-diffusion.cpp\build\bin\Release\sd-cli.exe`).
-- [ ] **2. Download the three model files:**
+- [ ] **2. Download the three model files (Turbo default):**
   `powershell -ExecutionPolicy Bypass -File scripts\get-krea2.ps1`
-  (add `-IncludeTurbo` for the Turbo variant). If a `GET` fails, the GGUF filename
-  changed — list the repo and pass `-RawFile/-LlmFile/...` to match, or set the
+  (add `-StepUp` for the higher-quality Q6_K). If a `GET` fails, the GGUF filename
+  changed — list the repo and pass `-TurboFile/-LlmFile/...` to match, or set the
   paths in `~/.becky/config.json` (`krea2_model`, `krea2_vae`, `krea2_text_encoder`).
   Verify: the three files exist in `X:\AI-2\becky-tools\models\krea2\`.
 - [ ] **3. Confirm the resolved command without running it:**

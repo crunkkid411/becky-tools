@@ -144,9 +144,9 @@ func printReport(res imagegen.Result) {
 func runSelftest() int {
 	res := imagegen.Plan(imagegen.Options{
 		Prompt: "a lovely cat holding a sign that says 'becky'",
-		Model:  "Krea-2-Raw-Q8_0.gguf",
+		Model:  "Krea-2-Turbo-Q4_K_M.gguf",
 		VAE:    "wan_2.1_vae.safetensors",
-		LLM:    "Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+		LLM:    "Qwen3VL-4B-Instruct-Q8_0.gguf",
 		Out:    "selftest.png",
 	})
 
@@ -155,15 +155,15 @@ func runSelftest() int {
 		ok   bool
 	}
 	checks := []check{
-		{"diffusion-model is the Krea-2 transformer", argVal(res.Args, "--diffusion-model") == "Krea-2-Raw-Q8_0.gguf"},
+		{"diffusion-model is the Krea-2 Turbo transformer", argVal(res.Args, "--diffusion-model") == "Krea-2-Turbo-Q4_K_M.gguf"},
 		{"vae is the Wan 2.1 VAE", argVal(res.Args, "--vae") == "wan_2.1_vae.safetensors"},
-		{"llm is the Qwen3-VL-4B text encoder", argVal(res.Args, "--llm") == "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"},
+		{"llm is the Qwen3-VL-4B text encoder", argVal(res.Args, "--llm") == "Qwen3VL-4B-Instruct-Q8_0.gguf"},
 		{"prompt is passed via -p", argVal(res.Args, "-p") == "a lovely cat holding a sign that says 'becky'"},
 		{"output is passed via -o", argVal(res.Args, "-o") == "selftest.png"},
 		{"seed is the fixed deterministic default", argVal(res.Args, "--seed") == strconv.FormatInt(imagegen.DefaultSeed, 10)},
-		{"steps default to raw (28)", argVal(res.Args, "--steps") == strconv.Itoa(imagegen.DefaultStepsRaw)},
+		{"steps auto-resolve to Turbo's distilled count (8)", argVal(res.Args, "--steps") == strconv.Itoa(imagegen.DefaultStepsTurbo)},
 		{"size defaults to 1024x1024", argVal(res.Args, "-W") == "1024" && argVal(res.Args, "-H") == "1024"},
-		{"variant resolves to krea-2-raw", res.Variant == "krea-2-raw"},
+		{"variant resolves to krea-2-turbo (the release model)", res.Variant == "krea-2-turbo"},
 		{"not degraded (Plan is pure)", !res.Degraded},
 	}
 

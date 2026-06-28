@@ -209,6 +209,13 @@ func withDefaults(o Options) Options {
 	o.LLM = firstNonEmpty(o.LLM, os.Getenv(EnvTextEncoder))
 	o.Out = firstNonEmpty(o.Out, DefaultOut)
 	o.Sampler = firstNonEmpty(o.Sampler, DefaultSampler)
+	// A Turbo model file implies the Turbo step profile even without --turbo, so
+	// becky's default (Krea-2 Turbo) generates at its distilled ~8 steps instead of
+	// Raw's 28. (krea's card marks Raw/Base "not for inference"; Turbo is the
+	// release model.) An explicit --steps still wins via the o.Steps<=0 guard below.
+	if !o.Turbo && strings.Contains(strings.ToLower(pathx.Base(o.Model)), "turbo") {
+		o.Turbo = true
+	}
 	if o.Width <= 0 {
 		o.Width = DefaultWidth
 	}

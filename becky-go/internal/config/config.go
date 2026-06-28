@@ -53,14 +53,14 @@ type Config struct {
 	// becky's DEFAULT local image-gen model: the FLUX.1 "Krea-2" diffusion
 	// transformer + the Wan 2.1 VAE + Qwen3-VL-4B as the text encoder (the --llm),
 	// all run by the sd-cli binary. This is GENERATION only — it does NOT replace
-	// the forensic vision READERS (Gemma-4 / LFM2.5-VL / Qwen). Raw is the default
-	// quality variant; Turbo (fewer steps) is the selectable alternate
-	// (becky-imagegen --turbo). Paths are read here, NEVER hardcoded in the tool.
-	// Source: docs/krea2.md (leejet/stable-diffusion.cpp). Downloaded by
-	// scripts/get-krea2.ps1.
+	// the forensic vision READERS (Gemma-4 / LFM2.5-VL / Qwen). Krea-2 *Turbo* is
+	// the default (krea's card marks Raw/Base "not recommended for inference"); the
+	// Raw/Base transformer is an opt-in experimentation path. Paths are read here,
+	// NEVER hardcoded in the tool. Source: docs/krea2.md (leejet/stable-diffusion.cpp).
+	// Downloaded by scripts/get-krea2.ps1.
 	SDCli            string `json:"sd_cli"`             // stable-diffusion.cpp sd-cli(.exe)
-	Krea2Model       string `json:"krea2_model"`        // DEFAULT diffusion-transformer GGUF (Krea-2-Raw, e.g. Q8_0)
-	Krea2ModelTurbo  string `json:"krea2_model_turbo"`  // ALTERNATE Turbo diffusion GGUF (selected by --turbo)
+	Krea2Model       string `json:"krea2_model"`        // DEFAULT diffusion-transformer GGUF (Krea-2-Turbo, e.g. Q4_K_M)
+	Krea2ModelTurbo  string `json:"krea2_model_turbo"`  // Turbo diffusion GGUF (becky-imagegen --turbo; default is already Turbo)
 	Krea2VAE         string `json:"krea2_vae"`          // Wan 2.1 VAE safetensors (--vae)
 	Krea2TextEncoder string `json:"krea2_text_encoder"` // Qwen3-VL-4B text-encoder GGUF (--llm)
 	LlamaMtmdCLI     string `json:"llama_mtmd_cli"`     // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
@@ -276,23 +276,33 @@ func defaults() Config {
 			`X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\mmproj-F16.gguf`,
 		),
 		// Krea2 local image generation via stable-diffusion.cpp. sd-cli is the
-		// generation binary (built alongside llama.cpp tooling); the Krea-2 Raw
-		// transformer is the default, Turbo the lighter alternate, both paired with
-		// the Wan 2.1 VAE + Qwen3-VL-4B text encoder. Downloaded by
-		// scripts/get-krea2.ps1; first listed path is the canonical install target so
-		// SOMETHING resolves before the download (degrade-never-crash takes it from
-		// there). docs/krea2.md (leejet/stable-diffusion.cpp).
+		// generation binary; the Krea-2 *Turbo* transformer is the DEFAULT (krea's
+		// own model card says the Raw/Base weights are "not recommended for
+		// inference" — they are a fine-tuning foundation; Turbo is the distilled
+		// release model: ~8 steps), paired with the Wan 2.1 VAE + Qwen3-VL-4B text
+		// encoder. Q4_K_M is the quality/size sweet spot for an 8 GB GPU (Q8_0 ~13 GB
+		// is overkill with --offload-to-cpu). Verified vs the live HF repos +
+		// krea2.md 2026-06-28. NOTE: weights are under the krea-2-community-license
+		// (+ AUP), NOT apache-2.0 despite the GGUF repo's mistag. Downloaded by
+		// scripts/get-krea2.ps1; first existing path wins, so a step-up (Q6_K) or the
+		// legacy Q8 file is picked up automatically if present. docs/krea2.md.
 		SDCli: resolve("sd-cli", `C:\stable-diffusion.cpp\build\bin\Release\sd-cli.exe`),
 		Krea2Model: firstExisting(
+			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q4_K_M.gguf`,
+			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q6_K.gguf`,
 			`X:\AI-2\becky-tools\models\krea2\Krea-2-Raw-Q8_0.gguf`,
 		),
 		Krea2ModelTurbo: firstExisting(
+			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q4_K_M.gguf`,
+			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q6_K.gguf`,
 			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q8_0.gguf`,
 		),
 		Krea2VAE: firstExisting(
 			`X:\AI-2\becky-tools\models\krea2\wan_2.1_vae.safetensors`,
 		),
 		Krea2TextEncoder: firstExisting(
+			`X:\AI-2\becky-tools\models\krea2\Qwen3VL-4B-Instruct-Q8_0.gguf`,
+			`X:\AI-2\becky-tools\models\krea2\Qwen3VL-4B-Instruct-Q4_K_M.gguf`,
 			`X:\AI-2\becky-tools\models\krea2\Qwen3-VL-4B-Instruct-Q4_K_M.gguf`,
 		),
 		LlamaMtmdCLI: resolve("llama-mtmd-cli", `C:\llama.cpp\build\bin\llama-mtmd-cli.exe`),
