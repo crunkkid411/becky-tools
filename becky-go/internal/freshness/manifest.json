@@ -102,6 +102,32 @@
       "note": "becky's GENERATIVE orchestrator + ask-routing model AND a SINGLE-IMAGE corroborator. Drives becky-ask intent routing, becky-scout's proposer, becky-new-tool model reasoning (TEXT), and becky-vision's --qwen single-still second opinion (a DIFFERENT family than Gemma-4/LFM, so an agreeing read is real corroboration). IMPORTANT: Qwen3.5-4B does ONE still image at a time - it does NOT watch video and has NO audio; ALL video+audio watching stays Gemma-4 (E4B -> 12B, becky-validate). It is IMAGE-CAPABLE via its OWN F16 mmproj - NOT a separate 'Qwen3.5-VL' (no such model); the distinct heavy Qwen3-VL is only for a dedicated VL job. Resolved by config.Qwen() (BECKY_QWEN_MODEL overrides); downloaded via scripts/get-qwen35.ps1. The pinned GGUF is the Unsloth UD-Q4_K_XL (Dynamic-2.0 quant), the exact file Jordan linked."
     },
     {
+      "id": "stable-diffusion-cpp",
+      "name": "stable-diffusion.cpp (sd-cli)",
+      "used_by": [
+        "becky-imagegen"
+      ],
+      "pinned": "master (sd-cli; CUDA build)",
+      "upstream": {
+        "type": "github-release",
+        "ref": "leejet/stable-diffusion.cpp"
+      },
+      "note": "The on-device text->image inference engine for becky-imagegen. Pure C++/GGML, runs GGUF/safetensors models offline on the GPU. sd-cli is the binary; becky-imagegen (internal/imagegen) only assembles its argv (deterministic fixed seed). Built locally alongside the llama.cpp tooling; path resolved by config.SDCli. Krea-2 support landed in docs/krea2.md."
+    },
+    {
+      "id": "krea-2",
+      "name": "FLUX.1 Krea-2 (image generation: transformer + Wan 2.1 VAE + Qwen3-VL-4B text encoder)",
+      "used_by": [
+        "becky-imagegen"
+      ],
+      "pinned": "Krea-2-Raw GGUF (default) + Krea-2-Turbo (alternate); Wan 2.1 VAE; Qwen3-VL-4B-Instruct text encoder",
+      "upstream": {
+        "type": "hf-model",
+        "ref": "realrebelai/KREA-2_GGUFs"
+      },
+      "note": "becky's DEFAULT local image-generation model, run via stable-diffusion.cpp (docs/krea2.md). Three pieces: the Krea-2 diffusion transformer (--diffusion-model; Raw is the quality default, Turbo the fewer-steps alternate via --turbo), the Wan 2.1 VAE (--vae; Comfy-Org/Wan_2.1_ComfyUI_repackaged), and Qwen3-VL-4B-Instruct as the text encoder (--llm; Qwen/Qwen3-VL-4B-Instruct-GGUF). GENERATION only - it does NOT replace the forensic vision READERS (Gemma-4/LFM2.5-VL/Qwen single-image). Resolved by config.ImageGen(); downloaded via scripts/get-krea2.ps1."
+    },
+    {
       "id": "qwen3-embed-4b",
       "name": "Qwen3-Embedding-4B",
       "used_by": [

@@ -134,6 +134,7 @@ var ToolCatalog = []Capability{
 	{Verb: "becky-regrab", Summary: "Re-grab a page web2md missed: a local Gemma-4 model extracts the content from the page text, then it's verified.", Example: `becky-regrab "<url>"`, Keywords: []string{"regrab", "re-grab", "recover page", "missed page", "gemma extract", "retry download"}, Tier: TierGreen, Pack: "default"},
 	{Verb: "becky-export", Summary: "Export findings / clips into a shareable package.", Example: `becky-export "<results>"`, Keywords: []string{"export", "package", "report out", "share"}, Tier: TierRed, Pack: "default"},
 	{Verb: "reaper-bridge", Summary: "Drive the open REAPER session: author/edit takes, params, and the arrangement.", Example: `becky-reaper --apply "<edit.json>"`, Keywords: []string{"reaper", "daw", "take", "mixer", "arrangement", "track"}, Tier: TierYellow, Pack: "reaper"},
+	{Verb: "becky-imagegen", Summary: "Generate an image from a text prompt, fully local (Krea-2 via stable-diffusion.cpp).", Example: `becky-imagegen --prompt "a lovely cat" --out cat.png`, Keywords: []string{"imagegen", "image", "generate image", "text to image", "picture", "art", "draw", "krea", "stable diffusion", "flux"}, Tier: TierYellow, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.

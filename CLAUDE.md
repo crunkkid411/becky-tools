@@ -460,6 +460,13 @@ load-bearing rules, in brief:
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
+- `SPEC-BECKY-IMAGEGEN.md` (BUILT 2026-06-28, cloud — `becky-imagegen`: becky's DEFAULT
+  local **text→image** generator. Deterministic Go wrapper (`cmd/imagegen` +
+  `internal/imagegen`) around **stable-diffusion.cpp's `sd-cli`** running **FLUX.1
+  "Krea-2"** (Krea-2 transformer + Wan 2.1 VAE + Qwen3-VL-4B text encoder; docs/krea2.md).
+  Fixed-seed deterministic, degrade-never-crash, config-driven paths. Generation ONLY —
+  NOT the forensic vision readers. Offline proof `becky-imagegen --selftest` = 10/10;
+  §8 = the local model-boundary work order. Downloader `scripts/get-krea2.ps1`.)
 - `SPEC-BECKY-ASK.md`, `SPEC-BECKY-NEW-TOOL.md`, `SPEC-OCR.md`,
   `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`,
   `SPEC-BECKY-COMPOSE.md` (BUILT — `becky-compose`: deterministic genre→multi-track
@@ -528,6 +535,18 @@ Green and pushed. `go build/vet/test ./...` + `gofmt` clean (the lone `cmd/tts` 
 pre-existing/environmental — the local TTS model is present, so "degrades when no model" inverts);
 `build-all-tools.bat` produces all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **becky-imagegen — DEFAULT local text→image gen via Krea-2 (2026-06-28, cloud,
+  `claude/default-local-image-gen-lyw127`):** new single-purpose tool (`cmd/imagegen` +
+  `internal/imagegen`) — prompt → PNG, generated on-device by **stable-diffusion.cpp's `sd-cli`**
+  running **FLUX.1 "Krea-2"** (Krea-2 transformer + Wan 2.1 VAE + Qwen3-VL-4B text encoder;
+  https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/krea2.md). becky-shaped: fixed
+  seed 42 (deterministic), degrade-never-crash, every path from `config.ImageGen()` (no hardcoding),
+  `--turbo` variant, `--dry-run`/`--json`. **Generation ONLY — does NOT replace the forensic vision
+  READERS (Gemma-4/LFM2.5-VL/Qwen).** Cloud gates green (build/vet/test/gofmt) + the offline proof
+  `becky-imagegen --selftest` = **10/10 PASS**; freshness manifest rows + `scripts/get-krea2.ps1`
+  added. **Left for local (SPEC-BECKY-IMAGEGEN.md §8):** build/obtain `sd-cli`, run `get-krea2.ps1`
+  for the three model files, then make ONE real 1024×1024 PNG (the hardware "see it" gate) + tune
+  steps/cfg/guidance on real output.
 - **Becky Review round-4 fixes — timeline + overlay + forensic re-transcribe naming (2026-06-27, local,
   `claude/becky-review-fixes2`):** all five of Jordan's round-4 items, CDP/screenshot-verified on a real
   folder then deployed to the main tree (Desktop "Becky Review" runs them). (a) clip **drag-reorder
