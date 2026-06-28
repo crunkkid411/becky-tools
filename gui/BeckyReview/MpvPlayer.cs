@@ -35,6 +35,10 @@ public sealed class MpvPlayer : IDisposable
     /// <summary>Raised (on a background thread) when playback position changes. Args: (timePos, duration).</summary>
     public event Action<double, double>? PositionChanged;
 
+    /// <summary>Raised (on a background thread) when mpv's pause state changes — from a
+    /// command OR a click on the video. The single source of truth for "is it playing".</summary>
+    public event Action<bool>? PauseChanged;
+
     private double _lastDuration;
 
     public MpvPlayer(string mpvExe, string pipeName = "beckympv")
@@ -90,7 +94,12 @@ public sealed class MpvPlayer : IDisposable
     {
         var dir = Path.GetDirectoryName(_mpvExe)!;
         var path = Path.Combine(dir, "becky-input.conf");
-        if (!File.Exists(path))
+        // Always (re)write so binding changes ship on the next launch.
+        // NOTE: mpv is embedded via --wid (it renders INTO the host WinForms panel and
+        // does NOT receive mouse/keyboard itself), so these are advisory; the app drives
+        // pause/seek/frame over IPC. Click-to-pause is handled by the host panel (see
+        // MainWindow.StartVideo), not by an mpv MBTN binding (which never fires here).
+        try
         {
             File.WriteAllText(path,
                 "RIGHT frame-step\n" +
@@ -99,6 +108,7 @@ public sealed class MpvPlayer : IDisposable
                 "Shift+LEFT seek -1 exact\n" +
                 "SPACE cycle pause\n");
         }
+        catch { /* keep any existing conf if the file is locked or unwritable */ }
         return path;
     }
 
@@ -141,6 +151,9 @@ public sealed class MpvPlayer : IDisposable
             // Observe position so the overlay + timeline update live (events, not polling).
             await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 1, "time-pos" } }), ct);
             await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 2, "duration" } }), ct);
+            // Observe pause so the page always knows the REAL play state (a video click,
+            // spacebar, or a command all change it the same way).
+            await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 3, "pause" } }), ct);
         }
         finally
         {
@@ -224,6 +237,11 @@ public sealed class MpvPlayer : IDisposable
                 else if (name == "time-pos" && root.TryGetProperty("data", out var tEl) && tEl.ValueKind == JsonValueKind.Number)
                 {
                     PositionChanged?.Invoke(tEl.GetDouble(), _lastDuration);
+                }
+                else if (name == "pause" && root.TryGetProperty("data", out var pEl) &&
+                         (pEl.ValueKind == JsonValueKind.True || pEl.ValueKind == JsonValueKind.False))
+                {
+                    PauseChanged?.Invoke(pEl.GetBoolean());
                 }
             }
         }

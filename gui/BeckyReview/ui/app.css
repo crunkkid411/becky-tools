@@ -200,15 +200,15 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* "‹ all videos" back control — above any results (a search OR a clicked video's
-   cues), so there is always a one-click way back to the full file list. */
+/* back arrow — above any results (a search OR a clicked video's cues), so there is
+   always a one-click way back to the full file list. A compact arrow, no label. */
 .backbtn {
   flex: none;
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 11px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 34px; padding: 0;
   background: var(--panel); color: var(--neon);
   border: 1px solid var(--neon-dim); border-radius: 7px;
-  font-size: 14px; font-weight: 700; cursor: pointer;
+  font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer;
   transition: border-color .12s, background .12s;
 }
 .backbtn:hover { border-color: var(--neon); background: var(--neon-soft); }

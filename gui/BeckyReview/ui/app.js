@@ -60,6 +60,7 @@
 
     activeSource: null,    // path currently loaded in mpv
     activeClipId: null,    // timeline clip whose source is playing (for the playhead)
+    playing: false,        // mpv's real play state (mirrors the host's {t:"play"} reports)
     pos: 0, dur: 0,        // last {t:"time"} report
     playheadComp: 0,       // current COMPILATION position (active clip start_sec + offset) - drives split (CHANGE 4)
     selectedClipId: null,  // last-selected timeline clip - target for ripple delete via Del/Esc (CHANGE 5)
@@ -157,6 +158,7 @@
           break;
         }
         case 'time':   onTime(m.pos, m.dur); break;
+        case 'play':   onPlayState(!!m.paused); break;
         case 'folder': onFolder(m.reply);    break;
       }
     });
@@ -389,7 +391,7 @@
     // after scrolling a long cue list — needed because clicking a VIDEO (not
     // searching) shows its cues with no search box to clear (CHANGE: go-back).
     var html = '<div class="resultshead">' +
-                 '<button class="backbtn" data-act="back-to-files" title="back to the video list">&#8249; all videos</button>' +
+                 '<button class="backbtn" data-act="back-to-files" title="back to the video list" aria-label="back to the video list">&#8592;</button>' +
                  '<span class="rhtext">' + escapeHtml(state.headerText || '') + '</span>' +
                '</div>';
     if (!rows.length) {
@@ -880,18 +882,58 @@
     return {};
   }
 
-  /* ---- playhead (driven by incoming {t:"time"} messages) ---- */
+  /* ---- playhead + "play the edit" (driven by incoming {t:"time"} messages) ---- */
+  var advancing = false;   // guard so a stale tick can't double-advance during a clip hop
+  var ADVANCE_EPS = 0.04;  // ~1 frame tolerance so we hop right at the out-point
   function onTime(pos, dur) {
     state.pos = (typeof pos === 'number') ? pos : 0;
     state.dur = (typeof dur === 'number') ? dur : 0;
-    // CHANGE 4: when a timeline clip is the active source, the SOURCE pos maps to a COMPILATION
-    // position: clip.start_sec + (sourcePos - clip.in). Stored so "split at playhead" knows where.
     if (state.activeClipId != null) {
       var ac = clipById(state.activeClipId);
-      if (ac) { state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0)); }
+      if (ac) {
+        // SOURCE pos -> COMPILATION pos (clip.start_sec + offset); drives split (CHANGE 4).
+        state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0));
+        // Play the TIMELINE, not the raw source: when a PLAYING clip reaches its
+        // out-point, hop to the next clip (or stop at the end) so playback never
+        // bleeds past the trimmed segment. Gated on actually playing, so navigating
+        // or seeking near the out never auto-advances.
+        if (state.playing && !advancing && state.pos >= (ac.out || 0) - ADVANCE_EPS) {
+          advanceFromClip(ac);
+          return;
+        }
+      }
     }
     updatePlayhead();
   }
+
+  // advanceFromClip hops timeline playback from ac to the NEXT clip (same source ->
+  // just seek; different source -> load+seek, keep playing), or pauses on the last
+  // frame at the end. A short guard ignores the stale ticks that arrive during the hop.
+  function advanceFromClip(ac) {
+    var clips = state.timeline.clips || [];
+    var idx = -1;
+    for (var i = 0; i < clips.length; i++) { if (String(clips[i].id) === String(ac.id)) { idx = i; break; } }
+    var next = (idx >= 0) ? clips[idx + 1] : null;
+    advancing = true;
+    setTimeout(function () { advancing = false; }, 400);
+    if (next) {
+      state.activeClipId = next.id;
+      state.selectedClipId = next.id;
+      markSelectedClip();
+      if (next.source === ac.source) {
+        mpvSeek(next.in || 0);                 // same source: seek, keep playing
+      } else {
+        state.activeSource = next.source;
+        mpvPlay(next.source, next.in || 0);    // next source: load + seek + keep playing
+      }
+    } else {
+      mpvSend('pause');                        // end of the timeline: stop on the last frame
+    }
+  }
+
+  // The host reports mpv's real pause state (a command, the spacebar, OR a click on
+  // the video) — the single source of truth for whether the timeline is playing.
+  function onPlayState(paused) { state.playing = !paused; }
   function updatePlayhead() {
     var id = state.activeClipId;
     if (id == null) { playheadEl.style.display = 'none'; return; }

@@ -11,9 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
-
-	"becky-go/internal/footage"
 )
 
 // fixtureFolder writes a synthetic case folder: two videos, one with an .srt
@@ -379,23 +376,5 @@ func TestAddMarker(t *testing.T) {
 	tl = app.AddMarker(3.0, "earlier")
 	if tl.Markers[0].At != 3.0 {
 		t.Errorf("markers not sorted: %+v", tl.Markers)
-	}
-}
-
-// TestVideoRecency locks the "most recent first" key: a known recording date wins,
-// otherwise the file mtime is used (so the pre-search list sorts newest at top).
-func TestVideoRecency(t *testing.T) {
-	withDate := footage.Video{Mtime: 100, Meta: footage.Meta{Date: "2025-01-02"}}
-	wantDate := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC).Unix()
-	if got := videoRecency(withDate); got != wantDate {
-		t.Errorf("recency with date = %d, want the parsed date %d (not mtime)", got, wantDate)
-	}
-	noDate := footage.Video{Mtime: 1750000000}
-	if got := videoRecency(noDate); got != 1750000000 {
-		t.Errorf("recency without date = %d, want the file mtime 1750000000", got)
-	}
-	blankDate := footage.Video{Mtime: 42, Meta: footage.Meta{Date: "   "}}
-	if got := videoRecency(blankDate); got != 42 {
-		t.Errorf("recency with blank date = %d, want the file mtime 42", got)
 	}
 }

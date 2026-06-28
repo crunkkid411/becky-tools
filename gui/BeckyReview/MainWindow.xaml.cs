@@ -131,11 +131,26 @@ public partial class MainWindow : Window
                 Dock = WinForms.DockStyle.Fill,
             };
             VideoHostElement.Child = _videoPanel;
+
+            // Click the video pane to play/pause. mpv is embedded via --wid (it renders
+            // INTO this panel and never receives the mouse itself), so the HOST panel
+            // takes the click and toggles pause over IPC. The pause-observe then syncs
+            // _paused + the page, so the timeline + transport stay consistent.
+            _videoPanel.MouseClick += (s, e) =>
+            {
+                if (e.Button == WinForms.MouseButtons.Left && _mpv != null)
+                {
+                    _paused = !_paused;
+                    _ = _mpv.SetPauseAsync(_paused);
+                }
+            };
+
             var hwnd = _videoPanel.Handle;
 
             var mpvExe = Path.Combine(AppContext.BaseDirectory, "runtime", "mpv", "mpv.exe");
             _mpv = new MpvPlayer(mpvExe);
             _mpv.PositionChanged += OnMpvPosition;
+            _mpv.PauseChanged += OnMpvPause;
             _mpv.Start(hwnd, null);
         }
         catch (Exception ex)
@@ -175,6 +190,15 @@ public partial class MainWindow : Window
                 UpdateOverlay(pos);
             }
         });
+    }
+
+    // mpv's real pause state (changed by a command, the spacebar, OR a click on the
+    // video). Keep our mirror in sync and tell the page so it knows when it is playing
+    // — the timeline "play through to the next clip" logic depends on this.
+    private void OnMpvPause(bool paused)
+    {
+        _paused = paused;
+        PostToPage(new { t = "play", paused });
     }
 
     // --- page -> host messages ---------------------------------------------------
