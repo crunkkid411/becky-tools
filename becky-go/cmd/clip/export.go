@@ -9,6 +9,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -198,6 +199,55 @@ func (a *App) GrabFrame(source string, t float64) (string, error) {
 		return "", err
 	}
 	return out, nil
+}
+
+// thumbWidth is the scaled width (px) of a timeline clip thumbnail — small enough
+// to inline as a data: URI for many clips, big enough to recognise the scene.
+const thumbWidth = 160
+
+// ThumbResult is the reply for the "thumb" verb: a tiny first-frame thumbnail for
+// a timeline clip, inlined as a base64 data: URI so the WebView can show it with
+// NO media server. Data is "" when ffmpeg is unavailable or the source isn't in
+// the open folder — a degrade (the clip just shows no thumbnail), never an error.
+type ThumbResult struct {
+	Data string `json:"data"`
+}
+
+// Thumb returns a small, CACHED first-frame thumbnail for source at time t as a
+// base64 image/jpeg data: URI. The source must be an indexed video in the open
+// folder (path security: thumbnails only come from originals the case folder
+// knows). The JPEG is cached in the work dir keyed by source + time + width, so a
+// timeline that re-renders (zoom, reorder, trim) re-extracts nothing. The source
+// is opened READ-ONLY. Degrade-never-crash: any failure (no ffmpeg, unresolved
+// source, read error) yields {data:""} so the timeline keeps working.
+func (a *App) Thumb(source string, t float64) ThumbResult {
+	v, ok := a.resolveSource(source)
+	if !ok {
+		return ThumbResult{}
+	}
+	dir, err := a.renderDir()
+	if err != nil {
+		return ThumbResult{}
+	}
+	full := baseName(v.Path)
+	stem := strings.TrimSuffix(full, filepath.Ext(full))
+	out := filepath.Join(dir, fmt.Sprintf("%s_%.3fs_thumb%d.jpg", slugName(stem), t, thumbWidth))
+	if _, statErr := os.Stat(out); statErr != nil {
+		// Not cached yet — extract it once. If the in-point grab fails (e.g. a
+		// truncated download whose transcript in-point is past the last decodable
+		// frame), fall back to the last frame near EOF so the clip still gets a
+		// thumbnail. Both failing leaves no file and degrades to no thumbnail.
+		if gerr := reel.GrabThumb(v.Path, t, out, thumbWidth); gerr != nil {
+			if terr := reel.GrabThumbTail(v.Path, out, thumbWidth); terr != nil {
+				return ThumbResult{}
+			}
+		}
+	}
+	b, err := os.ReadFile(out)
+	if err != nil || len(b) == 0 {
+		return ThumbResult{}
+	}
+	return ThumbResult{Data: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b)}
 }
 
 // ProxyFor returns a web-playable, SCRUB-FRIENDLY path for a source: a low-res,

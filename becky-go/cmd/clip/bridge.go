@@ -63,6 +63,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// Report a source's true duration (seconds) so the UI can clamp timeline
 		// trim/extend. Degrades to {duration:0} when not probe-able (no ffprobe).
 		return a.Probe(argString(args, "source")), nil
+	case "thumb":
+		// Tiny CACHED first-frame thumbnail (base64 data: URI) for a timeline clip.
+		// Degrades to {data:""} when not grab-able (no ffmpeg) — never an error.
+		return a.Thumb(argString(args, "source"), argFloat(args, "t")), nil
 
 	// ---- transcription (caption pipeline: official-first, local fallback) ----
 	case "transcribe":

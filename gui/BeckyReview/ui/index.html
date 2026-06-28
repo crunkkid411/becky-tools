@@ -37,11 +37,17 @@
     <div id="listScroll" class="listscroll" tabindex="0"></div>
   </section>
 
+  <!-- drag to resize the find | video columns -->
+  <div id="splitL" class="vsplit" title="drag to resize" aria-hidden="true"></div>
+
   <!-- ===================== VIDEO COLUMN: reserved native-mpv hole ==============
        Intentionally EMPTY. The C# host overlays a native mpv surface on top of
        this rect; app.js reports its geometry via {t:"videoRect", x, y, w, h}.
        Do NOT put children or text here - it must read as a transparent/black hole. -->
   <div id="videoHole" aria-label="Video preview" role="img"></div>
+
+  <!-- drag to resize the video | chat columns -->
+  <div id="splitR" class="vsplit" title="drag to resize" aria-hidden="true"></div>
 
   <!-- ============================ CHAT COLUMN: ask becky ======================== -->
   <section class="chat" aria-label="Ask becky">

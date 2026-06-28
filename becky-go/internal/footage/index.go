@@ -56,6 +56,7 @@ type Video struct {
 	TranscriptPath string `json:"transcript_path"` // sidecar (.srt/.vtt/.json3) or ""
 	HasTranscript  bool   `json:"has_transcript"`
 	Meta           Meta   `json:"meta"`
+	Mtime          int64  `json:"mtime,omitempty"` // file mod time (unix sec); a "most recent" fallback when Meta.Date is absent
 }
 
 // OrphanTranscript is a subtitle file that paired to NO indexed video — its
@@ -149,6 +150,9 @@ func Index(folder string) (FolderIndex, error) {
 		}
 		if m, ok := loadMetaQuiet(path); ok {
 			v.Meta = m
+		}
+		if info, ierr := d.Info(); ierr == nil {
+			v.Mtime = info.ModTime().Unix() // for a "most recent" list when no recording date is known
 		}
 		idx.Videos = append(idx.Videos, v)
 		return nil

@@ -55,11 +55,13 @@ body {
    the C# host overlays; we only leave the hole + report its rect (see app.js). */
 #app {
   display: grid;
-  grid-template-columns: 28% 1fr 28%;
+  /* outer column widths are draggable (set by the splitters as --findw / --chatw);
+     the center video hole is 1fr and follows. 6px splitter columns sit between. */
+  grid-template-columns: var(--findw, 28%) 6px 1fr 6px var(--chatw, 28%);
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas:
-    "find video chat"
-    "timeline timeline timeline";
+    "find sl video sr chat"
+    "timeline timeline timeline timeline timeline";
   height: 100vh;
   width: 100vw;
 }
@@ -67,6 +69,12 @@ body {
 .find     { grid-area: find;     border-right: 1px solid var(--line); }
 .chat     { grid-area: chat;     border-left: 1px solid var(--line); }
 .timeline { grid-area: timeline; border-top: 1px solid var(--line); background: var(--chrome); }
+
+/* draggable column splitters (find | video | chat) */
+.vsplit { background: var(--line); cursor: col-resize; touch-action: none; }
+.vsplit:hover { background: var(--neon); box-shadow: 0 0 8px rgba(57,255,20,.5); }
+#splitL { grid-area: sl; }
+#splitR { grid-area: sr; }
 
 .find, .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 
@@ -192,14 +200,30 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* results header (search / transcript cues) */
+/* "‹ all videos" back control — above any results (a search OR a clicked video's
+   cues), so there is always a one-click way back to the full file list. */
+.backbtn {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px;
+  background: var(--panel); color: var(--neon);
+  border: 1px solid var(--neon-dim); border-radius: 7px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.backbtn:hover { border-color: var(--neon); background: var(--neon-soft); }
+
+/* results header (search / transcript cues) — a sticky bar holding the back
+   button + the count/header text. */
 .resultshead {
   position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
   padding: 10px 2px 12px;
   background: var(--bg);
   color: var(--text); font-size: 14px; font-weight: 600;
   border-bottom: 1px solid var(--line-2);
 }
+.resultshead .rhtext { flex: 1; min-width: 0; }
 .more { color: var(--dim); font-size: 13px; text-align: center; padding: 12px 0 0; }
 
 /* quote / cue rows */
@@ -409,8 +433,14 @@ body {
   z-index: 4;
 }
 
-/* the empty fill between the two trim handles - forwards clicks to the scrubber */
-.clip .cbody { flex: 1; min-width: 0; }
+/* the fill between the two trim handles - forwards clicks to the scrubber AND
+   shows the clip's first-frame thumbnail (set as a background-image by app.js so a
+   hover tint can never clobber it). cover+center keeps the scene recognisable even
+   on a narrow clip. */
+.clip .cbody {
+  flex: 1; min-width: 0;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+}
 
 /* remove "x" - top-right corner, shown ON HOVER only */
 .clip .cx {

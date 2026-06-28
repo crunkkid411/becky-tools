@@ -196,6 +196,36 @@
     try { new ResizeObserver(reportVideoRect).observe(videoHoleEl); } catch (_) {}
   }
 
+  /* ---- draggable panel splitters (resize find | video | chat) ----------------
+     Each splitter drags ONE outer column's width (a CSS var on #app); the center
+     video hole is 1fr and follows. On every drag we re-report the hole rect so the
+     native mpv pane keeps lining up over it. Widths clamp to 12%..48% so a column
+     can never be dragged shut. This lets Jordan widen the file list to read long
+     names, or the video, as he likes. */
+  function setupSplitter(el, side) {
+    if (!el) { return; }
+    el.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      var appEl = document.getElementById('app');
+      function onMove(ev) {
+        var w = appEl.clientWidth || window.innerWidth;
+        var lo = w * 0.12, hi = w * 0.48;
+        var px = (side === 'left') ? ev.clientX : (w - ev.clientX);
+        px = Math.max(lo, Math.min(px, hi));
+        appEl.style.setProperty(side === 'left' ? '--findw' : '--chatw', Math.round(px) + 'px');
+        reportVideoRect();
+      }
+      function onUp() {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+      }
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  }
+  setupSplitter(document.getElementById('splitL'), 'left');
+  setupSplitter(document.getElementById('splitR'), 'right');
+
   /* =======================================================================
      SMALL HELPERS
      ===================================================================== */
@@ -311,7 +341,9 @@
       btn = '<button class="tbtn add" data-name="' + attr(v.name) + '" title="transcribe this video (local Parakeet ASR)">+</button>';
     }
     var sub = [v.date, v.person, v.location].filter(Boolean).join(' · ');
-    return '<div class="file" data-name="' + attr(v.name) + '">' +
+    // title= holds the FULL name so a long filename (the tail differentiates
+    // duplicates) is always readable on hover even when the row ellipsises it.
+    return '<div class="file" data-name="' + attr(v.name) + '" title="' + attr(v.name) + '">' +
              '<div class="fmeta">' +
                '<div class="fname">' + escapeHtml(v.name) + '</div>' +
                (sub ? '<div class="fsub">' + escapeHtml(sub) + '</div>' : '') +
@@ -353,7 +385,13 @@
 
   function renderResults() {
     var rows = state.rows || [];
-    var html = '<div class="resultshead">' + escapeHtml(state.headerText || '') + '</div>';
+    // The back control lives INSIDE the sticky header so it stays reachable even
+    // after scrolling a long cue list — needed because clicking a VIDEO (not
+    // searching) shows its cues with no search box to clear (CHANGE: go-back).
+    var html = '<div class="resultshead">' +
+                 '<button class="backbtn" data-act="back-to-files" title="back to the video list">&#8249; all videos</button>' +
+                 '<span class="rhtext">' + escapeHtml(state.headerText || '') + '</span>' +
+               '</div>';
     if (!rows.length) {
       $listScroll.innerHTML = html + emptyHTML('No quotes match.', '&#128269;');
       return;
@@ -499,7 +537,16 @@
   }
 
   /* ---- delegated clicks for the whole find list ---- */
+  function backToFiles() {
+    $search.value = ''; $searchClear.hidden = true;
+    state.query = ''; state.activeResultKey = null;
+    state.mode = 'files';
+    renderFind();
+  }
+
   $listScroll.addEventListener('click', function (e) {
+    var back = e.target.closest('[data-act="back-to-files"]');
+    if (back) { backToFiles(); return; }
     var tbtn = e.target.closest('.tbtn');
     if (tbtn) { if (!tbtn.disabled) { e.stopPropagation(); onTranscribeClick(tbtn.dataset.name); } return; }
     var all = e.target.closest('[data-act="transcribe-all"]');
@@ -760,6 +807,57 @@
     trackEl.appendChild(playheadEl);
     updatePlayhead();
     prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
+    applyThumbs();               // paint each clip's cached first-frame thumbnail (async, cheap)
+  }
+
+  /* ---- timeline clip thumbnails -----------------------------------------------
+     Each clip shows a tiny first-frame still (its in-point) so Jordan can tell at a
+     glance which clip is which. The engine extracts a small CACHED jpeg once per
+     (source, in) and returns it as a data: URI (no media server). We cache per key
+     on the JS side too and request at most a couple at a time, so a busy timeline
+     never spawns a storm of ffmpeg. A source with no thumbnail (no ffmpeg) just
+     stays the plain neon slab — degrade, never block. */
+  var thumbCache = {};      // "source@t" -> data URI ('' = known none, don't retry)
+  var thumbInflight = {};   // "source@t" -> true while its request is in flight
+  var thumbQueue = [];
+  var thumbActive = 0;
+  var THUMB_MAX = 2;        // max concurrent ffmpeg thumbnail grabs
+  function thumbKey(src, t) { return (src || '') + '@' + (Math.round((t || 0) * 1000) / 1000); }
+  function applyThumbs() {
+    var blocks = trackEl.querySelectorAll('.clip');
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var clip = clipById(b.dataset.id);
+      if (!clip || !clip.source) { continue; }
+      var key = thumbKey(clip.source, clip.in || 0);
+      var cached = thumbCache[key];
+      if (cached) {
+        var cbody = b.querySelector('.cbody');
+        if (cbody && cbody.dataset.thumbKey !== key) {
+          cbody.style.backgroundImage = 'url("' + cached + '")';
+          cbody.dataset.thumbKey = key;
+        }
+      } else if (cached === undefined && !thumbInflight[key]) {
+        thumbInflight[key] = true;
+        thumbQueue.push({ src: clip.source, t: clip.in || 0, key: key });
+        pumpThumbs();
+      }
+    }
+  }
+  function pumpThumbs() {
+    while (thumbActive < THUMB_MAX && thumbQueue.length) {
+      var job = thumbQueue.shift();
+      thumbActive++;
+      (function (job) {
+        beckyCall('thumb', { source: job.src, t: job.t }).then(function (rep) {
+          thumbActive--;
+          delete thumbInflight[job.key];
+          thumbCache[job.key] = (rep && rep.ok && rep.data && rep.data.data) ? rep.data.data : '';
+          applyThumbs();   // paint any rendered clip whose thumb just arrived
+          pumpThumbs();
+        });
+      })(job);
+    }
   }
 
   function updateOverlayBtn() {

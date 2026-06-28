@@ -337,6 +337,29 @@ func TestGrabFrameArgs(t *testing.T) {
 	}
 }
 
+func TestGrabThumbArgs(t *testing.T) {
+	args := grabThumbArgs(`X:\c\v.mp4`, 8179.792, `X:\out\t.jpg`, 160)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"-noaccurate_seek", "-ss 8179.792", `-i X:\c\v.mp4`, "-frames:v 1", "scale=160:-2", "-q:v 6", `X:\out\t.jpg`} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("grabThumbArgs missing %q in:\n%s", want, joined)
+		}
+	}
+	if indexOf(args, "-ss") > indexOf(args, "-i") {
+		t.Fatal("-ss must come before -i for a fast keyframe seek")
+	}
+}
+
+func TestGrabThumbTailArgs(t *testing.T) {
+	args := grabThumbTailArgs(`X:\c\v.mp4`, `X:\out\t.jpg`, 120)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"-sseof -1", `-i X:\c\v.mp4`, "-frames:v 1", "scale=120:-2", `X:\out\t.jpg`} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("grabThumbTailArgs missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func TestProxyArgs(t *testing.T) {
 	args := proxyArgs(`X:\c\exotic.mkv`, `X:\out\exotic.proxy.mp4`)
 	joined := strings.Join(args, " ")

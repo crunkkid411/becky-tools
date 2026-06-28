@@ -219,8 +219,21 @@ type VideoView struct {
 func (a *App) folderView() FolderView {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	fv := FolderView{Root: a.index.Root, Videos: make([]VideoView, 0, len(a.index.Videos)), OrphanCount: len(a.index.Orphans)}
-	for _, v := range a.index.Videos {
+	// Most-recent first for the pre-search file list: copy the index videos and
+	// order them by recency (recording date when known, else file mtime), newest
+	// at the top. A stable name tiebreak keeps the order deterministic. We sort a
+	// copy so the shared index keeps its own canonical order untouched.
+	vids := make([]footage.Video, len(a.index.Videos))
+	copy(vids, a.index.Videos)
+	sort.SliceStable(vids, func(i, j int) bool {
+		ri, rj := videoRecency(vids[i]), videoRecency(vids[j])
+		if ri != rj {
+			return ri > rj
+		}
+		return vids[i].Name < vids[j].Name
+	})
+	fv := FolderView{Root: a.index.Root, Videos: make([]VideoView, 0, len(vids)), OrphanCount: len(a.index.Orphans)}
+	for _, v := range vids {
 		fv.Videos = append(fv.Videos, VideoView{
 			Path:          v.Path,
 			Name:          v.Name,
@@ -232,6 +245,17 @@ func (a *App) folderView() FolderView {
 		})
 	}
 	return fv
+}
+
+// videoRecency returns a comparable "newness" timestamp (unix seconds) for the
+// most-recent-first file list: the recording date (Meta.Date, ISO YYYY-MM-DD) when
+// it parses, otherwise the file's modification time. Undated files therefore sort
+// by when they landed in the folder, which is the best "recent" signal available.
+func videoRecency(v footage.Video) int64 {
+	if t, err := time.Parse("2006-01-02", strings.TrimSpace(v.Meta.Date)); err == nil {
+		return t.Unix()
+	}
+	return v.Mtime
 }
 
 // ---- transcript (the clickable cue list for one video) --------------------
