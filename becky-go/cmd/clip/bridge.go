@@ -67,6 +67,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// Tiny CACHED first-frame thumbnail (base64 data: URI) for a timeline clip.
 		// Degrades to {data:""} when not grab-able (no ffmpeg) — never an error.
 		return a.Thumb(argString(args, "source"), argFloat(args, "t")), nil
+	case "timeline_edl":
+		// Write an mpv EDL of the whole timeline so the UI can play it as ONE
+		// seamless (gapless) virtual source. Returns {path,duration}; "" if empty.
+		return a.TimelineEDL()
 
 	// ---- transcription (caption pipeline: official-first, local fallback) ----
 	case "transcribe":

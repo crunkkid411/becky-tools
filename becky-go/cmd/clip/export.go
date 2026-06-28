@@ -250,6 +250,54 @@ func (a *App) Thumb(source string, t float64) ThumbResult {
 	return ThumbResult{Data: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b)}
 }
 
+// EDLResult is the reply for the timeline_edl verb: the path to an mpv EDL file
+// that concatenates the current timeline clips into ONE seamless virtual stream,
+// plus the total compilation duration (seconds). mpv loads the path and plays the
+// trimmed clips GAPLESSLY — no per-clip reload, no blink. Path is "" for an empty
+// timeline.
+type EDLResult struct {
+	Path     string  `json:"path"`
+	Duration float64 `json:"duration"`
+}
+
+// TimelineEDL writes an mpv EDL ("# mpv EDL v0") describing the current reel — one
+// "source,in,length" line per clip, in order — into the work dir, and returns its
+// path so the UI can load the whole timeline as a single seamless source. The
+// sources are the reel's own (already folder-validated) absolute paths, opened
+// READ-ONLY by mpv. The simple EDL line format is comma-delimited, so a clip whose
+// source path contains a comma is skipped (extremely rare for these files) rather
+// than corrupting the stream. Degrade-never-crash: an empty timeline or a write
+// failure yields an empty path, never a panic.
+func (a *App) TimelineEDL() (EDLResult, error) {
+	a.mu.Lock()
+	clips := make([]edl.Clip, len(a.reel.Clips))
+	copy(clips, a.reel.Clips)
+	work := a.workDir
+	a.mu.Unlock()
+	if len(clips) == 0 {
+		return EDLResult{}, nil
+	}
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		return EDLResult{}, fmt.Errorf("create work dir: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString("# mpv EDL v0\n")
+	var total float64
+	for _, c := range clips {
+		length := c.Out - c.In
+		if length <= 0 || strings.ContainsRune(c.Source, ',') {
+			continue
+		}
+		fmt.Fprintf(&b, "%s,%.3f,%.3f\n", c.Source, c.In, length)
+		total += length
+	}
+	out := filepath.Join(work, "timeline.edl")
+	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+		return EDLResult{}, fmt.Errorf("write edl: %w", err)
+	}
+	return EDLResult{Path: out, Duration: total}, nil
+}
+
 // ProxyFor returns a web-playable, SCRUB-FRIENDLY path for a source: a low-res,
 // intra-frame, constant-frame-rate proxy built in the work dir (the all-intra
 // H.264 scrub proxy is yuv420p+faststart, so the WebView2 <video> plays it and

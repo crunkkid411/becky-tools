@@ -58,9 +58,14 @@
     overlayOn: false,
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
-    activeSource: null,    // path currently loaded in mpv
-    activeClipId: null,    // timeline clip whose source is playing (for the playhead)
+    activeSource: null,    // path currently loaded in mpv (a single source for preview, OR the timeline EDL)
+    activeClipId: null,    // timeline clip under the playhead (for the playhead + overlay)
     playing: false,        // mpv's real play state (mirrors the host's {t:"play"} reports)
+    edlPath: null,         // mpv EDL file = the WHOLE reel as one seamless source (gapless playback)
+    edlVersion: -1,        // the tlVersion the loaded EDL was built for (-1 = none)
+    tlVersion: 0,          // bumped on every timeline change so the EDL regenerates
+    edlDur: 0,             // total compilation duration (sec) reported by the EDL
+    edlInflight: null,     // in-flight EDL (re)generation promise so we never request it twice
     pos: 0, dur: 0,        // last {t:"time"} report
     playheadComp: 0,       // current COMPILATION position (active clip start_sec + offset) - drives split (CHANGE 4)
     selectedClipId: null,  // last-selected timeline clip - target for ripple delete via Del/Esc (CHANGE 5)
@@ -743,6 +748,7 @@
       overlay: tl.overlay || {},
       duration_sec: typeof tl.duration_sec === 'number' ? tl.duration_sec : 0
     };
+    state.tlVersion++;   // the timeline changed -> the seamless EDL must regenerate before next play/seek
     state.overlayOn = !!(state.timeline.overlay && state.timeline.overlay.enabled);
     if (state.activeClipId != null && !clipById(state.activeClipId)) { state.activeClipId = null; }
     if (state.selectedClipId != null && !clipById(state.selectedClipId)) { state.selectedClipId = null; }  // CHANGE 5
@@ -882,66 +888,113 @@
     return {};
   }
 
-  /* ---- playhead + "play the edit" (driven by incoming {t:"time"} messages) ---- */
-  var advancing = false;   // guard so a stale tick can't double-advance during a clip hop
-  var ADVANCE_EPS = 0.04;  // ~1 frame tolerance so we hop right at the out-point
+  /* ---- seamless timeline playback via an mpv EDL --------------------------------
+     The whole reel loads as ONE mpv EDL (a virtual gapless source), so playing it
+     plays exactly the trimmed clips back-to-back with NO per-clip reload and no
+     blink; mpv plays to the end and holds the last frame. The position mpv reports
+     IS the compilation position, so there is no per-clip mapping and no "advance"
+     logic — that earlier hop-on-out code is what caused the one-frame-at-a-time bug. */
+  function isTimelineLoaded() { return !!state.edlPath && state.activeSource === state.edlPath; }
+
+  // The clip occupying compilation position comp (for the playhead + overlay).
+  function clipAtComp(comp) {
+    var clips = state.timeline.clips || [];
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i], s = c.start_sec || 0, d = clipDur(c);
+      if (comp >= s - 0.001 && comp < s + d) { return c; }
+    }
+    return clips.length ? clips[clips.length - 1] : null;   // at/after the end -> the last clip
+  }
+
+  // (re)generate the timeline EDL whenever the timeline changed; cached + in-flight-guarded.
+  function ensureEdl() {
+    if (state.edlPath && state.edlVersion === state.tlVersion) { return Promise.resolve(state.edlPath); }
+    if (state.edlInflight) { return state.edlInflight; }
+    var want = state.tlVersion;
+    state.edlInflight = beckyCall('timeline_edl', {}).then(function (rep) {
+      state.edlInflight = null;
+      if (rep.ok && rep.data && rep.data.path) {
+        state.edlPath = rep.data.path; state.edlVersion = want; state.edlDur = rep.data.duration || 0;
+        return state.edlPath;
+      }
+      return null;
+    });
+    return state.edlInflight;
+  }
+
+  // Position the timeline at compilation second `comp`. play=true keeps/starts
+  // playback; play=false holds the frame PAUSED (navigation). Reuses the loaded EDL
+  // when it is current (a fast seek); otherwise (re)loads the fresh EDL ONCE — a
+  // drag that fires many seeks before the load finishes coalesces to the latest
+  // target (edlLoading guard), so a ruler scrub never reloads mpv repeatedly.
+  var edlLoading = false, pendingSeek = null;
+  async function seekTimeline(comp, play) {
+    if (!(state.timeline.clips || []).length) { return; }
+    if (isTimelineLoaded() && state.edlVersion === state.tlVersion) {
+      mpvSeek(comp);                                  // already the current EDL -> just seek
+      if (play && !state.playing) { mpvSend('resume'); }
+      else if (!play && state.playing) { mpvSend('pause'); }
+      return;
+    }
+    pendingSeek = { comp: comp, play: play };         // remember the latest target
+    if (edlLoading) { return; }                       // a load is already running; it'll use pendingSeek
+    edlLoading = true;
+    var path = await ensureEdl();
+    edlLoading = false;
+    if (!path) { return; }
+    var tgt = pendingSeek || { comp: comp, play: play };
+    pendingSeek = null;
+    state.activeSource = path;
+    if (tgt.play) { mpvPlay(path, tgt.comp); } else { mpvLoadAt(path, tgt.comp); }
+  }
+
+  /* ---- playhead (driven by incoming {t:"time"} messages) ---- */
   function onTime(pos, dur) {
     state.pos = (typeof pos === 'number') ? pos : 0;
     state.dur = (typeof dur === 'number') ? dur : 0;
-    if (state.activeClipId != null) {
+    if (isTimelineLoaded()) {
+      state.playheadComp = state.pos;                 // EDL position IS the compilation position
+      var c = clipAtComp(state.pos);
+      state.activeClipId = c ? c.id : null;
+    } else if (state.activeClipId != null) {
       var ac = clipById(state.activeClipId);
-      if (ac) {
-        // SOURCE pos -> COMPILATION pos (clip.start_sec + offset); drives split (CHANGE 4).
-        state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0));
-        // Play the TIMELINE, not the raw source: when a PLAYING clip reaches its
-        // out-point, hop to the next clip (or stop at the end) so playback never
-        // bleeds past the trimmed segment. Gated on actually playing, so navigating
-        // or seeking near the out never auto-advances.
-        if (state.playing && !advancing && state.pos >= (ac.out || 0) - ADVANCE_EPS) {
-          advanceFromClip(ac);
-          return;
-        }
-      }
+      if (ac) { state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0)); }
     }
     updatePlayhead();
   }
 
-  // advanceFromClip hops timeline playback from ac to the NEXT clip (same source ->
-  // just seek; different source -> load+seek, keep playing), or pauses on the last
-  // frame at the end. A short guard ignores the stale ticks that arrive during the hop.
-  function advanceFromClip(ac) {
+  // The host reports mpv's real pause state (a command, the spacebar, OR a click on
+  // the video) — the single source of truth for whether playback is running.
+  function onPlayState(paused) { state.playing = !paused; }
+
+  // Play/pause for the ▶ button + spacebar. If there are timeline clips but the
+  // seamless EDL isn't the current loaded source, START timeline playback from the
+  // playhead (load the fresh EDL + play); otherwise just toggle what's loaded (the
+  // EDL, or a search-result preview).
+  function togglePlay() {
     var clips = state.timeline.clips || [];
-    var idx = -1;
-    for (var i = 0; i < clips.length; i++) { if (String(clips[i].id) === String(ac.id)) { idx = i; break; } }
-    var next = (idx >= 0) ? clips[idx + 1] : null;
-    advancing = true;
-    setTimeout(function () { advancing = false; }, 400);
-    if (next) {
-      state.activeClipId = next.id;
-      state.selectedClipId = next.id;
-      markSelectedClip();
-      if (next.source === ac.source) {
-        mpvSeek(next.in || 0);                 // same source: seek, keep playing
-      } else {
-        state.activeSource = next.source;
-        mpvPlay(next.source, next.in || 0);    // next source: load + seek + keep playing
-      }
+    if (clips.length && !state.playing && (!isTimelineLoaded() || state.edlVersion !== state.tlVersion)) {
+      seekTimeline(state.playheadComp || 0, true);
     } else {
-      mpvSend('pause');                        // end of the timeline: stop on the last frame
+      mpvSend('toggle');
     }
   }
 
-  // The host reports mpv's real pause state (a command, the spacebar, OR a click on
-  // the video) — the single source of truth for whether the timeline is playing.
-  function onPlayState(paused) { state.playing = !paused; }
   function updatePlayhead() {
-    var id = state.activeClipId;
-    if (id == null) { playheadEl.style.display = 'none'; return; }
-    var block = blockById(id), clip = clipById(id);
-    if (!block || !clip) { playheadEl.style.display = 'none'; return; }
-    var dur = clipDur(clip);
-    if (dur <= 0) { playheadEl.style.display = 'none'; return; }
-    var frac = (state.pos - (clip.in || 0)) / dur;
+    var comp, clip;
+    if (isTimelineLoaded()) {
+      comp = state.playheadComp || 0; clip = clipAtComp(comp);
+    } else if (state.activeClipId != null) {
+      clip = clipById(state.activeClipId);
+      comp = clip ? (clip.start_sec || 0) + (state.pos - (clip.in || 0)) : 0;
+    } else {
+      playheadEl.style.display = 'none'; return;
+    }
+    if (!clip) { playheadEl.style.display = 'none'; return; }
+    var block = blockById(clip.id);
+    if (!block) { playheadEl.style.display = 'none'; return; }
+    var d = clipDur(clip);
+    var frac = d > 0 ? (comp - (clip.start_sec || 0)) / d : 0;
     frac = Math.max(0, Math.min(1, frac));
     playheadEl.style.left = (block.offsetLeft + frac * block.offsetWidth) + 'px';
     playheadEl.style.display = 'block';
@@ -1264,22 +1317,15 @@
     if (!hit) { return; }
     var clip = clipById(hit.id);
     if (!clip) { return; }
-    var offset = (clip.in || 0) + hit.frac * clipDur(clip);
+    var comp = (clip.start_sec || 0) + hit.frac * clipDur(clip);   // the compilation position clicked
     state.activeClipId = clip.id;
     state.selectedClipId = clip.id;                // CHANGE 5: scrubbing/clicking also selects that clip
-    state.playheadComp = (clip.start_sec || 0) + hit.frac * clipDur(clip);  // CHANGE 4: keep comp pos exact
+    state.playheadComp = comp;
     markSelectedClip();
-    // Navigating the timeline NEVER auto-plays (that's the ▶/space job). A new source
-    // loads + seeks and holds the frame PAUSED; the same source just seeks, and a FRESH
-    // click/scrub-start (isStart) also pauses so a click can never start playback.
-    // (Search-result clicks still play — that's mpvPlay, a separate path.)
-    if (state.activeSource !== clip.source) {
-      state.activeSource = clip.source;
-      mpvLoadAt(clip.source, offset);             // new source: load + seek, stay paused
-    } else {
-      mpvSeek(offset);                            // same source already loaded: exact seek
-      if (isStart) { mpvSend('pause'); }          // a fresh click/scrub never auto-plays
-    }
+    // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, held PAUSED — a
+    // click never starts playback (that's the ▶/space job). seekTimeline reuses the
+    // loaded EDL (a fast seek) or loads it once. (isStart kept for the shared signature.)
+    seekTimeline(comp, false);
     updatePlayhead();
   }
   rulerEl.addEventListener('pointerdown', function (e) {
@@ -1293,7 +1339,7 @@
   rulerEl.addEventListener('pointercancel', function () { scrubbing = false; });
 
   /* ---- transport + reel actions ---- */
-  $tPlay.addEventListener('click', function () { mpvSend('toggle'); });
+  $tPlay.addEventListener('click', function () { togglePlay(); });
   $tFrameBack.addEventListener('click', function () { mpvSend('frame', { dir: -1 }); });
   $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
   if ($tSplit) { $tSplit.addEventListener('click', function () { splitAtPlayhead(); }); }  // CHANGE 4
@@ -1379,7 +1425,7 @@
     // Space = play / pause (CHANGE 3)
     if (e.key === ' ') {
       e.preventDefault();
-      mpvSend('toggle');
+      togglePlay();
       return;
     }
     // s = split clip at the playhead (CHANGE 4)
