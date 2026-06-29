@@ -15,7 +15,7 @@ const (
 	ltBoxAlpha   = "0.6"
 	ltMarginX    = 20 // px from the left edge
 	ltLineH      = 38 // vertical step between stacked lines
-	ltBottomPad  = 24 // px from the bottom edge to the lowest line (default position)
+	ltBottomPad  = 48 // px from the bottom edge to the lowest line (breathing room)
 	ltTopPad     = 20 // px from the top edge to the highest line (Position == "top")
 )
 
@@ -41,8 +41,11 @@ const defaultFont = `C:/Windows/Fonts/consola.ttf`
 //   - the Date and Link lines (labeled), each from the sidecar Meta or, for a
 //     yt-dlp download with no sidecar, recovered from the file name.
 //
-// fontFile is the resolved font path; fps is the clip's effective frame rate.
-func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64) string {
+// fontFile is the resolved font path; fps is the clip's effective frame rate;
+// w/h are the OUTPUT frame size (the lower-third is drawn on the scaled+padded
+// canvas, see args.go), used to WRAP a long filename/URL onto extra lines instead
+// of letting it run off the right edge (critical info must never be clipped).
+func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w, h int) string {
 	if !o.Enabled {
 		return ""
 	}
@@ -51,25 +54,31 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64) s
 	}
 	escFont := escapeFontPath(fontFile)
 
-	// Collect the lines in display order (top -> bottom). The timecode line is
-	// special (drawtext timecode=); the rest are plain text=.
+	// Collect the lines in display order (top -> bottom). A long text field wraps
+	// to multiple sub-lines so it stays within the video width. The timecode line
+	// is special (drawtext timecode=) and short, so it is never wrapped.
 	type ltLine struct {
 		tc   bool
 		text string
 		size int
 	}
 	var lines []ltLine
+	addText := func(text string, size int) {
+		for _, sub := range wrapToWidth(text, size, w) {
+			lines = append(lines, ltLine{text: sub, size: size})
+		}
+	}
 	if meta := metaLine(o, c); meta != "" {
-		lines = append(lines, ltLine{text: meta, size: ltFontSize})
+		addText(meta, ltFontSize)
 	}
 	if o.ShowTimecode {
 		lines = append(lines, ltLine{tc: true, size: ltTCFontSize})
 	}
 	if date := overlayDate(o, c); date != "" {
-		lines = append(lines, ltLine{text: "Date: " + date, size: ltFontSize})
+		addText("Date: "+date, ltFontSize)
 	}
 	if link := overlayLink(o, c); link != "" {
-		lines = append(lines, ltLine{text: "Link: " + link, size: ltFontSize})
+		addText("Link: "+link, ltFontSize)
 	}
 	if len(lines) == 0 {
 		return ""
@@ -165,6 +174,54 @@ func lineYExpr(position string, i, n int) string {
 		return itoa(ltTopPad + i*ltLineH)
 	}
 	return "h-" + itoa(ltBottomPad+(n-1-i)*ltLineH)
+}
+
+// wrapToWidth splits text into lines that each fit widthPx at fontSize, using the
+// same monospace glyph-width estimate (~0.55*fontsize) the layout assumes. It
+// breaks on spaces where it can and HARD-breaks an over-long token (a long
+// filename or URL with no spaces) so nothing is ever clipped. Always returns at
+// least one line; widthPx <= 0 (unknown) disables wrapping.
+func wrapToWidth(text string, fontSize, widthPx int) []string {
+	if widthPx <= 0 || fontSize <= 0 {
+		return []string{text}
+	}
+	maxChars := int(float64(widthPx-2*ltMarginX) / (float64(fontSize) * 0.55))
+	if maxChars < 8 {
+		maxChars = 8 // never produce absurdly short lines
+	}
+	if len([]rune(text)) <= maxChars {
+		return []string{text}
+	}
+	var lines []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			lines = append(lines, string(cur))
+			cur = nil
+		}
+	}
+	for _, word := range strings.Fields(text) {
+		wr := []rune(word)
+		for len(wr) > maxChars { // hard-break a token longer than a whole line
+			flush()
+			lines = append(lines, string(wr[:maxChars]))
+			wr = wr[maxChars:]
+		}
+		switch {
+		case len(cur) == 0:
+			cur = wr
+		case len(cur)+1+len(wr) <= maxChars:
+			cur = append(append(cur, ' '), wr...)
+		default:
+			flush()
+			cur = wr
+		}
+	}
+	flush()
+	if len(lines) == 0 {
+		return []string{text}
+	}
+	return lines
 }
 
 // joinDrawtext assembles a single "drawtext=<k=v:k=v...>" filter from its

@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -99,6 +100,29 @@ func TestCallExportEmptyTimelineErrors(t *testing.T) {
 	r := callEnv(t, app, "export", `{}`)
 	if r.OK {
 		t.Error("export on an empty timeline should fail with a clear message")
+	}
+}
+
+// TestNextSequencedPath: a re-export must never overwrite — each call returns the
+// next free <base>_NNNN.mp4 (0001, then 0002 once 0001 exists, ...).
+func TestNextSequencedPath(t *testing.T) {
+	dir := t.TempDir()
+	first := nextSequencedPath(dir, "case_reel", ".mp4")
+	if filepath.Base(first) != "case_reel_0001.mp4" {
+		t.Fatalf("first export should be _0001, got %q", filepath.Base(first))
+	}
+	if err := os.WriteFile(first, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := nextSequencedPath(dir, "case_reel", ".mp4")
+	if filepath.Base(second) != "case_reel_0002.mp4" {
+		t.Fatalf("with _0001 present, next must be _0002, got %q", filepath.Base(second))
+	}
+	if err := os.WriteFile(second, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if third := nextSequencedPath(dir, "case_reel", ".mp4"); filepath.Base(third) != "case_reel_0003.mp4" {
+		t.Fatalf("with _0001+_0002 present, next must be _0003, got %q", filepath.Base(third))
 	}
 }
 

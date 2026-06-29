@@ -128,12 +128,19 @@ func buildFilterComplex(r edl.Reel, opts resolvedOpts) (graph, vOut, aOut string
 	for i, c := range r.Clips {
 		fps := c.FPS(opts.OutFPS)
 		var steps []string
-		if lt := lowerThirdFilter(r.Overlay, c, opts.FontFile, fps); lt != "" {
-			steps = append(steps, lt)
-		}
+		// Normalize to the OUTPUT canvas FIRST, then draw the lower-third on it: the
+		// burn now sees a known, consistent width (opts.Width) so it can wrap a long
+		// filename/URL, and a consistent size regardless of the source resolution.
+		// It stays BEFORE the fps filter so drawtext's running timecode still advances
+		// at the SOURCE frame rate (the forensic ORIG-TC anchor must not drift).
 		steps = append(steps,
 			fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", opts.Width, opts.Height),
 			fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", opts.Width, opts.Height),
+		)
+		if lt := lowerThirdFilter(r.Overlay, c, opts.FontFile, fps, opts.Width, opts.Height); lt != "" {
+			steps = append(steps, lt)
+		}
+		steps = append(steps,
 			"setsar=1",
 			"fps="+formatRate(opts.OutFPS),
 			"format=yuv420p",

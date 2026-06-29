@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -418,26 +420,62 @@ public partial class MainWindow : Window
         var dateLine = date.Length > 0 ? "Date: " + date : "";
         var linkLine = link.Length > 0 ? "Link: " + link : "";
 
-        // Each line's font is scaled to fit the video's displayed width (a glyph is
-        // ~0.55*font wide; keep a ~32px margin). Short lines keep their base size; only
-        // a long name/URL shrinks. Floor of 9 keeps it readable.
-        int Fit(string text, int baseFs) =>
-            text.Length == 0 ? baseFs : Math.Max(9, Math.Min(baseFs, (int)((dispW - 32) / (text.Length * 0.55))));
+        // A long filename/URL WRAPS to extra lines (at the readable base font) rather
+        // than shrinking to nothing or running off the video — critical info must
+        // always be shown in full and legibly (a glyph is ~0.55*font wide).
+        // \an1 = bottom-left, \pos at the video rect's bottom-left so the block grows
+        // upward from the bottom-left corner OF THE VIDEO; OverlayBottomPad keeps it
+        // off the very bottom edge. \bord2 outline keeps it legible on any background.
+        int px = xoff + 16, py = yoff + dispH - OverlayBottomPad;
+        var sb = new StringBuilder();
+        sb.Append("{\\an1}{\\pos(").Append(px).Append(',').Append(py).Append(")}{\\bord2}{\\3c&H000000&}");
+        var emittedAny = false;
+        void Emit(string text, int fontSize, string colorBGR)
+        {
+            foreach (var sub in WrapToWidth(text, fontSize, dispW))
+            {
+                if (emittedAny) { sb.Append("\\N"); }
+                emittedAny = true;
+                sb.Append("{\\fs").Append(fontSize).Append("}{\\1c&H").Append(colorBGR).Append("&}").Append(AssEscape(sub));
+            }
+        }
+        Emit(_ovFile, fs, "14FF39");   // filename — green
+        Emit(line2, fs, "FFFFFF");     // ORIG TC — white (short, won't wrap)
+        Emit(dateLine, meta2, "D7D7D7"); // Date — gray
+        Emit(linkLine, meta2, "D7D7D7"); // Link — gray
+        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", sb.ToString(), w, h, 0, false, false);
+    }
 
-        var nameFs = Fit(_ovFile, fs);
-        var dateFs = Fit(dateLine, meta2);
-        var linkFs = Fit(linkLine, meta2);
+    // Inset (px) from the video's bottom edge to the lowest overlay line, so the
+    // lower-third isn't cramped against the very bottom (awkward to read).
+    private const int OverlayBottomPad = 28;
 
-        // \an1 = bottom-left, \pos at the video rect's bottom-left (inset a little) so
-        // the block grows upward from the bottom-left corner OF THE VIDEO, not the
-        // window. \bord2 outline keeps it legible on any background.
-        int px = xoff + 16, py = yoff + dispH - 12;
-        var ass = "{\\an1}{\\pos(" + px + "," + py + ")}{\\bord2}{\\3c&H000000&}" +
-                  "{\\fs" + nameFs + "}{\\1c&H14FF39&}" + AssEscape(_ovFile) +
-                  "\\N{\\fs" + fs + "}{\\1c&HFFFFFF&}" + line2;
-        if (dateLine.Length > 0) { ass += "\\N{\\fs" + dateFs + "}{\\1c&HD7D7D7&}" + AssEscape(dateLine); }
-        if (linkLine.Length > 0) { ass += "\\N{\\fs" + linkFs + "}{\\1c&HD7D7D7&}" + AssEscape(linkLine); }
-        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", ass, w, h, 0, false, false);
+    // WrapToWidth splits text into lines that each fit widthPx at fontSize, breaking
+    // on spaces where it can and HARD-breaking an over-long token (a long filename or
+    // URL with no spaces) so nothing is ever clipped. Empty text -> no lines.
+    private static List<string> WrapToWidth(string text, int fontSize, int widthPx)
+    {
+        var lines = new List<string>();
+        if (string.IsNullOrEmpty(text)) { return lines; }
+        var maxChars = Math.Max(8, (int)((widthPx - 32) / (fontSize * 0.55)));
+        if (text.Length <= maxChars) { lines.Add(text); return lines; }
+        var cur = new StringBuilder();
+        foreach (var word in text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var wr = word;
+            while (wr.Length > maxChars) // hard-break a token longer than a whole line
+            {
+                if (cur.Length > 0) { lines.Add(cur.ToString()); cur.Clear(); }
+                lines.Add(wr.Substring(0, maxChars));
+                wr = wr.Substring(maxChars);
+            }
+            if (cur.Length == 0) { cur.Append(wr); }
+            else if (cur.Length + 1 + wr.Length <= maxChars) { cur.Append(' ').Append(wr); }
+            else { lines.Add(cur.ToString()); cur.Clear(); cur.Append(wr); }
+        }
+        if (cur.Length > 0) { lines.Add(cur.ToString()); }
+        if (lines.Count == 0) { lines.Add(text); }
+        return lines;
     }
 
     // --- yt-dlp filename provenance ---------------------------------------------

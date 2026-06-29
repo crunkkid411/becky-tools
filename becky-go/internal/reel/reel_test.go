@@ -252,12 +252,12 @@ func TestLowerThirdFilter_Toggles(t *testing.T) {
 	clip := edl.Clip{Source: `X:\c\v.mp4`, In: 10, Out: 12,
 		Meta: edl.ClipMeta{Person: "P", Location: "L", Date: "2026-06-18", Link: "http://x", SourceFPS: 30}}
 
-	if got := lowerThirdFilter(edl.Overlay{Enabled: false}, clip, "", 30); got != "" {
+	if got := lowerThirdFilter(edl.Overlay{Enabled: false}, clip, "", 30, 1280, 720); got != "" {
 		t.Fatalf("disabled overlay should produce empty filter, got %q", got)
 	}
 
 	o := edl.Overlay{Enabled: true, ShowTimecode: true}
-	got := lowerThirdFilter(o, clip, "", 30)
+	got := lowerThirdFilter(o, clip, "", 30, 1280, 720)
 	if !strings.Contains(got, "timecode=") {
 		t.Fatalf("expected timecode line, got %q", got)
 	}
@@ -266,7 +266,7 @@ func TestLowerThirdFilter_Toggles(t *testing.T) {
 	}
 
 	oAll := edl.Overlay{Enabled: true, ShowFilename: true, ShowPerson: true, ShowLocation: true, ShowDate: true, ShowLink: true}
-	gotAll := lowerThirdFilter(oAll, clip, "", 30)
+	gotAll := lowerThirdFilter(oAll, clip, "", 30, 1280, 720)
 	// Identity fields stay on one row; Date and Link now get their OWN labeled
 	// lines so a long URL can't make the row run past the video (colons escaped).
 	if !strings.Contains(gotAll, "v.mp4 | P | L") {
@@ -289,12 +289,52 @@ func TestOverlayProvenanceFromFilename(t *testing.T) {
 	clip := edl.Clip{Source: `X:\case\2026-06-27_Some Title_[abcdefghijk].mp4`, In: 0, Out: 2,
 		Meta: edl.ClipMeta{SourceFPS: 30}}
 	o := edl.Overlay{Enabled: true, ShowDate: true, ShowLink: true}
-	got := lowerThirdFilter(o, clip, "", 30)
+	got := lowerThirdFilter(o, clip, "", 30, 1280, 720)
 	if !strings.Contains(got, "Date\\: 2026-06-27") {
 		t.Fatalf("date should be recovered from the file name:\n%s", got)
 	}
 	if !strings.Contains(got, "Link\\: https\\://www.youtube.com/watch?v=abcdefghijk") {
 		t.Fatalf("link should be recovered from the file name:\n%s", got)
+	}
+}
+
+func TestWrapToWidth(t *testing.T) {
+	// A short string is returned as a single line.
+	if got := wrapToWidth("short.mp4", 26, 1280); len(got) != 1 {
+		t.Fatalf("short text should be one line, got %d: %v", len(got), got)
+	}
+	// A long no-space token hard-breaks into multiple lines that each fit.
+	long := strings.Repeat("a", 300)
+	fontSize, width := 26, 640
+	got := wrapToWidth(long, fontSize, width)
+	if len(got) < 2 {
+		t.Fatalf("a 300-char token at width 640 must wrap, got %d lines", len(got))
+	}
+	maxChars := int(float64(width-2*ltMarginX) / (float64(fontSize) * 0.55))
+	for _, ln := range got {
+		if len([]rune(ln)) > maxChars {
+			t.Fatalf("wrapped line %q exceeds %d chars", ln, maxChars)
+		}
+	}
+	// No characters are lost (critical: the whole filename must survive).
+	if joined := strings.Join(got, ""); joined != long {
+		t.Fatalf("wrap dropped characters: got %d, want %d", len(joined), len(long))
+	}
+	// Width unknown (0) disables wrapping.
+	if got := wrapToWidth(long, 26, 0); len(got) != 1 {
+		t.Fatalf("width 0 should disable wrapping, got %d lines", len(got))
+	}
+}
+
+// TestLowerThirdFilter_WrapsLongFilename: a very long filename produces more than
+// one drawtext line (so it is never clipped off the right edge of the video).
+func TestLowerThirdFilter_WrapsLongFilename(t *testing.T) {
+	long := strings.Repeat("verylongname_", 12) + "[abcdefghijk].mp4"
+	clip := edl.Clip{Source: `X:\case\` + long, In: 0, Out: 2, Meta: edl.ClipMeta{SourceFPS: 30}}
+	o := edl.Overlay{Enabled: true, ShowFilename: true}
+	got := lowerThirdFilter(o, clip, "", 30, 640, 360)
+	if n := strings.Count(got, "drawtext="); n < 2 {
+		t.Fatalf("a long filename should wrap to >=2 drawtext lines, got %d:\n%s", n, got)
 	}
 }
 
@@ -307,15 +347,15 @@ func TestMetaLine_SkipsEmptyAndUntoggled(t *testing.T) {
 }
 
 func TestLineYExpr(t *testing.T) {
-	// Bottom (default): the LAST line sits ltBottomPad off the bottom; earlier
-	// lines step up by ltLineH. With 4 lines: i=3 -> h-24, i=0 -> h-138.
-	if got := lineYExpr("bottom", 3, 4); got != "h-24" {
-		t.Fatalf("bottom last line y = %q, want h-24", got)
+	// Bottom (default): the LAST line sits ltBottomPad (48) off the bottom; earlier
+	// lines step up by ltLineH (38). With 4 lines: i=3 -> h-48, i=0 -> h-162.
+	if got := lineYExpr("bottom", 3, 4); got != "h-48" {
+		t.Fatalf("bottom last line y = %q, want h-48", got)
 	}
-	if got := lineYExpr("bottom", 0, 4); got != "h-138" {
-		t.Fatalf("bottom top line y = %q, want h-138", got)
+	if got := lineYExpr("bottom", 0, 4); got != "h-162" {
+		t.Fatalf("bottom top line y = %q, want h-162", got)
 	}
-	// Top: the FIRST line sits ltTopPad off the top; later lines step down.
+	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down.
 	if got := lineYExpr("top", 0, 4); got != "20" {
 		t.Fatalf("top first line y = %q, want 20", got)
 	}
@@ -323,7 +363,7 @@ func TestLineYExpr(t *testing.T) {
 		t.Fatalf("top third line y = %q, want 96", got)
 	}
 	// Unknown position defaults to bottom-anchored.
-	if got := lineYExpr("middle", 0, 1); got != "h-24" {
+	if got := lineYExpr("middle", 0, 1); got != "h-48" {
 		t.Fatalf("unknown position should default bottom, got %q", got)
 	}
 }

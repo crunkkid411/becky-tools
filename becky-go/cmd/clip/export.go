@@ -60,7 +60,9 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 		if err != nil {
 			return ExportResult{}, err
 		}
-		outPath = filepath.Join(dir, slugName(r.Name)+"_reel.mp4")
+		// Sequence the auto-named export so a re-export NEVER overwrites a previous
+		// one: <slug>_reel_0001.mp4, then _0002, _0003, ... (next free number).
+		outPath = nextSequencedPath(dir, slugName(r.Name)+"_reel", ".mp4")
 	}
 	outPath = absOut(outPath)
 
@@ -356,6 +358,20 @@ func (a *App) renderDir() (string, error) {
 		return "", fmt.Errorf("create render dir %q: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// nextSequencedPath returns dir/<base>_NNNN<ext> for the lowest 4-digit NNNN (>=1)
+// whose file does not yet exist, so a re-export lands beside the previous one
+// (..._0001, _0002, _0003) instead of overwriting it. The .edl/.srt sidecars share
+// the chosen stem. The 9999 cap is a runaway guard (no real case hits it).
+func nextSequencedPath(dir, base, ext string) string {
+	for n := 1; n <= 9999; n++ {
+		p := filepath.Join(dir, fmt.Sprintf("%s_%04d%s", base, n, ext))
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			return p
+		}
+	}
+	return filepath.Join(dir, base+"_9999"+ext)
 }
 
 // absOut returns the cleaned absolute form of an output path (best-effort).
