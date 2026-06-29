@@ -10,12 +10,12 @@ import (
 
 // Lower-third layout constants. Deterministic, unobtrusive, bottom by default.
 const (
-	ltFontSize   = 52 // filename / Date / Link lines (large — readable on playback)
-	ltTCFontSize = 56 // the original-timecode line (slightly larger — it's the anchor)
+	ltFontSize   = 47 // filename / Date / link lines (large — readable on playback)
+	ltTCFontSize = 50 // the original-timecode line (slightly larger — it's the anchor)
 	ltBoxAlpha   = "0.6"
 	ltMarginX    = 20 // px from the left edge
-	ltLineH      = 72 // vertical step between stacked lines (must exceed the font size)
-	ltBottomPad  = 76 // px from the bottom edge to the lowest line's TOP (clears the big font)
+	ltLineH      = 65 // vertical step between stacked lines (must exceed the font size)
+	ltBottomPad  = 68 // px from the bottom edge to the lowest line's TOP (clears the big font)
 	ltTopPad     = 20 // px from the top edge to the highest line (Position == "top")
 )
 
@@ -38,8 +38,8 @@ const defaultFont = `C:/Windows/Fonts/consola.ttf`
 //     burned value equals the position in the ORIGINAL file (the verification
 //     anchor). Only emitted when Overlay.ShowTimecode.
 //   - the filename line joins filename | person | location.
-//   - the Date and Link lines (labeled), each from the sidecar Meta or, for a
-//     yt-dlp download with no sidecar, recovered from the file name.
+//   - a labeled "Date:" line and a bare URL line, each from the sidecar Meta or,
+//     for a yt-dlp download with no sidecar, recovered from the file name.
 //
 // fontFile is the resolved font path; fps is the clip's effective frame rate;
 // w/h are the OUTPUT frame size (the lower-third is drawn on the scaled+padded
@@ -78,7 +78,7 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w
 		addText("Date: "+date, ltFontSize)
 	}
 	if link := overlayLink(o, c); link != "" {
-		addText("Link: "+link, ltFontSize)
+		addText(link, ltFontSize) // the URL is self-evidently the link — no "Link:" label
 	}
 	if len(lines) == 0 {
 		return ""

@@ -359,11 +359,14 @@ func (a *App) Search(query string) []SearchResult {
 	idx := a.index
 	a.mu.Unlock()
 
-	// maxPlayable + maxTranscriptOnly cap each group independently: a case with
-	// 418 orphan transcripts must not bury the handful of playable hits, and vice
-	// versa. The combined list stays bounded for the UI.
-	const maxPlayable = 200
-	const maxTranscriptOnly = 200
+	// maxPlayable + maxTranscriptOnly bound each group so a pathological common-word
+	// search can't return a runaway payload — but they are set HIGH (was 200 each,
+	// which silently hid real hits: a known quote past the top 200-by-score never
+	// showed, even when its date was known). At 5000 each, any realistic forensic
+	// search returns ALL its hits; the UI renders the newest first and tells the user
+	// when a search is still too broad to show in full ("Showing X of N — narrow it").
+	const maxPlayable = 5000
+	const maxTranscriptOnly = 5000
 
 	video := footage.GrepTranscripts(idx, terms)
 	if len(video) > maxPlayable {

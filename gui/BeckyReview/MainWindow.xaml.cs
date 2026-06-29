@@ -419,7 +419,7 @@ public partial class MainWindow : Window
         // sent by the page) maps it back to the current clip's real source time.
         var line2 = "ORIG TC " + Smpte(pos + _ovTcOffset, _ovFps);
         var dateLine = date.Length > 0 ? "Date: " + date : "";
-        var linkLine = link.Length > 0 ? "Link: " + link : "";
+        var linkLine = link; // the URL is self-evidently the link — no "Link:" label
 
         // A long filename/URL WRAPS to extra lines (at the readable base font) rather
         // than shrinking to nothing or running off the video — critical info must

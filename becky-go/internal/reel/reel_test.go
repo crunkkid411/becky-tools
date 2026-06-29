@@ -278,8 +278,11 @@ func TestLowerThirdFilter_Toggles(t *testing.T) {
 	if !strings.Contains(gotAll, "Date\\: 2026-06-18") {
 		t.Fatalf("expected a labeled Date line:\n%s", gotAll)
 	}
-	if !strings.Contains(gotAll, "Link\\: http\\://x") {
-		t.Fatalf("expected a labeled Link line (colons escaped):\n%s", gotAll)
+	if !strings.Contains(gotAll, "text='http\\://x'") {
+		t.Fatalf("expected a bare URL line (no \"Link:\" label, colons escaped):\n%s", gotAll)
+	}
+	if strings.Contains(gotAll, "Link\\:") {
+		t.Fatalf("the redundant \"Link:\" label should be gone:\n%s", gotAll)
 	}
 }
 
@@ -294,8 +297,8 @@ func TestOverlayProvenanceFromFilename(t *testing.T) {
 	if !strings.Contains(got, "Date\\: 2026-06-27") {
 		t.Fatalf("date should be recovered from the file name:\n%s", got)
 	}
-	if !strings.Contains(got, "Link\\: https\\://www.youtube.com/watch?v=abcdefghijk") {
-		t.Fatalf("link should be recovered from the file name:\n%s", got)
+	if !strings.Contains(got, "text='https\\://www.youtube.com/watch?v=abcdefghijk'") {
+		t.Fatalf("link should be recovered from the file name (bare URL, no label):\n%s", got)
 	}
 }
 
@@ -348,23 +351,23 @@ func TestMetaLine_SkipsEmptyAndUntoggled(t *testing.T) {
 }
 
 func TestLineYExpr(t *testing.T) {
-	// Bottom (default): the LAST line sits ltBottomPad (76) off the bottom; earlier
-	// lines step up by ltLineH (72). With 4 lines: i=3 -> h-76, i=0 -> h-292.
-	if got := lineYExpr("bottom", 3, 4); got != "h-76" {
-		t.Fatalf("bottom last line y = %q, want h-76", got)
+	// Bottom (default): the LAST line sits ltBottomPad (68) off the bottom; earlier
+	// lines step up by ltLineH (65). With 4 lines: i=3 -> h-68, i=0 -> h-263.
+	if got := lineYExpr("bottom", 3, 4); got != "h-68" {
+		t.Fatalf("bottom last line y = %q, want h-68", got)
 	}
-	if got := lineYExpr("bottom", 0, 4); got != "h-292" {
-		t.Fatalf("bottom top line y = %q, want h-292", got)
+	if got := lineYExpr("bottom", 0, 4); got != "h-263" {
+		t.Fatalf("bottom top line y = %q, want h-263", got)
 	}
-	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down by 72.
+	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down by 65.
 	if got := lineYExpr("top", 0, 4); got != "20" {
 		t.Fatalf("top first line y = %q, want 20", got)
 	}
-	if got := lineYExpr("top", 2, 4); got != "164" {
-		t.Fatalf("top third line y = %q, want 164", got)
+	if got := lineYExpr("top", 2, 4); got != "150" {
+		t.Fatalf("top third line y = %q, want 150", got)
 	}
 	// Unknown position defaults to bottom-anchored.
-	if got := lineYExpr("middle", 0, 1); got != "h-76" {
+	if got := lineYExpr("middle", 0, 1); got != "h-68" {
 		t.Fatalf("unknown position should default bottom, got %q", got)
 	}
 }

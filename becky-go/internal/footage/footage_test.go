@@ -370,6 +370,41 @@ func TestLoadMetaCorruptSidecar(t *testing.T) {
 	}
 }
 
+// TestEverySrtNamingSchemeIsSearchable proves the core guarantee: EVERY .srt in
+// the tree is searchable, whatever it's named. Inconsistent agents have produced
+// "<stem>.en.srt", "<stem>_LOCAL.srt", "<stem>_parakeet_transcription.srt", plus
+// loose "captions.srt"/"becky.srt" with no matching video. Each must surface a hit
+// for its unique term — paired to its video (GrepTranscripts) or standalone
+// (GrepOrphans). If this fails, search is silently missing transcripts.
+func TestEverySrtNamingSchemeIsSearchable(t *testing.T) {
+	root := t.TempDir()
+	cue := func(term string) string {
+		return "1\n00:00:01,000 --> 00:00:03,000\nthis cue contains " + term + " verbatim\n"
+	}
+	// Paired schemes (a video + a transcript whose name varies).
+	writeFile(t, filepath.Join(root, "2026-06-29_Normal_[abcdefghijk].mp4"), "x")
+	writeFile(t, filepath.Join(root, "2026-06-29_Normal_[abcdefghijk].en.srt"), cue("alphaterm"))
+	writeFile(t, filepath.Join(root, "2026-06-28_LocalCase.mp4"), "x")
+	writeFile(t, filepath.Join(root, "2026-06-28_LocalCase_LOCAL.srt"), cue("betaterm"))
+	writeFile(t, filepath.Join(root, "2026-06-27_Pk.mp4"), "x")
+	writeFile(t, filepath.Join(root, "2026-06-27_Pk_parakeet_transcription.srt"), cue("gammaterm"))
+	// Orphan schemes (loose transcripts with no matching video — must still search).
+	writeFile(t, filepath.Join(root, "captions.srt"), cue("deltaterm"))
+	writeFile(t, filepath.Join(root, "becky.srt"), cue("epsilonterm"))
+
+	idx, err := Index(root)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	for _, term := range []string{"alphaterm", "betaterm", "gammaterm", "deltaterm", "epsilonterm"} {
+		hits := len(GrepTranscripts(idx, []string{term})) + len(GrepOrphans(idx, []string{term}))
+		if hits == 0 {
+			t.Errorf("term %q is NOT searchable — a transcript was missed (videos=%d, orphans=%d)",
+				term, len(idx.Videos), len(idx.Orphans))
+		}
+	}
+}
+
 // ---- YouTube-id pairing (rule 0) ------------------------------------------
 
 // TestResolveYouTubeIDSameDir is the id-pairing positive case in the same dir:

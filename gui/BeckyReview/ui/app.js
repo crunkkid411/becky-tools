@@ -24,7 +24,7 @@
   var ZOOM_MIN = 2;        // zoom clamp (px per second) - standard-NLE timeline zoom
   var ZOOM_MAX = 120;
   var MINW = 96;           // base/cap for the min clip-block width; the live floor scales with zoom
-  var MAX_ROWS = 400;      // cap rendered quote rows (search can return many)
+  var MAX_ROWS = 3000;     // cap RENDERED quote rows (results are date-sorted, so this shows the newest first; the "Showing X of N" note tells the user when more exist)
   var CALL_TIMEOUT_MS = 35 * 60 * 1000;   // 35-minute safety timeout per spec
   var DBL_GUARD_MS = 220;  // single-click wait so a double-click can cancel it
   var RECT_THROTTLE_MS = 60;   // max rate we report the video-hole rect to the host
