@@ -172,5 +172,75 @@
       </Setter>
     </Style>
 
+    <!-- ============================================================
+         Dark ComboBox for the settings dropdowns (brain/mic/voice)
+         ============================================================ -->
+    <Style x:Key="WhoreComboItem" TargetType="ComboBoxItem">
+      <Setter Property="Foreground" Value="{StaticResource TextMain}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="FontFamily" Value="{StaticResource HudFont}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Padding" Value="8,6" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBoxItem">
+            <Border x:Name="b" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+              <ContentPresenter />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsHighlighted" Value="True">
+                <Setter TargetName="b" Property="Background" Value="#3322E8FF" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="WhoreCombo" TargetType="ComboBox">
+      <Setter Property="Foreground" Value="{StaticResource CyanBright}" />
+      <Setter Property="FontFamily" Value="{StaticResource HudFont}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="ItemContainerStyle" Value="{StaticResource WhoreComboItem}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid>
+              <ToggleButton x:Name="tb" Focusable="False" ClickMode="Press"
+                            IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Border Background="#33020A10" BorderBrush="{StaticResource PanelStroke}" BorderThickness="1" CornerRadius="3">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="24" />
+                        </Grid.ColumnDefinitions>
+                        <ContentPresenter Grid.Column="0" Margin="10,0,0,0" VerticalAlignment="Center"
+                                          Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}" />
+                        <TextBlock Grid.Column="1" Text="&#x25BE;" Foreground="{StaticResource Cyan}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11" />
+                      </Grid>
+                    </Border>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                     AllowsTransparency="True" PopupAnimation="Fade">
+                <Border Background="#F2061821" BorderBrush="{StaticResource PanelStroke}" BorderThickness="1"
+                        CornerRadius="3" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                        Effect="{StaticResource GlowCyanSoft}">
+                  <ScrollViewer MaxHeight="240">
+                    <ItemsPresenter />
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
   </Application.Resources>
 </Application>

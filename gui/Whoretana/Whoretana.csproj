@@ -18,9 +18,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- SkiaSharp draws the orb. ALL audio (mic capture, VAD, playback) lives in the
+         Python FastRTC sidecar (voice/whoretana_voice.py) - no managed audio lib here. -->
     <PackageReference Include="SkiaSharp" Version="2.88.8" />
     <PackageReference Include="SkiaSharp.Views.WPF" Version="2.88.8" />
-    <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
   <ItemGroup>

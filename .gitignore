@@ -4,6 +4,8 @@ becky-go/bin/
 bin/
 # .NET build intermediates (WPF guis: BeckyWindow / BeckyReview / Whoretana)
 obj/
+# Secrets - the real .env is never committed (use .env.example as the template)
+.env
 # Linux/macOS tool binaries built in becky-go root by `go build ./cmd/<name>/`
 becky-go/ask
 becky-go/becky
