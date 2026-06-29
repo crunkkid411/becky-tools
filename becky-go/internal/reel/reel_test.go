@@ -351,23 +351,23 @@ func TestMetaLine_SkipsEmptyAndUntoggled(t *testing.T) {
 }
 
 func TestLineYExpr(t *testing.T) {
-	// Bottom (default): the LAST line sits ltBottomPad (68) off the bottom; earlier
-	// lines step up by ltLineH (65). With 4 lines: i=3 -> h-68, i=0 -> h-263.
-	if got := lineYExpr("bottom", 3, 4); got != "h-68" {
-		t.Fatalf("bottom last line y = %q, want h-68", got)
+	// Bottom (default): the LAST line sits ltBottomPad (61) off the bottom; earlier
+	// lines step up by ltLineH (58). With 4 lines: i=3 -> h-61, i=0 -> h-235.
+	if got := lineYExpr("bottom", 3, 4); got != "h-61" {
+		t.Fatalf("bottom last line y = %q, want h-61", got)
 	}
-	if got := lineYExpr("bottom", 0, 4); got != "h-263" {
-		t.Fatalf("bottom top line y = %q, want h-263", got)
+	if got := lineYExpr("bottom", 0, 4); got != "h-235" {
+		t.Fatalf("bottom top line y = %q, want h-235", got)
 	}
-	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down by 65.
+	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down by 58.
 	if got := lineYExpr("top", 0, 4); got != "20" {
 		t.Fatalf("top first line y = %q, want 20", got)
 	}
-	if got := lineYExpr("top", 2, 4); got != "150" {
-		t.Fatalf("top third line y = %q, want 150", got)
+	if got := lineYExpr("top", 2, 4); got != "136" {
+		t.Fatalf("top third line y = %q, want 136", got)
 	}
 	// Unknown position defaults to bottom-anchored.
-	if got := lineYExpr("middle", 0, 1); got != "h-68" {
+	if got := lineYExpr("middle", 0, 1); got != "h-61" {
 		t.Fatalf("unknown position should default bottom, got %q", got)
 	}
 }
