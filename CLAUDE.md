@@ -548,6 +548,14 @@ blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); t
 FAIL is pre-existing/environmental (the local TTS model is present, so "degrades when no model"
 inverts); `build-all-tools.bat` builds all 84 `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
 
+- **becky-transcribe gap-fill — long-clip transcripts no longer come up ~48 min short (2026-06-29, local,
+  `claude/transcribe-audio-gapfill`):** sources whose audio drops out mid-stream (yt-dlp livestream VODs) have
+  ~48 min of timeline with NO audio packets; plain `ffmpeg` extraction dropped the gaps -> a too-short WAV ->
+  every Parakeet timestamp compressed (a 2:58:04 video's transcript ended at 02:10). Fix = one filter,
+  `-af aresample=async=1:first_pts=0` in `extractAudio` (`cmd/transcribe/main.go`), so silence fills the gaps
+  and the WAV matches the video timeline. No-op on clean files (byte-identical). Proven end-to-end: the
+  TakingBack2007 video now transcribes to 02:58:14. Regression test `TestExtractAudioFillsTimelineGaps`. Details
+  in `HANDOFF-LOG.md`.
 - **WHORETANA — the native voice GUI Jordan opens (2026-06-29, local, master `1ff1e06`):** `gui/Whoretana`
   (WPF, .NET 8) — a cyan glitch HUD with a SkiaSharp particle **orb** you talk to. Orb idle/listening
   (mic-reactive)/**speaking (emergent face, mouth lip-syncs to TTS amplitude)** under datamosh glitch;

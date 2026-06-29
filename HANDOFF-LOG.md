@@ -10,6 +10,39 @@
 
 ---
 
+## becky-transcribe — gap-fill audio extraction fixes 48-min-short transcripts on desynced/corrupted sources (2026-06-29, local, `claude/transcribe-audio-gapfill`)
+
+**The bug.** Long videos whose audio drops out mid-stream (yt-dlp-merged livestream VODs) transcribed ~48 min
+SHORT with every timestamp compressed. Example: `2026-06-21_TakingBack2007_is_going_ON_TOUR_[Mfnt2pZgYHE].mp4`
+is 2:58:04, but its `_parakeet_transcription.srt` ended at 02:10:05 — "...Alright bye guys." landed at 2:10
+instead of 2:58:09. Re-transcribing (incl. becky-review's "Transcribe all") never fixed it.
+
+**Root cause (3 independent signals agree on 2:10:07).** The source's AAC audio holds only 2:10:07 of actual
+samples (336226 frames @ 44.1 kHz) though the container/video timeline is 2:58:16 — ~48 min of the timeline have
+NO audio packets (audio cuts out ~5-6 min, returns ~7:30, plus more). `extractAudio` (`cmd/transcribe/main.go`)
+ran plain `ffmpeg -vn -ar 16000 -ac 1 -acodec pcm_s16le`, which CONCATENATES the surviving samples and silently
+drops the gaps -> a 2:10:07 WAV. Parakeet transcribed that faithfully; the shortfall is 100% in extraction —
+NOT Parakeet chunking, NOT SRT parsing, NOT becky-review wiring. (Decoded PCM payload = 243974 kB = 2:10:07;
+AAC frame math = 2:10:07; broken transcript end = 2:10:05. "Transcribe all" also SKIPS files that already have
+a transcript, so re-clicking it silently passed this one over — the per-video reload hit the same extraction.)
+
+**Fix (surgical, one line).** Added `-af aresample=async=1:first_pts=0` to extractAudio so ffmpeg inserts silence
+to keep audio aligned to its timestamps -> the WAV length matches the video timeline deterministically. Verified:
+corrupted file -> full 2:58:16 WAV (was 2:10:07); CLEAN file -> byte-identical output (no-op; normal clips
+unaffected, fixes both the sherpa CPU and DirectML GPU paths since they share the one WAV). Silence-filled gaps
+are dropped by the existing VAD gate, so no hallucinated text is indexed over them. Load-bearing DO-NOT-REMOVE
+comment added so a later "simplify" pass can't strip it.
+
+**Proven end-to-end on the real file.** Rebuilt becky-transcribe.exe re-transcribed the 2:58 video: new SRT runs
+00:00:00 -> 02:58:14, last line "Thank you. I appreciate it. Alright bye guys." at **02:58:09** (matches Jordan's
+eyeball check). Installed the corrected sidecar in place; the old broken one is backed up to the session scratch dir.
+
+**Gates.** New regression test `TestExtractAudioFillsTimelineGaps` (synthesizes a 6 s clip with a real 2 s audio
+gap; asserts extracted length == timeline; skips if ffmpeg/x264 absent) — PASS (would FAIL pre-fix). `go build/vet
+./...` green, gofmt clean-modulo-CRLF, `build-all-tools.bat` rebuilt all `.exe`. **Left for Jordan: nothing** —
+open becky-review on this file and confirm quotes seek correctly. The same fix benefits any other desynced long
+clip; a batch re-transcribe of the folder is available on request.
+
 ## WHORETANA — native WPF voice shell + becky-voice driver (2026-06-29, local, `claude/whoretana-gui` -> master `1ff1e06`)
 
 **What landed.** The GUI Jordan asked for: **`gui/Whoretana`**, a native WPF (.NET 8) "WHORETANA" voice

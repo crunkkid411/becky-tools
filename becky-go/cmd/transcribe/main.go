@@ -304,6 +304,18 @@ func parsePositional() string {
 	return input
 }
 
+// extractAudio decodes the input to a 16 kHz mono PCM WAV for ASR.
+//
+// The "aresample=async=1:first_pts=0" filter is load-bearing, not cosmetic — DO NOT
+// remove it. Some sources (e.g. yt-dlp-merged livestream VODs) have stretches where
+// the audio packets are missing while the container timeline still advances: the
+// stream claims, say, 2:58:16 but only ~2:10 of actual samples exist. Plain ffmpeg
+// decoding CONCATENATES the surviving samples and silently drops the gaps, yielding a
+// WAV ~48 min shorter than the video — so every Parakeet timestamp ends up compressed
+// (the last line lands at 2:10 instead of 2:58). aresample=async=1 instead inserts
+// silence to keep audio aligned to its timestamps, so the WAV length matches the video
+// timeline deterministically. It is a no-op on clean, gap-free files (byte-identical
+// output), so normal clips are unaffected. Regression test: TestExtractAudioFillsTimelineGaps.
 func extractAudio(ffmpeg, input string) (string, error) {
 	tmp, err := os.CreateTemp("", "becky_asr_*.wav")
 	if err != nil {
@@ -312,7 +324,8 @@ func extractAudio(ffmpeg, input string) (string, error) {
 	path := tmp.Name()
 	tmp.Close()
 	cmd := exec.Command(ffmpeg, "-y", "-i", input,
-		"-vn", "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
+		"-vn", "-af", "aresample=async=1:first_pts=0",
+		"-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
 		"-loglevel", "error", path)
 	proc.NoWindow(cmd) // no console flash when becky-clip spawns us windowless
 	var errBuf strings.Builder
