@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -28,10 +29,10 @@ public partial class MainWindow : Window
     private bool _paused = true;
     private string? _folder;
 
-    // Host-drawn forensic lower-third state (mpv osd-overlay). The overlay is sized in
-    // the HOST/window coordinate space (mpv's OSD maps to the window, NOT the
-    // letterbox-aware video rect), so it never drifts off-screen on a portrait/odd
-    // aspect clip. _ovW/_ovH (the real video dims) are kept only as a fallback.
+    // Host-drawn forensic lower-third state (mpv osd-overlay). The overlay is drawn in
+    // the window's coordinate space (mpv's OSD maps to the window, NOT the video rect),
+    // but \pos'd onto the letterbox-aware video rect so it tracks the VIDEO and never
+    // runs wider than it. _ovW/_ovH (the real video dims) drive that rect.
     private bool _overlayOn;
     private string _ovFile = "";
     private string _ovDate = "";
@@ -360,54 +361,96 @@ public partial class MainWindow : Window
     }
 
     // --- the forensic lower-third, drawn by mpv (ASS via osd-overlay) ------------
-    // CRITICAL: mpv's osd-overlay coordinate space (res_x/res_y) maps to the WINDOW
-    // (the --wid host panel), NOT the letterbox-aware video rect. Passing the video's
-    // own w/h here made the text drift far off-screen whenever the clip aspect didn't
-    // match the panel (e.g. a portrait phone clip in a wide panel). So we render in the
-    // HOST canvas: {\an1} bottom-left then always sits at the window's bottom-left, the
-    // font is a fraction of the host HEIGHT (the predictable short dimension for a
-    // lower-third), and the filename is truncated to the host WIDTH so line 1 can't run
-    // off the right edge.
+    // mpv's osd-overlay coordinate space (res_x/res_y) maps to the WINDOW (the --wid
+    // host panel), NOT the letterbox-aware video rect — so res stays the window size
+    // (passing the video's own w/h here once made the text drift off-screen). To keep
+    // the lower-third aligned to the VIDEO and never wider than it, we work out where
+    // the video actually sits inside the window (letterbox/pillarbox), \pos the text at
+    // that rect's bottom-left, and scale each line's font to the video's displayed
+    // WIDTH (a detective needs the whole name/URL, so we shrink rather than truncate;
+    // the floor keeps it legible — widen the panel if a line ends up small).
 
     private void UpdateOverlay(double pos)
     {
-        // Overlay canvas = the host window. Fall back to the video dims, then 1280x720.
+        // res_x/res_y for the overlay = the host window (mpv maps OSD to the window).
         var w = _hostW > 0 ? _hostW : (_ovW > 0 ? _ovW : 1280);
         var h = _hostH > 0 ? _hostH : (_ovH > 0 ? _ovH : 720);
+
+        // Where the video really sits inside that window (letterbox/pillarbox). Until
+        // the real dims are known, fall back to the whole window.
+        int dispW = w, dispH = h, xoff = 0, yoff = 0;
+        if (_ovW > 0 && _ovH > 0 && h > 0)
+        {
+            double videoAspect = (double)_ovW / _ovH, winAspect = (double)w / h;
+            if (winAspect > videoAspect) { dispH = h; dispW = (int)Math.Round(h * videoAspect); xoff = (w - dispW) / 2; }
+            else { dispW = w; dispH = (int)Math.Round(w / videoAspect); yoff = (h - dispH) / 2; }
+        }
 
         // Font ~1/22 of the host height, clamped to a sane on-screen range.
         var fs = Math.Min(40, Math.Max(13, (int)Math.Round(h / 22.0)));
         var meta2 = Math.Max(11, fs * 5 / 6);
 
-        // NEVER truncate the filename — a detective needs the WHOLE name (especially
-        // the suffix before the extension that distinguishes duplicates). Instead,
-        // scale the filename's OWN font down so the entire name fits the video width
-        // on one line (a glyph is ~0.55*font wide; keep a ~20px margin each side). The
-        // floor keeps it legible; if it ends up small, Jordan can widen the panel.
-        var nameFs = fs;
-        if (_ovFile.Length > 0)
-        {
-            var fit = (int)((w - 40) / (_ovFile.Length * 0.55));
-            nameFs = Math.Max(9, Math.Min(fs, fit));
-        }
-        var line1 = AssEscape(_ovFile);
+        // yt-dlp puts the provenance in the file name ("YYYY-MM-DD_Title_[VIDEOID]"):
+        // when no becky sidecar supplied a date/link, recover them so the overlay still
+        // shows the source date + URL. An explicit sidecar value always wins.
+        var date = _ovDate.Length > 0 ? _ovDate : DateFromName(_ovFile);
+        var link = _ovLink.Length > 0 ? _ovLink : LinkFromName(_ovFile);
+
         // ORIG TC is the timecode in the SOURCE. During seamless EDL playback mpv's
         // position is the COMPILATION time, so _ovTcOffset (clip.in - clip.start_sec,
         // sent by the page) maps it back to the current clip's real source time.
         var line2 = "ORIG TC " + Smpte(pos + _ovTcOffset, _ovFps);
-        var meta = "";
-        if (_ovDate.Length > 0) { meta = _ovDate; }
-        if (_ovLink.Length > 0) { meta = meta.Length > 0 ? meta + "   " + _ovLink : _ovLink; }
+        var dateLine = date.Length > 0 ? "Date: " + date : "";
+        var linkLine = link.Length > 0 ? "Link: " + link : "";
 
-        // {\an1} bottom-left; outline for legibility; sized in the host window's space.
-        // The filename uses its fitted font, then line 2 + meta reset to the base sizes.
-        var ass = "{\\an1}{\\bord2}{\\3c&H000000&}{\\fs" + nameFs + "}{\\1c&H14FF39&}" + line1 +
+        // Each line's font is scaled to fit the video's displayed width (a glyph is
+        // ~0.55*font wide; keep a ~32px margin). Short lines keep their base size; only
+        // a long name/URL shrinks. Floor of 9 keeps it readable.
+        int Fit(string text, int baseFs) =>
+            text.Length == 0 ? baseFs : Math.Max(9, Math.Min(baseFs, (int)((dispW - 32) / (text.Length * 0.55))));
+
+        var nameFs = Fit(_ovFile, fs);
+        var dateFs = Fit(dateLine, meta2);
+        var linkFs = Fit(linkLine, meta2);
+
+        // \an1 = bottom-left, \pos at the video rect's bottom-left (inset a little) so
+        // the block grows upward from the bottom-left corner OF THE VIDEO, not the
+        // window. \bord2 outline keeps it legible on any background.
+        int px = xoff + 16, py = yoff + dispH - 12;
+        var ass = "{\\an1}{\\pos(" + px + "," + py + ")}{\\bord2}{\\3c&H000000&}" +
+                  "{\\fs" + nameFs + "}{\\1c&H14FF39&}" + AssEscape(_ovFile) +
                   "\\N{\\fs" + fs + "}{\\1c&HFFFFFF&}" + line2;
-        if (meta.Length > 0)
-        {
-            ass += "\\N{\\fs" + meta2 + "}{\\1c&HD7D7D7&}" + AssEscape(meta);
-        }
+        if (dateLine.Length > 0) { ass += "\\N{\\fs" + dateFs + "}{\\1c&HD7D7D7&}" + AssEscape(dateLine); }
+        if (linkLine.Length > 0) { ass += "\\N{\\fs" + linkFs + "}{\\1c&HD7D7D7&}" + AssEscape(linkLine); }
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", ass, w, h, 0, false, false);
+    }
+
+    // --- yt-dlp filename provenance ---------------------------------------------
+    // yt-dlp embeds the upload date and video id in the file name, e.g.
+    // "2026-06-27_Some Title_[abcdefghijk].mp4". These recover the overlay's Date
+    // and Link when no becky sidecar provided them (the sidecar still wins above).
+
+    // A leading recording-date prefix: dashed "2026-06-27_" or compact "20260627_".
+    private static readonly Regex DatePrefixRe =
+        new(@"^(?:(\d{4})-(\d{2})-(\d{2})|(\d{4})(\d{2})(\d{2}))[_ -]", RegexOptions.Compiled);
+
+    // The bracketed 11-char YouTube id token, e.g. "[abcdefghijk]" (case-sensitive).
+    private static readonly Regex YtIdRe =
+        new(@"\[([A-Za-z0-9_-]{11})\]", RegexOptions.Compiled);
+
+    private static string DateFromName(string name)
+    {
+        var m = DatePrefixRe.Match(name);
+        if (!m.Success) { return ""; }
+        return m.Groups[1].Success
+            ? m.Groups[1].Value + "-" + m.Groups[2].Value + "-" + m.Groups[3].Value
+            : m.Groups[4].Value + "-" + m.Groups[5].Value + "-" + m.Groups[6].Value;
+    }
+
+    private static string LinkFromName(string name)
+    {
+        var m = YtIdRe.Match(name);
+        return m.Success ? "https://www.youtube.com/watch?v=" + m.Groups[1].Value : "";
     }
 
     private void ClearOverlay()
