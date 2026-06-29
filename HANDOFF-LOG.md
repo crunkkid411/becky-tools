@@ -10,6 +10,40 @@
 
 ---
 
+## WHORETANA — native WPF voice shell + becky-voice driver (2026-06-29, local, `claude/whoretana-gui` -> master `1ff1e06`)
+
+**What landed.** The GUI Jordan asked for: **`gui/Whoretana`**, a native WPF (.NET 8) "WHORETANA" voice
+shell (zombie-Cortana), implementing `handoff-becky-wpf-gui.md` + the local half of
+`HANDOFF-BECKY-VOICE.md`, PLUS the becky-voice Go core Phases 1-2.
+
+- **Hero orb** (SkiaSharp `Orb/OrbControl.cs`): dendrite particle cloud + rotating reticle/gear rings +
+  breathing central bloom. **Idle** ambient; **listening** pulses outward with mic RMS; **speaking** rearranges
+  particles into an emergent FACE whose **mouth lip-syncs to the live TTS amplitude**, under a datamosh glitch
+  (per head3.gif). Software SKElement — no GL, no server.
+- **Palette** cyan `#22E8FF` + `#ff3366` accent only (no purple), Deacon Flock title (embedded). Grain +
+  scanlines + electric jagged chat border. Full HUD: command bar (search/`/do`/settings), live tool grid from
+  `becky-catalog --json` (tier-colored), workflow buttons, ops menu, circular CLI/agent launchers, mic VU dial,
+  status strip, chat box.
+- **Voice/chat loop:** mic (NAudio) -> `becky-transcribe` -> route -> `becky-tts` (orb lip-syncs). Chat + voice
+  route through **`becky-voice.exe`** over NDJSON (intent `{type,text,target,pack,confirm,id}` / event
+  `{type,text,clip,tool,argv,tier,action,need_confirm}`), fallback `becky-ask --question`. **Red tier confirms
+  before running.** No server anywhere — a `.exe` launching `becky-*.exe`'s.
+- **becky-voice Go core** (`cmd/becky-voice` + `internal/pack` + `packs/default.json`,`reaper.json`): Phases 1-2
+  of HANDOFF-BECKY-VOICE.md — deterministic NDJSON router, tier gate, voiceresp lines, fix-it, workflow phrases,
+  pack scoping. Five gates green; `--selftest` 5/5; `build-all-tools.bat` builds `becky-voice.exe`.
+
+**Verified on Win10 (mouse/keyboard + screenshots):** window opens; orb idle/listening/**speaking face with
+lip-sync**; 21 catalog tools load tier-colored; typed chat "export this" routed through becky-voice and was
+**refused pending confirm** (red-tier gate working) with the whoretana voice line; becky-ask fallback + becky-tts
+playback proven (SpeakDone fired). Launch: Desktop **"Whoretana"** shortcut or `Open Whoretana.bat`.
+
+**Left (key-gated boundary, not built):** **Gemini 2.5 Flash realtime** — the pinned low-latency talk model
+(HANDOFF-BECKY-VOICE Phase 3.1) needs Jordan's `GEMINI_API_KEY` + a realtime Python helper. The working local
+loop (transcribe -> becky-voice -> tts) stands in until then. Also: catalog keyword matching has a known
+substring quirk ("search" -> `find` op) — Phase-0 behavior, tunable later.
+
+---
+
 ## Cloud-queue drain — imagegen + becky-daw/reaper + OCR-ensemble spec (2026-06-28, local integration)
 
 **What landed.** The "Get Becky Updates" button launched the local agent to drain three unmerged

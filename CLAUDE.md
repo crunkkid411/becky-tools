@@ -541,12 +541,23 @@ load-bearing rules, in brief:
   threshold T, critical classes, long-doc in v1?, agreement tol, escalate-only vs `--thorough`);
   then cloud can build the deterministic core with no models.
 
-### Current state of master (as of 2026-06-28)
+### Current state of master (as of 2026-06-29)
 
 Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
 blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
 FAIL is pre-existing/environmental (the local TTS model is present, so "degrades when no model"
 inverts); `build-all-tools.bat` builds all 84 `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+
+- **WHORETANA — the native voice GUI Jordan opens (2026-06-29, local, master `1ff1e06`):** `gui/Whoretana`
+  (WPF, .NET 8) — a cyan glitch HUD with a SkiaSharp particle **orb** you talk to. Orb idle/listening
+  (mic-reactive)/**speaking (emergent face, mouth lip-syncs to TTS amplitude)** under datamosh glitch;
+  Deacon Flock title; `#22E8FF` + `#ff3366` only, no purple. Live tool grid from `becky-catalog --json`,
+  workflow buttons, ops menu, circular CLI launchers, VU dial, electric chat box. Chat + hold-to-talk route
+  through **`becky-voice.exe`** (NDJSON; red tier confirms) with a `becky-ask` fallback; STT `becky-transcribe`,
+  TTS `becky-tts` (lip-sync). Also shipped **becky-voice Phases 1-2** (`cmd/becky-voice` + `internal/pack` +
+  `packs/`; `--selftest` 5/5). Launch: Desktop "Whoretana" or `Open Whoretana.bat`. Verified by mouse/keyboard
+  + screenshots. **Left (Jordan's key):** Gemini 2.5 Flash realtime (HANDOFF-BECKY-VOICE Phase 3.1) needs
+  `GEMINI_API_KEY` + a realtime Python helper — clean next step on the working local loop.
 
 - **becky-daw ask + becky-reaper song — the AI-music loop RUNS end-to-end headless (2026-06-28, cloud,
   `claude/becky-tool-continue-f7m0yq`):** plain-English → openable, audible REAPER session, no GUI/GPU.
