@@ -1,0 +1,176 @@
+<Application x:Class="Whoretana.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+  <Application.Resources>
+
+    <!-- ============================================================
+         WHORETANA palette. Cyan/blue homage to Cortana (but better).
+         Secondary contrast is #ff3366 only. Background is near-black
+         teal-navy; chrome is translucent dark with neon strokes.
+         ============================================================ -->
+    <Color x:Key="CyanColor">#FF22E8FF</Color>
+    <Color x:Key="CyanBrightColor">#FF8CF6FF</Color>
+    <Color x:Key="CyanDeepColor">#FF0AA6C2</Color>
+    <Color x:Key="AccentColor">#FFFF3366</Color>
+    <Color x:Key="InkColor">#FF030D12</Color>
+
+    <SolidColorBrush x:Key="Cyan" Color="{StaticResource CyanColor}" />
+    <SolidColorBrush x:Key="CyanBright" Color="{StaticResource CyanBrightColor}" />
+    <SolidColorBrush x:Key="CyanDeep" Color="{StaticResource CyanDeepColor}" />
+    <SolidColorBrush x:Key="Accent" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="TextMain" Color="#FFBFEFF7" />
+    <SolidColorBrush x:Key="TextDim" Color="#FF5E93A0" />
+
+    <!-- translucent panel skins -->
+    <SolidColorBrush x:Key="PanelFill" Color="#9904141C" />
+    <SolidColorBrush x:Key="PanelFillSoft" Color="#660A1A24" />
+    <SolidColorBrush x:Key="PanelStroke" Color="#4422E8FF" />
+
+    <!-- fonts: embedded distressed title + mono HUD -->
+    <FontFamily x:Key="TitleFont">pack://application:,,,/Assets/#Deacon Flock</FontFamily>
+    <FontFamily x:Key="HudFont">Consolas</FontFamily>
+
+    <!-- a soft cyan glow reused on panels/text -->
+    <DropShadowEffect x:Key="GlowCyan" Color="{StaticResource CyanColor}"
+                      BlurRadius="18" ShadowDepth="0" Opacity="0.85" />
+    <DropShadowEffect x:Key="GlowCyanSoft" Color="{StaticResource CyanColor}"
+                      BlurRadius="10" ShadowDepth="0" Opacity="0.55" />
+    <DropShadowEffect x:Key="GlowAccent" Color="{StaticResource AccentColor}"
+                      BlurRadius="16" ShadowDepth="0" Opacity="0.8" />
+
+    <!-- ============================================================
+         Bracketed tool button  [LIKE_THIS]  (left tool grid)
+         ============================================================ -->
+    <Style x:Key="ToolButton" TargetType="Button">
+      <Setter Property="Foreground" Value="{StaticResource Cyan}" />
+      <Setter Property="Background" Value="#33041018" />
+      <Setter Property="BorderBrush" Value="{StaticResource Cyan}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontFamily" Value="{StaticResource HudFont}" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Padding" Value="8,5" />
+      <Setter Property="Margin" Value="3" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="SnapsToDevicePixels" Value="True" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Margin="{TemplateBinding Padding}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#3322E8FF" />
+                <Setter Property="Effect" Value="{StaticResource GlowCyanSoft}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#5522E8FF" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- ============================================================
+         Command-bar icon button (top-left: code/search//do/shield/gear)
+         ============================================================ -->
+    <Style x:Key="IconButton" TargetType="Button">
+      <Setter Property="Width" Value="40" />
+      <Setter Property="Height" Value="40" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="{StaticResource Cyan}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#2222E8FF" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- ============================================================
+         Circular agent / CLI launcher (top-right)
+         ============================================================ -->
+    <Style x:Key="AgentButton" TargetType="Button">
+      <Setter Property="Width" Value="56" />
+      <Setter Property="Height" Value="56" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="{StaticResource Cyan}" />
+      <Setter Property="FontFamily" Value="{StaticResource HudFont}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid>
+              <Ellipse x:Name="ring" Stroke="{StaticResource Cyan}" StrokeThickness="1.4"
+                       Fill="#220A1A24" />
+              <Ellipse x:Name="glow" Stroke="{StaticResource Cyan}" StrokeThickness="0.7"
+                       Margin="5" Opacity="0.4" />
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ring" Property="Fill" Value="#3322E8FF" />
+                <Setter Property="Effect" Value="{StaticResource GlowCyan}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- ============================================================
+         Chat input box (lower-right)
+         ============================================================ -->
+    <Style x:Key="ChatInput" TargetType="TextBox">
+      <Setter Property="Background" Value="#33020A10" />
+      <Setter Property="Foreground" Value="{StaticResource TextMain}" />
+      <Setter Property="CaretBrush" Value="{StaticResource Cyan}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="FontFamily" Value="{StaticResource HudFont}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <!-- thin dark scrollbar so panels don't show a bright OS bar -->
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{StaticResource CyanDeep}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Grid Background="Transparent">
+              <Track x:Name="PART_Track" IsDirectionReversed="True">
+                <Track.Thumb>
+                  <Thumb>
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border CornerRadius="3" Background="#5522E8FF" />
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+  </Application.Resources>
+</Application>

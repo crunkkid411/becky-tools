@@ -2,6 +2,8 @@
 *.exe
 becky-go/bin/
 bin/
+# .NET build intermediates (WPF guis: BeckyWindow / BeckyReview / Whoretana)
+obj/
 # Linux/macOS tool binaries built in becky-go root by `go build ./cmd/<name>/`
 becky-go/ask
 becky-go/becky

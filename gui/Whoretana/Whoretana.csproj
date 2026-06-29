@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WHORETANA - the native becky voice shell (WPF, .NET 8, Windows-native).
+       Build: `dotnet build -c Release`. Run: the produced Whoretana.exe, or `dotnet run`.
+       No browser, no web view, no localhost/server (Jordan's hard constraint).
+       The hero orb is rendered with SkiaSharp (GPU-friendly 2D, in-process, no server).
+       Mic reactivity uses NAudio (pure managed). It shells out to becky-*.exe (JSON in/out). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Whoretana</AssemblyName>
+    <RootNamespace>Whoretana</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="2.88.8" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embed the title font so WHORETANA renders right even if it is not installed. -->
+    <Resource Include="Assets\DeaconFlock.ttf" />
+  </ItemGroup>
+
+</Project>

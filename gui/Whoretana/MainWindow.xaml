@@ -1,0 +1,296 @@
+<Window x:Class="Whoretana.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:orb="clr-namespace:Whoretana.Orb"
+        Title="WHORETANA" Height="940" Width="1640"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        Background="#FF02080C">
+  <Grid>
+    <!-- ============ Layer 0: teal-navy glow-from-center background ============ -->
+    <Rectangle>
+      <Rectangle.Fill>
+        <RadialGradientBrush Center="0.5,0.46" GradientOrigin="0.5,0.46" RadiusX="0.72" RadiusY="0.72">
+          <GradientStop Color="#FF0A2434" Offset="0.0" />
+          <GradientStop Color="#FF061821" Offset="0.5" />
+          <GradientStop Color="#FF02080C" Offset="1.0" />
+        </RadialGradientBrush>
+      </Rectangle.Fill>
+    </Rectangle>
+
+    <!-- ============ Layer 1: the hero orb ============ -->
+    <orb:OrbControl x:Name="Orb" Width="860" Height="860"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,24,0,0" />
+
+    <!-- ============ Layer 2: global scanlines + vignette (cheap, static) ============ -->
+    <Rectangle IsHitTestVisible="False">
+      <Rectangle.Fill>
+        <DrawingBrush TileMode="Tile" Viewport="0,0,3,3" ViewportUnits="Absolute">
+          <DrawingBrush.Drawing>
+            <GeometryDrawing Geometry="M0,0 L3,0 L3,1 L0,1 Z">
+              <GeometryDrawing.Brush><SolidColorBrush Color="#16000000" /></GeometryDrawing.Brush>
+            </GeometryDrawing>
+          </DrawingBrush.Drawing>
+        </DrawingBrush>
+      </Rectangle.Fill>
+    </Rectangle>
+    <Rectangle IsHitTestVisible="False">
+      <Rectangle.Fill>
+        <RadialGradientBrush Center="0.5,0.5" RadiusX="0.78" RadiusY="0.78">
+          <GradientStop Color="#00000000" Offset="0.55" />
+          <GradientStop Color="#D8000000" Offset="1.0" />
+        </RadialGradientBrush>
+      </Rectangle.Fill>
+    </Rectangle>
+
+    <!-- ============ Title ============ -->
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,16,0,0" IsHitTestVisible="False">
+      <TextBlock Text="WHORETANA" FontFamily="{StaticResource TitleFont}" FontSize="60"
+                 Foreground="{StaticResource CyanBright}" Effect="{StaticResource GlowCyan}"
+                 HorizontalAlignment="Center" />
+      <Rectangle Height="2" Width="360" Fill="{StaticResource Cyan}" Opacity="0.5" Margin="0,2,0,0">
+        <Rectangle.Effect><BlurEffect Radius="2" /></Rectangle.Effect>
+      </Rectangle>
+    </StackPanel>
+
+    <!-- ============ Window drag + buttons ============ -->
+    <Border x:Name="DragBar" Background="#01000000" Height="58" VerticalAlignment="Top"
+            HorizontalAlignment="Stretch" Margin="470,0,330,0" MouseLeftButtonDown="DragBar_MouseDown" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0">
+      <Button Content="&#x2014;" Click="Min_Click" Style="{StaticResource IconButton}" FontSize="16" />
+      <Button Content="&#x2715;" Click="Close_Click" Style="{StaticResource IconButton}"
+              Foreground="{StaticResource Accent}" FontSize="14" />
+    </StackPanel>
+
+    <!-- ============ TOP-LEFT: command bar + search ============ -->
+    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="22,18,0,0"
+            Width="436" Background="{StaticResource PanelFill}" BorderBrush="{StaticResource PanelStroke}"
+            BorderThickness="1" CornerRadius="4" Padding="8">
+      <StackPanel>
+        <StackPanel Orientation="Horizontal">
+          <Button Style="{StaticResource IconButton}" ToolTip="Console / code" Tag="code" Click="Icon_Click">
+            <TextBlock Text="&lt;/&gt;" FontFamily="{StaticResource HudFont}" FontSize="16" FontWeight="Bold"
+                       Foreground="{StaticResource Cyan}" Effect="{StaticResource GlowCyanSoft}" />
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="Search tools" Tag="search" Click="Icon_Click">
+            <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                       Foreground="{StaticResource Cyan}" Effect="{StaticResource GlowCyanSoft}" />
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="/do  (run a workflow)" Tag="do" Click="Icon_Click">
+            <TextBlock Text="/do" FontFamily="{StaticResource HudFont}" FontSize="15" FontWeight="Bold"
+                       Foreground="{StaticResource CyanBright}" Effect="{StaticResource GlowCyan}" />
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="Safety / tiers" Tag="shield" Click="Icon_Click">
+            <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="17"
+                       Foreground="{StaticResource Cyan}" Effect="{StaticResource GlowCyanSoft}" />
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="Settings" Tag="settings" Click="Icon_Click">
+            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="17"
+                       Foreground="{StaticResource Cyan}" Effect="{StaticResource GlowCyanSoft}" />
+          </Button>
+        </StackPanel>
+        <Border Margin="2,8,2,0" Background="#33020A10" BorderBrush="{StaticResource PanelStroke}"
+                BorderThickness="1" CornerRadius="3">
+          <Grid>
+            <TextBox x:Name="SearchBox" Style="{StaticResource ChatInput}" Background="Transparent"
+                     TextChanged="SearchBox_TextChanged" />
+            <TextBlock x:Name="SearchHint" Text="search tools..." Foreground="{StaticResource TextDim}"
+                       FontFamily="{StaticResource HudFont}" FontSize="13" Margin="12,0,0,0"
+                       VerticalAlignment="Center" IsHitTestVisible="False" />
+          </Grid>
+        </Border>
+      </StackPanel>
+    </Border>
+
+    <!-- ============ LEFT: tool grid (from the live catalog) ============ -->
+    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="22,128,0,0" Width="436"
+            Background="{StaticResource PanelFillSoft}" BorderBrush="{StaticResource PanelStroke}"
+            BorderThickness="1" CornerRadius="4" Padding="6">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="206">
+        <WrapPanel x:Name="ToolPanel" Orientation="Horizontal" />
+      </ScrollViewer>
+    </Border>
+
+    <!-- ============ LEFT: workflow buttons ============ -->
+    <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="24,346,0,0" Width="432">
+      <TextBlock Text="WORKFLOWS" Foreground="{StaticResource TextDim}" FontFamily="{StaticResource HudFont}"
+                 FontSize="11" Margin="4,0,0,3" />
+      <StackPanel Orientation="Horizontal">
+        <Button x:Name="WfVideo" Style="{StaticResource ToolButton}" Tag="process this video"
+                Click="Workflow_Click" Content="&#x25B6; PROCESS VIDEO" Padding="10,7" />
+        <Button x:Name="WfCase" Style="{StaticResource ToolButton}" Tag="run the forensic case"
+                Click="Workflow_Click" Content="&#x25B6; FORENSIC CASE" Padding="10,7" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal">
+        <Button x:Name="WfMusic" Style="{StaticResource ToolButton}" Tag="make a song"
+                Click="Workflow_Click" Content="&#x25B6; MAKE MUSIC" Padding="10,7" />
+        <Button x:Name="WfResearch" Style="{StaticResource ToolButton}" Tag="research this"
+                Click="Workflow_Click" Content="&#x25B6; DEEP RESEARCH" Padding="10,7" />
+      </StackPanel>
+    </StackPanel>
+
+    <!-- ============ LEFT: dropdown menu (ops / sections) ============ -->
+    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="22,452,0,0" Width="300"
+            Background="#CC07151E" BorderBrush="{StaticResource PanelStroke}" BorderThickness="1"
+            CornerRadius="4" Padding="4">
+      <StackPanel>
+        <Border Background="#2222E8FF" CornerRadius="3" Padding="8,5" Margin="2,2,2,4">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE700;" FontFamily="Segoe MDL2 Assets" Foreground="{StaticResource Cyan}"
+                       FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBlock Text="MENU" Foreground="{StaticResource CyanBright}" FontFamily="{StaticResource HudFont}"
+                       FontWeight="Bold" FontSize="13" VerticalAlignment="Center" />
+            <TextBlock Text="&#x25BE;" Foreground="{StaticResource TextDim}" FontSize="11"
+                       VerticalAlignment="Center" Margin="8,0,0,0" />
+          </StackPanel>
+        </Border>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="300">
+          <StackPanel x:Name="MenuList" />
+        </ScrollViewer>
+      </StackPanel>
+    </Border>
+
+    <!-- ============ LEFT-BOTTOM: wireframe cube glyph ============ -->
+    <Viewbox Width="74" Height="74" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="34,0,0,28"
+             IsHitTestVisible="False" Opacity="0.8">
+      <Canvas Width="100" Height="100">
+        <Path Stroke="{StaticResource Cyan}" StrokeThickness="2" Effect="{StaticResource GlowCyanSoft}"
+              Data="M50,8 L88,30 L88,70 L50,92 L12,70 L12,30 Z M50,8 L50,50 M88,30 L50,50 M12,30 L50,50" />
+      </Canvas>
+    </Viewbox>
+
+    <!-- ============ TOP-RIGHT: agent / CLI launchers ============ -->
+    <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,52,22,0"
+            Background="{StaticResource PanelFillSoft}" BorderBrush="{StaticResource PanelStroke}"
+            BorderThickness="1" CornerRadius="4" Padding="10">
+      <StackPanel>
+        <TextBlock Text="LAUNCH" Foreground="{StaticResource TextDim}" FontFamily="{StaticResource HudFont}"
+                   FontSize="11" Margin="2,0,0,6" />
+        <UniformGrid Columns="4">
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="claude" Click="Agent_Click">
+              <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Claude" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="ask" Click="Agent_Click">
+              <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Ask" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="research" Click="Agent_Click">
+              <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Research" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="daw" Click="Agent_Click">
+              <TextBlock Text="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="DAW" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="review" Click="Agent_Click">
+              <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Review" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="window" Click="Agent_Click">
+              <TextBlock Text="&#xE7C4;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Tools" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="canvas" Click="Agent_Click">
+              <TextBlock Text="&#xE790;" FontFamily="Segoe MDL2 Assets" FontSize="19" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Canvas" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+          <StackPanel Margin="6,2">
+            <Button Style="{StaticResource AgentButton}" Tag="repo" Click="Agent_Click">
+              <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <TextBlock Text="Shell" Foreground="{StaticResource TextDim}" FontSize="10"
+                       FontFamily="{StaticResource HudFont}" HorizontalAlignment="Center" Margin="0,3,0,0" />
+          </StackPanel>
+        </UniformGrid>
+      </StackPanel>
+    </Border>
+
+    <!-- ============ RIGHT: secondary dial (mic VU) ============ -->
+    <Grid x:Name="Dial" Width="118" Height="118" HorizontalAlignment="Right" VerticalAlignment="Center"
+          Margin="0,0,46,40" IsHitTestVisible="False">
+      <Ellipse Stroke="{StaticResource CyanDeep}" StrokeThickness="1.4" Fill="#220A1A24" />
+      <Ellipse Stroke="{StaticResource Cyan}" StrokeThickness="0.7" Margin="10" Opacity="0.5" />
+      <Ellipse x:Name="DialCore" Width="22" Height="22" Fill="{StaticResource Cyan}" Opacity="0.85"
+               Effect="{StaticResource GlowCyan}" />
+      <Path x:Name="DialNeedle" Stroke="{StaticResource CyanBright}" StrokeThickness="2.4"
+            Data="M59,59 L59,16" RenderTransformOrigin="0.5,0.5" Effect="{StaticResource GlowCyanSoft}">
+        <Path.RenderTransform><RotateTransform x:Name="DialRot" Angle="0" CenterX="59" CenterY="59" /></Path.RenderTransform>
+      </Path>
+    </Grid>
+
+    <!-- ============ BOTTOM-CENTER: status / transcript strip ============ -->
+    <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,22"
+            Background="#99030F16" BorderBrush="{StaticResource PanelStroke}" BorderThickness="1"
+            CornerRadius="3" Padding="18,7" MaxWidth="560">
+      <TextBlock x:Name="StatusText" Text="READY  -  hold the mic or type below"
+                 Foreground="{StaticResource Cyan}" FontFamily="{StaticResource HudFont}" FontSize="13"
+                 TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+    </Border>
+
+    <!-- ============ BOTTOM-RIGHT: electric chat box ============ -->
+    <Grid Width="452" Height="338" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,22,22">
+      <!-- electric border paths (geometry built in code, flicker animated) -->
+      <Path x:Name="ChatEdgeGlow" Stroke="{StaticResource Cyan}" StrokeThickness="2.4"
+            Effect="{StaticResource GlowCyan}" />
+      <Path x:Name="ChatEdge2" Stroke="{StaticResource Accent}" StrokeThickness="1.0" Opacity="0.35" />
+      <Border Margin="6" Background="#CC04101A" CornerRadius="2">
+        <DockPanel Margin="10">
+          <TextBlock DockPanel.Dock="Top" Text="WHORETANA // CHANNEL" Foreground="{StaticResource TextDim}"
+                     FontFamily="{StaticResource HudFont}" FontSize="10" Margin="2,0,0,6" />
+          <!-- input row -->
+          <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="#33020A10" BorderBrush="{StaticResource PanelStroke}"
+                    BorderThickness="1" CornerRadius="3">
+              <Grid>
+                <TextBox x:Name="ChatInput" Style="{StaticResource ChatInput}" Background="Transparent"
+                         KeyDown="ChatInput_KeyDown" />
+                <TextBlock x:Name="ChatHint" Text="type your message..." Foreground="{StaticResource TextDim}"
+                           FontFamily="{StaticResource HudFont}" FontSize="13" Margin="12,0,0,0"
+                           VerticalAlignment="Center" IsHitTestVisible="False" />
+              </Grid>
+            </Border>
+            <Button Grid.Column="1" Style="{StaticResource IconButton}" Click="Send_Click" ToolTip="Send">
+              <TextBlock Text="&#xE724;" FontFamily="Segoe MDL2 Assets" FontSize="18" Foreground="{StaticResource Cyan}" />
+            </Button>
+            <Button x:Name="MicButton" Grid.Column="2" Style="{StaticResource IconButton}"
+                    Click="Mic_Click" ToolTip="Hold-to-talk (click to start/stop)">
+              <TextBlock x:Name="MicGlyph" Text="&#xE720;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                         Foreground="{StaticResource Cyan}" />
+            </Button>
+          </Grid>
+          <!-- chat log -->
+          <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="ChatLog" />
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>

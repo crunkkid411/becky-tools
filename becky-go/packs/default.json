@@ -1,0 +1,22 @@
+{
+  "name": "default",
+  "tools": [
+    "becky-transcribe",
+    "becky-diarize",
+    "becky-identify",
+    "becky-pipeline",
+    "becky-ocr",
+    "becky-search",
+    "becky-research",
+    "becky-radar",
+    "becky-scout",
+    "find",
+    "becky-events",
+    "becky-review",
+    "becky-web2md",
+    "becky-clipcheck",
+    "becky-regrab",
+    "becky-export"
+  ],
+  "tier_overrides": {}
+}
