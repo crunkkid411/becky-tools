@@ -267,8 +267,34 @@ func TestLowerThirdFilter_Toggles(t *testing.T) {
 
 	oAll := edl.Overlay{Enabled: true, ShowFilename: true, ShowPerson: true, ShowLocation: true, ShowDate: true, ShowLink: true}
 	gotAll := lowerThirdFilter(oAll, clip, "", 30)
-	if !strings.Contains(gotAll, "v.mp4 | P | L | 2026-06-18 | http\\://x") {
-		t.Fatalf("metadata line wrong (note link colon escaped):\n%s", gotAll)
+	// Identity fields stay on one row; Date and Link now get their OWN labeled
+	// lines so a long URL can't make the row run past the video (colons escaped).
+	if !strings.Contains(gotAll, "v.mp4 | P | L") {
+		t.Fatalf("identity line wrong:\n%s", gotAll)
+	}
+	if strings.Contains(gotAll, "v.mp4 | P | L | 2026-06-18") {
+		t.Fatalf("date/link must NOT be joined into the identity row:\n%s", gotAll)
+	}
+	if !strings.Contains(gotAll, "Date\\: 2026-06-18") {
+		t.Fatalf("expected a labeled Date line:\n%s", gotAll)
+	}
+	if !strings.Contains(gotAll, "Link\\: http\\://x") {
+		t.Fatalf("expected a labeled Link line (colons escaped):\n%s", gotAll)
+	}
+}
+
+// TestOverlayProvenanceFromFilename: with no sidecar date/link, a yt-dlp file
+// name supplies both (Date label + canonical watch URL), each on its own line.
+func TestOverlayProvenanceFromFilename(t *testing.T) {
+	clip := edl.Clip{Source: `X:\case\2026-06-27_Some Title_[abcdefghijk].mp4`, In: 0, Out: 2,
+		Meta: edl.ClipMeta{SourceFPS: 30}}
+	o := edl.Overlay{Enabled: true, ShowDate: true, ShowLink: true}
+	got := lowerThirdFilter(o, clip, "", 30)
+	if !strings.Contains(got, "Date\\: 2026-06-27") {
+		t.Fatalf("date should be recovered from the file name:\n%s", got)
+	}
+	if !strings.Contains(got, "Link\\: https\\://www.youtube.com/watch?v=abcdefghijk") {
+		t.Fatalf("link should be recovered from the file name:\n%s", got)
 	}
 }
 
@@ -280,15 +306,25 @@ func TestMetaLine_SkipsEmptyAndUntoggled(t *testing.T) {
 	}
 }
 
-func TestPositionYExprs(t *testing.T) {
-	if tc, meta := positionYExprs("bottom"); tc != "h-60" || meta != "h-30" {
-		t.Fatalf("bottom y exprs = %q,%q", tc, meta)
+func TestLineYExpr(t *testing.T) {
+	// Bottom (default): the LAST line sits ltBottomPad off the bottom; earlier
+	// lines step up by ltLineH. With 4 lines: i=3 -> h-24, i=0 -> h-138.
+	if got := lineYExpr("bottom", 3, 4); got != "h-24" {
+		t.Fatalf("bottom last line y = %q, want h-24", got)
 	}
-	if tc, meta := positionYExprs("top"); tc != "20" || meta != "50" {
-		t.Fatalf("top y exprs = %q,%q", tc, meta)
+	if got := lineYExpr("bottom", 0, 4); got != "h-138" {
+		t.Fatalf("bottom top line y = %q, want h-138", got)
 	}
-	if tc, _ := positionYExprs("middle"); tc != "h-60" {
-		t.Fatalf("unknown position should default bottom, got %q", tc)
+	// Top: the FIRST line sits ltTopPad off the top; later lines step down.
+	if got := lineYExpr("top", 0, 4); got != "20" {
+		t.Fatalf("top first line y = %q, want 20", got)
+	}
+	if got := lineYExpr("top", 2, 4); got != "96" {
+		t.Fatalf("top third line y = %q, want 96", got)
+	}
+	// Unknown position defaults to bottom-anchored.
+	if got := lineYExpr("middle", 0, 1); got != "h-24" {
+		t.Fatalf("unknown position should default bottom, got %q", got)
 	}
 }
 

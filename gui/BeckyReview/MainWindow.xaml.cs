@@ -153,6 +153,7 @@ public partial class MainWindow : Window
             _mpv = new MpvPlayer(mpvExe);
             _mpv.PositionChanged += OnMpvPosition;
             _mpv.PauseChanged += OnMpvPause;
+            _mpv.VideoSizeChanged += OnMpvVideoSize;
             _mpv.Start(hwnd, null);
         }
         catch (Exception ex)
@@ -191,6 +192,20 @@ public partial class MainWindow : Window
             {
                 UpdateOverlay(pos);
             }
+        });
+    }
+
+    // The real displayed video size from mpv (observed). This is what makes the
+    // overlay fit the VIDEO instead of the whole window — without it, _ovW/_ovH stay
+    // 0 (the one-shot read races the async load) and the overlay falls back to the
+    // full window width, which is why the preview text ran wider than the video.
+    private void OnMpvVideoSize(int w, int h)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            _ovW = w;
+            _ovH = h;
+            if (_overlayOn) { UpdateOverlay(_lastPos); }
         });
     }
 

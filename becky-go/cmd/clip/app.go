@@ -110,7 +110,7 @@ func newReel(name string) edl.Reel {
 			ShowFilename: true,
 			ShowTimecode: true,
 			ShowDate:     true,
-			ShowLink:     false,
+			ShowLink:     true,
 			ShowPerson:   true,
 			ShowLocation: true,
 			Position:     "bottom",

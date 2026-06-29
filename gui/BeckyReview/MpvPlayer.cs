@@ -39,7 +39,15 @@ public sealed class MpvPlayer : IDisposable
     /// command OR a click on the video. The single source of truth for "is it playing".</summary>
     public event Action<bool>? PauseChanged;
 
+    /// <summary>Raised (on a background thread) when the DISPLAYED video size becomes
+    /// known/changes (mpv dwidth/dheight). Args: (width, height) in px. Used to size +
+    /// place the forensic overlay against the real video rect (observed, not polled, so
+    /// it can't race the async loadfile the way a one-shot get_property does).</summary>
+    public event Action<int, int>? VideoSizeChanged;
+
     private double _lastDuration;
+    private int _lastDw;
+    private int _lastDh;
 
     public MpvPlayer(string mpvExe, string pipeName = "beckympv")
     {
@@ -154,6 +162,11 @@ public sealed class MpvPlayer : IDisposable
             // Observe pause so the page always knows the REAL play state (a video click,
             // spacebar, or a command all change it the same way).
             await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 3, "pause" } }), ct);
+            // Observe the displayed video size so the overlay can fit the real video rect.
+            // dwidth/dheight account for aspect/rotation; they arrive once the file decodes
+            // (and again if it changes) — no race with the async loadfile.
+            await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 4, "dwidth" } }), ct);
+            await WriteRawAsync(JsonSerializer.Serialize(new { command = new object[] { "observe_property", 5, "dheight" } }), ct);
         }
         finally
         {
@@ -242,6 +255,15 @@ public sealed class MpvPlayer : IDisposable
                          (pEl.ValueKind == JsonValueKind.True || pEl.ValueKind == JsonValueKind.False))
                 {
                     PauseChanged?.Invoke(pEl.GetBoolean());
+                }
+                else if ((name == "dwidth" || name == "dheight") &&
+                         root.TryGetProperty("data", out var szEl) && szEl.ValueKind == JsonValueKind.Number &&
+                         szEl.TryGetDouble(out var szVal))
+                {
+                    // GetDouble (not GetInt32) so a fractional value can't throw inside the
+                    // read loop and silently stop ALL property events.
+                    if (name == "dwidth") { _lastDw = (int)szVal; } else { _lastDh = (int)szVal; }
+                    if (_lastDw > 0 && _lastDh > 0) { VideoSizeChanged?.Invoke(_lastDw, _lastDh); }
                 }
             }
         }
