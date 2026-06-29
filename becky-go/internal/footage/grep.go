@@ -14,6 +14,7 @@ package footage
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -93,13 +94,14 @@ func itoa(n int64) string {
 // relevance (count of distinct matched terms, then total occurrences) used only
 // to rank/cap before the model ever sees it.
 type Candidate struct {
-	Source    string   `json:"source"`    // absolute path to the source video
-	Name      string   `json:"name"`      // video basename
-	Timestamp float64  `json:"timestamp"` // segment start, seconds into source
-	End       float64  `json:"end"`       // segment end, seconds into source
-	Text      string   `json:"text"`      // the matched cue text (verbatim)
-	Score     float64  `json:"score"`     // deterministic rank score (higher = better)
-	Terms     []string `json:"terms"`     // which query terms hit this cue
+	Source    string   `json:"source"`         // absolute path to the source video
+	Name      string   `json:"name"`           // video basename
+	Date      string   `json:"date,omitempty"` // ISO YYYY-MM-DD from the yt-dlp file name, or "" (lets the UI sort hits by recording date)
+	Timestamp float64  `json:"timestamp"`      // segment start, seconds into source
+	End       float64  `json:"end"`            // segment end, seconds into source
+	Text      string   `json:"text"`           // the matched cue text (verbatim)
+	Score     float64  `json:"score"`          // deterministic rank score (higher = better)
+	Terms     []string `json:"terms"`          // which query terms hit this cue
 }
 
 // GrepTranscripts scans the transcripts of every video in the index for the
@@ -126,7 +128,7 @@ func GrepTranscripts(index FolderIndex, terms []string) []Candidate {
 		if err != nil {
 			continue // degrade: unreadable transcript contributes nothing
 		}
-		out = appendSegmentHits(out, sub.Segments, norm, v.Path, v.Name)
+		out = appendSegmentHits(out, sub.Segments, norm, v.Path, v.Name, DateFromName(v.Name))
 	}
 
 	sortCandidates(out)
@@ -151,8 +153,9 @@ func GrepOrphans(index FolderIndex, terms []string) []Candidate {
 		if err != nil {
 			continue // degrade: unreadable transcript contributes nothing
 		}
-		// Source "" marks a transcript-only hit (no playable/extractable video).
-		out = appendSegmentHits(out, sub.Segments, norm, "", o.Title)
+		// Source "" marks a transcript-only hit (no playable/extractable video). The
+		// date still comes from the ORIGINAL subtitle file name (Title has it stripped).
+		out = appendSegmentHits(out, sub.Segments, norm, "", o.Title, DateFromName(filepath.Base(o.Path)))
 	}
 	sortCandidates(out)
 	return out
@@ -163,7 +166,7 @@ func GrepOrphans(index FolderIndex, terms []string) []Candidate {
 // slice. source/name set the Candidate's Source/Name (a video path+basename for
 // real transcripts, "" + Title for orphans). Shared by GrepTranscripts and
 // GrepOrphans so the match+score logic lives in exactly one place.
-func appendSegmentHits(dst []Candidate, segs []sidecar.Segment, norm []string, source, name string) []Candidate {
+func appendSegmentHits(dst []Candidate, segs []sidecar.Segment, norm []string, source, name, date string) []Candidate {
 	for _, seg := range segs {
 		hay := strings.ToLower(seg.Text)
 		var hitTerms []string
@@ -180,6 +183,7 @@ func appendSegmentHits(dst []Candidate, segs []sidecar.Segment, norm []string, s
 		dst = append(dst, Candidate{
 			Source:    source,
 			Name:      name,
+			Date:      date,
 			Timestamp: seg.Start,
 			End:       seg.End,
 			Text:      seg.Text,

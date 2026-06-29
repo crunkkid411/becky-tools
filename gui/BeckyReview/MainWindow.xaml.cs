@@ -403,9 +403,10 @@ public partial class MainWindow : Window
             else { dispW = w; dispH = (int)Math.Round(w / videoAspect); yoff = (h - dispH) / 2; }
         }
 
-        // Font ~1/22 of the host height, clamped to a sane on-screen range.
-        var fs = Math.Min(40, Math.Max(13, (int)Math.Round(h / 22.0)));
-        var meta2 = Math.Max(11, fs * 5 / 6);
+        // Font ~1/11 of the host height (large + readable on playback), clamped to a
+        // sane on-screen range. The Date/Link lines are a touch smaller.
+        var fs = Math.Min(80, Math.Max(26, (int)Math.Round(h / 11.0)));
+        var meta2 = Math.Max(22, fs * 5 / 6);
 
         // yt-dlp puts the provenance in the file name ("YYYY-MM-DD_Title_[VIDEOID]"):
         // when no becky sidecar supplied a date/link, recover them so the overlay still

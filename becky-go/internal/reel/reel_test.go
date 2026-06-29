@@ -289,7 +289,8 @@ func TestOverlayProvenanceFromFilename(t *testing.T) {
 	clip := edl.Clip{Source: `X:\case\2026-06-27_Some Title_[abcdefghijk].mp4`, In: 0, Out: 2,
 		Meta: edl.ClipMeta{SourceFPS: 30}}
 	o := edl.Overlay{Enabled: true, ShowDate: true, ShowLink: true}
-	got := lowerThirdFilter(o, clip, "", 30, 1280, 720)
+	// Wide canvas so the URL stays on one line (this test checks recovery, not wrap).
+	got := lowerThirdFilter(o, clip, "", 30, 1920, 1080)
 	if !strings.Contains(got, "Date\\: 2026-06-27") {
 		t.Fatalf("date should be recovered from the file name:\n%s", got)
 	}
@@ -347,23 +348,23 @@ func TestMetaLine_SkipsEmptyAndUntoggled(t *testing.T) {
 }
 
 func TestLineYExpr(t *testing.T) {
-	// Bottom (default): the LAST line sits ltBottomPad (48) off the bottom; earlier
-	// lines step up by ltLineH (38). With 4 lines: i=3 -> h-48, i=0 -> h-162.
-	if got := lineYExpr("bottom", 3, 4); got != "h-48" {
-		t.Fatalf("bottom last line y = %q, want h-48", got)
+	// Bottom (default): the LAST line sits ltBottomPad (76) off the bottom; earlier
+	// lines step up by ltLineH (72). With 4 lines: i=3 -> h-76, i=0 -> h-292.
+	if got := lineYExpr("bottom", 3, 4); got != "h-76" {
+		t.Fatalf("bottom last line y = %q, want h-76", got)
 	}
-	if got := lineYExpr("bottom", 0, 4); got != "h-162" {
-		t.Fatalf("bottom top line y = %q, want h-162", got)
+	if got := lineYExpr("bottom", 0, 4); got != "h-292" {
+		t.Fatalf("bottom top line y = %q, want h-292", got)
 	}
-	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down.
+	// Top: the FIRST line sits ltTopPad (20) off the top; later lines step down by 72.
 	if got := lineYExpr("top", 0, 4); got != "20" {
 		t.Fatalf("top first line y = %q, want 20", got)
 	}
-	if got := lineYExpr("top", 2, 4); got != "96" {
-		t.Fatalf("top third line y = %q, want 96", got)
+	if got := lineYExpr("top", 2, 4); got != "164" {
+		t.Fatalf("top third line y = %q, want 164", got)
 	}
 	// Unknown position defaults to bottom-anchored.
-	if got := lineYExpr("middle", 0, 1); got != "h-48" {
+	if got := lineYExpr("middle", 0, 1); got != "h-76" {
 		t.Fatalf("unknown position should default bottom, got %q", got)
 	}
 }

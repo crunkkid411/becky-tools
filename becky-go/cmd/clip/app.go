@@ -337,6 +337,7 @@ func (a *App) Probe(source string) ProbeResult {
 type SearchResult struct {
 	Source         string  `json:"source"`
 	Name           string  `json:"name"`
+	Date           string  `json:"date,omitempty"` // ISO YYYY-MM-DD from the file name; drives the newest-first sort
 	Start          float64 `json:"start"`
 	End            float64 `json:"end"`
 	Text           string  `json:"text"`
@@ -378,6 +379,7 @@ func (a *App) Search(query string) []SearchResult {
 		out = append(out, SearchResult{
 			Source:   c.Source,
 			Name:     c.Name,
+			Date:     c.Date,
 			Start:    c.Timestamp,
 			End:      c.End,
 			Text:     c.Text,
@@ -389,6 +391,7 @@ func (a *App) Search(query string) []SearchResult {
 		out = append(out, SearchResult{
 			Source:         "", // no playable/extractable video for an orphan transcript
 			Name:           c.Name,
+			Date:           c.Date,
 			Start:          c.Timestamp,
 			End:            c.End,
 			Text:           c.Text,
@@ -397,7 +400,36 @@ func (a *App) Search(query string) []SearchResult {
 			TranscriptOnly: true,
 		})
 	}
+	// Forensic scrub-by-time: order hits by the file-name date NEWEST first (today at
+	// the top), so scrolling jumps through time fast. Files with no date-coded name
+	// fall to the bottom. (The folder LIST stays newest-file-by-mtime — unchanged.)
+	sortSearchByDate(out)
 	return out
+}
+
+// sortSearchByDate orders search hits by their file-name date, newest first, with
+// undated files last. Within one date, playable hits precede transcript-only ones,
+// then by name (groups a file's quotes together) and timestamp (chronological).
+func sortSearchByDate(out []SearchResult) {
+	sort.SliceStable(out, func(i, j int) bool {
+		di, dj := out[i].Date, out[j].Date
+		if di != dj {
+			if di == "" {
+				return false // undated sinks below anything dated
+			}
+			if dj == "" {
+				return true
+			}
+			return di > dj // ISO dates sort lexically; ">" = newer first
+		}
+		if out[i].TranscriptOnly != out[j].TranscriptOnly {
+			return !out[i].TranscriptOnly // playable above transcript-only
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Start < out[j].Start
+	})
 }
 
 // searchTerms splits a query into literal grep terms. A fully-quoted query is a

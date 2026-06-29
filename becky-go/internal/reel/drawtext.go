@@ -10,12 +10,12 @@ import (
 
 // Lower-third layout constants. Deterministic, unobtrusive, bottom by default.
 const (
-	ltFontSize   = 26 // filename / Date / Link lines
-	ltTCFontSize = 28 // the original-timecode line (slightly larger — it's the anchor)
+	ltFontSize   = 52 // filename / Date / Link lines (large — readable on playback)
+	ltTCFontSize = 56 // the original-timecode line (slightly larger — it's the anchor)
 	ltBoxAlpha   = "0.6"
 	ltMarginX    = 20 // px from the left edge
-	ltLineH      = 38 // vertical step between stacked lines
-	ltBottomPad  = 48 // px from the bottom edge to the lowest line (breathing room)
+	ltLineH      = 72 // vertical step between stacked lines (must exceed the font size)
+	ltBottomPad  = 76 // px from the bottom edge to the lowest line's TOP (clears the big font)
 	ltTopPad     = 20 // px from the top edge to the highest line (Position == "top")
 )
 

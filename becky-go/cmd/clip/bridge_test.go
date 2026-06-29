@@ -103,6 +103,35 @@ func TestCallExportEmptyTimelineErrors(t *testing.T) {
 	}
 }
 
+// TestSortSearchByDate: search hits sort by file-name date NEWEST first; undated
+// hits fall to the bottom; within a date, playable precedes transcript-only.
+func TestSortSearchByDate(t *testing.T) {
+	out := []SearchResult{
+		{Name: "no-date.mp4", Date: "", Start: 1},
+		{Name: "old.mp4", Date: "2026-06-20", Start: 1},
+		{Name: "today-orphan.srt", Date: "2026-06-29", Start: 1, TranscriptOnly: true},
+		{Name: "today.mp4", Date: "2026-06-29", Start: 5},
+		{Name: "today.mp4", Date: "2026-06-29", Start: 2},
+	}
+	sortSearchByDate(out)
+	gotOrder := []string{}
+	for _, r := range out {
+		gotOrder = append(gotOrder, r.Name)
+	}
+	// 2026-06-29 first (playable today.mp4 @2 then @5, then the orphan), then the
+	// 2026-06-20 hit, then the undated one last.
+	want := []string{"today.mp4", "today.mp4", "today-orphan.srt", "old.mp4", "no-date.mp4"}
+	for i := range want {
+		if gotOrder[i] != want[i] {
+			t.Fatalf("sort order[%d] = %q, want %q (full: %v)", i, gotOrder[i], want[i], gotOrder)
+		}
+	}
+	// And the two today.mp4 hits stay chronological (Start 2 before 5).
+	if out[0].Start != 2 || out[1].Start != 5 {
+		t.Fatalf("same-file hits should be chronological, got %.0f then %.0f", out[0].Start, out[1].Start)
+	}
+}
+
 // TestNextSequencedPath: a re-export must never overwrite — each call returns the
 // next free <base>_NNNN.mp4 (0001, then 0002 once 0001 exists, ...).
 func TestNextSequencedPath(t *testing.T) {
