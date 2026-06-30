@@ -56,6 +56,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		return a.Transcript(argString(args, "name"))
 	case "search":
 		return a.Search(argString(args, "query")), nil
+	case "qmd_search":
+		// Smart (hybrid BM25+vector) transcript search via the local qmd engine, with a
+		// keyword fallback. Resolves each hit to the precise .srt cue. {results,mode,note}.
+		return a.QmdSearch(argString(args, "query")), nil
 	case "media_url":
 		// Resolve a source (or proxy) to a /media URL the <video> can load.
 		return a.mediaURLReply(argString(args, "source"))

@@ -54,8 +54,9 @@
 
     activeResultKey: null, // which quote row is highlighted
 
-    fileSort: 'date',      // file list sort: 'date' (newest first, default) | 'name' (Z->A)
-    quoteSort: 'date',     // search-results sort: 'date' (newest first, default) | 'name' (source Z->A)
+    fileSort: { mode: 'date', desc: true },   // file list: mode date|name + direction (re-click flips)
+    quoteSort: { mode: 'date', desc: true },  // search results: mode date|name|relevance + direction
+    smartSearch: false,    // false = keyword grep (single words); true = qmd hybrid (meaning)
     fileScrollTop: 0,      // remembered file-list scroll offset (restored when "back" returns)
     cueMode: false,        // true when the results pane shows ONE video's transcript cues (not a search)
     cueAll: [],            // the full cue list for the open video (filtered by cueFilter when shown)
@@ -89,6 +90,7 @@
   /* --------------------------- DOM references ----------------------------- */
   var $search      = document.getElementById('search');
   var $searchClear = document.getElementById('searchClear');
+  var $smartToggle = document.getElementById('smartToggle');   // keyword vs qmd hybrid
   var $listScroll  = document.getElementById('listScroll');
 
   var $useClaude = document.getElementById('useClaude');
@@ -376,27 +378,36 @@
   // file first, by mtime — the default); 'name' sorts a COPY by name Z->A so the
   // engine's canonical order is never disturbed.
   function sortedVideos() {
-    if (state.fileSort === 'name') {
-      return state.videos.slice().sort(function (a, b) {
-        return a.name < b.name ? 1 : (a.name > b.name ? -1 : 0);   // Z -> A
+    var s = state.fileSort;
+    if (s.mode === 'name') {
+      var v = state.videos.slice().sort(function (a, b) {
+        return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);   // A -> Z base
       });
+      return s.desc ? v.reverse() : v;   // desc = Z -> A (the default)
     }
-    return state.videos;
+    // date mode: the engine list is already newest-first (desc); asc = oldest-first.
+    return s.desc ? state.videos : state.videos.slice().reverse();
   }
 
-  // sortControlHTML renders the tiny [newest | name Z-A] segmented toggle shared by
-  // the file list ('file') and the search results ('quote'). The active option is
-  // highlighted; clicks are handled by data-sort in the list delegate.
+  // sortControlHTML renders the segmented sort toggle shared by the file list ('file')
+  // and the search results ('quote'). Clicking the ACTIVE mode flips its direction
+  // (newest<->oldest, Z-A<->A-Z); the quote list adds a crown = most-relevant.
   function sortControlHTML(kind) {
-    var cur = (kind === 'file') ? state.fileSort : state.quoteSort;
-    return '<span class="sortbar">' +
-             '<span class="sortlbl">sort</span>' +
-             '<button class="sortbtn' + (cur === 'date' ? ' on' : '') + '" data-sort="' + kind + ':date">newest</button>' +
-             '<button class="sortbtn' + (cur === 'name' ? ' on' : '') + '" data-sort="' + kind + ':name">name Z–A</button>' +
-           '</span>';
+    var s = (kind === 'file') ? state.fileSort : state.quoteSort;
+    var dateLbl = (s.mode === 'date' && !s.desc) ? 'oldest' : 'newest';
+    var nameLbl = (s.mode === 'name' && !s.desc) ? 'A–Z' : 'Z–A';
+    var html = '<span class="sortbar">' +
+                 '<span class="sortlbl">sort</span>' +
+                 '<button class="sortbtn' + (s.mode === 'date' ? ' on' : '') + '" data-sort="' + kind + ':date">' + dateLbl + '</button>' +
+                 '<button class="sortbtn' + (s.mode === 'name' ? ' on' : '') + '" data-sort="' + kind + ':name">' + nameLbl + '</button>';
+    if (kind === 'quote') {
+      html += '<button class="sortbtn crown' + (s.mode === 'relevance' ? ' on' : '') + '" data-sort="quote:relevance" title="most relevant first" aria-label="sort by most relevant">&#128081;</button>';
+    }
+    return html + '</span>';
   }
 
   function renderFiles() {
+    kbIndex = -1;   // rows are rebuilt -> reset the keyboard cursor
     if (!state.videos.length) {
       $listScroll.innerHTML = emptyHTML('Pick a case folder, then search.');
       return;
@@ -438,16 +449,23 @@
   // sortQuotes returns a sorted COPY of search results. 'date' keeps the engine's
   // order (newest file-date first — the default); 'name' sorts by source name Z->A
   // with same-file hits left chronological.
-  function sortQuotes(rows, mode) {
-    if (mode === 'name') {
-      return rows.slice().sort(function (a, b) {
+  function sortQuotes(rows, s) {
+    if (s.mode === 'relevance') {
+      var r = rows.slice().sort(function (a, b) { return (b.score || 0) - (a.score || 0); });  // high score first
+      return s.desc ? r : r.reverse();
+    }
+    if (s.mode === 'name') {
+      var n = rows.slice().sort(function (a, b) {
         var an = (a.name || baseName(a.source) || '').toLowerCase();
         var bn = (b.name || baseName(b.source) || '').toLowerCase();
-        if (an !== bn) { return an < bn ? 1 : -1; }   // Z -> A
+        if (an !== bn) { return an < bn ? -1 : 1; }   // A -> Z base
         return (a.start || 0) - (b.start || 0);
       });
+      return s.desc ? n.reverse() : n;   // desc = Z -> A (the default)
     }
-    return rows.slice();   // 'date' = engine order
+    // date mode: engine order is newest-first; reverse for oldest-first.
+    var d = rows.slice();
+    return s.desc ? d : d.reverse();
   }
 
   // filterCues keeps the cues whose text contains every whitespace term of q (the
@@ -483,6 +501,7 @@
   }
 
   function renderResults() {
+    kbIndex = -1;   // rows are rebuilt -> reset the keyboard cursor
     var rows = state.rows || [];
     var head;
     if (state.cueMode) {
@@ -538,17 +557,18 @@
     state.cueMode = false;   // a folder-wide search is never single-transcript cue mode
     if (!query) { state.mode = 'files'; renderFind(); return; }
 
-    // CHANGE 1: show a "Searching…" state the instant a non-empty search starts, so a slow
-    // or failed search is never a silent blank. The post-await logic below replaces this.
+    var smart = state.smartSearch;
+    // Show a "Searching…" state the instant a non-empty search starts, so a slow or
+    // failed search is never a silent blank.
     state.mode = 'results';
     state.rows = [];
     state.searchRaw = [];
     state.terms = [];
     state.activeResultKey = null;
-    state.headerText = 'Searching for "' + query + '"…';
+    state.headerText = (smart ? 'Smart-searching for "' : 'Searching for "') + query + '"…';
     renderFind();
 
-    var rep = await beckyCall('search', { query: query });
+    var rep = await beckyCall(smart ? 'qmd_search' : 'search', { query: query });
     // a newer search may have superseded this one
     if (state.query !== query) { return; }
     if (!rep.ok) {
@@ -557,7 +577,18 @@
       renderFind();
       return;
     }
-    var results = Array.isArray(rep.data) ? rep.data : [];
+
+    // Keyword search returns []SearchResult; smart (qmd) returns {results,mode,note}.
+    var results, note = '', mode = '';
+    if (smart) {
+      var d = rep.data || {};
+      results = Array.isArray(d.results) ? d.results : [];
+      note = d.note || ''; mode = d.mode || '';
+      state.quoteSort = { mode: 'relevance', desc: true };   // semantic results rank by relevance
+    } else {
+      results = Array.isArray(rep.data) ? rep.data : [];
+      state.quoteSort = { mode: 'date', desc: true };        // keyword results default newest-first
+    }
     var transcriptOnly = results.filter(function (r) { return r.transcript_only; }).length;
     var playable = results.length - transcriptOnly;
 
@@ -567,8 +598,13 @@
     state.rows = sortQuotes(results, state.quoteSort);  // displayed = sorted view
     state.terms = query.split(/\s+/).filter(Boolean);
     state.activeResultKey = null;
-    state.headerText = results.length + ' quotes across the transcripts for "' + query +
-      '" (' + playable + ' playable, ' + transcriptOnly + ' transcript-only)';
+    if (smart) {
+      state.headerText = results.length + ' match' + (results.length === 1 ? '' : 'es') +
+        ' for "' + query + '"' + (mode === 'hybrid' ? ' (smart)' : '') + (note ? ' — ' + note : '');
+    } else {
+      state.headerText = results.length + ' quotes across the transcripts for "' + query +
+        '" (' + playable + ' playable, ' + transcriptOnly + ' transcript-only)';
+    }
     renderFind();
   }
 
@@ -677,15 +713,15 @@
   // Apply a sort toggle. spec is "file:date"|"file:name"|"quote:date"|"quote:name".
   function applySortChange(spec) {
     var parts = String(spec || '').split(':');
-    var kind = parts[0], val = parts[1];
-    if (val !== 'date' && val !== 'name') { return; }
+    var kind = parts[0], mode = parts[1];
+    if (mode !== 'date' && mode !== 'name' && mode !== 'relevance') { return; }
+    if (kind === 'file' && mode === 'relevance') { return; }   // relevance applies to search results only
+    var s = (kind === 'file') ? state.fileSort : state.quoteSort;
+    if (s.mode === mode) { s.desc = !s.desc; }                 // re-click the active mode flips direction
+    else { s.mode = mode; s.desc = true; }                     // switch mode -> default direction
     if (kind === 'file') {
-      if (state.fileSort === val) { return; }
-      state.fileSort = val;
       renderFiles();
-    } else if (kind === 'quote') {
-      if (state.quoteSort === val) { return; }
-      state.quoteSort = val;
+    } else {
       state.rows = sortQuotes(state.searchRaw || [], state.quoteSort);
       state.activeResultKey = null;
       renderResults();
@@ -735,6 +771,19 @@
   $searchClear.addEventListener('click', function () {
     $search.value = ''; $searchClear.hidden = true; $search.focus(); doSearch('');
   });
+
+  // Smart toggle: flip keyword <-> qmd hybrid, then re-run the current query.
+  if ($smartToggle) {
+    $smartToggle.addEventListener('click', function () {
+      state.smartSearch = !state.smartSearch;
+      $smartToggle.classList.toggle('on', state.smartSearch);
+      $smartToggle.setAttribute('aria-pressed', state.smartSearch ? 'true' : 'false');
+      $search.placeholder = state.smartSearch
+        ? 'smart search — find meaning, not just words…'
+        : 'search the transcripts...';
+      if (state.query) { doSearch(state.query); }
+    });
+  }
 
   /* =======================================================================
      FOLDER
@@ -988,13 +1037,17 @@
     return false;
   }
 
-  // sourceColor maps a source path to a stable vivid hue, so every clip from the
-  // SAME video shows the same colour band — a glance-readable grouping on a mixed
-  // timeline. Deterministic (same path -> same colour every render).
-  function sourceColor(src) {
+  // sourceHue maps a source path to a stable hue (0-359), so every clip from the SAME
+  // video shares a colour. Deterministic (same path -> same hue every render).
+  function sourceHue(src) {
     var s = String(src || ''), h = 0;
     for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) >>> 0; }
-    return 'hsl(' + (h % 360) + ', 75%, 55%)';
+    return h % 360;
+  }
+  // clipColor tints the WHOLE clip with its source colour: faint when unselected and
+  // SOLID/opaque when selected (the selection cue itself — no separate outline).
+  function clipColor(src, selected) {
+    return 'hsla(' + sourceHue(src) + ', 70%, 50%, ' + (selected ? 0.88 : 0.22) + ')';
   }
 
   function clipBlockHTML(clip) {
@@ -1002,10 +1055,9 @@
     var w = clipW(dur);
     var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
     var tip = truncate(label, 80) + '  (' + mmss(dur) + ')';
-    var sel = isClipSelected(clip.id) ? ' selected' : '';
-    var band = sourceColor(clip.source);
-    return '<div class="clip' + sel + '" data-id="' + attr(clip.id) + '" style="width:' + w + 'px" title="' + attr(tip) + '">' +
-             '<div class="cband" style="background:' + band + '"></div>' +
+    var seld = isClipSelected(clip.id);
+    return '<div class="clip' + (seld ? ' selected' : '') + '" data-id="' + attr(clip.id) +
+             '" style="width:' + w + 'px;background:' + clipColor(clip.source, seld) + '" title="' + attr(tip) + '">' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
              '<div class="cthumb"></div>' +
              '<div class="cbody"></div>' +
@@ -1240,11 +1292,14 @@
     playheadEl.style.display = 'block';
   }
 
-  /* ---- selection outline: toggle .selected on existing blocks without a re-render ---- */
+  /* ---- selection: toggle .selected + repaint each clip's opacity, no re-render ---- */
   function markSelectedClip() {
     var blocks = trackEl.querySelectorAll('.clip');
     for (var i = 0; i < blocks.length; i++) {
-      blocks[i].classList.toggle('selected', isClipSelected(blocks[i].dataset.id));
+      var sel = isClipSelected(blocks[i].dataset.id);
+      blocks[i].classList.toggle('selected', sel);
+      var c = clipById(blocks[i].dataset.id);
+      if (c) { blocks[i].style.background = clipColor(c.source, sel); }  // opaque when selected
     }
     updateRenderSelButton();
   }
@@ -1563,6 +1618,54 @@
     updatePlayhead();
   }
 
+  // seekClipEdge moves the playhead to the START (toEnd=false) or END (toEnd=true) of
+  // the CURRENT clip — the clip under the playhead, else the selected one, else the
+  // first. End lands just inside the clip so it doesn't spill into the next one.
+  function seekClipEdge(toEnd) {
+    var clips = state.timeline.clips || [];
+    if (!clips.length) { return; }
+    var id = (state.activeClipId != null) ? state.activeClipId : primarySelectedId();
+    var clip = (id != null) ? clipById(id) : null;
+    if (!clip) { clip = clipAtComp(state.playheadComp || 0) || clips[0]; }
+    var comp = toEnd ? ((clip.start_sec || 0) + Math.max(0, clipDur(clip) - 0.04)) : (clip.start_sec || 0);
+    state.activeClipId = clip.id;
+    state.playheadComp = comp;
+    seekTimeline(comp, false);
+    updatePlayhead();
+  }
+
+  /* ---- keyboard navigation of the left-panel list (Up/Down + Enter) ----
+     kbIndex is the keyboard cursor over the CURRENTLY rendered rows (files OR quote
+     rows). It resets on every list re-render (renderFind) so it never points at a
+     stale row. The panel must be focused (clicking a row focuses #listScroll). */
+  var kbIndex = -1;
+  function listRows() { return $listScroll.querySelectorAll('.file, .qrow'); }
+  function listIsFocused() { return document.activeElement === $listScroll; }
+  function paintListSel() {
+    var rows = listRows();
+    for (var i = 0; i < rows.length; i++) { rows[i].classList.toggle('kbsel', i === kbIndex); }
+    if (kbIndex >= 0 && rows[kbIndex]) { rows[kbIndex].scrollIntoView({ block: 'nearest' }); }
+  }
+  function moveListSelection(delta) {
+    var rows = listRows();
+    if (!rows.length) { return; }
+    kbIndex = (kbIndex < 0) ? (delta > 0 ? 0 : rows.length - 1)
+                            : Math.max(0, Math.min(kbIndex + delta, rows.length - 1));
+    paintListSel();
+  }
+  function activateListSelection() {
+    var rows = listRows();
+    var row = (kbIndex >= 0) ? rows[kbIndex] : null;
+    if (!row) { return; }
+    if (row.classList.contains('file')) { onFileClick(row.dataset.name); }
+    else { guardRowClick(row); }
+  }
+  // Clicking anywhere in the list (except an input/button) focuses the panel so the
+  // Up/Down keys take over immediately.
+  $listScroll.addEventListener('pointerdown', function (e) {
+    if (!e.target.closest('input, button, [data-sort]')) { $listScroll.focus(); }
+  });
+
   /* ---- the unified track pointer handlers ---- */
   trackEl.addEventListener('pointerdown', function (e) {
     if (e.button !== undefined && e.button !== 0) { return; }   // left button only
@@ -1752,16 +1855,16 @@
   if ($tZoomIn)  { $tZoomIn.addEventListener('click',  function () { zoomBy(1.5); }); }
   if ($tZoomOut) { $tZoomOut.addEventListener('click', function () { zoomBy(1 / 1.5); }); }
   if (tlBodyEl) {
-    // Ctrl/Cmd + wheel ZOOMS the timeline toward the cursor; a PLAIN wheel pans it
-    // sideways. Everything OUTSIDE the timeline is untouched (this handler is scoped
-    // to the timeline body only), so normal scrolling elsewhere is unaffected.
+    // PLAIN wheel ZOOMS the timeline toward the cursor; Ctrl/Cmd + wheel pans it
+    // sideways. This handler is scoped to the timeline body only, so scrolling
+    // anywhere else in the app is untouched.
     tlBodyEl.addEventListener('wheel', function (e) {
       if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);
-      } else {
         var d = (Math.abs(e.deltaY) >= Math.abs(e.deltaX)) ? e.deltaY : e.deltaX;
-        if (d) { e.preventDefault(); tlBodyEl.scrollLeft += d; }   // plain wheel = horizontal pan
+        if (d) { e.preventDefault(); tlBodyEl.scrollLeft += d; }   // Ctrl+wheel = horizontal pan
+      } else {
+        e.preventDefault();
+        zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);          // plain wheel = zoom to cursor
       }
     }, { passive: false });
   }
@@ -1838,6 +1941,29 @@
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
       e.preventDefault(); redoTimeline(); return;
+    }
+
+    // Up / Down = navigate the file/quote list (only when the left panel is focused);
+    // Enter activates the highlighted row.
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && listIsFocused()) {
+      e.preventDefault();
+      moveListSelection(e.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'Enter' && listIsFocused() && kbIndex >= 0) {
+      e.preventDefault();
+      activateListSelection();
+      return;
+    }
+
+    // Left / Right = step the playhead one frame; Ctrl+Left / Ctrl+Right = jump to the
+    // current clip's start / end.
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      var fwd = (e.key === 'ArrowRight');
+      if (e.ctrlKey || e.metaKey) { seekClipEdge(fwd); }
+      else { mpvSend('frame', { dir: fwd ? 1 : -1 }); }
+      return;
     }
 
     // Space = play / pause (CHANGE 3)

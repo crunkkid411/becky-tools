@@ -141,6 +141,16 @@ body {
 }
 .iconbtn:hover { color: var(--neon); }
 
+/* smart-search toggle: off = keyword (grep), on = qmd hybrid (meaning). Blue when on. */
+.smartbtn {
+  flex: none; cursor: pointer; font-size: 12px; font-weight: 700;
+  padding: 4px 9px; border-radius: 999px; line-height: 1;
+  background: transparent; color: var(--dim); border: 1px solid var(--line);
+  transition: color .12s, border-color .12s, background .12s;
+}
+.smartbtn:hover { color: var(--blue); border-color: var(--blue); }
+.smartbtn.on { color: #fff; background: #0c2a3a; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.4); }
+
 /* ============================ LIST / RESULTS =============================== */
 .listscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 16px; }
 
@@ -235,6 +245,13 @@ body {
 }
 .sortbtn:hover { border-color: var(--neon); color: var(--neon); }
 .sortbtn.on { background: var(--neon-dim); color: #eaffea; border-color: var(--neon); }
+/* "most relevant" sort = a crown button (no text), blue like the render-selection button */
+.sortbtn.crown { color: var(--blue); border-color: #14506a; font-size: 14px; padding: 3px 8px; }
+.sortbtn.crown:hover { color: #fff; border-color: var(--blue); }
+.sortbtn.crown.on { background: #0c2a3a; color: #fff; border-color: var(--blue); box-shadow: 0 0 6px rgba(0,174,239,.4); }
+
+/* keyboard-nav cursor over the file / quote rows (Up/Down arrows) */
+.file.kbsel, .qrow.kbsel { border-color: var(--neon); box-shadow: 0 0 0 2px var(--neon-soft); }
 
 /* file-list header now holds a count row + the sort toggle; let it wrap */
 .findhead { flex-wrap: wrap; row-gap: 8px; }
@@ -452,6 +469,10 @@ body {
 
 /* a clip block - a SOLID neon-tinted slab; NO text on it (label + duration live
    only in the title= tooltip). The whole body is a scrub/seek surface. */
+/* A clip is tinted by its SOURCE video (the whole block, not a stripe): app.js sets
+   the inline background to that source's colour at LOW alpha when unselected and FULL
+   alpha when selected — so clips from the same video share a hue, and the selected
+   clip stands out by being solid/opaque (no separate outline needed). */
 .clip {
   position: relative;
   flex: none;
@@ -459,18 +480,9 @@ body {
   background: var(--neon-soft);
   border: 1px solid var(--neon-dim); border-radius: 6px;
   overflow: hidden; cursor: text;
-  transition: border-color .12s, box-shadow .12s, background .12s;
+  transition: border-color .12s, box-shadow .12s;
 }
-.clip:hover { border-color: var(--neon); background: rgba(57, 255, 20, 0.30); }
-
-/* per-source colour band: a thin top stripe whose hue is derived (in app.js) from
-   the clip's SOURCE path, so clips from the same video share a colour — a
-   glance-readable grouping when a timeline mixes several files. Sits above the body
-   but below the remove "x"; pointer-events none so it never eats a click. */
-.clip .cband {
-  position: absolute; top: 0; left: 0; right: 0; height: 5px;
-  pointer-events: none; z-index: 3;
-}
+.clip:hover { border-color: var(--neon); }   /* hover brightens the border only; never clobbers the source colour */
 
 /* clip thumbnail = a SMALL FIXED icon pinned at the clip's left (after the trim
    handle). Fixed size so it never resizes/reflows as the clip width changes (the
@@ -483,11 +495,10 @@ body {
   pointer-events: none; z-index: 1;
 }
 
-/* the selected clip = ripple-delete target (Del/Esc): a bright neon-yellow outline that
-   stays distinct from the green hover/playhead so the selection is unmistakable (CHANGE 5) */
+/* a selected clip is shown by its SOLID (opaque) source colour — set inline by
+   app.js — plus a thin white border for an unmistakable edge. No yellow outline. */
 .clip.selected {
-  border-color: var(--yellow);
-  box-shadow: 0 0 0 2px var(--yellow), 0 0 12px rgba(255, 215, 0, .55);
+  border-color: var(--text);
   z-index: 3;
 }
 
