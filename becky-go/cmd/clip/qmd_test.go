@@ -3,7 +3,54 @@ package main
 // qmd_test.go covers the pure parsing/resolution helpers of the qmd integration —
 // no qmd binary, no GPU. The live hybrid/keyword shell-out is exercised by hand.
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
+
+func hasKV(env []string, kv string) bool {
+	for _, e := range env {
+		if e == kv {
+			return true
+		}
+	}
+	return false
+}
+
+// TestQmdEnvForcesVulkanAndPins: when the qmd env vars are missing, qmdEnv fills the
+// Vulkan backend + the shared index/config/HOME pins (derived from USERPROFILE) so qmd
+// works regardless of how becky was launched.
+func TestQmdEnvForcesVulkanAndPins(t *testing.T) {
+	t.Setenv("USERPROFILE", `C:\Users\test`)
+	for _, k := range []string{"QMD_LLAMA_GPU", "XDG_CACHE_HOME", "QMD_CONFIG_DIR", "HOME"} {
+		t.Setenv(k, "") // empty == missing for qmdEnv
+	}
+	env := qmdEnv()
+	if !hasKV(env, "QMD_LLAMA_GPU=vulkan") {
+		t.Error("qmdEnv must force QMD_LLAMA_GPU=vulkan when unset")
+	}
+	if !hasKV(env, "HOME=C:\\Users\\test") {
+		t.Error("qmdEnv must set HOME from USERPROFILE")
+	}
+	if want := "XDG_CACHE_HOME=" + filepath.Join(`C:\Users\test`, ".cache"); !hasKV(env, want) {
+		t.Errorf("qmdEnv must pin %q", want)
+	}
+	if want := "QMD_CONFIG_DIR=" + filepath.Join(`C:\Users\test`, ".config", "qmd"); !hasKV(env, want) {
+		t.Errorf("qmdEnv must pin %q", want)
+	}
+}
+
+// TestQmdEnvRespectsExplicit: an explicit env value is kept, not overridden.
+func TestQmdEnvRespectsExplicit(t *testing.T) {
+	t.Setenv("QMD_LLAMA_GPU", "cuda")
+	env := qmdEnv()
+	if hasKV(env, "QMD_LLAMA_GPU=vulkan") {
+		t.Error("qmdEnv must respect an explicit QMD_LLAMA_GPU value")
+	}
+	if !hasKV(env, "QMD_LLAMA_GPU=cuda") {
+		t.Error("explicit QMD_LLAMA_GPU=cuda should remain")
+	}
+}
 
 // TestParseQmdJSON: tolerate leading progress text + trailing bytes around the array.
 func TestParseQmdJSON(t *testing.T) {

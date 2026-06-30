@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -47,22 +48,44 @@ type QmdResult struct {
 	Note    string         `json:"note,omitempty"`
 }
 
-// qmdEnv returns the environment for the qmd child process. qmd locates its index via
-// $HOME; under Git Bash HOME is set, but a native-Windows parent (the WPF host, a
-// double-clicked launcher) leaves HOME UNSET, so qmd reads an empty index and returns
-// nothing. We set HOME=USERPROFILE when it's missing so qmd always finds its real
-// index regardless of how becky was launched. An already-set HOME is respected.
+// qmdEnv returns the environment for the qmd child process, FORCING the settings qmd
+// needs to work the same no matter how becky was launched (the user env vars exist, but
+// a process started before they were pinned — or a fresh machine — won't inherit them):
+//   - QMD_LLAMA_GPU=vulkan : qmd's CUDA backend hard-aborts on this box, so the hybrid
+//     (vector) path crashes unless Vulkan is forced (per tools/qmd-index/README.md).
+//   - XDG_CACHE_HOME / QMD_CONFIG_DIR / HOME : pin the ONE shared index + config dir so
+//     qmd never falls back to an empty per-shell cache (the "0 results" bug).
+//
+// Each is only filled when MISSING, so an explicit user env value is respected.
 func qmdEnv() []string {
 	env := os.Environ()
-	for _, e := range env {
-		if strings.HasPrefix(e, "HOME=") && len(e) > len("HOME=") {
-			return env // HOME already set — respect it
+	up := strings.TrimSpace(os.Getenv("USERPROFILE"))
+	if up == "" {
+		up = strings.TrimSpace(os.Getenv("HOME"))
+	}
+	defaults := [][2]string{
+		{"QMD_LLAMA_GPU", "vulkan"},
+		{"HOME", up},
+		{"XDG_CACHE_HOME", filepath.Join(up, ".cache")},
+		{"QMD_CONFIG_DIR", filepath.Join(up, ".config", "qmd")},
+	}
+	for _, kv := range defaults {
+		if kv[1] != "" && !envHas(env, kv[0]) {
+			env = append(env, kv[0]+"="+kv[1])
 		}
 	}
-	if up := strings.TrimSpace(os.Getenv("USERPROFILE")); up != "" {
-		env = append(env, "HOME="+up)
-	}
 	return env
+}
+
+// envHas reports whether key is present AND non-empty in a KEY=VALUE environment slice.
+func envHas(env []string, key string) bool {
+	p := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, p) && len(e) > len(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // qmdBin is the qmd executable (override with BECKY_QMD; defaults to "qmd" on PATH).
