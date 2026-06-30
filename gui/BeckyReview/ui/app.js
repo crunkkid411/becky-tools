@@ -54,6 +54,14 @@
 
     activeResultKey: null, // which quote row is highlighted
 
+    fileSort: 'date',      // file list sort: 'date' (newest first, default) | 'name' (Z->A)
+    quoteSort: 'date',     // search-results sort: 'date' (newest first, default) | 'name' (source Z->A)
+    fileScrollTop: 0,      // remembered file-list scroll offset (restored when "back" returns)
+    cueMode: false,        // true when the results pane shows ONE video's transcript cues (not a search)
+    cueAll: [],            // the full cue list for the open video (filtered by cueFilter when shown)
+    cueFilter: '',         // "search within this transcript" text (cueMode only)
+    viewVideoName: '',     // the video whose cues are shown (cueMode header)
+
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
     overlayOn: false,
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
@@ -68,7 +76,8 @@
     edlInflight: null,     // in-flight EDL (re)generation promise so we never request it twice
     pos: 0, dur: 0,        // last {t:"time"} report
     playheadComp: 0,       // current COMPILATION position (active clip start_sec + offset) - drives split (CHANGE 4)
-    selectedClipId: null,  // last-selected timeline clip - target for ripple delete via Del/Esc (CHANGE 5)
+    selectedClipId: null,  // anchor/primary selected clip (Shift-range anchor + extend-frame + playhead)
+    selectedClipIds: [],   // ALL selected clips (Ctrl+click toggles, Shift+click ranges) - ripple-delete + render-selection targets
 
     transcribing: {},      // name -> true while a single transcribe runs
     transcribingAll: false,
@@ -93,9 +102,14 @@
   var $tFrameBack= document.getElementById('tFrameBack');
   var $tFrameFwd = document.getElementById('tFrameFwd');
   var $tSplit    = document.getElementById('tSplit');     // split clip at playhead (CHANGE 4)
+  var $tExtendL  = document.getElementById('tExtendL');   // extend selected clip 1 frame left (earlier)
+  var $tExtendR  = document.getElementById('tExtendR');   // extend selected clip 1 frame right (later)
   var $tOverlay  = document.getElementById('tOverlay');
+  var $tUndo     = document.getElementById('tUndo');
+  var $tRedo     = document.getElementById('tRedo');
   var $tSave     = document.getElementById('tSave');
   var $tLoad     = document.getElementById('tLoad');
+  var $tRenderSel= document.getElementById('tRenderSel'); // render only the selected clips
   var $tExport   = document.getElementById('tExport');
   var $tZoomIn   = document.getElementById('tZoomIn');
   var $tZoomOut  = document.getElementById('tZoomOut');
@@ -358,6 +372,30 @@
            '</div>';
   }
 
+  // sortedVideos applies the file-list sort. 'date' keeps the engine's order (newest
+  // file first, by mtime — the default); 'name' sorts a COPY by name Z->A so the
+  // engine's canonical order is never disturbed.
+  function sortedVideos() {
+    if (state.fileSort === 'name') {
+      return state.videos.slice().sort(function (a, b) {
+        return a.name < b.name ? 1 : (a.name > b.name ? -1 : 0);   // Z -> A
+      });
+    }
+    return state.videos;
+  }
+
+  // sortControlHTML renders the tiny [newest | name Z-A] segmented toggle shared by
+  // the file list ('file') and the search results ('quote'). The active option is
+  // highlighted; clicks are handled by data-sort in the list delegate.
+  function sortControlHTML(kind) {
+    var cur = (kind === 'file') ? state.fileSort : state.quoteSort;
+    return '<span class="sortbar">' +
+             '<span class="sortlbl">sort</span>' +
+             '<button class="sortbtn' + (cur === 'date' ? ' on' : '') + '" data-sort="' + kind + ':date">newest</button>' +
+             '<button class="sortbtn' + (cur === 'name' ? ' on' : '') + '" data-sort="' + kind + ':name">name Z–A</button>' +
+           '</span>';
+  }
+
   function renderFiles() {
     if (!state.videos.length) {
       $listScroll.innerHTML = emptyHTML('Pick a case folder, then search.');
@@ -365,12 +403,19 @@
     }
     var head =
       '<div class="findhead">' +
-        '<span>' + state.videos.length + ' video' + (state.videos.length === 1 ? '' : 's') + '</span>' +
+        '<span class="findcount">' + state.videos.length + ' video' + (state.videos.length === 1 ? '' : 's') + '</span>' +
+        sortControlHTML('file') +
         '<button class="btn small" data-act="transcribe-all"' + (state.transcribingAll ? ' disabled' : '') + '>' +
           (state.transcribingAll ? 'transcribing…' : 'Transcribe all') +
         '</button>' +
       '</div>';
-    $listScroll.innerHTML = head + '<div class="filelist">' + state.videos.map(fileRowHTML).join('') + '</div>';
+    // Scroll handling: an IN-PLACE re-render (the file list was already showing —
+    // e.g. a transcribe finished) keeps the current scroll so the list doesn't jump;
+    // arriving from results/cues ("back") restores the offset saved when we left.
+    var inPlace = !!$listScroll.querySelector('.filelist');
+    var keep = inPlace ? $listScroll.scrollTop : (state.fileScrollTop || 0);
+    $listScroll.innerHTML = head + '<div class="filelist">' + sortedVideos().map(fileRowHTML).join('') + '</div>';
+    $listScroll.scrollTop = keep;
   }
 
   /* ---- ranked search results / transcript cues ---- */
@@ -390,25 +435,89 @@
            '</div>';
   }
 
+  // sortQuotes returns a sorted COPY of search results. 'date' keeps the engine's
+  // order (newest file-date first — the default); 'name' sorts by source name Z->A
+  // with same-file hits left chronological.
+  function sortQuotes(rows, mode) {
+    if (mode === 'name') {
+      return rows.slice().sort(function (a, b) {
+        var an = (a.name || baseName(a.source) || '').toLowerCase();
+        var bn = (b.name || baseName(b.source) || '').toLowerCase();
+        if (an !== bn) { return an < bn ? 1 : -1; }   // Z -> A
+        return (a.start || 0) - (b.start || 0);
+      });
+    }
+    return rows.slice();   // 'date' = engine order
+  }
+
+  // filterCues keeps the cues whose text contains every whitespace term of q (the
+  // "search within this transcript" box). Empty q -> all cues.
+  function filterCues(cues, q) {
+    q = (q || '').trim().toLowerCase();
+    if (!q) { return cues.slice(); }
+    var terms = q.split(/\s+/).filter(Boolean);
+    return cues.filter(function (c) {
+      var t = (c.text || '').toLowerCase();
+      for (var i = 0; i < terms.length; i++) { if (t.indexOf(terms[i]) < 0) { return false; } }
+      return true;
+    });
+  }
+
+  function cueHeaderText() {
+    var total = state.cueAll.length;
+    var shown = state.rows.length;
+    if (state.cueFilter && state.cueFilter.trim()) {
+      return state.viewVideoName + ' — ' + shown + ' of ' + total + ' line' + (total === 1 ? '' : 's');
+    }
+    return state.viewVideoName + ' — ' + total + ' line' + (total === 1 ? '' : 's');
+  }
+
+  // Restore focus + caret to the cue-search box after a re-render so typing a filter
+  // is never interrupted (the box is recreated each render).
+  function focusCueSearch() {
+    var el = document.getElementById('cueSearch');
+    if (!el) { return; }
+    el.focus();
+    var n = el.value.length;
+    try { el.setSelectionRange(n, n); } catch (_) {}
+  }
+
   function renderResults() {
     var rows = state.rows || [];
-    // The back control lives INSIDE the sticky header so it stays reachable even
-    // after scrolling a long cue list — needed because clicking a VIDEO (not
-    // searching) shows its cues with no search box to clear (CHANGE: go-back).
-    var html = '<div class="resultshead">' +
+    var head;
+    if (state.cueMode) {
+      // A clicked video's transcript cues: back + title over a "search within this
+      // transcript" box. Highlight the within-transcript terms in the rows.
+      state.terms = state.cueFilter ? state.cueFilter.trim().split(/\s+/).filter(Boolean) : [];
+      head = '<div class="resultshead cue">' +
+               '<div class="rhrow">' +
                  '<button class="backbtn" data-act="back-to-files" title="back to the video list" aria-label="back to the video list">&#8592;</button>' +
                  '<span class="rhtext">' + escapeHtml(state.headerText || '') + '</span>' +
-               '</div>';
+               '</div>' +
+               '<div class="rhrow tools">' +
+                 '<input id="cueSearch" class="cuesearch" type="text" placeholder="search within this transcript…" autocomplete="off" spellcheck="false" value="' + attr(state.cueFilter) + '">' +
+               '</div>' +
+             '</div>';
+    } else {
+      // A folder-wide search: back + count + the date/name sort toggle.
+      head = '<div class="resultshead">' +
+               '<button class="backbtn" data-act="back-to-files" title="back to the video list" aria-label="back to the video list">&#8592;</button>' +
+               '<span class="rhtext">' + escapeHtml(state.headerText || '') + '</span>' +
+               sortControlHTML('quote') +
+             '</div>';
+    }
     if (!rows.length) {
-      $listScroll.innerHTML = html + emptyHTML('No quotes match.', '&#128269;');
+      $listScroll.innerHTML = head + emptyHTML(state.cueMode ? 'No lines match.' : 'No quotes match.', '&#128269;');
+      if (state.cueMode) { focusCueSearch(); }
       return;
     }
     var shown = rows.slice(0, MAX_ROWS);
-    html += '<div class="qlist">' + shown.map(function (r, i) { return qrowHTML(r, i); }).join('') + '</div>';
+    var html = head + '<div class="qlist">' + shown.map(function (r, i) { return qrowHTML(r, i); }).join('') + '</div>';
     if (rows.length > shown.length) {
       html += '<div class="more">Showing ' + shown.length + ' of ' + rows.length + '. Refine your search to narrow it.</div>';
     }
     $listScroll.innerHTML = html;
+    if (state.cueMode) { focusCueSearch(); }
   }
 
   function markActiveRow() {
@@ -422,13 +531,18 @@
   var searchTimer = null;
   async function doSearch(query) {
     query = (query || '').trim();
+    // Leaving the file list to show results: remember where the list was scrolled so
+    // "back" returns to the same place.
+    if (state.mode === 'files') { state.fileScrollTop = $listScroll.scrollTop; }
     state.query = query;
+    state.cueMode = false;   // a folder-wide search is never single-transcript cue mode
     if (!query) { state.mode = 'files'; renderFind(); return; }
 
     // CHANGE 1: show a "Searching…" state the instant a non-empty search starts, so a slow
     // or failed search is never a silent blank. The post-await logic below replaces this.
     state.mode = 'results';
     state.rows = [];
+    state.searchRaw = [];
     state.terms = [];
     state.activeResultKey = null;
     state.headerText = 'Searching for "' + query + '"…';
@@ -438,7 +552,7 @@
     // a newer search may have superseded this one
     if (state.query !== query) { return; }
     if (!rep.ok) {
-      state.mode = 'results'; state.rows = []; state.terms = [];
+      state.mode = 'results'; state.rows = []; state.searchRaw = []; state.terms = [];
       state.headerText = 'Search failed' + (rep.error ? ': ' + rep.error : '');
       renderFind();
       return;
@@ -448,7 +562,9 @@
     var playable = results.length - transcriptOnly;
 
     state.mode = 'results';
-    state.rows = results;
+    state.cueMode = false;
+    state.searchRaw = results;                          // canonical, for re-sorting
+    state.rows = sortQuotes(results, state.quoteSort);  // displayed = sorted view
     state.terms = query.split(/\s+/).filter(Boolean);
     state.activeResultKey = null;
     state.headerText = results.length + ' quotes across the transcripts for "' + query +
@@ -494,6 +610,8 @@
     var v = null;
     for (var i = 0; i < state.videos.length; i++) { if (state.videos[i].name === name) { v = state.videos[i]; break; } }
     if (!v) { return; }
+    // Remember the file-list scroll so "back" returns to this video, not the top.
+    if (state.mode === 'files') { state.fileScrollTop = $listScroll.scrollTop; }
     state.activeSource = v.path;
     state.activeClipId = null;
     updatePlayhead();
@@ -502,10 +620,14 @@
     var rep = await beckyCall('transcript', { name: name });
     var cues = (rep.ok && Array.isArray(rep.data)) ? rep.data : [];
     state.mode = 'results';
-    state.rows = cues;
+    state.cueMode = true;          // single-transcript view: enables "search within this transcript"
+    state.viewVideoName = name;
+    state.cueAll = cues;
+    state.cueFilter = '';
+    state.rows = cues.slice();
     state.terms = [];
     state.activeResultKey = null;
-    state.headerText = name + ' — ' + cues.length + ' line' + (cues.length === 1 ? '' : 's');
+    state.headerText = cueHeaderText();
     renderFind();
   }
 
@@ -547,11 +669,32 @@
   function backToFiles() {
     $search.value = ''; $searchClear.hidden = true;
     state.query = ''; state.activeResultKey = null;
+    state.cueMode = false; state.cueFilter = ''; state.cueAll = [];
     state.mode = 'files';
-    renderFind();
+    renderFind();   // restores state.fileScrollTop (returning, not in-place)
+  }
+
+  // Apply a sort toggle. spec is "file:date"|"file:name"|"quote:date"|"quote:name".
+  function applySortChange(spec) {
+    var parts = String(spec || '').split(':');
+    var kind = parts[0], val = parts[1];
+    if (val !== 'date' && val !== 'name') { return; }
+    if (kind === 'file') {
+      if (state.fileSort === val) { return; }
+      state.fileSort = val;
+      renderFiles();
+    } else if (kind === 'quote') {
+      if (state.quoteSort === val) { return; }
+      state.quoteSort = val;
+      state.rows = sortQuotes(state.searchRaw || [], state.quoteSort);
+      state.activeResultKey = null;
+      renderResults();
+    }
   }
 
   $listScroll.addEventListener('click', function (e) {
+    var sort = e.target.closest('[data-sort]');
+    if (sort) { applySortChange(sort.dataset.sort); return; }
     var back = e.target.closest('[data-act="back-to-files"]');
     if (back) { backToFiles(); return; }
     var tbtn = e.target.closest('.tbtn');
@@ -562,6 +705,17 @@
     if (file) { onFileClick(file.dataset.name); return; }
     var row = e.target.closest('.qrow');
     if (row) { guardRowClick(row); }
+  });
+
+  // "Search within this transcript" (cue mode): filter the open video's cues live.
+  $listScroll.addEventListener('input', function (e) {
+    if (e.target && e.target.id === 'cueSearch') {
+      state.cueFilter = e.target.value;
+      state.rows = filterCues(state.cueAll, state.cueFilter);
+      state.activeResultKey = null;
+      state.headerText = cueHeaderText();
+      renderResults();   // focusCueSearch() restores the caret
+    }
   });
   $listScroll.addEventListener('dblclick', function (e) {
     var row = e.target.closest('.qrow');
@@ -591,6 +745,8 @@
     state.videos = Array.isArray(fv.videos) ? fv.videos : [];
     state.orphanCount = fv.orphan_count || 0;
     state.mode = 'files';
+    state.cueMode = false;
+    state.fileScrollTop = 0;   // a freshly opened folder starts at the top
     $search.value = ''; $searchClear.hidden = true;
     renderFind();
   }
@@ -751,7 +907,9 @@
     state.tlVersion++;   // the timeline changed -> the seamless EDL must regenerate before next play/seek
     state.overlayOn = !!(state.timeline.overlay && state.timeline.overlay.enabled);
     if (state.activeClipId != null && !clipById(state.activeClipId)) { state.activeClipId = null; }
-    if (state.selectedClipId != null && !clipById(state.selectedClipId)) { state.selectedClipId = null; }  // CHANGE 5
+    // Drop any selected ids whose clips no longer exist (after remove/undo/load).
+    state.selectedClipIds = (state.selectedClipIds || []).filter(function (id) { return !!clipById(id); });
+    if (state.selectedClipId != null && !clipById(state.selectedClipId)) { state.selectedClipId = null; }
     renderTimeline();
   }
 
@@ -763,36 +921,93 @@
   }
   function clipW(dur) { return Math.max(minClipW(), (dur || 0) * state.pxPerSec); }
   function updateZoomLabel() { if ($tZoom) { $tZoom.textContent = state.pxPerSec + ' px/s'; } }
-  function setZoom(px) {
+  // setZoom changes the scale and keeps the point under anchorClientX (or the viewport
+  // centre) fixed, so zoom grows/shrinks toward the cursor instead of the left edge.
+  function setZoom(px, anchorClientX) {
     var v = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(px)));
     if (v === state.pxPerSec) { updateZoomLabel(); return; }
+    var old = state.pxPerSec;
+    var anchorX = null, contentX = 0;
+    if (tlBodyEl) {
+      var rect = tlBodyEl.getBoundingClientRect();
+      anchorX = (typeof anchorClientX === 'number') ? (anchorClientX - rect.left) : (rect.width / 2);
+      contentX = anchorX + tlBodyEl.scrollLeft;   // content-space x under the anchor
+    }
     state.pxPerSec = v;
     renderTimeline();   // re-render clip widths + ruler at the new scale
+    if (tlBodyEl && anchorX != null) {
+      // ponytail: linear rescale of scrollLeft; the per-clip min-width floor makes this
+      // slightly approximate for very short clips — fine for a zoom anchor.
+      tlBodyEl.scrollLeft = contentX * (v / old) - anchorX;
+    }
   }
   function zoomBy(factor) { setZoom(state.pxPerSec * factor); }
+  function zoomAt(factor, clientX) { setZoom(state.pxPerSec * factor, clientX); }
 
-  /* Scale the ruler ticks + the track grid lines to the current zoom
-     (1-second minor ticks, 5-second major ticks). */
+  /* Scale the TRACK grid lines to the current zoom (a faint line every 5s). The ruler
+     now shows real labelled timecode ticks instead — see renderRulerTicks. */
   function applyTimelineScale() {
-    var s = state.pxPerSec, maj = s * 5;
-    rulerEl.style.backgroundImage =
-      'repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px ' + s + 'px),' +
-      'repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px ' + maj + 'px)';
+    var maj = state.pxPerSec * 5;
     trackEl.style.backgroundImage =
       'repeating-linear-gradient(90deg, transparent 0 ' + (maj - 1) + 'px, var(--line-2) ' + (maj - 1) + 'px ' + maj + 'px)';
+  }
+
+  // niceRulerStep: seconds between LABELLED ticks, chosen so labels sit >= ~64px apart
+  // at the current zoom (so they never crowd, and spread out as you zoom in).
+  function niceRulerStep(pxps) {
+    var steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+    for (var i = 0; i < steps.length; i++) { if (steps[i] * pxps >= 64) { return steps[i]; } }
+    return steps[steps.length - 1];
+  }
+
+  // renderRulerTicks fills the gray ruler with timecode marks at compilation time
+  // s = 0, step, 2*step, ... across the whole reel. left = s * pxPerSec matches the
+  // track's time grid. pointer-events on the ticks are off (CSS) so the ruler's
+  // click/drag still works beneath them.
+  function renderRulerTicks() {
+    var clips = state.timeline.clips || [];
+    var total = state.timeline.duration_sec || sumDur(clips);
+    if (!total || total <= 0) { rulerEl.innerHTML = ''; return; }
+    var step = niceRulerStep(state.pxPerSec);
+    var useH = total >= 3600;
+    var html = '';
+    for (var s = 0; s <= total + 0.001; s += step) {
+      var left = Math.round(s * state.pxPerSec);
+      html += '<span class="rtick" style="left:' + left + 'px">' + (useH ? hms(s) : mmss(s)) + '</span>';
+    }
+    rulerEl.innerHTML = html;
   }
 
   /* A clip is a SOLID block with NO visible text (CHANGE 3): label + duration ride
      in the title= tooltip only. Keeps the two trim handles + a hover-only remove "x".
      The empty .cbody fills between the handles and forwards clicks to the scrubber. */
+  // isClipSelected reports whether a clip id is in the multi-selection.
+  function isClipSelected(id) {
+    var ids = state.selectedClipIds || [];
+    for (var i = 0; i < ids.length; i++) { if (String(ids[i]) === String(id)) { return true; } }
+    return false;
+  }
+
+  // sourceColor maps a source path to a stable vivid hue, so every clip from the
+  // SAME video shows the same colour band — a glance-readable grouping on a mixed
+  // timeline. Deterministic (same path -> same colour every render).
+  function sourceColor(src) {
+    var s = String(src || ''), h = 0;
+    for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) >>> 0; }
+    return 'hsl(' + (h % 360) + ', 75%, 55%)';
+  }
+
   function clipBlockHTML(clip) {
     var dur = clipDur(clip);
     var w = clipW(dur);
     var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
     var tip = truncate(label, 80) + '  (' + mmss(dur) + ')';
-    var sel = (String(clip.id) === String(state.selectedClipId)) ? ' selected' : '';   // CHANGE 5
+    var sel = isClipSelected(clip.id) ? ' selected' : '';
+    var band = sourceColor(clip.source);
     return '<div class="clip' + sel + '" data-id="' + attr(clip.id) + '" style="width:' + w + 'px" title="' + attr(tip) + '">' +
+             '<div class="cband" style="background:' + band + '"></div>' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
+             '<div class="cthumb"></div>' +
              '<div class="cbody"></div>' +
              '<button class="cx" data-act="remove" title="remove clip">×</button>' +
              '<div class="rh rh-r" data-edge="r" title="trim out"></div>' +
@@ -806,6 +1021,7 @@
     updateOverlayBtn();
     updateZoomLabel();
     applyTimelineScale();
+    renderRulerTicks();   // timecode marks in the gray ruler
 
     if (!clips.length) {
       trackEl.innerHTML = '<div class="tlempty">No clips yet — double-click a quote to add one to the timeline.</div>';
@@ -814,6 +1030,7 @@
     }
     trackEl.appendChild(playheadEl);
     updatePlayhead();
+    updateRenderSelButton();     // keep the render-selection button in sync with the redraw
     prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
     applyThumbs();               // paint each clip's cached first-frame thumbnail (async, cheap)
   }
@@ -840,10 +1057,10 @@
       var key = thumbKey(clip.source, clip.in || 0);
       var cached = thumbCache[key];
       if (cached) {
-        var cbody = b.querySelector('.cbody');
-        if (cbody && cbody.dataset.thumbKey !== key) {
-          cbody.style.backgroundImage = 'url("' + cached + '")';
-          cbody.dataset.thumbKey = key;
+        var cthumb = b.querySelector('.cthumb');
+        if (cthumb && cthumb.dataset.thumbKey !== key) {
+          cthumb.style.backgroundImage = 'url("' + cached + '")';
+          cthumb.dataset.thumbKey = key;
         }
       } else if (cached === undefined && !thumbInflight[key]) {
         thumbInflight[key] = true;
@@ -1023,12 +1240,66 @@
     playheadEl.style.display = 'block';
   }
 
-  /* ---- selection outline (CHANGE 5): toggle .selected on existing blocks without a re-render ---- */
+  /* ---- selection outline: toggle .selected on existing blocks without a re-render ---- */
   function markSelectedClip() {
     var blocks = trackEl.querySelectorAll('.clip');
     for (var i = 0; i < blocks.length; i++) {
-      blocks[i].classList.toggle('selected', blocks[i].dataset.id === String(state.selectedClipId));
+      blocks[i].classList.toggle('selected', isClipSelected(blocks[i].dataset.id));
     }
+    updateRenderSelButton();
+  }
+
+  // The "render selection" button appears only while clips are selected, labelled
+  // with the count so Jordan knows exactly what will render.
+  function updateRenderSelButton() {
+    if (!$tRenderSel) { return; }
+    var n = (state.selectedClipIds || []).length;
+    $tRenderSel.hidden = n === 0;
+    if (n > 0) { $tRenderSel.textContent = 'render selection (' + n + ')'; }
+  }
+
+  // Selection mutators. clearSelection / selectOnly / toggleInSelection / selectRange
+  // all keep selectedClipId (the anchor/primary) and selectedClipIds (the full set)
+  // consistent, then repaint the outlines + the render-selection button.
+  function clearSelection() {
+    state.selectedClipIds = [];
+    state.selectedClipId = null;
+    markSelectedClip();
+  }
+  function selectOnly(id) {
+    state.selectedClipIds = [String(id)];
+    state.selectedClipId = String(id);
+    markSelectedClip();
+  }
+  function toggleInSelection(id) {
+    id = String(id);
+    var ids = state.selectedClipIds || [];
+    if (isClipSelected(id)) {
+      state.selectedClipIds = ids.filter(function (x) { return String(x) !== id; });
+      if (String(state.selectedClipId) === id) {
+        state.selectedClipId = state.selectedClipIds.length ? state.selectedClipIds[state.selectedClipIds.length - 1] : null;
+      }
+    } else {
+      state.selectedClipIds = ids.concat([id]);
+      state.selectedClipId = id;   // a Ctrl+click makes the clicked clip the new anchor
+    }
+    markSelectedClip();
+  }
+  // selectRange selects every clip between the anchor and id (inclusive) in timeline
+  // order — Shift+click. Falls back to a single select when there is no anchor.
+  function selectRange(id) {
+    var clips = state.timeline.clips || [];
+    var ai = -1, bi = -1;
+    for (var i = 0; i < clips.length; i++) {
+      if (String(clips[i].id) === String(state.selectedClipId)) { ai = i; }
+      if (String(clips[i].id) === String(id)) { bi = i; }
+    }
+    if (ai < 0 || bi < 0) { selectOnly(id); return; }
+    var lo = Math.min(ai, bi), hi = Math.max(ai, bi), out = [];
+    for (var j = lo; j <= hi; j++) { out.push(String(clips[j].id)); }
+    state.selectedClipIds = out;
+    // anchor stays where it was so a second Shift+click re-ranges from the same point
+    markSelectedClip();
   }
 
   async function onClipRemove(id) {
@@ -1230,7 +1501,11 @@
   /* ---- CLIP-BODY gesture: PENDING -> click (seek) OR drag (reorder) (CHANGE A) ---- */
   function startClipGesture(block, e) {
     e.preventDefault();                  // keep the drag clean (no text selection)
-    clipGesture = { id: block.dataset.id, block: block, startX: e.clientX, dragging: false };
+    clipGesture = {
+      id: block.dataset.id, block: block, startX: e.clientX, dragging: false,
+      ctrl: e.ctrlKey || e.metaKey,      // Ctrl/Cmd+click = toggle in multi-selection
+      shift: e.shiftKey                  // Shift+click = select range from the anchor
+    };
     try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
   }
   function moveClipGesture(e) {
@@ -1263,10 +1538,29 @@
       } else {
         renderTimeline();                             // no change -> just clear the drag visuals
       }
+    } else if (g.ctrl) {
+      // Ctrl/Cmd+click: toggle this clip in the multi-selection; don't move the playhead.
+      toggleInSelection(g.id);
+    } else if (g.shift) {
+      // Shift+click: select every clip from the anchor to here, and move the playhead
+      // to the clicked clip's start so the preview follows.
+      selectRange(g.id);
+      seekClipById(g.id, false);
     } else {
-      // a CLICK (moved <= DRAG_PX) -> seek the playhead + select the clip.
+      // a plain CLICK (moved <= DRAG_PX) -> select ONLY this clip + seek to the exact spot.
       scrubTo(e, true);
     }
+  }
+
+  // seekClipById moves the playhead to a clip's start (PAUSED unless play=true).
+  function seekClipById(id, play) {
+    var c = clipById(id);
+    if (!c) { return; }
+    var comp = c.start_sec || 0;
+    state.activeClipId = c.id;
+    state.playheadComp = comp;
+    seekTimeline(comp, !!play);
+    updatePlayhead();
   }
 
   /* ---- the unified track pointer handlers ---- */
@@ -1342,24 +1636,41 @@
     if (!clip) { return; }
     var comp = (clip.start_sec || 0) + hit.frac * clipDur(clip);   // the compilation position clicked
     state.activeClipId = clip.id;
-    state.selectedClipId = clip.id;                // CHANGE 5: scrubbing/clicking also selects that clip
+    selectOnly(clip.id);                            // a plain click/scrub selects ONLY this clip
     state.playheadComp = comp;
-    markSelectedClip();
     // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, held PAUSED — a
     // click never starts playback (that's the ▶/space job). seekTimeline reuses the
     // loaded EDL (a fast seek) or loads it once. (isStart kept for the shared signature.)
     seekTimeline(comp, false);
     updatePlayhead();
   }
+  // Ruler gesture (the gray bar above the clips): a CLICK places the playhead; a DRAG
+  // pans the timeline sideways. Click-vs-drag is decided by movement, like the clip
+  // body — below DRAG_PX it's a click (seek on pointerup), beyond it pans scrollLeft.
+  var rulerPan = null;   // { startX, startScroll, panned }
   rulerEl.addEventListener('pointerdown', function (e) {
+    if (e.button !== undefined && e.button !== 0) { return; }
     if (!(state.timeline.clips || []).length) { return; }
-    scrubbing = true;
+    e.preventDefault();
+    rulerPan = { startX: e.clientX, startScroll: tlBodyEl ? tlBodyEl.scrollLeft : 0, panned: false };
     try { rulerEl.setPointerCapture(e.pointerId); } catch (_) {}
-    scrubTo(e, true);
   });
-  rulerEl.addEventListener('pointermove', function (e) { if (scrubbing) { scrubTo(e, false); } });
-  rulerEl.addEventListener('pointerup', function () { scrubbing = false; });
-  rulerEl.addEventListener('pointercancel', function () { scrubbing = false; });
+  rulerEl.addEventListener('pointermove', function (e) {
+    if (!rulerPan) { return; }
+    var dx = e.clientX - rulerPan.startX;
+    if (!rulerPan.panned && Math.abs(dx) <= DRAG_PX) { return; }   // still within click slop
+    rulerPan.panned = true;
+    rulerEl.classList.add('panning');
+    if (tlBodyEl) { tlBodyEl.scrollLeft = rulerPan.startScroll - dx; }   // grab-and-drag pan
+  });
+  function endRulerGesture(e) {
+    if (!rulerPan) { return; }
+    var g = rulerPan; rulerPan = null;
+    rulerEl.classList.remove('panning');
+    if (!g.panned) { scrubTo(e, true); }   // a click (no real drag) -> move the playhead here
+  }
+  rulerEl.addEventListener('pointerup', endRulerGesture);
+  rulerEl.addEventListener('pointercancel', function () { rulerPan = null; rulerEl.classList.remove('panning'); });
 
   /* ---- transport + reel actions ---- */
   $tPlay.addEventListener('click', function () { togglePlay(); });
@@ -1367,15 +1678,91 @@
   $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
   if ($tSplit) { $tSplit.addEventListener('click', function () { splitAtPlayhead(); }); }  // CHANGE 4
 
+  /* ---- undo / redo (engine-side history; Ctrl+Z / Ctrl+Shift+Z) ---- */
+  async function undoTimeline() {
+    var rep = await beckyCall('undo', {});
+    if (rep.ok && rep.data) {
+      applyTimeline(rep.data.timeline);
+      toast(rep.data.changed ? 'Undo' : 'Nothing to undo');
+    }
+  }
+  async function redoTimeline() {
+    var rep = await beckyCall('redo', {});
+    if (rep.ok && rep.data) {
+      applyTimeline(rep.data.timeline);
+      toast(rep.data.changed ? 'Redo' : 'Nothing to redo');
+    }
+  }
+  if ($tUndo) { $tUndo.addEventListener('click', undoTimeline); }
+  if ($tRedo) { $tRedo.addEventListener('click', redoTimeline); }
+
+  /* ---- extend the SELECTED clip by one frame (left = earlier IN, right = later OUT) ----
+     Reuses set_trim; one frame = 1/fps of the clip's own source. The right edge is
+     capped at the source's true duration when known (never a neighbour). */
+  function primarySelectedId() {
+    if (state.selectedClipId != null) { return state.selectedClipId; }
+    if ((state.selectedClipIds || []).length === 1) { return state.selectedClipIds[0]; }
+    return null;
+  }
+  async function extendSelected(dir) {
+    var id = primarySelectedId();
+    var clip = id != null ? clipById(id) : null;
+    if (!clip) { toast('Select a clip first.'); return; }
+    ensureSourceDuration(clip.source);   // warm the cap for next time
+    var fps = (clip.source_fps && clip.source_fps > 0) ? clip.source_fps : 30;
+    var frame = 1 / fps;
+    var nin = clip.in || 0, nout = clip.out || 0;
+    if (dir < 0) {
+      nin = Math.max(0, nin - frame);                       // grow the LEFT edge earlier
+      if (nin >= nout - MIN_CLIP) { toast('Clip is already at its source start.'); return; }
+    } else {
+      nout = nout + frame;                                  // grow the RIGHT edge later
+      var cap = knownSourceDuration(clip.source);
+      if (cap > 0 && nout > cap) { toast('Clip is already at its source end.'); return; }
+    }
+    var rep = await beckyCall('set_trim', { id: id, in: nin, out: nout });
+    if (rep.ok && rep.data) { applyTimeline(rep.data); }
+    else { toast('Could not extend clip' + (rep.error ? ': ' + rep.error : '')); }
+  }
+  if ($tExtendL) { $tExtendL.addEventListener('click', function () { extendSelected(-1); }); }
+  if ($tExtendR) { $tExtendR.addEventListener('click', function () { extendSelected(1); }); }
+
+  /* ---- render ONLY the selected clips ---- */
+  if ($tRenderSel) {
+    $tRenderSel.addEventListener('click', async function () {
+      var ids = (state.selectedClipIds || []).slice();
+      if (!ids.length) { toast('Select one or more clips first.'); return; }
+      toast('Rendering selection…');
+      var rep = await beckyCall('export_selection', { ids: ids });
+      if (!rep.ok) { addBeckyMsg('Render selection failed' + (rep.error ? ': ' + rep.error : '')); toast('Render failed'); return; }
+      var r = rep.data || {};
+      var parts = [];
+      if (r.mp4) { parts.push('MP4: ' + r.mp4); }
+      if (r.duration_sec != null) { parts.push('Duration: ' + hms(r.duration_sec)); }
+      if (r.clips != null) { parts.push('Clips: ' + r.clips); }
+      if (r.output_mb != null) { parts.push('Size: ' + r.output_mb + ' MB'); }
+      if (typeof r.audio_ok === 'boolean') { parts.push('Audio: ' + (r.audio_ok ? 'ok' : 'MISSING')); }
+      if (r.note) { parts.push(r.note); }
+      addBeckyMsg('Rendered ' + ids.length + ' selected clip' + (ids.length === 1 ? '' : 's') + '.\n' + parts.join('\n'));
+      toast('Selection rendered');
+    });
+  }
+
   /* ---- timeline zoom: buttons + mousewheel over the timeline ---- */
   if ($tZoomIn)  { $tZoomIn.addEventListener('click',  function () { zoomBy(1.5); }); }
   if ($tZoomOut) { $tZoomOut.addEventListener('click', function () { zoomBy(1 / 1.5); }); }
   if (tlBodyEl) {
-    // CHANGE 2: PLAIN wheel over the timeline now zooms (up = in, down = out); no modifier needed
-    // (Ctrl+wheel zooms too). preventDefault stops the page/timeline from scrolling instead.
+    // Ctrl/Cmd + wheel ZOOMS the timeline toward the cursor; a PLAIN wheel pans it
+    // sideways. Everything OUTSIDE the timeline is untouched (this handler is scoped
+    // to the timeline body only), so normal scrolling elsewhere is unaffected.
     tlBodyEl.addEventListener('wheel', function (e) {
-      e.preventDefault();
-      zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);
+      } else {
+        var d = (Math.abs(e.deltaY) >= Math.abs(e.deltaX)) ? e.deltaY : e.deltaX;
+        if (d) { e.preventDefault(); tlBodyEl.scrollLeft += d; }   // plain wheel = horizontal pan
+      }
     }, { passive: false });
   }
 
@@ -1388,20 +1775,24 @@
     sendOverlayUpdate();   // push the CURRENT clip's name + source TC (handles EDL playback)
   });
 
+  // Save/Load use a NATIVE file dialog from the host (save_dialog/load_dialog are
+  // intercepted in MainWindow before the engine). The old window.prompt() froze the
+  // UI: its modal rendered BEHIND the always-on-top native mpv surface, so the page's
+  // JS blocked on a dialog the user could never see or dismiss. A real OS dialog also
+  // means Jordan never has to type a full path.
   $tSave.addEventListener('click', async function () {
-    var def = state.folder ? (state.folder + '\\reel.json') : 'reel.json';
-    var path = window.prompt('Save reel as (full path):', def);
-    if (!path) { return; }
-    var rep = await beckyCall('save_reel', { path: path });
-    if (rep.ok) { toast('Saved ' + ((rep.data && rep.data.path) || path)); }
+    if (!state.timeline.clips || !state.timeline.clips.length) { toast('Timeline is empty — nothing to save.'); return; }
+    var dlg = await beckyCall('save_dialog', { default: state.folder ? (state.folder + '\\reel.reel.json') : 'reel.reel.json' });
+    if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
+    var rep = await beckyCall('save_reel', { path: dlg.data.path });
+    if (rep.ok) { toast('Saved ' + ((rep.data && rep.data.path) || dlg.data.path)); }
     else { toast('Save failed' + (rep.error ? ': ' + rep.error : '')); }
   });
 
   $tLoad.addEventListener('click', async function () {
-    var def = state.folder ? (state.folder + '\\reel.json') : 'reel.json';
-    var path = window.prompt('Load reel from (full path):', def);
-    if (!path) { return; }
-    var rep = await beckyCall('load_reel', { path: path });
+    var dlg = await beckyCall('load_dialog', { default: state.folder || '' });
+    if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
+    var rep = await beckyCall('load_reel', { path: dlg.data.path });
     if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Loaded reel'); }
     else { toast('Load failed' + (rep.error ? ': ' + rep.error : '')); }
   });
@@ -1437,7 +1828,17 @@
   }
 
   document.addEventListener('keydown', async function (e) {
-    if (typingInField()) { return; }   // never hijack keys while the user is typing (CHANGE 8)
+    if (typingInField()) { return; }   // never hijack keys while the user is typing (Ctrl+Z in a field = native text undo)
+
+    // Undo / Redo: Ctrl+Z, Ctrl+Shift+Z (and Ctrl+Y) for the timeline.
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      if (e.shiftKey) { redoTimeline(); } else { undoTimeline(); }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+      e.preventDefault(); redoTimeline(); return;
+    }
 
     // Space = play / pause (CHANGE 3)
     if (e.key === ' ') {
@@ -1445,21 +1846,30 @@
       togglePlay();
       return;
     }
-    // s = split clip at the playhead (CHANGE 4)
-    if (e.key === 's' || e.key === 'S') {
+    // s = split clip at the playhead (CHANGE 4). Ignore Ctrl/Cmd+S so a save chord never splits.
+    if ((e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       splitAtPlayhead();
       return;
     }
-    // Delete / Escape = ripple-delete the selected clip (CHANGE 5)
-    if ((e.key === 'Delete' || e.key === 'Escape') && state.selectedClipId != null) {
+    // Delete / Backspace = ripple-delete ALL selected clips.
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (state.selectedClipIds || []).length) {
       e.preventDefault();
-      var id = state.selectedClipId;
-      state.selectedClipId = null;
-      var rep = await beckyCall('remove_clip', { id: id });   // server-side remove auto-ripples start_sec
-      if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Removed clip'); }
-      else { toast('Could not remove clip' + (rep.error ? ': ' + rep.error : '')); }
-      markSelectedClip();
+      var ids = state.selectedClipIds.slice();
+      clearSelection();
+      var okAny = false, lastTl = null;
+      for (var i = 0; i < ids.length; i++) {
+        var rep = await beckyCall('remove_clip', { id: ids[i] });   // server-side remove auto-ripples start_sec
+        if (rep.ok && rep.data) { okAny = true; lastTl = rep.data; }
+      }
+      if (lastTl) { applyTimeline(lastTl); }
+      toast(okAny ? ('Removed ' + ids.length + ' clip' + (ids.length === 1 ? '' : 's')) : 'Could not remove clip');
+      return;
+    }
+    // Escape = clear the selection (does NOT delete).
+    if (e.key === 'Escape' && (state.selectedClipIds || []).length) {
+      e.preventDefault();
+      clearSelection();
       return;
     }
   });
@@ -1501,6 +1911,13 @@
     reportVideoRect: reportVideoRect,
     setZoom: setZoom,
     splitAtPlayhead: splitAtPlayhead,
+    undo: undoTimeline,
+    redo: redoTimeline,
+    extendSelected: extendSelected,
+    selectOnly: selectOnly,
+    toggleInSelection: toggleInSelection,
+    selectRange: selectRange,
+    clearSelection: clearSelection,
     state: state
   };
 

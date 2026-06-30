@@ -104,6 +104,13 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		return a.AddMarker(argFloat(args, "at"), argString(args, "label")), nil
 	case "timeline":
 		return a.Timeline(), nil
+	case "undo":
+		// Revert the last clip edit. changed=false ⇒ nothing to undo (UI no-ops quietly).
+		tl, changed := a.Undo()
+		return map[string]any{"timeline": tl, "changed": changed}, nil
+	case "redo":
+		tl, changed := a.Redo()
+		return map[string]any{"timeline": tl, "changed": changed}, nil
 
 	// ---- save / load ----
 	case "save_reel":
@@ -118,6 +125,9 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	// ---- render / export (new files) ----
 	case "export":
 		return a.ExportReel(argString(args, "output"))
+	case "export_selection":
+		// Render only the selected clips (their IDs) to a separate compilation MP4.
+		return a.ExportSelection(argStringSlice(args, "ids"), argString(args, "output"))
 	case "write_edl":
 		path, err := a.WriteEDLOnly(argString(args, "output"))
 		if err != nil {
@@ -294,6 +304,27 @@ func argBool(m map[string]any, key string) bool {
 	default:
 		return false
 	}
+}
+
+// argStringSlice reads a string-array arg (a JSON array of strings, e.g. clip IDs).
+// Missing / non-array / non-string elements are skipped, yielding a (possibly
+// empty) slice — never an error, so a malformed payload degrades to "no ids".
+func argStringSlice(m map[string]any, key string) []string {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // firstLine returns the first line of an error message (for compact notes).

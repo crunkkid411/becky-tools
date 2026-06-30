@@ -94,6 +94,10 @@ public partial class MainWindow : Window
         core.Settings.AreDefaultContextMenusEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.AreDevToolsEnabled = true;
+        // Disable the WebView's built-in Ctrl+wheel page zoom: zooming is reserved for
+        // the TIMELINE (the page handles Ctrl+wheel over it), so Ctrl+scroll anywhere
+        // else must leave the UI untouched rather than scaling the whole page.
+        core.Settings.IsZoomControlEnabled = false;
 
         var uiFolder = Path.Combine(AppContext.BaseDirectory, "ui");
         core.SetVirtualHostNameToFolderMapping(
@@ -258,12 +262,86 @@ public partial class MainWindow : Window
             ? aEl
             : null;
 
+        // Host-handled verbs: native Save/Open file dialogs. The engine is headless and
+        // can't show a WPF dialog, and the old in-page window.prompt froze behind the
+        // always-on-top mpv surface — so the host shows the dialog and replies with the
+        // chosen path ({path:""} = cancelled). The page then calls save_reel/load_reel.
+        if (verb == "save_dialog" || verb == "load_dialog")
+        {
+            var def = "";
+            if (args is JsonElement ae && ae.ValueKind == JsonValueKind.Object
+                && ae.TryGetProperty("default", out var dEl) && dEl.ValueKind == JsonValueKind.String)
+            {
+                def = dEl.GetString() ?? "";
+            }
+            var path = await ShowReelDialogAsync(verb == "save_dialog", def);
+            PostToPage(new { t = "reply", id, reply = new { ok = true, data = new { path } } });
+            return;
+        }
+
         JsonElement reply = default;
         if (_engine != null)
         {
             reply = await _engine.CallAsync(verb, args);
         }
         PostReply(id, reply);
+    }
+
+    /// <summary>
+    /// Show a native Save/Open dialog for a .reel.json file and return the chosen path
+    /// ("" if cancelled). Runs on the UI thread. This replaces the old window.prompt,
+    /// whose modal rendered behind the always-on-top native mpv pane and froze the page;
+    /// it also spares Jordan from typing a full path.
+    /// </summary>
+    private Task<string> ShowReelDialogAsync(bool save, string def)
+    {
+        return Dispatcher.InvokeAsync(() =>
+        {
+            const string filter = "Becky reel (*.reel.json)|*.reel.json|JSON (*.json)|*.json|All files (*.*)|*.*";
+            string initialDir = "", fileName = "";
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(def))
+                {
+                    if (Directory.Exists(def))
+                    {
+                        initialDir = def;
+                    }
+                    else
+                    {
+                        var d = Path.GetDirectoryName(def);
+                        if (!string.IsNullOrWhiteSpace(d) && Directory.Exists(d)) { initialDir = d!; }
+                        fileName = Path.GetFileName(def);
+                    }
+                }
+            }
+            catch { /* best-effort defaults */ }
+
+            if (save)
+            {
+                var dlg = new SaveFileDialog
+                {
+                    Title = "Save reel",
+                    Filter = filter,
+                    DefaultExt = "reel.json",
+                    AddExtension = true,
+                };
+                if (!string.IsNullOrEmpty(initialDir)) { dlg.InitialDirectory = initialDir; }
+                if (!string.IsNullOrEmpty(fileName)) { dlg.FileName = fileName; }
+                return dlg.ShowDialog(this) == true ? dlg.FileName : "";
+            }
+            else
+            {
+                var dlg = new OpenFileDialog
+                {
+                    Title = "Load reel",
+                    Filter = filter,
+                    CheckFileExists = true,
+                };
+                if (!string.IsNullOrEmpty(initialDir)) { dlg.InitialDirectory = initialDir; }
+                return dlg.ShowDialog(this) == true ? dlg.FileName : "";
+            }
+        }).Task;
     }
 
     /// <summary>Position the native mpv pane over the page's #videoHole (CSS px == DIP at 100% zoom).</summary>

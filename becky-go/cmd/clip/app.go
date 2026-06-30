@@ -63,6 +63,14 @@ type App struct {
 	// nextID is the monotonic counter for stable clip IDs ("c1", "c2", …).
 	nextID int
 
+	// undoStack/redoStack are the timeline history (Ctrl+Z / Ctrl+Shift+Z). Each
+	// CLIP-changing edit (add/remove/reorder/trim/label/load) records the PRE-edit
+	// clip state to undoStack and clears redoStack; Undo/Redo move snapshots between
+	// the two. The snapshot is clips + name + nextID only — overlay + markers are
+	// deliberately NOT included, so undo only ever changes the CLIPS (predictable).
+	undoStack []reelSnapshot
+	redoStack []reelSnapshot
+
 	// router is the becky assistant (cost-tiered). Built lazily on first use
 	// so a session with no chat never spawns a model. nil until built.
 	router *assistant.Router
@@ -502,6 +510,7 @@ func (a *App) AddClip(source string, in, out float64, label string) (TimelineVie
 	}
 
 	a.mu.Lock()
+	a.pushUndoLocked()
 	a.nextID++
 	clip := edl.Clip{
 		ID:     fmt.Sprintf("c%d", a.nextID),
@@ -539,6 +548,7 @@ func (a *App) RemoveClip(id string) (TimelineView, error) {
 	if !found {
 		return a.timelineLocked(), fmt.Errorf("no clip %q", id)
 	}
+	a.pushUndoLocked()
 	a.reel.Clips = out
 	return a.timelineLocked(), nil
 }
@@ -567,6 +577,7 @@ func (a *App) Reorder(id string, to int) (TimelineView, error) {
 	if to == from {
 		return a.timelineLocked(), nil
 	}
+	a.pushUndoLocked()
 	moved := a.reel.Clips[from]
 	rest := make([]edl.Clip, 0, len(a.reel.Clips)-1)
 	rest = append(rest, a.reel.Clips[:from]...)
@@ -589,6 +600,7 @@ func (a *App) SetTrim(id string, in, out float64) (TimelineView, error) {
 	defer a.mu.Unlock()
 	for i := range a.reel.Clips {
 		if a.reel.Clips[i].ID == id {
+			a.pushUndoLocked()
 			a.reel.Clips[i].In = clampNonNeg(in)
 			a.reel.Clips[i].Out = clampNonNeg(out)
 			return a.timelineLocked(), nil
@@ -603,6 +615,7 @@ func (a *App) SetLabel(id, text string) (TimelineView, error) {
 	defer a.mu.Unlock()
 	for i := range a.reel.Clips {
 		if a.reel.Clips[i].ID == id {
+			a.pushUndoLocked()
 			a.reel.Clips[i].Label = strings.TrimSpace(text)
 			return a.timelineLocked(), nil
 		}
@@ -694,6 +707,77 @@ func (a *App) timelineLocked() TimelineView {
 	}
 }
 
+// ---- undo / redo (timeline history) ---------------------------------------
+
+// reelSnapshot is one undo/redo checkpoint: a deep copy of the clip list plus the
+// reel name and the id counter — enough to fully restore the timeline's CLIPS.
+// Overlay + markers are intentionally excluded so undo only ever changes clips.
+type reelSnapshot struct {
+	clips  []edl.Clip
+	name   string
+	nextID int
+}
+
+// maxUndoDepth caps the history so a long session can't grow it without bound.
+const maxUndoDepth = 200
+
+// snapshotLocked captures the current clip state. Caller holds a.mu.
+func (a *App) snapshotLocked() reelSnapshot {
+	cl := make([]edl.Clip, len(a.reel.Clips))
+	copy(cl, a.reel.Clips)
+	return reelSnapshot{clips: cl, name: a.reel.Name, nextID: a.nextID}
+}
+
+// pushUndoLocked records the CURRENT clip state before a mutation and drops any
+// redo branch (a new edit forks history). Caller holds a.mu and is about to mutate
+// the reel's clips. This is the ONE place edits become undoable, so every clip
+// mutator calls it right before it changes a.reel.Clips.
+func (a *App) pushUndoLocked() {
+	a.undoStack = append(a.undoStack, a.snapshotLocked())
+	if len(a.undoStack) > maxUndoDepth {
+		a.undoStack = a.undoStack[len(a.undoStack)-maxUndoDepth:]
+	}
+	a.redoStack = nil
+}
+
+// restoreLocked replaces the live clip state with a snapshot. Caller holds a.mu.
+func (a *App) restoreLocked(s reelSnapshot) {
+	cl := make([]edl.Clip, len(s.clips))
+	copy(cl, s.clips)
+	a.reel.Clips = cl
+	a.reel.Name = s.name
+	a.nextID = s.nextID
+}
+
+// Undo reverts the last clip mutation. The second return is false (with the
+// timeline unchanged) when there is nothing to undo, so the UI can no-op quietly.
+func (a *App) Undo() (TimelineView, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.undoStack) == 0 {
+		return a.timelineLocked(), false
+	}
+	a.redoStack = append(a.redoStack, a.snapshotLocked())
+	s := a.undoStack[len(a.undoStack)-1]
+	a.undoStack = a.undoStack[:len(a.undoStack)-1]
+	a.restoreLocked(s)
+	return a.timelineLocked(), true
+}
+
+// Redo re-applies the last undone mutation. false when there is nothing to redo.
+func (a *App) Redo() (TimelineView, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.redoStack) == 0 {
+		return a.timelineLocked(), false
+	}
+	a.undoStack = append(a.undoStack, a.snapshotLocked())
+	s := a.redoStack[len(a.redoStack)-1]
+	a.redoStack = a.redoStack[:len(a.redoStack)-1]
+	a.restoreLocked(s)
+	return a.timelineLocked(), true
+}
+
 // ---- save / load reel -----------------------------------------------------
 
 // SaveReel writes the in-memory reel to path (or the last reelPath). Only the
@@ -729,6 +813,7 @@ func (a *App) LoadReel(path string) (TimelineView, error) {
 		return TimelineView{}, err
 	}
 	a.mu.Lock()
+	a.pushUndoLocked()
 	a.reel = r
 	a.reelPath = path
 	a.nextID = maxClipID(r.Clips)

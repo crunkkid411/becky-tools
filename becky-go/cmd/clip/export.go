@@ -54,15 +54,49 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 	if len(r.Clips) == 0 {
 		return ExportResult{}, fmt.Errorf("the timeline is empty — add a clip before exporting")
 	}
+	return a.renderReel(r, outPath, "_reel")
+}
 
+// ExportSelection renders ONLY the clips whose IDs are in ids (kept in their current
+// timeline order) to a compilation MP4, with the EDL/SRT sidecars beside it. It uses
+// the SAME render path as ExportReel on a filtered copy of the reel, so the selected
+// clips export byte-identically to a full export of just those clips. Unknown ids are
+// ignored; an empty / all-unknown selection is a clear error (never a silent no-op).
+func (a *App) ExportSelection(ids []string, outPath string) (ExportResult, error) {
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if s := strings.TrimSpace(id); s != "" {
+			want[s] = true
+		}
+	}
+	a.mu.Lock()
+	sub := a.reel   // copy the reel header (version/name/overlay)
+	sub.Clips = nil // ...with only the selected clips, in timeline order
+	for _, c := range a.reel.Clips {
+		if want[c.ID] {
+			sub.Clips = append(sub.Clips, c)
+		}
+	}
+	a.mu.Unlock()
+	if len(sub.Clips) == 0 {
+		return ExportResult{}, fmt.Errorf("no selected clips to render — select one or more clips first")
+	}
+	return a.renderReel(sub, outPath, "_selection")
+}
+
+// renderReel renders r to outPath (or an auto-sequenced <slug><suffix>_NNNN.mp4 in
+// the render dir) and writes the EDL + re-based SRT sidecars beside it, then
+// corroborates the output actually has audible audio. Shared by ExportReel (whole
+// timeline) and ExportSelection (a filtered sub-reel) so both behave identically.
+func (a *App) renderReel(r edl.Reel, outPath, suffix string) (ExportResult, error) {
 	if strings.TrimSpace(outPath) == "" {
 		dir, err := a.renderDir()
 		if err != nil {
 			return ExportResult{}, err
 		}
 		// Sequence the auto-named export so a re-export NEVER overwrites a previous
-		// one: <slug>_reel_0001.mp4, then _0002, _0003, ... (next free number).
-		outPath = nextSequencedPath(dir, slugName(r.Name)+"_reel", ".mp4")
+		// one: <slug><suffix>_0001.mp4, then _0002, _0003, ... (next free number).
+		outPath = nextSequencedPath(dir, slugName(r.Name)+suffix, ".mp4")
 	}
 	outPath = absOut(outPath)
 
