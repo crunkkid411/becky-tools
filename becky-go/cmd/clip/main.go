@@ -137,6 +137,17 @@ func cmdCall(argv []string) {
 // (window_gui.go) so App.Call concurrency behaves identically.
 func cmdBridge() {
 	app := NewApp()
+
+	// Becky Review can hand us a reel to pre-load at startup (set by the "Open
+	// Forensic Hits" launcher via BECKY_REVIEW_REEL). The page's boot() already
+	// fetches `timeline`, so a pre-loaded reel shows on the timeline with NO UI
+	// change. Guarded: unset -> identical to before. Degrade-never-crash on a bad path.
+	if reelPath := strings.TrimSpace(os.Getenv("BECKY_REVIEW_REEL")); reelPath != "" {
+		if _, err := app.LoadReel(reelPath); err != nil {
+			fmt.Fprintf(os.Stderr, "becky-review: could not pre-load reel %q: %v\n", reelPath, err)
+		}
+	}
+
 	out := bufio.NewWriter(os.Stdout)
 	var outMu sync.Mutex
 

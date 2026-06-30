@@ -10,6 +10,43 @@
 
 ---
 
+## becky-hits — forensic agent's hit-list -> auto-loaded Becky Review timeline (2026-06-30, local, `claude/becky-hits-to-review`)
+
+**The goal.** The specialized forensic agent has a precious, jam-packed context. It should emit only the
+MINIMUM per finding — a `.srt` filename + a timestamp (+ optional quote) — and have those clips appear,
+ready to review, on Becky Review's timeline "near instantly" with one call. Earlier idea (agent writes a full
+Reel JSON itself) was rejected: too much work for the agent.
+
+**What shipped (two Go-only changes; the fragile WPF/JS UI is UNTOUCHED).**
+1. **New isolated tool `cmd/becky-hits`** (single-purpose, fully tested). Reads a tiny hit-list JSON
+   `[{"srt":"<name>","t":"HH:MM:SS","q":"<optional quote>"}]` (or `in`/`out` for an explicit window) and the
+   case folder, and writes a becky **Reel** (`internal/edl`). It REUSES the exact pieces Becky Review already
+   uses so a generated clip resolves identically: `footage.Index` for the forgiving `.srt`->source-video
+   pairing, and `sidecar.ParseSubtitle` to SNAP each timestamp to the cue that contains it (tight `[in,out]`,
+   cue text becomes the label if no quote given; small `--pad`, and a `--window` fallback when no cue contains
+   the point). Degrade-never-crash: a `.srt` with no source video (an orphan) is warned + skipped, never fatal.
+2. **One guarded line of behavior in the engine** (`cmd/clip` `bridge` startup): if `BECKY_REVIEW_REEL` is
+   set, pre-load that reel via the existing tested `App.LoadReel`. Becky Review's page `boot()` ALREADY calls
+   the `timeline` verb ("restore any existing timeline"), so the pre-loaded clips render with NO change to the
+   WPF app or its JS. Env unset => byte-identical to before (verified). `OpenFolder` never touches `a.reel`, so
+   the auto folder-open can't wipe it.
+3. **One-click launcher `Open Forensic Hits.bat`** (ASCII-only): runs becky-hits on the agent's hit-list,
+   then `call`s the existing `Open Becky Review.bat` with `BECKY_REVIEW_FOLDER=E:\TakingBack2007` +
+   `BECKY_REVIEW_REEL=<reel>` so the window opens with the clips already on the timeline.
+
+**Proven (this box).** `go build ./...`, `go vet`, package tests all green; `becky-hits --selftest` = 10/10 PASS;
+unit tests assert cue-snap windows + explicit/fallback windows + orphan-skip by value. Real-data run against
+`E:\TakingBack2007`: `15_01-14-2026_parakeet_transcription.srt` resolved to the real `25-EVIDENCE\15_01-14-2026.mp4`
+(confirmed on disk), timestamps snapped to cues `[0,3.14]` / `[2.22,5.94]` with the right labels. Engine preload
+proven by running `becky-review-engine.exe bridge` with `BECKY_REVIEW_REEL` set + the real `timeline` request:
+it returned both clips with correct `start_sec`/`dur_sec` ripple (exactly what `boot()` consumes). No-env run
+returned the empty "Untitled compilation" — the guard is a true no-op.
+
+**Left for Jordan (the one human "see it" gate).** Double-click **Open Forensic Hits.bat** (after the agent
+drops its findings at `E:\TakingBack2007\_forensic_hits.json`, or pass the hits path as the first argument) and
+confirm the clips appear on the timeline and play. Everything up to the window is verified; this is the visual
+confirmation only.
+
 ## becky-transcribe — gap-fill audio extraction fixes 48-min-short transcripts on desynced/corrupted sources (2026-06-29, local, `claude/transcribe-audio-gapfill`)
 
 **The bug.** Long videos whose audio drops out mid-stream (yt-dlp-merged livestream VODs) transcribed ~48 min
