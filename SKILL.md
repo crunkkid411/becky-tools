@@ -139,6 +139,34 @@ unverified or contradicted clip on a timeline "anyway."** A transcript mention o
 enough to claim the subject is on screen. "Not sure" -> say **unknown**, don't ship it. Wide, unverified
 windows that waste a human's review time are a TOOL-USE FAILURE, not a near-miss. Multiple corroborated data points make decisions, never just one.
 
+## Find evidence across the WHOLE corpus — the two-stage judge (`becky-judge`)
+
+When the request is a broad forensic sweep of ALL the transcripts ("find every clip where he tells
+viewers to go after Shelby or Hair Jordan"), do NOT read 1,100+ files. Run the two-stage pipeline:
+
+```
+becky-judge --folder E:\TakingBack2007 \
+  --query "directing or encouraging viewers to harass, dox, mass-report, or go after Shelby or Hair Jordan" \
+  --rubric "C:\Users\only1\Documents\Obsidian\llm-wiki-CLANCY-TRIAL\wiki\becky-judge-forensic-rubric-and-alias-map.md"
+```
+
+- **Stage 1 — RECALL:** `qmd` hybrid search (BM25 + vector, Vulkan GPU) narrows the 1,136-file index to
+  a few dozen candidate windows. becky forces the right GPU/index env, so it just works.
+- **Stage 2 — JUDGE:** **Sonnet 5, xhigh reasoning, 1M context** reads ONLY those candidate windows
+  against the `--rubric` guide — the case **alias map + rubric** (green hair = Hair Jordan; "my ex-wife"
+  resolves to Shelby by the arrest-date arithmetic; the satire-disclaimer + DARVO traps). It resolves the
+  coded language, rejects noise, and keeps only genuine hits, labelling each with WHO + why.
+- **Output → Becky Review:** survivors are written to `_forensic_hits.json` in the exact
+  `{srt, in, out, q}` shape `becky-hits` consumes → double-click **"Open Forensic Hits"** to load them onto
+  the timeline. (Or: `becky-hits --hits _forensic_hits.json --folder <dir>`.)
+
+Flags: `--limit N` (candidates), `--window N` (context cues each side), `--dry-run` (Stage 1 only, no
+LLM), `--selftest` (offline proof), `--model`/`--effort` (default `claude-sonnet-5[1m]` / `xhigh`). Set
+`BECKY_JUDGE_GUIDE=<the rubric path>` once and you can drop `--rubric`. Degrade-never-crash: no Claude →
+every candidate is kept with a note, so Stage 1 is never lost. The judge also returns **new_alias**
+candidates (coded refs not yet in the map) so the guide grows as new videos are ingested — confirm them,
+then append to the guide's changelog with the file + timestamp where established.
+
 ## The easy way — the `becky` command (plain language)
 ```
 becky enroll-wiki --wiki "C:\Users\only1\Documents\Obsidian\llm-wiki-CLANCY-TRIAL\wiki" --kb kb-final

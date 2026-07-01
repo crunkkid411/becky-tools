@@ -53,12 +53,15 @@ type candidate struct {
 }
 
 // verdict is the judge's decision for one candidate (the LLM's JSON-schema output).
+// NewAlias is the evolution hook: a coded reference the judge spotted that is NOT in
+// the guide's alias map yet — surfaced for human confirmation so the map can grow.
 type verdict struct {
 	ID         int     `json:"id"`
 	Keep       bool    `json:"keep"`
 	Who        string  `json:"who"`
 	Confidence float64 `json:"confidence"`
 	Reason     string  `json:"reason"`
+	NewAlias   string  `json:"new_alias"`
 }
 
 type outHit struct {
@@ -76,13 +79,14 @@ type outFile struct {
 }
 
 type report struct {
-	Out        string `json:"out"`
-	Query      string `json:"query"`
-	Mode       string `json:"recall_mode"` // qmd: hybrid | keyword | unavailable
-	Candidates int    `json:"candidates"`
-	Kept       int    `json:"kept"`
-	Judged     bool   `json:"judged"` // false = dry-run / judge unavailable (all kept)
-	Note       string `json:"note,omitempty"`
+	Out        string   `json:"out"`
+	Query      string   `json:"query"`
+	Mode       string   `json:"recall_mode"` // qmd: hybrid | keyword | unavailable
+	Candidates int      `json:"candidates"`
+	Kept       int      `json:"kept"`
+	Judged     bool     `json:"judged"` // false = dry-run / judge unavailable (all kept)
+	NewAliases []string `json:"new_aliases,omitempty"`
+	Note       string   `json:"note,omitempty"`
 }
 
 func main() {
@@ -94,7 +98,10 @@ func main() {
 	out := fs.String("out", "", "output hit-list path (default: <folder>\\_forensic_hits.json)")
 	limit := fs.Int("limit", 40, "max Stage-1 candidates to judge")
 	window := fs.Int("window", 4, "context cues on EACH side of a hit (more context = better referent resolution)")
-	model := fs.String("model", "", "Claude model for the judge (default: CLI default)")
+	// Stage 2 defaults to Sonnet 5 with a 1M context window and xhigh reasoning — the
+	// nuanced referent-resolution the small local models can't do (Jordan's directive).
+	model := fs.String("model", "claude-sonnet-5[1m]", "Claude model for the judge (the [1m] suffix = 1M-token context)")
+	effort := fs.String("effort", "xhigh", "reasoning effort: low|medium|high|xhigh|max")
 	dryRun := fs.Bool("dry-run", false, "Stage 1 only: emit every candidate, skip the LLM judge")
 	jsonOut := fs.Bool("json", false, "emit the machine report as JSON to stdout")
 	selftest := fs.Bool("selftest", false, "run the offline self-test (no qmd, no LLM) and exit")
@@ -125,6 +132,7 @@ func main() {
 	// Stage 2: JUDGE (or dry-run / degrade).
 	var kept []candidate
 	keepReason := map[int]verdict{}
+	var newAliases []string // coded refs the judge flagged as not-yet-in-the-map (evolution hook)
 	judged := false
 	note := ""
 	switch {
@@ -132,7 +140,13 @@ func main() {
 		kept = cands
 		note = "dry-run: every candidate kept (no LLM judge)"
 	default:
-		verdicts, jerr := judge(cands, loadText(*rubricArg, defaultRubric), loadText(*aliasArg, ""), *query, *model)
+		// The rubric/alias guide: --rubric wins, else the BECKY_JUDGE_GUIDE env path
+		// (so an agent doesn't repeat it), else the built-in default rubric.
+		rubricSrc := strings.TrimSpace(*rubricArg)
+		if rubricSrc == "" {
+			rubricSrc = strings.TrimSpace(os.Getenv("BECKY_JUDGE_GUIDE"))
+		}
+		verdicts, jerr := judge(cands, loadText(rubricSrc, defaultRubric), loadText(*aliasArg, ""), *query, *model, *effort)
 		if jerr != nil {
 			kept = cands
 			note = "judge unavailable (" + firstLine(jerr) + ") — every candidate kept; re-run when Claude is available"
@@ -141,6 +155,9 @@ func main() {
 			for _, v := range verdicts {
 				if v.Keep {
 					keepReason[v.ID] = v
+				}
+				if s := strings.TrimSpace(v.NewAlias); s != "" {
+					newAliases = append(newAliases, s)
 				}
 			}
 			for _, c := range cands {
@@ -161,7 +178,7 @@ func main() {
 		fatalf("write hit-list: %v", err)
 	}
 
-	rep := report{Out: outPath, Query: *query, Mode: mode, Candidates: len(cands), Kept: len(of.Hits), Judged: judged, Note: note}
+	rep := report{Out: outPath, Query: *query, Mode: mode, Candidates: len(cands), Kept: len(of.Hits), Judged: judged, NewAliases: newAliases, Note: note}
 	if *jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(rep)
 	} else {
@@ -170,6 +187,9 @@ func main() {
 			fmt.Printf("Stage 2 (judge): kept %d of %d\n", rep.Kept, rep.Candidates)
 		} else {
 			fmt.Printf("Stage 2: SKIPPED — %s\n", note)
+		}
+		if len(newAliases) > 0 {
+			fmt.Printf("NEW ALIAS CANDIDATES (confirm + add to the guide's changelog):\n  - %s\n", strings.Join(newAliases, "\n  - "))
 		}
 		fmt.Printf("Wrote %d hits -> %s\n", rep.Kept, rep.Out)
 		fmt.Printf("Next: becky-hits --hits %q --folder %q   (or double-click \"Open Forensic Hits\")\n", outPath, *folder)
@@ -246,20 +266,25 @@ func windowAround(srtPath string, t float64, half int) (float64, float64, string
 
 // ---- Stage 2: JUDGE ---------------------------------------------------------
 
-func judge(cands []candidate, rubric, aliases, query, model string) ([]verdict, error) {
+func judge(cands []candidate, rubric, aliases, query, model, effort string) ([]verdict, error) {
 	if agentrun.ResolveBin() == "" {
 		return nil, fmt.Errorf("claude CLI not found on PATH")
 	}
 	prompt := buildPrompt(cands, rubric, aliases, query)
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
+	var extra []string
+	if strings.TrimSpace(effort) != "" {
+		extra = []string{"--effort", effort} // xhigh reasoning for the nuanced referent resolution
+	}
 	res, err := agentrun.Run(ctx, agentrun.AgentSpec{
 		PromptStdin:  prompt,
 		JSONSchema:   verdictSchema,
-		Model:        model,
+		Model:        model, // e.g. claude-sonnet-5[1m] — the [1m] suffix = 1M-token context
 		MaxTurns:     1,
-		MaxBudgetUSD: 3.0,
+		MaxBudgetUSD: 5.0,
 		WorkDir:      os.TempDir(), // neutral dir: no project CLAUDE.md, stays on-task
+		ExtraArgs:    extra,
 	})
 	if err != nil {
 		return nil, err
@@ -282,7 +307,7 @@ func judge(cands []candidate, rubric, aliases, query, model string) ([]verdict, 
 
 // verdictSchema MUST be a single line with no spaces: it is passed as a --json-schema
 // argv to the Windows claude.cmd shim, which mangles multi-line / spaced args.
-const verdictSchema = `{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer"},"keep":{"type":"boolean"},"who":{"type":"string"},"confidence":{"type":"number"},"reason":{"type":"string"}},"required":["id","keep","reason"]}}},"required":["verdicts"]}`
+const verdictSchema = `{"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"integer"},"keep":{"type":"boolean"},"who":{"type":"string"},"confidence":{"type":"number"},"reason":{"type":"string"},"new_alias":{"type":"string"}},"required":["id","keep","reason"]}}},"required":["verdicts"]}`
 
 const defaultRubric = `You are a careful forensic evidence judge for a harassment investigation.
 Decide whether each transcript window is a GENUINE hit for the deputy's request.
