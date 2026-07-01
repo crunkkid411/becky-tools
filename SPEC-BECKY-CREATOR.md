@@ -1,12 +1,20 @@
 # SPEC-BECKY-CREATOR.md — Becky Review becomes the full autopilot creator-editing suite
 
-> **STATUS: DESIGN ONLY (2026-07-01), awaiting Jordan's go/no-go on the open decisions in
-> §6. This is the umbrella/vision spec — each numbered component in §3 gets its own
-> dedicated `SPEC-BECKY-<NAME>.md` when it's greenlit for build.** Grounded in a direct
-> code audit of `gui/BeckyReview/`, `cmd/clip/bridge.go`, `internal/assistant`,
-> `internal/edl`/`internal/reel`/`internal/footage`, `cmd/cut`, and `internal/otio` (2026-07-01),
-> plus a competitive audit of clipwith.ai, aiaicaptain.ai, and wisecut.ai. Companion doc:
-> `SPEC-BECKY-NLE.md` (see §6 decision #1 — this spec proposes that plan be paused).
+> **STATUS: DESIGN ONLY (2026-07-01, revised after real research + two rounds of
+> correction), awaiting Jordan's go/no-go on §6.** This is the umbrella/vision spec — each
+> numbered component in §3 gets its own dedicated `SPEC-BECKY-<NAME>.md` when it's greenlit.
+> Grounded in a direct code audit of `gui/BeckyReview/`, `cmd/clip/bridge.go`,
+> `internal/assistant`, `internal/edl`/`internal/reel`/`internal/footage`, `cmd/cut`, and
+> `internal/otio`; a competitive audit of clipwith.ai, aiaicaptain.ai, and wisecut.ai; and six
+> real cited research passes (academic papers, engineering docs, vendor manuals — see §11)
+> covering highlight detection, editing-style learning, video reframing, B-roll retrieval,
+> and real-time multi-track playback engines. **This revision exists because the first draft
+> got two things wrong from unexamined assumptions, and Jordan's own corrections (he has
+> never used Becky Review for creative editing — his real edit history is in VEGAS Pro 18;
+> and a Shotcut-engine adoption was already tried last week and abandoned for timeline lag)
+> changed the plan materially. Where a claim below is sourced, it says so; where it's still
+> an open bet, it says that too — see §10.** Companion doc: `SPEC-BECKY-NLE.md` (§6 decision
+> #1 — this spec now has *evidence*, not just a hunch, that the Shotcut plan should stay paused).
 
 ---
 
@@ -69,17 +77,18 @@ Jordan ────────► │  Becky Review (gui/BeckyReview) — WPF s
 ```
 
 **Design rules (load-bearing, carried over from the rest of the suite):**
-- **Judgment tasks default to the AVLM (Gemma-4 E4B→12B) as the primary decision-maker, not
-  a corroborating afterthought.** It watches and listens natively on Jordan's own hardware
-  with headroom to spare — no separate vision/audio encoder pipeline, unlike the
-  vendor-bolted-on approach older AI-editing services use. "Is this worth keeping," "does
-  this B-roll match the topic" — these are judgment calls and go to the AVLM directly.
-  Cheap deterministic signals (silence, transcript grep) still get used, but only to narrow
-  *which* windows the model looks at for time-budget reasons, never to make the call
-  themselves. **This does not apply to every subtask** — per-frame geometry/tracking
-  (reframe-crop), signal processing (beat detection, ducking), and plain statistics
-  (style-profile mining) are not judgment calls and stay on the lightweight deterministic
-  tools already in the repo; handing those to a 12B model would just make them slower.
+- **No default answer for "which tool judges this" — it's decided per-subtask against real
+  evidence, not a blanket rule.** The first draft of this spec claimed the AVLM (Gemma-4)
+  should always be the primary judge for anything requiring "understanding." Real research
+  (§3.2, §3.4) shows that's wrong as a blanket rule: the published state of the art for both
+  highlight detection and B-roll retrieval is purpose-built, specifically-trained models —
+  not a general multimodal LLM prompted to judge. So the actual rule is narrower: **cheap
+  deterministic signals narrow candidates for time budget; a purpose-built or benchmarked
+  approach makes the call where one exists and is checkable against real footage; the AVLM
+  is one candidate approach to test empirically, not an assumed winner.** Per-frame
+  geometry/tracking (reframe-crop), signal processing (beat detection, ducking), and plain
+  statistics (style-profile mining) are a different kind of problem entirely and stay on the
+  lightweight deterministic tools already in the repo regardless.
 - Every new stage is its own becky-shaped unit (a package + a bridge verb, or a standalone
   CLI the bridge shells out to) — never a monolith bolted onto `bridge.go`. Single-tool
   principle holds.
@@ -100,18 +109,19 @@ Jordan ────────► │  Becky Review (gui/BeckyReview) — WPF s
 
 | Existing package | What it gives today | Reuse for this spec |
 |---|---|---|
-| `internal/footage` | Folder discovery, 5-tier transcript-sidecar matching, `GrepTranscripts()` | Index a personal B-roll library the same way (§3.6); no new discovery code needed |
+| `internal/footage` | Folder discovery, 5-tier transcript-sidecar matching, `GrepTranscripts()` | Index a personal B-roll library the same way (§3.4); no new discovery code needed |
 | `cmd/cut` (becky-cut) | auto-editor + a real Silero-VAD post-pass; CLI only today | Wrap as a bridge verb (§3.1) — zero new detection logic |
 | `internal/assistant` | Cost-tiered (Tier 0 regex / Tier 1 local / Tier 2 frontier) clip-picking, `Proposal{Actions,...}` contract, map-reduce funnel over transcripts | The exact shape "Autopilot" reuses — a new deterministic Tier-0 "build a draft cut" action instead of only responding to typed asks |
 | `cmd/clip/bridge.go` | 35-verb NDJSON dispatch over one warm `*App`; adding a verb = one method + one `case` | Add verbs per stage: `autocut_silence`, `detect_highlights`, `style_profile`, `caption_style`, `reframe_vertical`, `suggest_broll`, `sync_music` |
-| `internal/edl` / `internal/reel` | Flat `Clip{ID,Source,In,Out,Label,Meta}` list; linear ffmpeg concat + forensic drawtext overlay; no transitions/speed | **Needs the multi-track restructure (§3.9)** before B-roll/music/caption tracks can layer over the main cut |
-| `internal/otio` | Full export: OTIO/EDL/FCPXML/MLT/VEGAS, all real | No new work — this is already ahead of every competitor researched |
-| `gui/BeckyReview/ui/app.js` | Drag-reorder, trim, split-at-playhead, undo/redo, save/load, multi-select | Add an "Autopilot" button + per-stage progress + (once §3.9 lands) additional timeline lanes |
-| becky-identify / InsightFace (elsewhere in the suite) | Face detection already used for forensic naming | Reuse for reframe (§3.5) instead of a new model |
-| `internal/orchestrate` (self-regulation / corroborate-then-conclude engine) | Forces ≥2 independent signals before a forensic conclusion | The same pattern fits highlight-detection (§3.2) almost exactly — "is this moment worth keeping" via corroborating signals instead of "is this person on screen" |
-| becky-imagegen (Krea-2) | Deterministic local text→image | Fallback B-roll generator when no matching real footage exists (§3.6) |
-| `internal/audioengine` (DAW sidechain/ducking) | Real sidechain ducking already built for the drum-machine mixer | Reuse verbatim for music-under-speech ducking (§3.8) |
+| `internal/edl` / `internal/reel` | Flat `Clip{ID,Source,In,Out,Label,Meta}` list; linear ffmpeg concat + forensic drawtext overlay; `proxy.go`'s `ScrubProxy` already proves intra-frame/CFR proxy media for single-track | Single-track stages (silence cut, captions) need nothing new; B-roll/music/multi-caption need **§3.9's Option A/B decision** — this is now a real playback-engine question, not a filter-graph rewrite |
+| `internal/otio` | Full export: OTIO/EDL/FCPXML/MLT/VEGAS, all real | No new work — already ahead of every competitor researched, and it's the mechanism Option B (§3.9) would hand off through |
+| `gui/BeckyReview/ui/app.js` | Drag-reorder, trim, split-at-playhead, undo/redo, save/load, multi-select | Add an "Autopilot" button + per-stage progress + (only if Option A is chosen) additional timeline lanes |
+| becky-identify / InsightFace (elsewhere in the suite) | Face detection already used for forensic naming | Reuse as the face-signal input to an AutoFlip-style weighted-fusion reframe (§3.5), not a standalone naive crop |
+| `internal/orchestrate` (self-regulation / corroborate-then-conclude engine) | Forces ≥2 independent signals before a forensic conclusion | Still the right ethos for how conservatively Autopilot should surface highlights (§3.2, §10) — but the actual highlight-detection mechanism itself is an open empirical question (§3.2), not something this pattern settles on its own |
+| becky-imagegen (Krea-2) | Deterministic local text→image | Fallback B-roll generator when no matching real footage exists (§3.4) |
+| `internal/audioengine` (DAW sidechain/ducking) | Real sidechain ducking already built for the drum-machine mixer | Reuse verbatim for music-under-speech ducking (§3.8), if Option A is chosen |
 | `internal/arrange` / becky-beat | Tempo/beat detection for composition | Reuse for cutting music to a beat grid (§3.8) |
+| `vegas/BeckyReviewTimeline.cs` | Working proof-of-concept of driving VEGAS Pro's `ScriptPortal.Vegas` scripting API from this repo | Direct template for Phase 2's history-extraction script (§3.6) |
 
 ---
 
@@ -125,33 +135,49 @@ needed — this is the cheapest, most-proven win and should be Phase 1.
 
 ### 3.2 Highlight / best-moment detection — **MISSING** (becky-hits only places an
 externally-supplied list; it detects nothing itself)
-This is the one every competitor sells as the core value (Wisecut's "viral moments,"
-ClipWith's visual+transcript scoring), and it's a judgment call ("is this worth keeping"),
-not a math problem — so it should be made by the same tool becky already trusts to make
-judgment calls: **Gemma-4 (E4B→12B), which watches AND listens natively, no separate
-vision/audio encoder pipeline required.** That capability didn't exist when older
-AI-editing services were designed — ClipWith bolts on a separate visual-indexing vendor
-(TwelveLabs) precisely because their reasoning model can't see. Becky's does, on Jordan's
-own GPU, with headroom to spare. So this is architected the same way `becky-validate`
-already corroborates "is this person on screen": **the AVLM's own watch-and-listen pass is
-the actual judgment, not an occasional expensive add-on.**
-1. **Cheap signals narrow the WINDOWS, not the decision.** Raw footage can be hours long;
-   feeding all of it to a 12B model in real time is a time-budget problem, not a
-   capability one. Transcript gaps/silence boundaries (already computed by `internal/
-   footage`/becky-cut) just mark candidate segment boundaries worth showing the model —
-   they never decide keep/cut on their own.
-2. **Gemma-4 watches each candidate segment and judges it directly** — one pass, audio +
-   video + speech together (energy, reaction, visual content, delivery), the same call
-   shape `becky-validate` already makes. This replaces the old idea of separately scoring
-   transcript-text and audio-RMS and visual-frames and fusing three heuristics after the
-   fact — that separation was a workaround for encoder-only models that couldn't watch and
-   listen at once; it isn't needed here.
+
+**This section has been wrong twice already, in opposite directions — recorded honestly
+because the correction matters more than looking consistent.** First draft: cheap heuristics
+decide, AI watching is a rare expensive double-check. Second draft (after Jordan's first
+pushback): AI watching is the primary judge because it's cheap now. Real cited research
+says neither is right as a blanket answer.
+
+**What's actually sourced:** the published state of the art for this exact task — video
+highlight detection / moment retrieval, benchmarked on datasets built for it (QVHighlights,
+TVSum, Charades-STA) — is **purpose-built, specifically-trained detection architectures**,
+not a general multimodal LLM prompted to judge a clip. UMT (arxiv.org/pdf/2203.12745),
+QD-DETR (ar5iv.labs.arxiv.org/html/2303.13874), TR-DETR (arxiv.org/pdf/2401.02309), and
+VideoLights (openreview.net/forum?id=F1cN3aoAty) are all transformer architectures trained
+specifically to localize and score salient moments — the authors of UMT explicitly frame it
+as "the first scheme to integrate multi-modal (visual-audio) learning" for this, i.e. a
+trained model, not a prompted one. Notably, VideoLights *does* fold in a vision-language
+model (BLIP-2) — but as a **feature extractor feeding a purpose-built architecture**, not as
+the thing making the final call. That's a meaningfully different shape than "ask Gemma-4 if
+this is a highlight."
+
+There's also a specific, directly relevant documented failure mode for the
+prompt-the-AVLM-directly approach: a 2026 paper (arxiv.org/html/2606.06926) found that
+feeding a long video to a multimodal LLM with a fixed/uniform frame-sampling budget causes
+**severe information loss** — sampling "a frame every 75 seconds" on a two-hour video misses
+short salient events entirely. This is a real, cited risk specifically for the "just let the
+big model watch it" approach on anything longer than a short clip.
+
+**What this means for becky, honestly:**
+1. Cheap deterministic signals (silence/transcript gaps, already computed by `internal/
+   footage`/becky-cut) narrowing which windows get evaluated is *more* important given the
+   frame-sampling failure mode above, not less — it keeps each evaluated window short enough
+   that the sampling problem doesn't bite.
+2. Within a narrowed window, **which approach actually judges best is an open, testable
+   question, not a settled one** — a specialized trained detector (harder to build, matches
+   the academic SOTA) vs. prompting Gemma-4 directly on a short clip (cheaper to build, no
+   published evidence either way at this scale) are both real candidates that need
+   evaluating against real labeled examples, not chosen from priors.
 3. **Calibrate against Jordan's own past keep/cut decisions**, not a generic "virality"
-   notion — his saved `.reel.json` history (§3.6) is ground truth for what *he* considers a
-   keeper, so the prompt/rubric should be tuned against that, not an assumed universal
-   standard.
-Needs its own spec (`SPEC-BECKY-HIGHLIGHTS.md`) to work out the exact prompt/rubric and
-verify it against real footage — that's the actual research task, not picking a new model.
+   notion — whatever can be recovered from his VEGAS Pro edit history (§3.6) is the closest
+   thing to ground truth for what *he* considers a keeper.
+Needs its own spec (`SPEC-BECKY-HIGHLIGHTS.md`) that starts from the cited architectures
+above and actually tests at least two approaches against Jordan's real footage before
+picking one — that's the real research task, not a one-line model pick.
 
 ### 3.3 Auto-captions with real styling — **PARTIAL**
 `cmd/captions` today only decides whether to trust existing subtitles vs. re-run ASR — it
@@ -163,42 +189,98 @@ karaoke-highlight, minimal) built on the same ASS pipeline, exposed as a `captio
 verb. Low research risk — this is mostly engineering, not model selection.
 
 ### 3.4 B-roll suggestion / insertion — **MISSING, nothing in code**
+
+**Also corrected from the last draft.** The previous version of this section proposed
+"Gemma-4 describes the B-roll library once, then keyword-match the transcript against those
+descriptions" as the primary mechanism, dismissing embedding search as an unnecessary later
+optimization. The actual text-video retrieval literature says the opposite: **joint
+text-video embedding retrieval is the benchmarked state of the art**, and
+caption-then-match is used in real research only as a *supplementary* signal layered on top
+of embedding retrieval, never as a standalone replacement. CLIP4Clip
+(semanticscholar.org/paper/CLIP4Clip...) and X-CLIP (arxiv.org/pdf/2207.07285) both report
+concrete state-of-the-art retrieval numbers on standard benchmarks (MSR-VTT, DiDeMo,
+ActivityNet) using joint embeddings. Cap4Video (arxiv.org/pdf/2301.00184) — the paper
+closest to "generate captions and use them for retrieval" — explicitly frames generated
+captions as an *auxiliary* branch that "supplements the original Query-Video matching
+branch," not a substitute for it. So a caption-then-keyword-match approach, on its own, is
+the weaker method per the literature that actually tested this, not a reasonable shortcut.
+
 Needs three things, none built yet:
 1. A personal B-roll library, indexed the same way `internal/footage` already indexes case
    folders (that discovery code is directly reusable).
-2. **A matching mechanism — Gemma-4 describes the library once, then matches against the
-   transcript it already produced.** No new model is needed: watch each B-roll clip one
-   time (offline, whenever the library changes) and have Gemma-4 write what's in it, the
-   same watch-and-listen call used everywhere else in the suite; matching a topic phrase
-   from the transcript against those plain-language descriptions is then a cheap text-match,
-   not a new embedding model to research. (An embedding-model semantic-search path is a
-   possible *later* optimization if plain-text matching proves too coarse on a large
-   library — not a v1 requirement.)
+2. **A matching mechanism — a small local text-video (or text-image, if B-roll is treated as
+   keyframes) embedding model should be the primary candidate**, with an LLM-generated
+   description as a *secondary/supplementary* signal if it measurably helps, not the primary
+   mechanism. This means real model research is needed here after all (which family of
+   embedding model, how large, does it need fine-tuning on Jordan's own footage style) —
+   this was wrongly waved off as unnecessary in the previous draft.
 3. A generated-footage fallback when nothing in the library matches — **becky-imagegen
    (Krea-2) already exists and is exactly this**, no new model work required for that half.
-Needs `SPEC-BECKY-BROLL.md`.
+Needs `SPEC-BECKY-BROLL.md`, starting from the CLIP4Clip/X-CLIP family as the reference
+point for the matching model, not skipping straight to "just describe it with the AVLM."
 
-### 3.5 Auto-reframe for vertical — **MISSING**
-No 9:16/portrait auto-crop exists. But becky already runs face detection (InsightFace, used
-for forensic naming) — a speaker-centered crop that tracks the detected face centroid is a
-straightforward reuse rather than a new model pick. Saliency-based crop (no face required,
-for B-roll/establishing shots) would be the one piece needing a small research pass.
-Needs `SPEC-BECKY-REFRAME.md`.
+### 3.5 Auto-reframe for vertical — **MISSING, but this one has a strong, real reference
+architecture to copy — Google's AutoFlip**
+No 9:16/portrait auto-crop exists in becky today. Unlike highlights/B-roll above, this
+sub-problem has a well-documented, open, purpose-built reference implementation:
+**Google's AutoFlip** (opensource.googleblog.com/2020/02/autoflip..., research.google/blog/
+autoflip...), which is not naive single-signal face-following — it's a **weighted multi-signal
+fusion**: each detected feature type (face, object, "salient region") gets an importance
+weight, a `SignalFusingCalculator` combines them, and the crop path is chosen from three
+behaviors per shot (stationary / constant pan / continuous track) after buffering the whole
+shot, then smoothed via Euclidean-norm optimization against a low-degree polynomial camera
+path — specifically to avoid jittery frame-to-frame crop jumps. A separate academic approach
+("Watch to Edit: Video Retargeting using Gaze," arxiv.org/pdf/1807.03125) uses real gaze data
+and dynamic programming to decide where to cut, with the crop path built from piecewise
+constant/linear/parabolic segments — a more research-heavy alternative worth knowing about
+but not necessary for v1.
+**Revised plan:** don't build a naive "follow the face centroid" crop — replicate AutoFlip's
+actual shape (weighted signal fusion + shot-buffered behavior choice + smoothed path
+optimization), reusing becky's existing InsightFace detection as the face signal input
+rather than reimplementing detection. This directly avoids AutoFlip's own documented reason
+for existing: raw per-frame tracking is jittery and loses secondary subjects; the fusion +
+smoothing is what fixes that.
+Needs `SPEC-BECKY-REFRAME.md`, built directly against AutoFlip's published methodology.
 
-### 3.6 Style-learning from Jordan's own past edits — **MISSING, but the cheapest,
-highest-differentiation win in this whole spec**
-Of the three competitors researched, only aiaicaptain.ai claims this, and it doesn't
-disclose the mechanism. **Becky Review already has exactly the training data for free**:
-every finished edit is saved as a `.reel.json` (`save_reel`/`load_reel` already exist).
-v1 needs **no model at all** — pure statistics mined from Jordan's own saved reels:
-average clip length, cuts-per-minute, keep-ratio against source footage length, which
-caption style he ends up using most, how often he adds B-roll. Store this as a
-`style_profile.json` and feed it as *defaults/priors* into every other autopilot stage
-(bias highlight-detection's target clip length toward his historical average, default
-caption style to his most-used preset, etc.). This should be one of the very first
-components built — it's deterministic, offline, low-risk, and it's the feature that makes
-the output feel like *his* edit instead of a generic auto-cut. Needs
-`SPEC-BECKY-EDIT-STYLE.md`, but the core logic is almost build-ready as spec'd here.
+### 3.6 Style-learning from Jordan's own past edits — **MISSING; the previous draft's whole
+premise was false and has been replaced**
+The first draft of this section assumed Becky Review's saved `.reel.json` files were "free
+training data" from Jordan's past edits. **That's wrong — Jordan has never used Becky
+Review for creative editing, only forensic review, so there is no such history there.**
+His real editing history — years of it — lives in **VEGAS Pro 18** project files.
+
+**What's actually recoverable, researched directly:** the `.veg` project file itself is
+**not a documented or crackable format** — no official Sony/MAGIX spec exists, and no
+maintained open-source parser was found. The real path is VEGAS Pro's own **documented
+scripting API** (MAGIX's "VEGAS Pro Scripting API Summary," the `ScriptPortal.Vegas`
+namespace), which exposes `Track`, `TrackEvent`, `Effect`/`Transitions`, `Media`, and
+`Region` objects — confirmed working in practice by community script repos
+(github.com/evankale/VegasScripts) and, directly relevant, **this repo's own
+`vegas/BeckyReviewTimeline.cs` already drives this exact API pattern**. VEGAS can be
+launched with a script attached from the command line (`vegas210.exe /SCRIPT ... /SCRIPTARGS
+...`), so a script that walks `Project.Tracks` → `Track.Events`, dumps structured data, then
+calls `Vegas.Exit()`, can in principle batch through a folder of old `.veg` files —
+launching the real VEGAS process each time (there is no documented true headless/no-window
+mode; this is a real, bounded, but non-trivial engineering task, not a quick win).
+
+**What that recovers vs. doesn't, honestly:** per-project track count, event/clip durations
+(→ cuts-per-minute, average clip length), transition types used, text/title-generator
+presence, track layout (video/audio/B-roll structure) — all structural. It does **not**
+recover footage content/topic or *why* a cut was made — the scripting API surfaces timeline
+structure only, never editorial intent. This is consistent with the one directly relevant
+academic reference found (arxiv.org/pdf/2105.06988, a video-editing-style-transfer paper),
+which models "style" via **framing, content type, playback speed, and lighting per
+segment** — a similarly structural, not semantic, representation. Notably, that paper (and
+every other academic result found — arxiv.org/pdf/1801.10281, the Tsinghua "Write-A-Video"
+paper, arxiv.org/pdf/2108.04294, arxiv.org/pdf/1907.07345) addresses one-shot style transfer
+or universal continuity-editing conventions learned from a *general corpus of movies* — **no
+academic work was found addressing "learn one specific person's long-term editing style
+across many of their own past projects."** That means this remains a genuinely open
+engineering bet, not something with an established recipe to copy — the VEGAS-mining path
+is the most credible way to get *real* signal, but what to do with it afterward still has
+to be worked out empirically against Jordan's actual footage, not assumed.
+Needs `SPEC-BECKY-EDIT-STYLE.md`, scoped around VEGAS scripting extraction first — see §6
+decision #6 for how much of his history is worth mining before building on top of it.
 
 ### 3.7 Multicam / best-take selection — **MISSING, low priority**
 No competitor researched does this convincingly either, and it's unclear it matches
@@ -214,15 +296,77 @@ The video-side gap is just wiring: pick a music bed (from a licensed/personal li
 beat grid, duck under speech using the existing sidechain logic. Needs
 `SPEC-BECKY-MUSICBED.md`.
 
-### 3.9 Multi-track timeline data model — **STRUCTURAL PREREQUISITE, not optional**
-`edl.Reel.Clips` is a flat, single-track list today, and `internal/reel`'s renderer is a
-linear ffmpeg concat with no overlay/mix support. B-roll (needs to sit over the main cut),
-a music bed (needs to run under the whole timeline), and styled captions (arguably their
-own lane) all require **actual layering**, not just more items in one list. This is real,
-non-trivial engineering — `Reel.Clips []Clip` → `Reel.Tracks []Track{Kind, Clips}`, plus a
-rewrite of `internal/reel`'s ffmpeg filter graph to composite tracks instead of
-concatenating one, plus a second lane in `gui/BeckyReview/ui/app.js`'s `#track` UI. This
-should be **Phase 0** — nothing in §3.4/§3.8/§3.3-styled-lane can land cleanly without it.
+### 3.9 Multi-track timeline data model — **STRUCTURAL PREREQUISITE, and the single riskiest
+item in this whole spec — now backed by real evidence, not a hand-wave**
+
+The previous draft treated this as "rewrite `internal/reel`'s ffmpeg filter graph for
+multi-track" — a data-structure problem. **Jordan corrected this directly: a Shotcut/MLT
+integration was actually built last week (working functionally) and abandoned because
+Shotcut's own timeline navigation was too laggy to use.** That's not a hypothetical risk,
+it already happened once, on a mature, widely-used engine — and real research now explains
+exactly why, which changes what "Phase 0" has to mean.
+
+**Why MLT/Shotcut lagged (sourced):** MLT's own architecture docs (mltframework.org/docs/
+framework/) describe a Tractor that pulls a frame from *every* track's producer on every
+tick and composites in software — an N-track project means N simultaneous decodes with no
+built-in GPU compositor. Shotcut's own lead developer, in the project's support forum,
+states directly that non-intra-frame ("temporally compressed") source video is "much
+slower" to seek, that "performance is already a known problem," and that the documented fix
+is a proxy workflow (forum.shotcut.org/t/why-stutter/15132). Kdenlive's own maintainer-
+tracked performance issue (invent.kde.org/multimedia/kdenlive/-/issues/439) lists missing
+GPU acceleration and inefficient multitrack composition as known root causes. Separately,
+a Shotcut-specific writeup (binarytides.com) states plainly that "shotcut does not and
+cannot use the gpu decoder... to play the timeline" — CPU-only decode is architectural, not
+a bug to be patched.
+
+**Why the obvious fix ("extend `internal/reel`'s ffmpeg concat") would very likely repeat
+this exact failure:** ffmpeg's own documentation confirms seeking is fundamentally
+decode-forward-from-keyframe-and-discard, not indexed random access — quoting ffmpeg.org's
+own docs directly: *"in most formats it is not possible to seek exactly... this extra
+segment between the seek point and position will be decoded and discarded."* MLT's own docs
+describe themselves as a "pull-based producer/consumer model" **specifically in contrast to**
+"linear streaming models where data flows continuously forward through a fixed pipeline" —
+i.e. MLT exists because plain ffmpeg filter graphs aren't built for exactly this. And
+libmpv — which Becky Review's current smooth single-track preview already depends on — is
+documented (mpv's own manual) as **one video output per instance**; `--lavfi-complex` can
+combine multiple *inputs* but only into one static, non-runtime-changeable output graph,
+never independent live-timed tracks. None of this is a data-model problem; it's a real-time
+playback-engine problem, and there is direct local precedent that getting it wrong is
+expensive (a week of work, thrown away).
+
+**What actually works, per every pro NLE researched (including the one Jordan already
+trusts):** Adobe Premiere's Mercury Playback Engine (GPU-accelerated compositing, not CPU
+filter graphs, plus a green/yellow/red disk-cached preview-file system); DaVinci Resolve's
+Optimized Media (auto-generated low-res/intra-frame proxies) plus Smart Cache (auto-caches
+anything too heavy to play live); and — most relevant, since Jordan already uses this
+successfully — **VEGAS Pro's own Dynamic RAM Preview**, which caches ahead-of-playhead
+frames into RAM specifically for anything that can't decode/composite in real time
+(help.magix-hub.com). The convergent pattern: **proxy/low-res media + GPU compositing + a
+real ahead-of-playhead frame cache** — three things MLT's stock pipeline doesn't force by
+default, which is the credible root cause of the Shotcut failure.
+
+**Two real options, not one assumed path — this needs Jordan's input (§6 decision #7):**
+- **Option A — build a thin custom compositor.** Becky already has half of this proven:
+  `internal/reel`'s `ScrubProxy` already generates intra-frame, constant-frame-rate proxy
+  media for single-track scrub, and it works. The missing half is compositing multiple
+  layers live — the evidence above suggests running one libmpv instance per track (each
+  decoding its own proxy stream into its own render-API surface, since mpv's single-stream
+  decode+seek is already proven smooth in this app) and adding a genuinely new, small
+  GPU-compositing layer above them to blend the surfaces plus caption/overlay text. This is
+  real, scoped engineering — not a rewrite of `internal/reel`'s filter graph — but it is a
+  **prototype/spike, not a guaranteed win**, and it has a real failure precedent to respect.
+- **Option B — don't build a multi-track compositor at all.** Autopilot produces a rough
+  cut + highlights + caption preview in Becky Review's existing single-track view (already
+  proven smooth), and B-roll/music-bed layering happens **after** export, in VEGAS Pro
+  itself — where Jordan already edits multi-track successfully today, and where
+  `internal/otio` already has a working VEGAS export path. This sacrifices the "one button,
+  fully composited in Becky Review" experience for B-roll/music specifically, but avoids the
+  single riskiest engineering bet in this entire spec, and doesn't ask becky to out-engineer
+  a problem three professional NLEs solve with dedicated GPU/cache subsystems.
+
+This should be **Phase 0**, but Phase 0 is now "resolve decision #7 with a real prototype/
+spike (if Option A), or scope the VEGAS hand-off cleanly (if Option B)" — not a data-model
+rewrite assumed to just work.
 
 ### 3.10 Export to standard NLE formats — **already fully built, no work needed**
 `internal/otio` covers OTIO/EDL/FCPXML/MLT/VEGAS with real writers and passing selftest
@@ -254,52 +398,70 @@ he has to touch anything.
 
 ## 5. Build plan — phases (each phase gets its own dedicated spec before it's built)
 
-- [ ] **Phase 0 — multi-track data model** (§3.9). Prerequisite plumbing; a spike first to
-      confirm the ffmpeg filter-graph rewrite is tractable without destabilizing the
-      existing forensic render path.
+- [ ] **Phase 0 — resolve the multi-track engine question** (§3.9). NOT a data-model
+      rewrite — a real prototype/spike (Option A) or a scoped VEGAS hand-off design
+      (Option B), decided per §6 decision #7 first. This gates B-roll/music/styled-caption
+      layering; it does not gate Phase 1.
 - [ ] **Phase 1 — wire becky-cut as a bridge verb** (§3.1) + an "Autopilot: cut silence"
-      button. Reuses 100% existing, proven code. Cheapest possible first slice.
-- [ ] **Phase 2 — style-profile from saved `.reel.json` history** (§3.6). Deterministic,
-      no models, high differentiation. `SPEC-BECKY-EDIT-STYLE.md`.
-- [ ] **Phase 3 — highlight/best-moment detection** (§3.2). `SPEC-BECKY-HIGHLIGHTS.md`,
-      research the scoring approach before building.
+      button. Reuses 100% existing, proven code, needs no multi-track anything. Cheapest
+      possible first slice — can ship before Phase 0 is even decided.
+- [ ] **Phase 2 — VEGAS history extraction** (§3.6). Batch-script VEGAS Pro's own scripting
+      API over Jordan's past `.veg` projects to recover real structural edit data. Real
+      engineering (VEGAS must launch per file), scope depends on §6 decision #6. Feeds the
+      style-profile that later phases can use as a prior.
+- [ ] **Phase 3 — highlight/best-moment detection** (§3.2). `SPEC-BECKY-HIGHLIGHTS.md` —
+      test at least a specialized-detector approach and a direct-AVLM-prompt approach
+      against real footage before picking one; don't assume either.
 - [ ] **Phase 4 — auto-captions with styling** (§3.3). `SPEC-BECKY-CAPTIONS-STYLE.md`.
-- [ ] **Phase 5 — auto-reframe vertical** (§3.5), reusing existing face-detection.
+      Single-track-safe — doesn't need Phase 0 resolved.
+- [ ] **Phase 5 — auto-reframe vertical** (§3.5), built directly against AutoFlip's
+      published weighted-signal-fusion + smoothed-path method, not naive face-following.
       `SPEC-BECKY-REFRAME.md`.
-- [ ] **Phase 6 — B-roll suggestion/insertion** (§3.4). `SPEC-BECKY-BROLL.md`.
-- [ ] **Phase 7 — music sync + ducking** (§3.8), pending decision #3 below.
-      `SPEC-BECKY-MUSICBED.md`.
+- [ ] **Phase 6 — B-roll suggestion/insertion** (§3.4). `SPEC-BECKY-BROLL.md`, starting from
+      a text-video embedding model (CLIP4Clip/X-CLIP family), not caption-then-keyword-match.
+      Needs Phase 0/Option A if B-roll is to layer inside Becky Review; not needed at all
+      under Option B.
+- [ ] **Phase 7 — music sync + ducking** (§3.8), pending decision #3. Also gated on Phase
+      0/Option A under the same logic as Phase 6.
 - [ ] *(parked)* Multicam/best-take (§3.7) — revisit only on real need.
 
 Each phase ships the same way the rest of the suite does: deterministic Go core + tests
 first, model/hardware boundary named explicitly, offline proof before any "local agent"
-handoff.
+handoff. **Phases 1 and 4 no longer depend on Phase 0 at all** — that dependency was an
+artifact of the old "everything needs multi-track" assumption; silence-cut and caption
+preview both work fine on the existing single-track timeline.
 
 ---
 
 ## 6. Open decisions for Jordan
 
-1. **Becky Review is the product now, not the Shotcut fork.** `SPEC-BECKY-NLE.md` proposed
-   forking Shotcut as the real NLE; that work never happened in this repo (confirmed —
-   zero QML/Shotcut references exist here) and you've since started actually using Becky
-   Review as your daily editor. This spec assumes Shotcut adoption is **paused**, the same
-   way `CANVAS-NORTH-STAR.md` pinned becky-canvas over REAPER after that direction
-   ping-ponged for weeks. **Confirm this, or say if you still want the Shotcut path — this
-   is exactly the kind of flip-flop CLAUDE.md warns about, better to pin it once now.**
-2. **Phase order** — the plan above front-loads the cheapest/highest-value wins (silence
-   cut wiring, then your own style profile) before the model-research-heavy stages
-   (highlights, B-roll, reframe). Confirm that ordering matches what you'd actually use
-   first, or reorder.
-3. **Music bed source** — do you have a personal/licensed royalty-free music library
-   already, or does this need a licensing decision before §3.8 can start? This blocks
-   Phase 7 specifically, nothing else.
-4. **B-roll library** — same question as above for §3.4: is there an existing folder of
-   your own B-roll footage to index, or does Phase 6 start from becky-imagegen-generated
-   stills/clips only?
-5. **Forensic/creator mode split** — should Autopilot and its new buttons be hidden by
-   default in a case-review session (so evidence review never looks cluttered), surfaced
-   only when a folder isn't tagged as a forensic case? Or should everything just always be
-   visible? Low-stakes, but worth deciding before the UI work in Phase 1.
+1. **Becky Review is the product now, not the Shotcut fork — and this is now backed by a
+   real result, not a hunch.** You already tried adopting a mature engine (Shotcut/MLT) and
+   it failed specifically on timeline lag, the exact risk this spec's §3.9 is built around.
+   `SPEC-BECKY-NLE.md`'s plan should stay paused on that evidence, the same way
+   `CANVAS-NORTH-STAR.md` pinned canvas over REAPER. **Confirm, or say if there's more to
+   the Shotcut story I should know before this gets pinned harder.**
+2. **Phase order** — Phase 1 (silence cut) no longer waits on anything; confirm that's still
+   the right first slice, or reorder given Phase 0's new shape.
+3. **Music bed source** — personal/licensed library, or does this need a licensing decision
+   first? Blocks Phase 7 only, and only matters if Option A (§3.9) is chosen.
+4. **B-roll library** — existing folder of your own B-roll, or start from
+   becky-imagegen-generated stills/clips only? Only matters if Option A is chosen.
+5. **Forensic/creator mode split** — should Autopilot's buttons stay hidden in a
+   case-review session, or always visible? Low-stakes, decide before Phase 1's UI work.
+6. **How much VEGAS history is worth mining (§3.6)?** The extraction script has to launch
+   VEGAS once per old project file — realistically slow over years of work. Do you want
+   everything mined, a recent window (e.g. last 1-2 years), or a hand-picked set of projects
+   you consider your best work? This changes Phase 2's scope a lot.
+7. **The big one: Option A or B for multi-track (§3.9)?** A = build a real (but genuinely
+   risky, prototype-first) compositor inside Becky Review so B-roll/music/captions layer in
+   one app. B = keep Becky Review single-track (proven smooth) for the rough-cut/highlights/
+   caption-preview part of Autopilot, and hand off to VEGAS Pro itself — where you already
+   edit multi-track successfully — for B-roll and music layering, via the OTIO/EDL/VEGAS
+   export that already works. B sacrifices some of the "one button" experience but carries
+   far less engineering risk, given Shotcut already showed what this kind of bet can cost.
+   **This decision should be made deliberately, not defaulted into** — it changes what
+   Phase 0 even means.
 
 ---
 
@@ -318,20 +480,33 @@ handoff.
 ## 8. Build plan — cloud vs. local baton (pre-build; this section becomes the shipped-vs-left report once work starts)
 
 **Cloud can build without hardware/models:**
-- Phase 0's multi-track `Reel`/`Track` data model + a rewritten (still cuts-only, now
-  multi-track) `internal/reel` filter graph, fully unit-tested.
-- Phase 1's `autocut_silence` bridge verb (pure wiring, no new detection logic).
-- Phase 2's style-profile miner (pure statistics over existing `.reel.json` files, no
-  models) — this can ship essentially complete from cloud alone.
-- The bridge-verb scaffolding for Phases 3-8 (deterministic cores, degrade-never-crash
+- Phase 1's `autocut_silence` bridge verb (pure wiring, no new detection logic, no
+  dependency on Phase 0 anymore).
+- Phase 2's VEGAS-scripting-API extraction script skeleton (the `ScriptPortal.Vegas`
+  traversal pattern, following `vegas/BeckyReviewTimeline.cs`'s existing shape) — but it
+  cannot be *run* or verified without a real VEGAS Pro install, so cloud can only write it,
+  not prove it.
+- The bridge-verb scaffolding for Phases 3-6 (deterministic cores, degrade-never-crash
   stubs where a model is required) — same pattern as the rest of the SPEC-FACTORY tools.
+- Option A's data-model half of Phase 0 (`Reel.Tracks` structure) *if* Option A is chosen —
+  but NOT the playback-engine prototype itself, which needs real hardware/GPU to validate.
 
-**Needs local (hardware/model/GUI):**
-- Wiring `gui/BeckyReview/ui/app.js`'s new "Autopilot" button + progress UI + (once Phase 0
-  lands) the additional timeline lane(s) — needs the real window to click through.
-- Any model selection/tuning for Phases 3-6 (highlight scoring thresholds, B-roll
-  embedding model if that path is chosen, reframe crop tuning) on Jordan's real footage.
-- Phase 7's music-bed integration once decision #3 above is settled.
+**Needs local (hardware/model/GUI/real footage) — this list grew after the research above,
+not shrank:**
+- The Phase 0 prototype/spike itself (Option A) — needs a real GPU, real footage, and
+  Jordan's own eyes on whether it actually feels smooth, exactly the gate that caught
+  Shotcut's failure. This cannot be proven from cloud; a green build is not evidence here.
+- Running Phase 2's VEGAS extraction against Jordan's real project history (needs VEGAS Pro
+  installed and his actual `.veg` files).
+- Wiring `gui/BeckyReview/ui/app.js`'s new "Autopilot" button + progress UI + (if Option A)
+  the additional timeline lane(s).
+- Testing Phase 3's highlight-detection candidates (specialized model vs. direct AVLM
+  prompt) against Jordan's real footage — this is now an explicit empirical comparison, not
+  a model pick.
+- Any model selection/tuning for Phase 6 (which text-video embedding model, whether it needs
+  fine-tuning on Jordan's own B-roll style) and Phase 5 (AutoFlip-style crop tuning) on real
+  footage.
+- Phase 7's music-bed integration once decision #3 is settled.
 
 ---
 
@@ -347,28 +522,75 @@ principle: any one stage can be improved, disabled, or replaced without touching
 
 ## 10. Honest open questions
 
-- Exactly how much of the multi-track render rewrite (§3.9) can reuse `internal/reel`'s
-  existing overlay/drawtext code vs. needing a genuine new filter-graph builder — needs a
-  spike, not a guess, before Phase 0 is scoped in detail.
+- **Option A vs. B for §3.9 (decision #7) is the single biggest unresolved question in this
+  whole spec**, and it's Jordan's to make, not a default to fall into — everything about
+  B-roll/music/multi-caption scope depends on it.
+- Whether a specialized highlight-detection architecture or a direct AVLM prompt performs
+  better on Jordan's actual footage (§3.2) — genuinely unknown, needs a real empirical test,
+  not a prior.
+- Whether a small text-video embedding model needs any fine-tuning on Jordan's specific
+  B-roll library to retrieve well (§3.4), or works acceptably off-the-shelf — unknown until
+  tried against his real library.
+- How much VEGAS history is practically worth mining (§3.6, decision #6) given the
+  per-file-launch cost of the only viable extraction path.
+- Whether style-profile (§3.6) should be one global profile or per-content-type — affects
+  the profile schema, cheap to decide either way once Phase 2's real data exists.
 - Whether highlight-detection (§3.2) should default to conservative (fewer, high-confidence
   highlights) or generous (more candidates, human trims down) — probably conservative,
   matching the corroborate-then-conclude ethos, but worth confirming against how Jordan
   actually wants to review Autopilot's output.
-- Whether style-profile (§3.6) should be one global profile or per-content-type (e.g. a
-  different rhythm for vlogs vs. gaming clips) if Jordan edits more than one style of video
-  — affects the profile schema, cheap to decide either way before Phase 2 starts.
 
 ---
 
 ## 11. Sources
 
-- Internal: `gui/BeckyReview/*`, `cmd/clip/bridge.go`, `cmd/clip/app.go`,
-  `internal/assistant/{router,funnel,classify,assist}.go`, `internal/edl/*`,
-  `internal/reel/*`, `internal/footage/*`, `cmd/cut/main.go`, `internal/otio/*`,
-  `internal/orchestrate`, `internal/audioengine`, `internal/arrange`, becky-imagegen
-  (`SPEC-BECKY-IMAGEGEN.md`), `GAP-ANALYSIS.md` §5 (video/NLE gaps), `SPEC-BECKY-NLE.md`,
-  `CANVAS-NORTH-STAR.md` (the precedent for pinning a direction after ping-ponging).
-- External (competitive reference, researched 2026-07-01): clipwith.ai/how-it-works
-  (transcript + visual-index + tiered-LLM edit reasoning), aiaicaptain.ai (NLE-native
-  plugin, style-learning "Presets" from past projects), wisecut.ai (Autopilot: silence cut
-  + highlight detection + reframe + captions + music/ducking).
+**Internal:** `gui/BeckyReview/*`, `cmd/clip/bridge.go`, `cmd/clip/app.go`,
+`internal/assistant/{router,funnel,classify,assist}.go`, `internal/edl/*`,
+`internal/reel/*` (incl. `proxy.go`'s existing `ScrubProxy`), `internal/footage/*`,
+`cmd/cut/main.go`, `internal/otio/*`, `internal/orchestrate`, `internal/audioengine`,
+`internal/arrange`, `vegas/BeckyReviewTimeline.cs`, becky-imagegen (`SPEC-BECKY-IMAGEGEN.md`),
+`GAP-ANALYSIS.md` §5, `SPEC-BECKY-NLE.md`, `CANVAS-NORTH-STAR.md`.
+
+**Competitive reference:** clipwith.ai/how-it-works, aiaicaptain.ai, wisecut.ai.
+
+**Highlight detection (§3.2):** UMT — arxiv.org/pdf/2203.12745; QD-DETR —
+ar5iv.labs.arxiv.org/html/2303.13874; TR-DETR — arxiv.org/pdf/2401.02309; VideoLights —
+openreview.net/forum?id=F1cN3aoAty; long-video MLLM frame-sampling information-loss finding
+— arxiv.org/html/2606.06926.
+
+**Editing-style learning (§3.6):** style-transfer-from-one-source-video paper —
+arxiv.org/pdf/2105.06988; video-story composition — arxiv.org/pdf/1801.10281; Write-A-Video
+(Tsinghua) — cg.cs.tsinghua.edu.cn/papers/TOG-2019-Write-a-Video.pdf; continuity-editing
+pattern learning — arxiv.org/pdf/2108.04294; imitation-learning cinematography controller —
+arxiv.org/pdf/1907.07345; Adobe Vidmento — research.adobe.com/news/vidmento...; Adobe color
+-preference patent — image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/9557829; VEGAS
+Scripting API — help.magix-hub.com (MAGIX "VEGAS Pro Scripting API Summary" +
+`vegasscriptfaq.html`), github.com/evankale/VegasScripts, github.com/haroldlinke/VEGASPython,
+jetdv.com/2024/09/16/finding-all-transitions-in-the-project-in-vegas-pro.
+
+**Auto-reframe (§3.5):** Google AutoFlip — opensource.googleblog.com/2020/02/autoflip...,
+research.google/blog/autoflip-an-open-source-framework-for-intelligent-video-reframing,
+mediapipe.readthedocs.io/en/latest/solutions/autoflip.html; gaze-based retargeting —
+arxiv.org/pdf/1807.03125; seam-carving video retargeting — research.google.com/pubs/
+archive/36246.pdf.
+
+**B-roll retrieval (§3.4):** X-CLIP — arxiv.org/pdf/2207.07285; CLIP4Clip —
+semanticscholar.org/paper/CLIP4Clip...; Cap4Video — arxiv.org/pdf/2301.00184; dual deep
+encoding — arxiv.org/pdf/2009.05381; VideoCLIP-XL — arxiv.org/pdf/2410.00741.
+
+**Multi-track playback engine (§3.9):** MLT framework architecture —
+mltframework.org/docs/framework/; Shotcut forum (Dan Dennedy) —
+forum.shotcut.org/t/why-stutter/15132; Kdenlive maintainer performance tracking —
+invent.kde.org/multimedia/kdenlive/-/issues/439; Shotcut CPU-only decode —
+binarytides.com/reduce-timeline-preview-lag-in-shotcut; ffmpeg seek/decode behavior —
+ffmpeg.org/ffmpeg.html, ffmpeg.org/pipermail/libav-user/2014-October/007590.html; ffmpeg
+filter_complex concat slowdown — trac.ffmpeg.org/ticket/8533; mpv stream-oriented design —
+github.com/mpv-player/mpv/blob/master/DOCS/man/vf.rst; mpv single-output-per-instance +
+`--lavfi-complex`/`--external-files` limits — mpv `DOCS/man/options.rst`, GitHub issues
+#8340/#3854/#10130/#4439/#10454, `overlay-add` in `DOCS/man/input.rst`; Adobe Mercury
+Playback Engine — helpx.adobe.com/premiere/.../mercury-playback-engine-gpu-accelerated-in
+-premiere.html, blog.adobe.com/en/publish/2011/02/20/red-yellow-and-green-render-bars;
+DaVinci Resolve Proxy Media/Smart Cache — steakunderwater.com/VFXPedia (Resolve 18.6
+manual mirror), blackmagicdesign.com/products/davinciresolve/fusion; VEGAS Dynamic RAM
+Preview — help.magix-hub.com/video/vegas/22/en/content/topics/5-preview/
+using_dynamic_ram_previews.htm.
