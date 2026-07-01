@@ -58,7 +58,7 @@ func TestBuildReelSnapsToCue(t *testing.T) {
 		{SRT: "kitchen.srt", T: "0:01:02", Q: "quote"}, // snaps to cue 2, explicit label
 		{SRT: "missing.srt", T: "00:00:05"},            // no video -> warning, skipped
 	}
-	reel, warnings := buildReel(idx, hits, "case", 0.5, 4.0)
+	reel, warnings, _ := buildReel(idx, hits, "case", 0.5, 4.0)
 
 	if len(reel.Clips) != 2 {
 		t.Fatalf("clips = %d, want 2", len(reel.Clips))
@@ -90,7 +90,7 @@ func TestBuildReelExplicitWindowAndFallback(t *testing.T) {
 		{SRT: "kitchen.srt", In: "0:30", Out: "0:36"}, // explicit window, no cue snap
 		{SRT: "kitchen.srt", T: "0:00:40"},            // between cues -> fixed fallback window
 	}
-	reel, _ := buildReel(idx, hits, "case", 0.5, 4.0)
+	reel, _, _ := buildReel(idx, hits, "case", 0.5, 4.0)
 	if len(reel.Clips) != 2 {
 		t.Fatalf("clips = %d, want 2", len(reel.Clips))
 	}

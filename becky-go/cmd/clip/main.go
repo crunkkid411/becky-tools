@@ -148,6 +148,15 @@ func cmdBridge() {
 		}
 	}
 
+	// Human-review Q&A cards (questions.go) — the same "Open Forensic Hits" launcher sets
+	// BECKY_REVIEW_QUESTIONS to the <reel>.questions.json sidecar becky-hits wrote. The
+	// page's boot() fetches `questions`; unset -> no cards (degrade, never crash).
+	if qPath := strings.TrimSpace(os.Getenv("BECKY_REVIEW_QUESTIONS")); qPath != "" {
+		if err := app.LoadQuestions(qPath); err != nil {
+			fmt.Fprintf(os.Stderr, "becky-review: could not pre-load questions %q: %v\n", qPath, err)
+		}
+	}
+
 	out := bufio.NewWriter(os.Stdout)
 	var outMu sync.Mutex
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,12 +35,12 @@ func runSelftest() {
 	}
 
 	hits := []hit{
-		{SRT: "example.srt", T: "00:00:11"},               // -> snaps to cue 1, label from cue
-		{SRT: "example.srt", T: "0:01:02", Q: "custom"},   // -> snaps to cue 2, explicit label
-		{SRT: "example.srt", In: "00:00:30", Out: "0:35"}, // -> explicit window
-		{SRT: "missing.srt", T: "00:00:05"},               // -> no source video, skipped
+		{SRT: "example.srt", T: "00:00:11", Question: "who is this?"},               // cue 1 + a review question
+		{SRT: "example.srt", T: "0:01:02", Q: "custom"},                             // cue 2, explicit label, no question
+		{SRT: "example.srt", In: "00:00:30", Out: "0:35", Question: "who is this?"}, // SAME question -> grouped
+		{SRT: "missing.srt", T: "00:00:05"},                                         // no source video, skipped
 	}
-	reel, warnings := buildReel(idx, hits, "selftest", 0.5, 4.0)
+	reel, warnings, cqs := buildReel(idx, hits, "selftest", 0.5, 4.0)
 
 	fail := false
 	check := func(name string, ok bool, detail string) {
@@ -64,6 +65,19 @@ func runSelftest() {
 	}
 	check("skip.orphan_warned", len(warnings) == 1, fmt.Sprintf("(warnings=%d, want 1)", len(warnings)))
 	check("overlay.enabled", reel.Overlay.Enabled, "")
+
+	// Q&A sidecar: two clips share one question -> one grouped entry with both clip IDs.
+	check("questions.clip_count", len(cqs) == 2, fmt.Sprintf("(got %d, want 2)", len(cqs)))
+	reelPath := filepath.Join(dir, "r.reel.json")
+	if err := writeQuestions(reelPath, cqs); err != nil {
+		check("questions.write", false, err.Error())
+	} else {
+		b, _ := os.ReadFile(questionsPathFor(reelPath))
+		var qf questionsFile
+		_ = json.Unmarshal(b, &qf)
+		ok := len(qf.Questions) == 1 && qf.Questions[0].Question == "who is this?" && len(qf.Questions[0].ClipIDs) == 2
+		check("questions.grouped", ok, fmt.Sprintf("(entries=%d)", len(qf.Questions)))
+	}
 
 	if fail {
 		fmt.Fprintln(os.Stderr, "selftest: FAIL")

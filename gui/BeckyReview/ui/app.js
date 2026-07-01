@@ -917,6 +917,7 @@
   async function sendAsk() {
     var text = $ask.value.trim();
     if (!text) { return; }
+    if (state.activeQuestionId) { saveAnswer(text); return; }   // answering a review question, not asking becky
     $ask.value = '';
     addUserMsg(text);
     var rep = await beckyCall('ask', { utterance: text });
@@ -925,6 +926,76 @@
   }
   $send.addEventListener('click', sendAsk);
   $ask.addEventListener('keydown', function (e) { if (e.key === 'Enter') { sendAsk(); } });
+
+  // ---- human-review Q&A panel (engine: questions/save_answer; becky-hits sidecar) ----
+  // A forensic hit-list can attach a "?" question to clips. becky-hits groups them into a
+  // sidecar the engine pre-loads; here each question is a clickable card in the right
+  // panel: click it -> its clips are selected + played in order so Jordan can answer, and
+  // his answer is saved to _forensic_answers.json (an agent routes it into the wiki).
+  var $questions = document.getElementById('questions');
+  state.questions = [];
+  state.activeQuestionId = null;
+
+  function renderQuestions() {
+    if (!$questions) { return; }
+    var qs = state.questions || [];
+    if (!qs.length) { $questions.hidden = true; $questions.innerHTML = ''; return; }
+    $questions.hidden = false;
+    var open = qs.filter(function (q) { return !q.answered; }).length;
+    var html = '<div class="qhead">Review questions <span class="qcount">' + open + ' open</span></div>';
+    for (var i = 0; i < qs.length; i++) {
+      var q = qs[i];
+      var rgb = hexToRgb(PALETTE[i % PALETTE.length]);
+      var accent = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+      var active = (String(state.activeQuestionId) === String(q.id));
+      var n = (q.clip_ids || []).length;
+      var meta = q.answered ? '✓ answered' : (n + ' clip' + (n === 1 ? '' : 's') + ' — click to watch');
+      html += '<div class="qcard' + (q.answered ? ' answered' : '') + (active ? ' active' : '') +
+              '" data-qid="' + attr(q.id) + '" style="border-left-color:' + accent + '">' +
+                '<div class="qtext">' + escapeHtml(q.question) + '</div>' +
+                '<div class="qmeta">' + meta + '</div>' +
+                (q.answered && q.answer ? '<div class="qans">' + escapeHtml(q.answer) + '</div>' : '') +
+              '</div>';
+    }
+    $questions.innerHTML = html;
+  }
+
+  if ($questions) {
+    $questions.addEventListener('click', function (e) {
+      var card = e.target.closest('.qcard');
+      if (card) { selectQuestion(card.dataset.qid); }
+    });
+  }
+
+  function selectQuestion(id) {
+    var qs = state.questions || [], q = null, i;
+    for (i = 0; i < qs.length; i++) { if (String(qs[i].id) === String(id)) { q = qs[i]; break; } }
+    if (!q) { return; }
+    state.activeQuestionId = String(id);
+    // select the clips this question is about + play from the first, so he watches them in order
+    var ids = (q.clip_ids || []).filter(function (c) { return !!clipById(c); }).map(String);
+    if (ids.length) {
+      state.selectedClipIds = ids;
+      state.selectedClipId = ids[0];
+      markSelectedClip();
+      seekClipById(ids[0], true);
+    }
+    $ask.placeholder = 'answer: ' + q.question;
+    $ask.focus();
+    renderQuestions();
+  }
+
+  async function saveAnswer(text) {
+    var id = state.activeQuestionId;
+    var q = (state.questions || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    $ask.value = '';
+    $ask.placeholder = 'ask becky...';
+    state.activeQuestionId = null;
+    var rep = await beckyCall('save_answer', { id: id, question: q ? q.question : '', answer: text });
+    if (rep.ok && rep.data && rep.data.questions) { state.questions = rep.data.questions; renderQuestions(); }
+    else { addBeckyMsg('(could not save answer: ' + (rep.error || 'error') + ')'); return; }
+    addBeckyMsg('Answer saved' + (q ? ' for: "' + q.question + '"' : '') + '. It will be routed into the wiki.');
+  }
 
   // use Claude toggle
   $useClaude.addEventListener('change', async function () {
@@ -1056,11 +1127,18 @@
     var idx = seen.indexOf(String(src || ''));
     return (idx < 0 ? 0 : idx) % PALETTE.length;
   }
-  // clipColor tints the WHOLE clip with its source colour: faint when unselected and
-  // SOLID/opaque when selected (the selection cue itself — no separate outline).
+  // clipColor tints the clip CENTRE with its source colour: faint when unselected,
+  // SOLID/opaque when selected (the selection cue).
   function clipColor(src, selected) {
     var rgb = hexToRgb(PALETTE[sourceColorIndex(src)]);
     return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (selected ? 0.9 : 0.24) + ')';
+  }
+  // clipBorder outlines the clip in its OWN source colour (near-full opacity) when
+  // unselected; a selected clip gets a white edge so it still reads as selected.
+  function clipBorder(src, selected) {
+    if (selected) { return '#ffffff'; }
+    var rgb = hexToRgb(PALETTE[sourceColorIndex(src)]);
+    return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.95)';
   }
 
   function clipBlockHTML(clip) {
@@ -1070,7 +1148,7 @@
     var tip = truncate(label, 80) + '  (' + mmss(dur) + ')';
     var seld = isClipSelected(clip.id);
     return '<div class="clip' + (seld ? ' selected' : '') + '" data-id="' + attr(clip.id) +
-             '" style="width:' + w + 'px;background:' + clipColor(clip.source, seld) + '" title="' + attr(tip) + '">' +
+             '" style="width:' + w + 'px;background:' + clipColor(clip.source, seld) + ';border-color:' + clipBorder(clip.source, seld) + '" title="' + attr(tip) + '">' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
              '<div class="cthumb"></div>' +
              '<div class="cbody"></div>' +
@@ -1312,7 +1390,10 @@
       var sel = isClipSelected(blocks[i].dataset.id);
       blocks[i].classList.toggle('selected', sel);
       var c = clipById(blocks[i].dataset.id);
-      if (c) { blocks[i].style.background = clipColor(c.source, sel); }  // opaque when selected
+      if (c) {
+        blocks[i].style.background = clipColor(c.source, sel);   // opaque when selected
+        blocks[i].style.borderColor = clipBorder(c.source, sel); // own colour, or white when selected
+      }
     }
     updateRenderSelButton();
   }
@@ -2045,6 +2126,13 @@
 
     var tl = await beckyCall('timeline', {});         // restore any existing timeline
     if (tl.ok && tl.data) { applyTimeline(tl.data); }
+
+    // Human-review Q&A cards (pre-loaded by the engine from a hits sidecar, if any).
+    var q = await beckyCall('questions', {});
+    if (q.ok && q.data && q.data.questions && q.data.questions.length) {
+      state.questions = q.data.questions;
+      renderQuestions();
+    }
 
     // Default the chat to LOCAL Gemma (Jordan's rule): the box starts unchecked and we
     // push that to the engine on boot, rather than adopting the engine's own default.

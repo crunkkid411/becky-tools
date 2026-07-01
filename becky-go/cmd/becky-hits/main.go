@@ -41,11 +41,28 @@ import (
 // agent's context stays cheap. Either t (a point, snapped to its cue) OR in/out
 // (an explicit window) supplies the timing; q is an optional quote/label.
 type hit struct {
-	SRT string `json:"srt"` // transcript filename the agent is working from (basename)
-	T   string `json:"t"`   // a single timestamp; snapped to the containing cue
-	In  string `json:"in"`  // explicit window start (overrides t)
-	Out string `json:"out"` // explicit window end (overrides t)
-	Q   string `json:"q"`   // optional quote -> clip label (else the cue text)
+	SRT      string `json:"srt"` // transcript filename the agent is working from (basename)
+	T        string `json:"t"`   // a single timestamp; snapped to the containing cue
+	In       string `json:"in"`  // explicit window start (overrides t)
+	Out      string `json:"out"` // explicit window end (overrides t)
+	Q        string `json:"q"`   // optional quote -> clip label (else the cue text)
+	Question string `json:"?"`   // optional HUMAN-REVIEW question this clip helps answer
+}
+
+// clipQ ties a built clip to the human-review question it belongs to (if any).
+type clipQ struct {
+	ClipID   string
+	Question string
+}
+
+// questionsFile is the <reel>.questions.json sidecar the Q&A panel reads.
+type questionsFile struct {
+	Questions []reviewQuestion `json:"questions"`
+}
+type reviewQuestion struct {
+	ID       string   `json:"id"`
+	Question string   `json:"question"`
+	ClipIDs  []string `json:"clip_ids"`
 }
 
 // hitFile accepts either a bare JSON array of hits or an object wrapping them,
@@ -58,10 +75,11 @@ type hitFile struct {
 }
 
 type report struct {
-	Reel     string   `json:"reel"`
-	Clips    int      `json:"clips"`
-	Skipped  int      `json:"skipped"`
-	Warnings []string `json:"warnings,omitempty"`
+	Reel      string   `json:"reel"`
+	Clips     int      `json:"clips"`
+	Skipped   int      `json:"skipped"`
+	Questions int      `json:"questions,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 func main() {
@@ -111,7 +129,7 @@ func main() {
 		reelName = "Forensic review hits"
 	}
 
-	reel, warnings := buildReel(idx, hits, reelName, *pad, *window)
+	reel, warnings, cqs := buildReel(idx, hits, reelName, *pad, *window)
 
 	outPath := *out
 	if outPath == "" {
@@ -120,12 +138,24 @@ func main() {
 	if err := edl.Save(outPath, reel); err != nil {
 		beckyio.Fatalf("%v", err)
 	}
+	if err := writeQuestions(outPath, cqs); err != nil {
+		warnings = append(warnings, fmt.Sprintf("could not write questions sidecar: %v", err))
+	}
 
+	nq := 0
+	seen := map[string]bool{}
+	for _, cq := range cqs {
+		if !seen[cq.Question] {
+			seen[cq.Question] = true
+			nq++
+		}
+	}
 	beckyio.PrintJSON(report{
-		Reel:     outPath,
-		Clips:    len(reel.Clips),
-		Skipped:  len(hits) - len(reel.Clips),
-		Warnings: warnings,
+		Reel:      outPath,
+		Clips:     len(reel.Clips),
+		Skipped:   len(hits) - len(reel.Clips),
+		Questions: nq,
+		Warnings:  warnings,
 	})
 }
 
@@ -163,7 +193,7 @@ func loadHits(path string) ([]hit, hitFile, error) {
 
 // buildReel resolves every hit to a clip on a fresh forensic reel. It returns the
 // reel and a list of plain-language warnings for hits it had to skip.
-func buildReel(idx footage.FolderIndex, hits []hit, name string, pad, window float64) (edl.Reel, []string) {
+func buildReel(idx footage.FolderIndex, hits []hit, name string, pad, window float64) (edl.Reel, []string, []clipQ) {
 	reel := edl.Reel{
 		Version: "1",
 		Name:    name,
@@ -177,6 +207,7 @@ func buildReel(idx footage.FolderIndex, hits []hit, name string, pad, window flo
 		},
 	}
 	var warnings []string
+	var cqs []clipQ
 	n := 0
 	for i, h := range hits {
 		srt := strings.TrimSpace(h.SRT)
@@ -209,8 +240,45 @@ func buildReel(idx footage.FolderIndex, hits []hit, name string, pad, window flo
 				SourceFPS: v.Meta.SourceFPS,
 			},
 		})
+		if q := strings.TrimSpace(h.Question); q != "" {
+			cqs = append(cqs, clipQ{ClipID: fmt.Sprintf("c%d", n), Question: q})
+		}
 	}
-	return reel, warnings
+	return reel, warnings, cqs
+}
+
+// writeQuestions groups the per-clip questions into a <reel>.questions.json sidecar
+// (one entry per distinct question, in first-seen order, with the clip IDs it covers).
+// No questions -> no file. The Becky Review engine reads this via BECKY_REVIEW_QUESTIONS.
+func writeQuestions(reelPath string, cqs []clipQ) error {
+	if len(cqs) == 0 {
+		return nil
+	}
+	var qf questionsFile
+	idx := map[string]int{} // question text -> position in qf.Questions
+	for _, cq := range cqs {
+		i, ok := idx[cq.Question]
+		if !ok {
+			i = len(qf.Questions)
+			idx[cq.Question] = i
+			qf.Questions = append(qf.Questions, reviewQuestion{
+				ID:       fmt.Sprintf("q%d", i+1),
+				Question: cq.Question,
+			})
+		}
+		qf.Questions[i].ClipIDs = append(qf.Questions[i].ClipIDs, cq.ClipID)
+	}
+	b, err := json.MarshalIndent(qf, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(questionsPathFor(reelPath), b, 0o644)
+}
+
+// questionsPathFor is "<reel-without-ext>.questions.json" beside the reel.
+func questionsPathFor(reelPath string) string {
+	ext := filepath.Ext(reelPath)
+	return strings.TrimSuffix(reelPath, ext) + ".questions.json"
 }
 
 // clipWindow computes a clip's [in,out] and label for one hit. Explicit in/out

@@ -52,5 +52,11 @@ REM Hand the folder + reel to Becky Review. Its engine pre-loads BECKY_REVIEW_RE
 REM on startup and the window auto-opens BECKY_REVIEW_FOLDER, so the clips are ready.
 set "BECKY_REVIEW_FOLDER=%CASE%"
 set "BECKY_REVIEW_REEL=%REEL%"
+
+REM If the hit-list carried "?" questions, becky-hits wrote a questions sidecar next to
+REM the reel. Hand it to Becky Review so the Q&A cards show in the right panel.
+set "QSIDE=%CASE%\becky-hits.reel.questions.json"
+if exist "%QSIDE%" set "BECKY_REVIEW_QUESTIONS=%QSIDE%"
+
 call "%ROOT%Open Becky Review.bat"
 exit /b 0

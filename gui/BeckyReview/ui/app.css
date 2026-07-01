@@ -318,6 +318,18 @@ body {
 
 .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 
+/* Human-review Q&A cards — sit above the chat, in the right panel */
+.questions { flex: none; max-height: 45%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.qhead { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa8b5); display: flex; justify-content: space-between; align-items: center; }
+.qcount { color: var(--neon); font-weight: 600; }
+.qcard { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 8px 10px; background: rgba(255,255,255,.03); cursor: pointer; transition: box-shadow .12s, background .12s; }
+.qcard:hover { box-shadow: 0 0 6px rgba(255,255,255,.25); }
+.qcard.active { background: rgba(255,255,255,.08); box-shadow: 0 0 0 1px var(--neon) inset; }
+.qcard.answered { opacity: .6; }
+.qtext { color: var(--text); font-size: 14px; line-height: 1.35; }
+.qmeta { color: var(--muted, #9aa8b5); font-size: 12px; margin-top: 3px; }
+.qans { color: var(--text); font-size: 13px; margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--line); white-space: pre-wrap; }
+
 .intro {
   color: var(--dim); font-size: 14px; line-height: 1.5;
   padding: 10px 12px; border: 1px dashed var(--line);
@@ -478,11 +490,11 @@ body {
   flex: none;
   display: flex; align-items: stretch;
   background: var(--neon-soft);
-  border: 1px solid var(--neon-dim); border-radius: 6px;
+  border: 1px solid transparent; border-radius: 6px;   /* colour set inline (per source) */
   overflow: hidden; cursor: text;
-  transition: border-color .12s, box-shadow .12s;
+  transition: box-shadow .12s;
 }
-.clip:hover { border-color: var(--neon); }   /* hover brightens the border only; never clobbers the source colour */
+.clip:hover { box-shadow: 0 0 6px rgba(255,255,255,.35); }   /* glow on hover; never recolours the source outline */
 
 /* clip thumbnail = a SMALL FIXED icon pinned at the clip's left (after the trim
    handle). Fixed size so it never resizes/reflows as the clip width changes (the
@@ -498,8 +510,7 @@ body {
 /* a selected clip is shown by its SOLID (opaque) source colour — set inline by
    app.js — plus a thin white border for an unmistakable edge. No yellow outline. */
 .clip.selected {
-  border-color: var(--text);
-  z-index: 3;
+  z-index: 3;   /* the white edge + opaque fill are set inline (app.js clipBorder/clipColor) */
 }
 
 /* the clip currently being dragged to a new slot (CHANGE A): lifted + dimmed so the

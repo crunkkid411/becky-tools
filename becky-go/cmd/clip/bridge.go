@@ -126,6 +126,16 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "load_reel":
 		return a.LoadReel(argString(args, "path"))
 
+	// ---- human-review Q&A (questions.go) ----
+	case "questions":
+		return map[string]any{"questions": a.Questions()}, nil
+	case "save_answer":
+		qs, err := a.SaveAnswer(argString(args, "id"), argString(args, "question"), argString(args, "answer"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"questions": qs}, nil
+
 	// ---- render / export (new files) ----
 	case "export":
 		return a.ExportReel(argString(args, "output"))

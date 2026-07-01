@@ -84,6 +84,12 @@ type App struct {
 	// a becky-owned dir, never the case folder.
 	workDir string
 
+	// questions are the human-review Q&A cards (questions.go), pre-loaded from a
+	// <reel>.questions.json sidecar; questionsPath is that file (for the answers file
+	// beside it). Empty unless Becky Review was opened via "Open Forensic Hits".
+	questions     []ReviewQuestion
+	questionsPath string
+
 	// http is the lazily-started loopback media+shell server (server.go).
 	http httpState
 

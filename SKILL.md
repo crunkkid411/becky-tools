@@ -167,6 +167,23 @@ every candidate is kept with a note, so Stage 1 is never lost. The judge also re
 candidates (coded refs not yet in the map) so the guide grows as new videos are ingested — confirm them,
 then append to the guide's changelog with the file + timestamp where established.
 
+**Asking Jordan a question about clips — the human-review Q&A panel.** NEVER put a question you need a
+human to answer into a markdown file and expect Jordan to scroll to it (he can't). Instead, add a `"?"`
+field to the relevant hits and run **"Open Forensic Hits"** — becky-hits groups the questions into a
+sidecar and Becky Review shows each as a clickable card in the right panel. Jordan clicks a question, the
+tied clips play in order, he types the answer. Multiple clips (even from different videos) can share one
+question — that's corroborating context. Hit-list shape:
+
+```json
+[
+  {"srt":"FILE_A.srt","in":"00:12:34,560","out":"00:12:41,000","q":"quote","?":"Who is McToy Toy?"},
+  {"srt":"FILE_B.srt","in":"00:18:48,650","out":"00:19:09,300","?":"Who is McToy Toy?"}
+]
+```
+
+Answers are appended to `_forensic_answers.json` beside the reel (`{id,question,answer,answered_at}`). An
+agent reads that file next session and routes each answer into the wiki (the GUI never edits markdown).
+
 ## The easy way — the `becky` command (plain language)
 ```
 becky enroll-wiki --wiki "C:\Users\only1\Documents\Obsidian\llm-wiki-CLANCY-TRIAL\wiki" --kb kb-final
