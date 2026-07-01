@@ -172,7 +172,7 @@ func main() {
 
 	outPath := *out
 	if outPath == "" {
-		outPath = filepath.Join(*folder, "_forensic_hits.json")
+		outPath = nextForensicHitsPath(*folder)
 	}
 	if err := writeJSON(outPath, of); err != nil {
 		fatalf("write hit-list: %v", err)
@@ -336,6 +336,23 @@ func buildPrompt(cands []candidate, rubric, aliases, query string) string {
 		fmt.Fprintf(&b, "=== candidate %d  (file: %s) ===\n%s\n\n", c.ID, c.Name, c.Window)
 	}
 	return b.String()
+}
+
+// nextForensicHitsPath returns <folder>\_forensic_hits.json, or _forensic_hits1.json,
+// _forensic_hits2.json, ... — the next free name, so a new run never overwrites a
+// previous findings file (Jordan's rule).
+func nextForensicHitsPath(folder string) string {
+	p := filepath.Join(folder, "_forensic_hits.json")
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return p
+	}
+	for n := 1; n <= 9999; n++ {
+		p = filepath.Join(folder, fmt.Sprintf("_forensic_hits%d.json", n))
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			return p
+		}
+	}
+	return filepath.Join(folder, "_forensic_hits9999.json")
 }
 
 // hitsFor builds the becky-hits-shaped hit-list from the kept candidates, labelling

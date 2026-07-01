@@ -1037,17 +1037,30 @@
     return false;
   }
 
-  // sourceHue maps a source path to a stable hue (0-359), so every clip from the SAME
-  // video shares a colour. Deterministic (same path -> same hue every render).
-  function sourceHue(src) {
-    var s = String(src || ''), h = 0;
-    for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) >>> 0; }
-    return h % 360;
+  // The standard becky colour order (Jordan's palette) — used wherever several things
+  // are colour-coded (timeline clips by source, and Q&A later). Assigned in order of
+  // first appearance so the first source is green, the second blue, etc.
+  var PALETTE = ['#14FF39', '#00AEEF', '#DC143C', '#8A2BE2', '#FF57D1', '#FFD700', '#16F0EA', '#FF8C00'];
+  function hexToRgb(h) {
+    h = h.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  // sourceColorIndex maps a source path to a PALETTE slot by its order of first
+  // appearance on the timeline. ponytail: O(n) scan per call; fine for dozens of clips.
+  function sourceColorIndex(src) {
+    var clips = state.timeline.clips || [], seen = [];
+    for (var i = 0; i < clips.length; i++) {
+      var s = clips[i].source || '';
+      if (seen.indexOf(s) < 0) { seen.push(s); }
+    }
+    var idx = seen.indexOf(String(src || ''));
+    return (idx < 0 ? 0 : idx) % PALETTE.length;
   }
   // clipColor tints the WHOLE clip with its source colour: faint when unselected and
   // SOLID/opaque when selected (the selection cue itself — no separate outline).
   function clipColor(src, selected) {
-    return 'hsla(' + sourceHue(src) + ', 70%, 50%, ' + (selected ? 0.88 : 0.22) + ')';
+    var rgb = hexToRgb(PALETTE[sourceColorIndex(src)]);
+    return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (selected ? 0.9 : 0.24) + ')';
   }
 
   function clipBlockHTML(clip) {
@@ -1867,6 +1880,24 @@
         zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);          // plain wheel = zoom to cursor
       }
     }, { passive: false });
+
+    // Middle-mouse (scroll-wheel) button + drag = pan the timeline sideways, WITHOUT
+    // touching clips (the clip gestures are left-button only). preventDefault stops the
+    // browser's middle-click autoscroll.
+    var midPan = null;
+    tlBodyEl.addEventListener('pointerdown', function (e) {
+      if (e.button !== 1) { return; }
+      e.preventDefault();
+      midPan = { x: e.clientX, scroll: tlBodyEl.scrollLeft };
+      try { tlBodyEl.setPointerCapture(e.pointerId); } catch (_) {}
+      tlBodyEl.style.cursor = 'grabbing';
+    });
+    tlBodyEl.addEventListener('pointermove', function (e) {
+      if (midPan) { tlBodyEl.scrollLeft = midPan.scroll - (e.clientX - midPan.x); }
+    });
+    function endMidPan() { if (midPan) { midPan = null; tlBodyEl.style.cursor = ''; } }
+    tlBodyEl.addEventListener('pointerup', endMidPan);
+    tlBodyEl.addEventListener('pointercancel', endMidPan);
   }
 
   $tOverlay.addEventListener('click', async function () {

@@ -94,9 +94,11 @@ func (a *App) renderReel(r edl.Reel, outPath, suffix string) (ExportResult, erro
 		if err != nil {
 			return ExportResult{}, err
 		}
-		// Sequence the auto-named export so a re-export NEVER overwrites a previous
-		// one: <slug><suffix>_0001.mp4, then _0002, _0003, ... (next free number).
-		outPath = nextSequencedPath(dir, slugName(r.Name)+suffix, ".mp4")
+		// Name by the clips' SOURCE: clips_<sourcestem>_NNNN.mp4 when every clip is from
+		// ONE video, else clips_compilation_NNNN.mp4. The _NNNN sequence (next free number)
+		// means a re-export never overwrites a previous one.
+		_ = suffix // superseded by source-based naming (kept in the signature for callers)
+		outPath = nextSequencedPath(dir, exportBaseName(r.Clips), ".mp4")
 	}
 	outPath = absOut(outPath)
 
@@ -406,6 +408,26 @@ func nextSequencedPath(dir, base, ext string) string {
 		}
 	}
 	return filepath.Join(dir, base+"_9999"+ext)
+}
+
+// exportBaseName builds the export file base from the clips' SOURCE videos:
+// "clips_<sourcestem>" when every clip shares ONE source, else "clips_compilation".
+// nextSequencedPath appends the _NNNN sequence + extension.
+func exportBaseName(clips []edl.Clip) string {
+	stem := ""
+	for _, c := range clips {
+		s := baseName(c.Source)
+		s = strings.TrimSuffix(s, filepath.Ext(s))
+		if stem == "" {
+			stem = s
+		} else if s != stem {
+			return "clips_compilation"
+		}
+	}
+	if stem == "" {
+		return "clips_compilation"
+	}
+	return "clips_" + slugName(stem)
 }
 
 // absOut returns the cleaned absolute form of an output path (best-effort).

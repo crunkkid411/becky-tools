@@ -496,7 +496,8 @@ public partial class MainWindow : Window
         // position is the COMPILATION time, so _ovTcOffset (clip.in - clip.start_sec,
         // sent by the page) maps it back to the current clip's real source time.
         var line2 = "ORIG TC " + Smpte(pos + _ovTcOffset, _ovFps);
-        var dateLine = date.Length > 0 ? "Date: " + date : "";
+        // yt-dlp dates are UTC — label them so (matches the source's own timezone).
+        var dateLine = date.Length > 0 ? "Date: " + date + " UTC" : "";
         var linkLine = link; // the URL is self-evidently the link — no "Link:" label
 
         // A long filename/URL WRAPS to extra lines (at the readable base font) rather
@@ -518,10 +519,11 @@ public partial class MainWindow : Window
                 sb.Append("{\\fs").Append(fontSize).Append("}{\\1c&H").Append(colorBGR).Append("&}").Append(AssEscape(sub));
             }
         }
-        Emit(_ovFile, fs, "14FF39");   // filename — green
-        Emit(line2, fs, "FFFFFF");     // ORIG TC — white (short, won't wrap)
-        Emit(dateLine, meta2, "D7D7D7"); // Date — gray
-        Emit(linkLine, meta2, "D7D7D7"); // Link — gray
+        // Line order (top -> bottom): Date, ORIG TC, filename, link (Jordan's layout).
+        Emit(dateLine, meta2, "D7D7D7"); // Date — gray (top)
+        Emit(line2, fs, "FFFFFF");       // ORIG TC — white (short, won't wrap)
+        Emit(_ovFile, fs, "14FF39");     // filename — green
+        Emit(linkLine, meta2, "D7D7D7"); // Link — gray (bottom)
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", sb.ToString(), w, h, 0, false, false);
     }
 
