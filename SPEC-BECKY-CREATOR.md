@@ -69,6 +69,17 @@ Jordan ────────► │  Becky Review (gui/BeckyReview) — WPF s
 ```
 
 **Design rules (load-bearing, carried over from the rest of the suite):**
+- **Judgment tasks default to the AVLM (Gemma-4 E4B→12B) as the primary decision-maker, not
+  a corroborating afterthought.** It watches and listens natively on Jordan's own hardware
+  with headroom to spare — no separate vision/audio encoder pipeline, unlike the
+  vendor-bolted-on approach older AI-editing services use. "Is this worth keeping," "does
+  this B-roll match the topic" — these are judgment calls and go to the AVLM directly.
+  Cheap deterministic signals (silence, transcript grep) still get used, but only to narrow
+  *which* windows the model looks at for time-budget reasons, never to make the call
+  themselves. **This does not apply to every subtask** — per-frame geometry/tracking
+  (reframe-crop), signal processing (beat detection, ducking), and plain statistics
+  (style-profile mining) are not judgment calls and stay on the lightweight deterministic
+  tools already in the repo; handing those to a 12B model would just make them slower.
 - Every new stage is its own becky-shaped unit (a package + a bridge verb, or a standalone
   CLI the bridge shells out to) — never a monolith bolted onto `bridge.go`. Single-tool
   principle holds.
@@ -115,22 +126,32 @@ needed — this is the cheapest, most-proven win and should be Phase 1.
 ### 3.2 Highlight / best-moment detection — **MISSING** (becky-hits only places an
 externally-supplied list; it detects nothing itself)
 This is the one every competitor sells as the core value (Wisecut's "viral moments,"
-ClipWith's visual+transcript scoring). becky's own corroborate-then-conclude philosophy is
-actually a strong fit here — treat "is this clip worth keeping" the same way `internal/
-orchestrate` treats "is this person on screen": don't trust one weak signal.
-Candidate signals to corroborate, cheapest first:
-1. **Deterministic, zero-model v1:** transcript-grep for reaction/emphasis phrases
-   ("no way," laughter markers if the ASR captures them), audio RMS/energy peaks, speech
-   pace changes — all things `internal/footage` and the transcript pipeline already expose.
-2. **Tier-1/Tier-2 LLM scoring:** reuse `internal/assistant`'s existing cost ladder to score
-   a transcript window for "quotable/engaging," the same funnel shape already used for
-   quote search.
-3. **Visual corroboration:** becky already has frame-level watching (Gemma-4 via
-   becky-vision/becky-validate) elsewhere in the suite — sampling frames for
-   motion/expression energy as a *third* independent signal, never the only one.
-Needs its own spec (`SPEC-BECKY-HIGHLIGHTS.md`) to pick the exact scoring thresholds —
-flag this as "research a class, then verify" per CLAUDE.md, same as the TTS/vision model
-picks.
+ClipWith's visual+transcript scoring), and it's a judgment call ("is this worth keeping"),
+not a math problem — so it should be made by the same tool becky already trusts to make
+judgment calls: **Gemma-4 (E4B→12B), which watches AND listens natively, no separate
+vision/audio encoder pipeline required.** That capability didn't exist when older
+AI-editing services were designed — ClipWith bolts on a separate visual-indexing vendor
+(TwelveLabs) precisely because their reasoning model can't see. Becky's does, on Jordan's
+own GPU, with headroom to spare. So this is architected the same way `becky-validate`
+already corroborates "is this person on screen": **the AVLM's own watch-and-listen pass is
+the actual judgment, not an occasional expensive add-on.**
+1. **Cheap signals narrow the WINDOWS, not the decision.** Raw footage can be hours long;
+   feeding all of it to a 12B model in real time is a time-budget problem, not a
+   capability one. Transcript gaps/silence boundaries (already computed by `internal/
+   footage`/becky-cut) just mark candidate segment boundaries worth showing the model —
+   they never decide keep/cut on their own.
+2. **Gemma-4 watches each candidate segment and judges it directly** — one pass, audio +
+   video + speech together (energy, reaction, visual content, delivery), the same call
+   shape `becky-validate` already makes. This replaces the old idea of separately scoring
+   transcript-text and audio-RMS and visual-frames and fusing three heuristics after the
+   fact — that separation was a workaround for encoder-only models that couldn't watch and
+   listen at once; it isn't needed here.
+3. **Calibrate against Jordan's own past keep/cut decisions**, not a generic "virality"
+   notion — his saved `.reel.json` history (§3.6) is ground truth for what *he* considers a
+   keeper, so the prompt/rubric should be tuned against that, not an assumed universal
+   standard.
+Needs its own spec (`SPEC-BECKY-HIGHLIGHTS.md`) to work out the exact prompt/rubric and
+verify it against real footage — that's the actual research task, not picking a new model.
 
 ### 3.3 Auto-captions with real styling — **PARTIAL**
 `cmd/captions` today only decides whether to trust existing subtitles vs. re-run ASR — it
@@ -145,11 +166,14 @@ verb. Low research risk — this is mostly engineering, not model selection.
 Needs three things, none built yet:
 1. A personal B-roll library, indexed the same way `internal/footage` already indexes case
    folders (that discovery code is directly reusable).
-2. A matching mechanism — candidates to research, cheapest first: (a) keyword/tag matching
-   against transcript topics (deterministic, controllable, good v1), (b) embedding-based
-   semantic search over library metadata (needs picking a small local embedding model —
-   research-a-class-then-verify applies), (c) LLM keyword extraction reusing the assistant's
-   Tier-1 ladder.
+2. **A matching mechanism — Gemma-4 describes the library once, then matches against the
+   transcript it already produced.** No new model is needed: watch each B-roll clip one
+   time (offline, whenever the library changes) and have Gemma-4 write what's in it, the
+   same watch-and-listen call used everywhere else in the suite; matching a topic phrase
+   from the transcript against those plain-language descriptions is then a cheap text-match,
+   not a new embedding model to research. (An embedding-model semantic-search path is a
+   possible *later* optimization if plain-text matching proves too coarse on a large
+   library — not a v1 requirement.)
 3. A generated-footage fallback when nothing in the library matches — **becky-imagegen
    (Krea-2) already exists and is exactly this**, no new model work required for that half.
 Needs `SPEC-BECKY-BROLL.md`.
