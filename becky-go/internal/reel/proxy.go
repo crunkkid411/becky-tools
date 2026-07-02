@@ -210,6 +210,90 @@ func scrubCodecFor(name string) scrubCodec {
 	}
 }
 
+// ScrubProxySegment transcodes ONLY the [inSec,outSec) window of source to a
+// low-res, INTRA-FRAME, constant-frame-rate proxy in outDir — the WINDOWED
+// sibling of ScrubProxy, for a timeline whose clip only uses a fraction of a
+// long source. Same intra-frame/constant-fps recipe as ScrubProxy
+// (scrubCodecFor), just bounded to the requested span via an accurate input
+// seek (-ss before -i) plus a duration limit (-t after -i), so scrub feel
+// matches the whole-file proxy without paying to transcode footage the
+// timeline never uses. The source is opened READ-ONLY; only the proxy file is
+// written. Use the ORIGINAL — never this proxy — for any final/forensic
+// export. See HANDOFF-PROXY-SNAPPINESS.md / ScrubProxy.
+//
+// A fresh cached proxy (exists, non-empty, mtime >= source) is reused, same as
+// ScrubProxy, keyed by BOTH the source and the requested window so different
+// timeline clips of the same source cache independently instead of colliding.
+func ScrubProxySegment(source string, inSec, outSec float64, outDir string) (string, error) {
+	cfg := config.Load()
+	si, err := os.Stat(source)
+	if err != nil {
+		return "", fmt.Errorf("source not found: %s", source)
+	}
+	if outDir == "" {
+		outDir = "."
+	}
+	out := scrubProxySegmentPath(source, outDir, inSec, outSec)
+	if fi, e := os.Stat(out); e == nil && fi.Size() > 0 && !fi.ModTime().Before(si.ModTime()) {
+		return out, nil // fresh cached proxy — no re-transcode
+	}
+	if cfg.FFmpeg == "" || !available(cfg.FFmpeg) {
+		return "", fmt.Errorf("ffmpeg not available (config FFmpeg=%q); cannot build windowed scrub proxy", cfg.FFmpeg)
+	}
+	if err := runFFmpeg(cfg.FFmpeg, false, scrubProxySegmentArgs(source, out, inSec, outSec)); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(out); err != nil {
+		return "", fmt.Errorf("windowed scrub proxy transcode produced no file: %s", out)
+	}
+	return out, nil
+}
+
+// scrubProxySegmentPath builds "<stem>.<inMs>-<outMs>.scrub.<ext>" inside
+// outDir — the windowed sibling of scrubProxyPath, so each distinct timeline
+// span of a source caches to its own file instead of colliding with the
+// whole-file scrub proxy or with other windows of the same source.
+// Millisecond integers keep the name stable and free of float-formatting
+// ambiguity.
+func scrubProxySegmentPath(source, outDir string, inSec, outSec float64) string {
+	base := pathx.Base(source)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	if stem == "" {
+		stem = "proxy"
+	}
+	ext := scrubCodecFor(os.Getenv("BECKY_PROXY_CODEC")).ext
+	name := fmt.Sprintf("%s.%d-%d.scrub%s", stem, millis(inSec), millis(outSec), ext)
+	return mustAbs(filepath.Join(outDir, name))
+}
+
+// millis rounds seconds to the nearest whole millisecond (for cache filenames).
+func millis(sec float64) int64 {
+	return int64(sec*1000 + 0.5)
+}
+
+// scrubProxySegmentArgs builds the ffmpeg argv for a WINDOWED intra-frame,
+// constant-frame-rate scrub proxy: an accurate input seek (-ss before -i)
+// brackets the start, a duration limit (-t after -i) bounds the end, then the
+// SAME scale/fps/codec recipe as scrubProxyArgs runs on just that span. Honors
+// the same BECKY_PROXY_CODEC / BECKY_PROXY_RES env overrides. Both -ss and -t
+// go through formatSeconds — a fixed "%.3f" (invariant-decimal, never
+// locale-dependent) — same as every other ffmpeg time arg in this package.
+// PURE (unit-tested).
+func scrubProxySegmentArgs(source, out string, inSec, outSec float64) []string {
+	c := scrubCodecFor(os.Getenv("BECKY_PROXY_CODEC"))
+	vf := fmt.Sprintf("scale=-2:%d,fps=30", scrubProxyHeight())
+	args := []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-ss", formatSeconds(inSec),
+		"-i", source,
+		"-t", formatSeconds(outSec - inSec),
+		"-vf", vf,
+	}
+	args = append(args, c.videoArgs...)
+	args = append(args, c.audioArgs...)
+	return append(args, out)
+}
+
 // videoCodec returns the first video stream's codec_name via ffprobe. An empty
 // codec / probe failure yields ("", err) and the caller treats it as "unknown"
 // (build a proxy to be safe).

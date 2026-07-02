@@ -71,6 +71,21 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// Tiny CACHED first-frame thumbnail (base64 data: URI) for a timeline clip.
 		// Degrades to {data:""} when not grab-able (no ffmpeg) — never an error.
 		return a.Thumb(argString(args, "source"), argFloat(args, "t")), nil
+	case "scrub_segment":
+		// Windowed scrub proxy for ONLY a timeline clip's [in,out) span (cheaper
+		// than a whole-file scrub proxy for a long source with one short clip).
+		// Degrades to {path:""} when ffmpeg is absent / source unresolved.
+		return a.ScrubSegment(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out")), nil
+	case "peaks":
+		// Normalized 0..1 waveform amplitude buckets for ONLY a clip's [in,out)
+		// window, for drawing a per-clip waveform on the timeline track.
+		// Degrades to {peaks:[],count:0} when ffmpeg/audio is unavailable.
+		return a.Peaks(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argInt(args, "buckets")), nil
+	case "autocut_silence":
+		// Run becky-cut's existing silence/VAD detector (dry-run: decide only,
+		// never render) and return its KEEP segments as {in,out} seconds, ready
+		// to feed into add_clip for each span. Degrades to {segments:[],note}.
+		return a.AutoCutSilence(argString(args, "name")), nil
 	case "timeline_edl":
 		// Write an mpv EDL of the whole timeline so the UI can play it as ONE
 		// seamless (gapless) virtual source. Returns {path,duration}; "" if empty.

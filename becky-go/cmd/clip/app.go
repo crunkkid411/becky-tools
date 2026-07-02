@@ -94,6 +94,12 @@ type App struct {
 	http httpState
 
 	cfg config.Config
+
+	// peaksCache holds computed per-clip waveform amplitude buckets (peaks.go),
+	// keyed by source+window+bucket-count, so re-rendering the same clip's
+	// waveform lane (zoom, reorder, re-open) decodes ffmpeg PCM nothing twice.
+	// Guarded by mu like every other App field; nil until the first Peaks call.
+	peaksCache map[string]PeaksResult
 }
 
 // NewApp builds an empty App with config loaded and a fresh empty reel. The

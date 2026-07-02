@@ -530,6 +530,17 @@ body {
   flex: 1; min-width: 0;
 }
 
+/* per-clip audio waveform — a single SVG stretched to fill the clip body (behind the
+   scrub surface + thumbnail), so Jordan can navigate the timeline visually. It's drawn
+   once in a 0..N x 0..1 viewBox with preserveAspectRatio=none, so it stretches for FREE
+   on zoom with no redraw. pointer-events:none keeps clicks going to the scrubber. */
+.clip .cwave {
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none; overflow: hidden;
+}
+.clip .cwave svg { width: 100%; height: 100%; display: block; }
+.clip .cwave path { fill: rgba(255,255,255,.5); }
+
 /* remove "x" - top-right corner, shown ON HOVER only */
 .clip .cx {
   position: absolute; top: 3px; right: 3px;

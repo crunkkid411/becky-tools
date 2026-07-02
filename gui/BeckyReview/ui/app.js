@@ -521,6 +521,7 @@
                '</div>' +
                '<div class="rhrow tools">' +
                  '<input id="cueSearch" class="cuesearch" type="text" placeholder="search within this transcript…" autocomplete="off" spellcheck="false" value="' + attr(state.cueFilter) + '">' +
+                 '<button class="btn small" data-act="autocut" title="auto-cut: drop the silent gaps and add the spoken segments of this video to the timeline">auto-cut</button>' +
                '</div>' +
              '</div>';
     } else {
@@ -707,6 +708,36 @@
     if (state.mode === 'files') { renderFiles(); }
   }
 
+  /* ---- auto-cut: silence-cut the open video, add its spoken segments as clips ----
+     Calls the engine's autocut_silence (which shells out to becky-cut --dry-run — it
+     only DECIDES, never renders/writes the source), then appends each keep-segment to
+     the timeline. Degrades to a toast when becky-cut isn't available or found nothing. */
+  var autocutting = false;
+  async function onAutoCut(name) {
+    if (autocutting || !name) { return; }
+    autocutting = true;
+    toast('Auto-cutting ' + name + '…');
+    try {
+      var rep = await beckyCall('autocut_silence', { name: name });
+      var segs = (rep.ok && rep.data && Array.isArray(rep.data.segments)) ? rep.data.segments : [];
+      if (!segs.length) {
+        toast((rep.data && rep.data.note) ? rep.data.note : 'Auto-cut found no spoken segments.');
+        return;
+      }
+      var v = videoByName(name);
+      if (!v) { toast('Video not found: ' + name); return; }
+      var lastTl = null, added = 0;
+      for (var i = 0; i < segs.length; i++) {
+        var r = await beckyCall('add_clip', { source: v.path, in: segs[i].in, out: segs[i].out, label: '' });
+        if (r.ok && r.data) { lastTl = r.data; added++; }
+      }
+      if (lastTl) { applyTimeline(lastTl); }
+      toast('Auto-cut: added ' + added + ' clip' + (added === 1 ? '' : 's') + ' to the timeline');
+    } finally {
+      autocutting = false;
+    }
+  }
+
   /* ---- delegated clicks for the whole find list ---- */
   function backToFiles() {
     $search.value = ''; $searchClear.hidden = true;
@@ -739,6 +770,8 @@
     if (sort) { applySortChange(sort.dataset.sort); return; }
     var back = e.target.closest('[data-act="back-to-files"]');
     if (back) { backToFiles(); return; }
+    var autocut = e.target.closest('[data-act="autocut"]');
+    if (autocut) { onAutoCut(state.viewVideoName); return; }
     var tbtn = e.target.closest('.tbtn');
     if (tbtn) { if (!tbtn.disabled) { e.stopPropagation(); onTranscribeClick(tbtn.dataset.name); } return; }
     var all = e.target.closest('[data-act="transcribe-all"]');
@@ -1025,6 +1058,7 @@
 
   function applyTimeline(tl) {
     if (!tl || typeof tl !== 'object') { return; }
+    var wasEmpty = !((state.timeline.clips) || []).length;   // to auto-fit the view on the FIRST clip
     state.timeline = {
       clips: Array.isArray(tl.clips) ? tl.clips : [],
       overlay: tl.overlay || {},
@@ -1038,6 +1072,11 @@
     state.selectedClipIds = (state.selectedClipIds || []).filter(function (id) { return !!clipById(id); });
     if (state.selectedClipId != null && !clipById(state.selectedClipId)) { state.selectedClipId = null; }
     renderTimeline();
+    // First clip added to an empty timeline: fit the view to ~10s (or the clip if longer)
+    // so Jordan isn't zoomed way out. Later edits leave his manual zoom alone.
+    if (wasEmpty && state.timeline.clips.length) {
+      fitTimelineZoom(Math.max(10, clipDur(state.timeline.clips[0])));
+    }
   }
 
   /* ---- zoom (CHANGE 5): one px-per-second scale drives clip widths + the ruler ---- */
@@ -1070,6 +1109,15 @@
   }
   function zoomBy(factor) { setZoom(state.pxPerSec * factor); }
   function zoomAt(factor, clientX) { setZoom(state.pxPerSec * factor, clientX); }
+  // fitTimelineZoom sets the scale so `seconds` fills the visible track width — the
+  // default view (Jordan: a new project should show ~10s, not be zoomed way out; a
+  // first clip longer than 10s expands to fit itself). setZoom clamps + re-renders.
+  function fitTimelineZoom(seconds) {
+    if (!tlBodyEl) { return; }
+    var w = tlBodyEl.clientWidth || 0;
+    if (w < 40) { return; }               // layout not ready yet — skip
+    setZoom(w / Math.max(1, seconds || 10));
+  }
 
   /* Scale the TRACK grid lines to the current zoom (a faint line every 5s). The ruler
      now shows real labelled timecode ticks instead — see renderRulerTicks. */
@@ -1157,6 +1205,7 @@
     var bord = clipBorder(clip.source, seld);   // border AND trim handles share this (never plain green)
     return '<div class="clip' + (seld ? ' selected' : '') + '" data-id="' + attr(clip.id) +
              '" style="width:' + w + 'px;background:' + clipColor(clip.source, seld) + ';border-color:' + bord + ';--clip-col:' + bord + '" title="' + attr(tip) + '">' +
+             '<div class="cwave"></div>' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
              '<div class="cthumb"></div>' +
              '<div class="cbody"></div>' +
@@ -1180,10 +1229,22 @@
       trackEl.innerHTML = clips.map(clipBlockHTML).join('');
     }
     trackEl.appendChild(playheadEl);
+    refreshClipGeom();           // cache clip left/width once so playback ticks don't reflow
     updatePlayhead();
     updateRenderSelButton();     // keep the render-selection button in sync with the redraw
     prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
     applyThumbs();               // paint each clip's cached first-frame thumbnail (async, cheap)
+    applyWaves();                // paint each clip's cached audio waveform (async, windowed)
+  }
+
+  // Scrolling the timeline horizontally reveals more clips: fetch their thumb/waveform
+  // then (debounced), so a big reel only ever spends ffmpeg on what's actually on screen.
+  var mediaScrollTimer = null;
+  if (tlBodyEl) {
+    tlBodyEl.addEventListener('scroll', function () {
+      clearTimeout(mediaScrollTimer);
+      mediaScrollTimer = setTimeout(function () { applyThumbs(); applyWaves(); }, 120);
+    });
   }
 
   /* ---- timeline clip thumbnails -----------------------------------------------
@@ -1213,7 +1274,7 @@
           cthumb.style.backgroundImage = 'url("' + cached + '")';
           cthumb.dataset.thumbKey = key;
         }
-      } else if (cached === undefined && !thumbInflight[key]) {
+      } else if (cached === undefined && !thumbInflight[key] && clipVisible(clip.id)) {
         thumbInflight[key] = true;
         thumbQueue.push({ src: clip.source, t: clip.in || 0, key: key });
         pumpThumbs();
@@ -1231,6 +1292,66 @@
           thumbCache[job.key] = (rep && rep.ok && rep.data && rep.data.data) ? rep.data.data : '';
           applyThumbs();   // paint any rendered clip whose thumb just arrived
           pumpThumbs();
+        });
+      })(job);
+    }
+  }
+
+  /* ---- per-clip audio waveform (engine 'peaks' verb; windowed to the clip) --------
+     Same lazy/cached/throttled shape as thumbnails: the engine returns normalized
+     amplitude buckets for the clip's OWN (source, in, out) window; we draw them ONCE
+     as a stretch-to-fit SVG so zoom needs no redraw. Degrades to no waveform (empty
+     peaks) when there's no audio/ffmpeg — never blocks. */
+  var waveCache = {};       // key -> SVG string ('' = known none, don't retry)
+  var waveInflight = {};
+  var waveQueue = [];
+  var waveActive = 0;
+  var WAVE_MAX = 2;         // max concurrent ffmpeg peak extractions
+  var WAVE_BUCKETS = 200;
+  function waveKey(src, inS, outS) {
+    return (src || '') + '@' + (Math.round((inS || 0) * 1000) / 1000) + '-' + (Math.round((outS || 0) * 1000) / 1000);
+  }
+  // buildWaveSvg turns [0..1] peaks into a filled, center-mirrored waveform path in a
+  // 0..(n-1) x 0..1 viewBox; preserveAspectRatio=none lets CSS stretch it to any width.
+  function buildWaveSvg(peaks) {
+    var n = peaks.length;
+    if (n < 2) { return ''; }
+    var pts = [];
+    for (var i = 0; i < n; i++) { var a = Math.max(0, Math.min(1, peaks[i])); pts.push(i + ',' + (0.5 - a * 0.5).toFixed(3)); }
+    for (var j = n - 1; j >= 0; j--) { var b = Math.max(0, Math.min(1, peaks[j])); pts.push(j + ',' + (0.5 + b * 0.5).toFixed(3)); }
+    return '<svg viewBox="0 0 ' + (n - 1) + ' 1" preserveAspectRatio="none"><path d="M' + pts.join(' L') + ' Z"/></svg>';
+  }
+  function applyWaves() {
+    var blocks = trackEl.querySelectorAll('.clip');
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var clip = clipById(b.dataset.id);
+      if (!clip || !clip.source) { continue; }
+      var key = waveKey(clip.source, clip.in || 0, clip.out || 0);
+      var cached = waveCache[key];
+      var el = b.querySelector('.cwave');
+      if (!el) { continue; }
+      if (cached !== undefined) {
+        if (el.dataset.waveKey !== key) { el.innerHTML = cached; el.dataset.waveKey = key; }
+      } else if (!waveInflight[key] && clipVisible(clip.id)) {
+        waveInflight[key] = true;
+        waveQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0, key: key });
+        pumpWaves();
+      }
+    }
+  }
+  function pumpWaves() {
+    while (waveActive < WAVE_MAX && waveQueue.length) {
+      var job = waveQueue.shift();
+      waveActive++;
+      (function (job) {
+        beckyCall('peaks', { source: job.src, in: job.in, out: job.out, buckets: WAVE_BUCKETS }).then(function (rep) {
+          waveActive--;
+          delete waveInflight[job.key];
+          var peaks = (rep && rep.ok && rep.data && Array.isArray(rep.data.peaks)) ? rep.data.peaks : [];
+          waveCache[job.key] = peaks.length ? buildWaveSvg(peaks) : '';
+          applyWaves();
+          pumpWaves();
         });
       })(job);
     }
@@ -1372,6 +1493,27 @@
     }
   }
 
+  // Cached clip geometry (left/width px), refreshed once per render, so the playhead —
+  // moved on every playback tick — never forces a layout by reading offsetLeft live.
+  var clipGeom = {};
+  function refreshClipGeom() {
+    clipGeom = {};
+    var blocks = trackEl.querySelectorAll('.clip');
+    for (var i = 0; i < blocks.length; i++) {
+      clipGeom[blocks[i].dataset.id] = { left: blocks[i].offsetLeft, width: blocks[i].offsetWidth };
+    }
+  }
+  // clipVisible reports whether a clip block is in (or near) the horizontal viewport —
+  // the gate that stops a big timeline from firing an ffmpeg thumb/waveform for EVERY
+  // clip at once (the "storm"). Uses the cached geometry + a 300px prefetch margin.
+  // Unknown geometry → true (safe: fetch rather than hide).
+  function clipVisible(id) {
+    var g = clipGeom[id];
+    if (!g || !tlBodyEl) { return true; }
+    var lo = tlBodyEl.scrollLeft - 300;
+    var hi = tlBodyEl.scrollLeft + (tlBodyEl.clientWidth || 0) + 300;
+    return (g.left + g.width) >= lo && g.left <= hi;
+  }
   function updatePlayhead() {
     var comp, clip;
     if (isTimelineLoaded()) {
@@ -1383,12 +1525,16 @@
       playheadEl.style.display = 'none'; return;
     }
     if (!clip) { playheadEl.style.display = 'none'; return; }
-    var block = blockById(clip.id);
-    if (!block) { playheadEl.style.display = 'none'; return; }
+    var g = clipGeom[clip.id];
+    if (!g) {                                   // cache miss (mid-resize / pre-paint) — read live
+      var block = blockById(clip.id);
+      if (!block) { playheadEl.style.display = 'none'; return; }
+      g = { left: block.offsetLeft, width: block.offsetWidth };
+    }
     var d = clipDur(clip);
     var frac = d > 0 ? (comp - (clip.start_sec || 0)) / d : 0;
     frac = Math.max(0, Math.min(1, frac));
-    playheadEl.style.left = (block.offsetLeft + frac * block.offsetWidth) + 'px';
+    playheadEl.style.left = (g.left + frac * g.width) + 'px';
     playheadEl.style.display = 'block';
   }
 
@@ -2308,6 +2454,9 @@
 
     var tl = await beckyCall('timeline', {});         // restore any existing timeline
     if (tl.ok && tl.data) { applyTimeline(tl.data); }
+    // Empty project → default the view to ~10s (a restored timeline with clips was
+    // already fitted by applyTimeline). Deferred so the track has laid out.
+    setTimeout(function () { if (!(state.timeline.clips || []).length) { fitTimelineZoom(10); } }, 250);
 
     // Human-review Q&A cards (pre-loaded by the engine from a hits sidecar, if any).
     var q = await beckyCall('questions', {});
@@ -2345,6 +2494,8 @@
     toggleInSelection: toggleInSelection,
     selectRange: selectRange,
     clearSelection: clearSelection,
+    buildWaveSvg: buildWaveSvg,
+    fitTimelineZoom: fitTimelineZoom,
     state: state
   };
 

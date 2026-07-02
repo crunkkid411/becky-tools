@@ -284,3 +284,56 @@ func TestProbeUnknownSourceDirect(t *testing.T) {
 		t.Fatalf("probe of an out-of-folder path must be 0, got %v", got)
 	}
 }
+
+// TestScrubSegmentVerbAndDirectDegrade proves scrub_segment is wired into
+// dispatch (default-deny table) and that an out-of-folder source degrades to
+// {path:""} through BOTH the bridge and the direct App call — deterministic,
+// no ffmpeg required (fixture videos are fake bytes; path security rejects
+// the source before ffmpeg would ever run).
+func TestScrubSegmentVerbAndDirectDegrade(t *testing.T) {
+	app, _ := openFixture(t)
+
+	r := callEnv(t, app, "scrub_segment", `{"source":"nope.mp4","in":1,"out":3}`)
+	if !r.OK {
+		t.Fatalf("scrub_segment verb should degrade, not error: %s", r.Error)
+	}
+	var sr ScrubSegmentResult
+	remarshal(t, r.Data, &sr)
+	if sr.Path != "" {
+		t.Fatalf("unknown source should degrade to path=\"\", got %q", sr.Path)
+	}
+
+	if got := app.ScrubSegment("nope.mp4", 1, 3).Path; got != "" {
+		t.Fatalf("direct ScrubSegment on unknown source = %q, want \"\"", got)
+	}
+}
+
+// TestPeaksAndAutoCutVerbsWireThroughDispatch proves peaks and autocut_silence
+// are both wired into dispatch and return their documented degrade shapes for
+// deterministic (no ffmpeg/becky-cut) inputs.
+func TestPeaksAndAutoCutVerbsWireThroughDispatch(t *testing.T) {
+	app, _ := openFixture(t)
+
+	r := callEnv(t, app, "peaks", `{"source":"nope.mp4","in":0,"out":5,"buckets":50}`)
+	if !r.OK {
+		t.Fatalf("peaks verb should degrade, not error: %s", r.Error)
+	}
+	var pr PeaksResult
+	remarshal(t, r.Data, &pr)
+	if pr.Count != 0 || len(pr.Peaks) != 0 {
+		t.Fatalf("unknown source peaks should degrade to {peaks:[],count:0}, got %+v", pr)
+	}
+
+	r = callEnv(t, app, "autocut_silence", `{"name":"nope.mp4"}`)
+	if !r.OK {
+		t.Fatalf("autocut_silence verb should degrade, not error: %s", r.Error)
+	}
+	var ar AutoCutResult
+	remarshal(t, r.Data, &ar)
+	if len(ar.Segments) != 0 {
+		t.Fatalf("unknown video autocut should degrade to empty segments, got %+v", ar.Segments)
+	}
+	if ar.Note == "" {
+		t.Error("degrade should carry a plain-language note")
+	}
+}

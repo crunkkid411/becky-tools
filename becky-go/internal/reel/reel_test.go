@@ -559,6 +559,45 @@ func TestScrubProxyArgsEnv(t *testing.T) {
 	})
 }
 
+// TestScrubProxySegmentArgs asserts the WINDOWED scrub proxy brackets the
+// requested span with an accurate input seek (-ss before -i) and a duration
+// limit (-t after -i), while keeping the same intra-frame recipe as the
+// whole-file scrub proxy. Checks VALUES, not just non-empty.
+func TestScrubProxySegmentArgs(t *testing.T) {
+	t.Setenv("BECKY_PROXY_CODEC", "")
+	t.Setenv("BECKY_PROXY_RES", "")
+	args := scrubProxySegmentArgs(`X:\c\longgop.mp4`, `X:\out\longgop.12000-17500.scrub.mp4`, 12.0, 17.5)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"-ss 12.000",
+		"-i " + `X:\c\longgop.mp4`,
+		"-t 5.500",
+		"-g 1", "-keyint_min 1", "-sc_threshold 0", // intra-frame, same as scrubProxyArgs
+		"scale=-2:540,fps=30",
+		"-c:v libx264", "-crf 20", "-movflags +faststart", "-c:a aac",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("scrubProxySegmentArgs missing %q in:\n%s", want, joined)
+		}
+	}
+	if indexOf(args, "-ss") > indexOf(args, "-i") {
+		t.Fatal("-ss must come before -i for an accurate windowed seek")
+	}
+	if indexOf(args, "-i") > indexOf(args, "-t") {
+		t.Fatal("-t must come after -i to bound the window's duration")
+	}
+}
+
+// TestScrubProxySegmentPath asserts the "<stem>.<inMs>-<outMs>.scrub.<ext>"
+// cache naming so distinct timeline windows of one source never collide.
+func TestScrubProxySegmentPath(t *testing.T) {
+	t.Setenv("BECKY_PROXY_CODEC", "")
+	got := scrubProxySegmentPath(`X:\c\long gop.mp4`, `X:\out`, 12.0, 17.5)
+	if !strings.HasSuffix(got, "long gop.12000-17500.scrub.mp4") {
+		t.Fatalf("scrubProxySegmentPath = %q, want suffix long gop.12000-17500.scrub.mp4", got)
+	}
+}
+
 // TestScrubProxyPath asserts the .scrub stem and the codec-driven extension.
 func TestScrubProxyPath(t *testing.T) {
 	t.Run("h264 default -> .mp4", func(t *testing.T) {

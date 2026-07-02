@@ -359,6 +359,48 @@ func (a *App) ProxyFor(source string) (string, error) {
 	return reel.ScrubProxy(v.Path, work)
 }
 
+// ScrubSegmentResult is the reply for the scrub_segment verb: a windowed scrub
+// proxy path for ONLY a timeline clip's actual [in,out) span. Path is "" when
+// ffmpeg is unavailable or the source isn't in the open folder — a degrade,
+// never an error, mirroring Thumb's bridge contract.
+type ScrubSegmentResult struct {
+	Path string `json:"path"`
+}
+
+// ScrubSegment returns a web-playable, scrub-friendly proxy for ONLY the
+// [inSec,outSec) window of source — the windowed sibling of ProxyFor (which
+// proxies the WHOLE source). Transcoding just the span a timeline clip
+// actually uses is far cheaper than a whole-file proxy for a long source with
+// one short clip on it ("windowed for only what is on the timeline"). Same
+// intra-frame/constant-fps recipe as ProxyFor (reel.ScrubProxySegment), so the
+// scrub feel matches. The source must be in the open folder and is opened
+// READ-ONLY; final export still uses the ORIGINAL, never this proxy.
+// Degrade-never-crash: an unresolved source, an un-orderable/empty window, or
+// ffmpeg being unavailable all yield {path:""}, never an error — same
+// contract as Thumb, so a missing ffmpeg just leaves the waveform lane's
+// preview unavailable rather than failing the bridge call.
+func (a *App) ScrubSegment(source string, inSec, outSec float64) ScrubSegmentResult {
+	v, ok := a.resolveSource(source)
+	if !ok {
+		return ScrubSegmentResult{}
+	}
+	if outSec < inSec {
+		inSec, outSec = outSec, inSec
+	}
+	inSec = clampNonNeg(inSec)
+	a.mu.Lock()
+	work := a.workDir
+	a.mu.Unlock()
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		return ScrubSegmentResult{}
+	}
+	path, err := reel.ScrubProxySegment(v.Path, inSec, outSec, work)
+	if err != nil {
+		return ScrubSegmentResult{}
+	}
+	return ScrubSegmentResult{Path: path}
+}
+
 // writeTextFile creates path and runs fn against a buffered writer, flushing on
 // success. Never touches any source video — only this output path.
 func writeTextFile(path string, fn func(*bufio.Writer) error) error {
