@@ -71,6 +71,24 @@ var subtitleSubdirs = map[string]bool{
 	"srt":         true,
 }
 
+// excludedWalkDirs are becky's OWN output folders, never case footage. "render"
+// is where cmd/clip's renderDir() writes compilation MP4s + EDL/SRT sidecars
+// (see cmd/clip/export.go); without this, a rendered export shows back up in
+// the file list / search as if it were original evidence. Compared
+// case-insensitively against a directory's base name; used by every WalkDir in
+// this package (Index, collectVideoBases, buildSubtitleIDIndex, collectOrphans)
+// so a render never becomes searchable or a false transcript orphan.
+var excludedWalkDirs = map[string]bool{
+	"render": true,
+}
+
+// skipExcludedDir reports whether d is a directory this package must never
+// descend into (see excludedWalkDirs). Callers use this as the first check in
+// every filepath.WalkDir visitor, returning filepath.SkipDir when it's true.
+func skipExcludedDir(d os.DirEntry) bool {
+	return d.IsDir() && excludedWalkDirs[strings.ToLower(d.Name())]
+}
+
 // separators are the characters that legitimately delimit a video stem from a
 // trailing qualifier in a subtitle filename (e.g. "BTIG3571_converted",
 // "video - en", "video.mp4"). A boundary-prefix match REQUIRES the character
@@ -282,6 +300,9 @@ func buildSubtitleIDIndex(root string) map[string]string {
 			return nil
 		}
 		if d.IsDir() {
+			if skipExcludedDir(d) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !subtitleExts[strings.ToLower(filepath.Ext(path))] {
@@ -531,6 +552,9 @@ func collectOrphans(root string, claimed map[string]bool) []OrphanTranscript {
 			return nil
 		}
 		if d.IsDir() {
+			if skipExcludedDir(d) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !subtitleExts[strings.ToLower(filepath.Ext(path))] {

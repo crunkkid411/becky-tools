@@ -212,6 +212,9 @@ func TestWriteEDL(t *testing.T) {
 	mustContain := []string{
 		"TITLE: penguin-bounty",
 		"FCM: NON-DROP FRAME",
+		// The channel field must carry audio, not bare "V" (video-only) — a Vegas
+		// Pro EDL import with "V" produced no audio track (Jordan's real bug).
+		"AA/V  C",
 		// Event 1: src 10.0->12.0 @30fps = 00:00:10:00 -> 00:00:12:00; record 0->2s.
 		"00:00:10:00 00:00:12:00 00:00:00:00 00:00:02:00",
 		// Event 2: src 3.0->5.0 @25fps; record contiguous from 2s -> 4s @30 (record fps = first clip 30).

@@ -106,6 +106,7 @@
   var $tFrameFwd = document.getElementById('tFrameFwd');
   var $tSpeed    = document.getElementById('tSpeed');     // 1× / 2× playback-speed toggle
   var $tSplit    = document.getElementById('tSplit');     // split clip at playhead (CHANGE 4)
+  var $tScreenshot = document.getElementById('tScreenshot'); // screenshot the preview -> Screenshot_NNNN.png
   var $tExtendL  = document.getElementById('tExtendL');   // extend selected clip 1 frame left (earlier)
   var $tExtendR  = document.getElementById('tExtendR');   // extend selected clip 1 frame right (later)
   var $tOverlay  = document.getElementById('tOverlay');
@@ -145,15 +146,39 @@
   var pending = new Map();
   var callSeq = 0;
 
+  /* Non-intrusive "loading" indicator (BUSY_DELAY_MS-delayed, depth-counted so
+     overlapping calls don't flicker it on/off): every beckyCall is wrapped with
+     this, so ANY slow engine round-trip (EDL rebuild, search, folder open, export...)
+     shows it automatically with no per-call-site wiring, and a fast one never does. */
+  var BUSY_DELAY_MS = 1000;
+  var $busyBar = document.getElementById('busyBar');
+  var busyDepth = 0, busyTimer = null;
+  function busyStart() {
+    busyDepth++;
+    if (busyDepth === 1) {
+      clearTimeout(busyTimer);
+      busyTimer = setTimeout(function () { if ($busyBar) { $busyBar.hidden = false; } }, BUSY_DELAY_MS);
+    }
+  }
+  function busyEnd() {
+    busyDepth = Math.max(0, busyDepth - 1);
+    if (busyDepth === 0) {
+      clearTimeout(busyTimer);
+      if ($busyBar) { $busyBar.hidden = true; }
+    }
+  }
+
   /** Invoke a backend verb; resolves with the reply envelope {ok,data,error}. */
   function beckyCall(verb, args) {
+    busyStart();
     return new Promise(function (resolve) {
       var id = 'ui' + (++callSeq) + '-' + Date.now();
-      pending.set(id, resolve);
+      pending.set(id, function (reply) { busyEnd(); resolve(reply); });
       post({ t: 'call', id: id, verb: verb, args: args || {} });
       setTimeout(function () {
         if (pending.has(id)) {
           pending.delete(id);
+          busyEnd();
           resolve({ ok: false, data: null, error: 'timeout' });
         }
       }, CALL_TIMEOUT_MS);
@@ -184,6 +209,7 @@
         case 'time':   onTime(m.pos, m.dur); break;
         case 'play':   onPlayState(!!m.paused); break;
         case 'folder': onFolder(m.reply);    break;
+        case 'screenshot': onScreenshot(m.path); break;
       }
     });
   }
@@ -630,6 +656,7 @@
     var r = state.rows[idx];
     if (!r) { return; }
     state.activeResultKey = key;
+    kbIndex = idx;   // keep the keyboard cursor in sync so Up/Down resumes from here
     markActiveRow();
     if (r.transcript_only || !r.source) { return; }   // not playable: just select
     state.activeSource = r.source;
@@ -1081,6 +1108,13 @@
       state.activeClipId = state.timeline.clips[0].id;
       state.playheadComp = state.timeline.clips[0].start_sec || 0;
       updatePlayhead();
+    } else if (state.playing && isTimelineLoaded()) {
+      // A cut/trim/reorder/delete just landed WHILE the seamless timeline was
+      // playing: tlVersion was bumped above, so the loaded EDL is now stale. Reload
+      // it right away at the same compilation position so playback keeps going on
+      // the EDITED timeline instead of silently drifting on the old one — that
+      // drift is what "makes a cut while playing break the timeline".
+      seekTimeline(state.playheadComp || 0, true);
     }
   }
 
@@ -1096,7 +1130,17 @@
   // centre) fixed, so zoom grows/shrinks toward the cursor instead of the left edge.
   function setZoom(px, anchorClientX) {
     var v = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(px)));
-    if (v === state.pxPerSec) { updateZoomLabel(); return; }
+    if (v === state.pxPerSec) {
+      // Rounding fixed point (the real "scroll-to-zoom stops working" bug): at a
+      // small integer like 2 or 3, round(v*1.15) rounds right back down to v itself
+      // — EVERY wheel tick after that computes the exact same no-op forever, no
+      // matter how many times you scroll, until a bigger jump (the +/- buttons use
+      // 1.5x) crosses the rounding boundary. Force the smallest real step instead
+      // so a wheel tick can never get permanently stuck just above ZOOM_MIN.
+      if (px > state.pxPerSec && state.pxPerSec < ZOOM_MAX) { v = state.pxPerSec + 1; }
+      else if (px < state.pxPerSec && state.pxPerSec > ZOOM_MIN) { v = state.pxPerSec - 1; }
+      else { updateZoomLabel(); return; }
+    }
     var old = state.pxPerSec;
     var anchorX = null, contentX = 0;
     if (tlBodyEl) {
@@ -1535,6 +1579,13 @@
   // the video) — the single source of truth for whether playback is running.
   function onPlayState(paused) { state.playing = !paused; }
 
+  // The host saved a screenshot of the current preview frame (Screenshot_NNNN.png
+  // in the case folder's render/ dir, auto-incrementing — see MainWindow.TakeScreenshotAsync).
+  function onScreenshot(path) {
+    if (path) { toast('Screenshot saved: ' + baseName(path)); }
+    else { toast('Screenshot failed'); }
+  }
+
   // Play/pause for the ▶ button + spacebar. If there are timeline clips but the
   // seamless EDL isn't the current loaded source, START timeline playback from the
   // playhead (load the fresh EDL + play); otherwise just toggle what's loaded (the
@@ -1680,7 +1731,7 @@
       if (rep.ok && rep.data) { okAny = true; lastTl = rep.data; }
     }
     if (lastTl) { applyTimeline(lastTl); }
-    toast(okAny ? ('Removed ' + ids.length + ' clip' + (ids.length === 1 ? '' : 's')) : 'Could not remove clip');
+    if (!okAny) { toast('Could not remove clip'); }
   }
 
   /* ---- split / cut at the playhead (CHANGE 4): button + "s" key ----
@@ -1731,6 +1782,10 @@
         var repO = await beckyCall('reorder', { id: newClip.id, to: leftIdx + 1 });
         if (repO.ok && repO.data) { applyTimeline(repO.data); }
       }
+      // The clip AFTER the playhead (the new right half) becomes the selection — it
+      // used to stay on the pre-split left half, which is backwards from what a
+      // producer expects right after a cut.
+      if (newClip) { selectOnly(newClip.id); }
       // No success toast on a cut — the two new clips are the visible confirmation
       // (Jordan: the "split clip" popup should not appear when making a cut).
     } finally {
@@ -1926,7 +1981,7 @@
       var from = clipIndexById(g.id);
       if (from >= 0 && to !== from) {
         var rep = await beckyCall('reorder', { id: g.id, to: to });
-        if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Reordered clip'); }
+        if (rep.ok && rep.data) { applyTimeline(rep.data); }
         else { renderTimeline(); toast('Could not reorder' + (rep.error ? ': ' + rep.error : '')); }
       } else {
         renderTimeline();                             // no change -> just clear the drag visuals
@@ -1956,19 +2011,27 @@
     updatePlayhead();
   }
 
-  // seekClipEdge moves the playhead to the START (toEnd=false) or END (toEnd=true) of
-  // the CURRENT clip — the clip under the playhead, else the selected one, else the
-  // first. End lands just inside the clip so it doesn't spill into the next one.
+  // seekClipEdge (Ctrl+Left/Right) jumps to the PREVIOUS/NEXT edit point across the
+  // WHOLE timeline — every clip's start plus the very end of the last clip — not just
+  // the current clip's own start/end (that got stuck re-landing on itself every time).
   function seekClipEdge(toEnd) {
     var clips = state.timeline.clips || [];
     if (!clips.length) { return; }
-    var id = (state.activeClipId != null) ? state.activeClipId : primarySelectedId();
-    var clip = (id != null) ? clipById(id) : null;
-    if (!clip) { clip = clipAtComp(state.playheadComp || 0) || clips[0]; }
-    var comp = toEnd ? ((clip.start_sec || 0) + Math.max(0, clipDur(clip) - 0.04)) : (clip.start_sec || 0);
-    state.activeClipId = clip.id;
-    state.playheadComp = comp;
-    seekTimeline(comp, false);
+    var points = clips.map(function (c) { return c.start_sec || 0; });
+    var last = clips[clips.length - 1];
+    points.push((last.start_sec || 0) + clipDur(last));   // the compilation's very end
+    points.sort(function (a, b) { return a - b; });
+    var comp = state.playheadComp || 0, target = null, i;
+    if (toEnd) {
+      for (i = 0; i < points.length; i++) { if (points[i] > comp + 0.01) { target = points[i]; break; } }
+      if (target == null) { target = points[points.length - 1]; }   // already at/after the end
+    } else {
+      for (i = points.length - 1; i >= 0; i--) { if (points[i] < comp - 0.01) { target = points[i]; break; } }
+      if (target == null) { target = points[0]; }   // already at/before the start
+    }
+    state.activeClipId = (clipAtComp(target) || clips[0]).id;
+    state.playheadComp = target;
+    seekTimeline(target, false);
     updatePlayhead();
   }
 
@@ -1999,6 +2062,9 @@
     if (kbIndex < 0) { kbIndex = selectedRowIndex(); }   // resume from the selection, not the top
     kbIndex = (kbIndex < 0) ? (delta > 0 ? 0 : rows.length - 1)
                             : Math.max(0, Math.min(kbIndex + delta, rows.length - 1));
+    // The keyboard cursor now owns the highlight — clear any leftover mouse-selected
+    // row so the two never show independently (ONE selection at a time in the panel).
+    if (state.activeResultKey != null) { state.activeResultKey = null; markActiveRow(); }
     paintListSel();
   }
   function activateListSelection() {
@@ -2132,6 +2198,7 @@
   $tFrameBack.addEventListener('click', function () { mpvSend('frame', { dir: -1 }); });
   $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
   if ($tSplit) { $tSplit.addEventListener('click', function () { splitAtPlayhead(); }); }  // CHANGE 4
+  if ($tScreenshot) { $tScreenshot.addEventListener('click', function () { mpvSend('screenshot'); }); }
 
   /* ---- playback speed: 1× / 2× (button click + Shift+Space) ---- */
   var playSpeed = 1;
@@ -2148,17 +2215,11 @@
   /* ---- undo / redo (engine-side history; Ctrl+Z / Ctrl+Shift+Z) ---- */
   async function undoTimeline() {
     var rep = await beckyCall('undo', {});
-    if (rep.ok && rep.data) {
-      applyTimeline(rep.data.timeline);
-      toast(rep.data.changed ? 'Undo' : 'Nothing to undo');
-    }
+    if (rep.ok && rep.data) { applyTimeline(rep.data.timeline); }
   }
   async function redoTimeline() {
     var rep = await beckyCall('redo', {});
-    if (rep.ok && rep.data) {
-      applyTimeline(rep.data.timeline);
-      toast(rep.data.changed ? 'Redo' : 'Nothing to redo');
-    }
+    if (rep.ok && rep.data) { applyTimeline(rep.data.timeline); }
   }
   if ($tUndo) { $tUndo.addEventListener('click', undoTimeline); }
   if ($tRedo) { $tRedo.addEventListener('click', redoTimeline); }
@@ -2195,23 +2256,42 @@
   if ($tExtendR) { $tExtendR.addEventListener('click', function () { extendSelected(1); }); }
 
   /* ---- render ONLY the selected clips ---- */
+  // Single click renders exactly as before. A double click ALSO reveals the
+  // rendered file in Explorer once it's done — tracked via a flag (not a
+  // click-delay guard) so the single-click path never gains latency, and a
+  // renderingSel guard so the double-click's 2nd click event can't launch a
+  // second concurrent render.
+  var renderingSel = false, revealAfterRenderSel = false;
   if ($tRenderSel) {
+    $tRenderSel.addEventListener('dblclick', function () { revealAfterRenderSel = true; });
     $tRenderSel.addEventListener('click', async function () {
+      if (renderingSel) { return; }
       var ids = (state.selectedClipIds || []).slice();
       if (!ids.length) { toast('Select one or more clips first.'); return; }
+      renderingSel = true;
       toast('Rendering selection…');
-      var rep = await beckyCall('export_selection', { ids: ids });
-      if (!rep.ok) { addBeckyMsg('Render selection failed' + (rep.error ? ': ' + rep.error : '')); toast('Render failed'); return; }
-      var r = rep.data || {};
-      var parts = [];
-      if (r.mp4) { parts.push('MP4: ' + r.mp4); }
-      if (r.duration_sec != null) { parts.push('Duration: ' + hms(r.duration_sec)); }
-      if (r.clips != null) { parts.push('Clips: ' + r.clips); }
-      if (r.output_mb != null) { parts.push('Size: ' + r.output_mb + ' MB'); }
-      if (typeof r.audio_ok === 'boolean') { parts.push('Audio: ' + (r.audio_ok ? 'ok' : 'MISSING')); }
-      if (r.note) { parts.push(r.note); }
-      addBeckyMsg('Rendered ' + ids.length + ' selected clip' + (ids.length === 1 ? '' : 's') + '.\n' + parts.join('\n'));
-      toast('Selection rendered');
+      try {
+        var rep = await beckyCall('export_selection', { ids: ids });
+        if (!rep.ok) { addBeckyMsg('Render selection failed' + (rep.error ? ': ' + rep.error : '')); toast('Render failed'); return; }
+        var r = rep.data || {};
+        var parts = [];
+        if (r.mp4) { parts.push('MP4: ' + r.mp4); }
+        if (r.duration_sec != null) { parts.push('Duration: ' + hms(r.duration_sec)); }
+        if (r.clips != null) { parts.push('Clips: ' + r.clips); }
+        if (r.output_mb != null) { parts.push('Size: ' + r.output_mb + ' MB'); }
+        if (typeof r.audio_ok === 'boolean') { parts.push('Audio: ' + (r.audio_ok ? 'ok' : 'MISSING')); }
+        if (r.note) { parts.push(r.note); }
+        addBeckyMsg('Rendered ' + ids.length + ' selected clip' + (ids.length === 1 ? '' : 's') + '.\n' + parts.join('\n'));
+        toast('Selection rendered');
+        // Read the reveal flag AFTER the render finishes, not before: a real
+        // double-click delivers click, click, THEN dblclick (DOM spec order), so
+        // dblclick only sets the flag well after this handler already started —
+        // reading it up front would always see the stale pre-dblclick value.
+        if (revealAfterRenderSel && r.mp4) { revealFile(r.mp4); }
+      } finally {
+        renderingSel = false;
+        revealAfterRenderSel = false;
+      }
     });
   }
 
@@ -2293,24 +2373,37 @@
     else { toast('Load failed' + (rep.error ? ': ' + rep.error : '')); }
   });
 
+  // Same single-click-unchanged / double-click-also-reveals pattern as render selection.
+  var exporting = false, revealAfterExport = false;
+  $tExport.addEventListener('dblclick', function () { revealAfterExport = true; });
   $tExport.addEventListener('click', async function () {
+    if (exporting) { return; }
     if (!state.timeline.clips || !state.timeline.clips.length) { toast('Timeline is empty — add clips first.'); return; }
+    exporting = true;
     toast('Exporting…');
-    var rep = await beckyCall('export', {});
-    if (!rep.ok) { addBeckyMsg('Export failed' + (rep.error ? ': ' + rep.error : '')); toast('Export failed'); return; }
-    var r = rep.data || {};
-    var parts = [];
-    if (r.mp4) { parts.push('MP4: ' + r.mp4); }
-    if (r.duration_sec != null) { parts.push('Duration: ' + hms(r.duration_sec)); }
-    if (r.clips != null) { parts.push('Clips: ' + r.clips); }
-    if (r.output_mb != null) { parts.push('Size: ' + r.output_mb + ' MB'); }
-    if (r.codec) { parts.push('Codec: ' + r.codec); }
-    if (r.edl) { parts.push('EDL: ' + r.edl); }
-    if (r.srt) { parts.push('SRT: ' + r.srt); }
-    if (typeof r.audio_ok === 'boolean') { parts.push('Audio: ' + (r.audio_ok ? 'ok' : 'MISSING')); }
-    if (r.note) { parts.push(r.note); }
-    addBeckyMsg('Export complete.\n' + parts.join('\n'));
-    toast('Export complete');
+    try {
+      var rep = await beckyCall('export', {});
+      if (!rep.ok) { addBeckyMsg('Export failed' + (rep.error ? ': ' + rep.error : '')); toast('Export failed'); return; }
+      var r = rep.data || {};
+      var parts = [];
+      if (r.mp4) { parts.push('MP4: ' + r.mp4); }
+      if (r.duration_sec != null) { parts.push('Duration: ' + hms(r.duration_sec)); }
+      if (r.clips != null) { parts.push('Clips: ' + r.clips); }
+      if (r.output_mb != null) { parts.push('Size: ' + r.output_mb + ' MB'); }
+      if (r.codec) { parts.push('Codec: ' + r.codec); }
+      if (r.edl) { parts.push('EDL: ' + r.edl); }
+      if (r.srt) { parts.push('SRT: ' + r.srt); }
+      if (typeof r.audio_ok === 'boolean') { parts.push('Audio: ' + (r.audio_ok ? 'ok' : 'MISSING')); }
+      if (r.note) { parts.push(r.note); }
+      addBeckyMsg('Export complete.\n' + parts.join('\n'));
+      toast('Export complete');
+      // Read the reveal flag AFTER the export finishes — see the matching comment
+      // in the render-selection handler above for why (DOM click/click/dblclick order).
+      if (revealAfterExport && r.mp4) { revealFile(r.mp4); }
+    } finally {
+      exporting = false;
+      revealAfterExport = false;
+    }
   });
 
   /* =======================================================================
@@ -2478,6 +2571,14 @@
       activateListSelection();
       return;
     }
+    // Up/Down elsewhere (the list isn't focused) = zoom the timeline in/out — a
+    // clip or the timeline itself is the implied context once the list isn't
+    // claiming these keys.
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      zoomBy(e.key === 'ArrowUp' ? 1.5 : 1 / 1.5);
+      return;
+    }
 
     // Left / Right = step the playhead one frame; Ctrl+Left / Ctrl+Right = jump to the
     // current clip's start / end.
@@ -2489,9 +2590,19 @@
       return;
     }
 
-    // Space = play / pause; Shift+Space = play at 2× (Jordan's 2× shortcut).
+    // Space = play / pause; Shift+Space = play at 2× (Jordan's 2× shortcut). But if
+    // the left panel is focused with a keyboard-selected row, Space plays THAT row
+    // (mirrors a single click) instead of toggling the timeline.
     if (e.key === ' ') {
       e.preventDefault();
+      if (listIsFocused() && kbIndex >= 0) {
+        var selRows = listRows(), selRow = selRows[kbIndex];
+        if (selRow) {
+          if (selRow.classList.contains('file')) { onFileClick(selRow.dataset.name); }
+          else { onRowClick(+selRow.dataset.idx, selRow.dataset.key); }
+          return;
+        }
+      }
       if (e.shiftKey) { setSpeed(2); }
       togglePlay();
       return;

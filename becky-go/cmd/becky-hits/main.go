@@ -76,6 +76,7 @@ type hitFile struct {
 
 type report struct {
 	Reel      string   `json:"reel"`
+	EDL       string   `json:"edl,omitempty"`
 	Clips     int      `json:"clips"`
 	Skipped   int      `json:"skipped"`
 	Questions int      `json:"questions,omitempty"`
@@ -141,6 +142,14 @@ func main() {
 	if err := writeQuestions(outPath, cqs); err != nil {
 		warnings = append(warnings, fmt.Sprintf("could not write questions sidecar: %v", err))
 	}
+	// Also write a plain CMX3600 .edl beside the reel, so the SAME hits are directly
+	// importable into Vegas Pro (or any other EDL-reading NLE) without going through
+	// Becky Review first. Best-effort: a write failure is noted but doesn't fail the run.
+	edlPath := edlPathFor(outPath)
+	if err := writeEDLSidecar(edlPath, reel); err != nil {
+		warnings = append(warnings, fmt.Sprintf("could not write Vegas-compatible .edl: %v", err))
+		edlPath = ""
+	}
 
 	nq := 0
 	seen := map[string]bool{}
@@ -152,6 +161,7 @@ func main() {
 	}
 	beckyio.PrintJSON(report{
 		Reel:      outPath,
+		EDL:       edlPath,
 		Clips:     len(reel.Clips),
 		Skipped:   len(hits) - len(reel.Clips),
 		Questions: nq,
@@ -279,6 +289,23 @@ func writeQuestions(reelPath string, cqs []clipQ) error {
 func questionsPathFor(reelPath string) string {
 	ext := filepath.Ext(reelPath)
 	return strings.TrimSuffix(reelPath, ext) + ".questions.json"
+}
+
+// edlPathFor is "<reel-without-ext>.edl" beside the reel (same naming pattern
+// as questionsPathFor).
+func edlPathFor(reelPath string) string {
+	ext := filepath.Ext(reelPath)
+	return strings.TrimSuffix(reelPath, ext) + ".edl"
+}
+
+// writeEDLSidecar writes a CMX3600 EDL (edl.WriteEDL) for reel to path.
+func writeEDLSidecar(path string, reel edl.Reel) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return edl.WriteEDL(f, reel)
 }
 
 // clipWindow computes a clip's [in,out] and label for one hit. Explicit in/out

@@ -58,9 +58,12 @@ func WriteEDL(w io.Writer, r Reel) error {
 		recCursor += c.Dur()
 		recOut := SecondsToTimecode(recCursor, recFPS)
 
-		// Event line: NNN<sp><sp>REEL<sp...>V<sp...>C<sp...>srcIn srcOut recIn recOut
+		// Event line: NNN<sp><sp>REEL<sp...>AA/V<sp...>C<sp...>srcIn srcOut recIn recOut
+		// Channel "AA/V" = video + 2-channel audio (the standard CMX3600 designator
+		// for a normal sync-sound cut). A bare "V" (video-only) is why an EDL import
+		// into Vegas Pro carried no audio track — see internal/edl/edl_test.go.
 		event := i + 1
-		fmt.Fprintf(bw, "%03d  %-8s V     C        %s %s %s %s\r\n",
+		fmt.Fprintf(bw, "%03d  %-8s AA/V  C        %s %s %s %s\r\n",
 			event, reel, srcIn, srcOut, recIn, recOut)
 
 		// "* FROM CLIP NAME:" comment carries the full original basename so the

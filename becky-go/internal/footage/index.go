@@ -99,6 +99,9 @@ func collectVideoBases(root string) []string {
 			return nil
 		}
 		if d.IsDir() {
+			if skipExcludedDir(d) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if videoExts[strings.ToLower(filepath.Ext(path))] {
@@ -147,6 +150,9 @@ func Index(folder string) (FolderIndex, error) {
 			return nil
 		}
 		if d.IsDir() {
+			if skipExcludedDir(d) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))

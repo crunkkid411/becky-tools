@@ -114,6 +114,15 @@ public partial class MainWindow : Window
         // was interacting with the native mpv pane), not only after a click in the page.
         WebView.MouseEnter += (s, e) => { try { WebView.Focus(); } catch { } };
 
+        // Belt-and-suspenders for the same class of bug: ANY mouse-wheel tick anywhere in
+        // the window re-asserts WebView focus BEFORE the tick is handled (tunnelling
+        // PreviewMouseWheel fires ahead of the page's own wheel listener). MouseEnter alone
+        // only fires when the pointer CROSSES into the WebView's bounds, not on every
+        // scroll, so a focus loss that happens without a fresh mouse-enter (e.g. a native
+        // dialog closing, or Windows quietly handing focus elsewhere) could otherwise leave
+        // scroll-to-zoom silently dead until an unrelated click "un-sticks" it.
+        PreviewMouseWheel += (s, e) => { try { WebView.Focus(); } catch { } };
+
         _webReady = true;
         StatusLabel.Text = "Pick a case folder to begin.";
     }
@@ -367,6 +376,12 @@ public partial class MainWindow : Window
                 {
                     Title = "Load reel",
                     Filter = filter,
+                    // Explicit (not relying on the implicit default): start scoped to
+                    // *.reel.json only, so a folder full of videos/transcripts never
+                    // shows as one long unsorted list — the sort Jordan wants is really
+                    // "don't show me the whole folder", which the OS's native Open
+                    // dialog can't otherwise be told (it has no app-controllable sort API).
+                    FilterIndex = 1,
                     CheckFileExists = true,
                 };
                 if (!string.IsNullOrEmpty(initialDir)) { dlg.InitialDirectory = initialDir; }
@@ -485,6 +500,9 @@ public partial class MainWindow : Window
                 if (sp > 0) { _ = _mpv.SetSpeedAsync(sp); }
                 break;
             }
+            case "screenshot":
+                _ = TakeScreenshotAsync();
+                break;
             case "overlay":
                 _overlayOn = root.TryGetProperty("on", out var onEl) && onEl.ValueKind == JsonValueKind.True;
                 var f = Str(root, "file");
@@ -500,6 +518,38 @@ public partial class MainWindow : Window
                 if (_overlayOn) { UpdateOverlay(_lastPos); } else { ClearOverlay(); }
                 break;
         }
+    }
+
+    /// <summary>
+    /// Screenshot the CURRENT preview frame exactly as shown (mpv's "window" flag
+    /// captures the rendered window, including our forensic overlay if it's on) into
+    /// the case folder's render/ dir — the same human-facing-output location as
+    /// exports (cmd/clip's renderDir(), and already excluded from search/browse).
+    /// Auto-increments Screenshot_0001.png, _0002.png, ... so a repeat never
+    /// overwrites a previous capture. Degrades to a "failed" toast (via the null
+    /// path reply) when no folder is open or the dir can't be created.
+    /// </summary>
+    private async Task TakeScreenshotAsync()
+    {
+        if (_mpv == null) { return; }
+        var dir = string.IsNullOrWhiteSpace(_folder) ? Path.GetTempPath() : Path.Combine(_folder, "render");
+        try { Directory.CreateDirectory(dir); }
+        catch { PostToPage(new { t = "screenshot", path = (string?)null }); return; }
+        var path = NextScreenshotPath(dir);
+        await _mpv.SendAsync(default, "screenshot-to-file", path, "window");
+        PostToPage(new { t = "screenshot", path });
+    }
+
+    /// <summary>"<dir>\Screenshot_NNNN.png" for the lowest 4-digit NNNN (>=1) that
+    /// doesn't already exist, mirroring cmd/clip's nextSequencedPath naming.</summary>
+    private static string NextScreenshotPath(string dir)
+    {
+        for (var n = 1; n <= 9999; n++)
+        {
+            var p = Path.Combine(dir, $"Screenshot_{n:D4}.png");
+            if (!File.Exists(p)) { return p; }
+        }
+        return Path.Combine(dir, "Screenshot_9999.png");
     }
 
     /// <summary>Load+seek+play, then read the real video dimensions for an exactly-sized overlay.</summary>

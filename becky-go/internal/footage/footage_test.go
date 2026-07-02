@@ -140,6 +140,36 @@ func TestIndexMissingFolderDegrades(t *testing.T) {
 	}
 }
 
+// TestIndex_SkipsRenderFolder is the regression for Jordan's real bug: cmd/clip's
+// renderDir() writes compilation MP4s + EDL/SRT sidecars into "<folder>/render/",
+// and without this exclusion those show back up in Index() as if they were
+// original case footage (findable/searchable) and their sidecar .srt as an
+// "orphan" transcript.
+func TestIndex_SkipsRenderFolder(t *testing.T) {
+	root := synthFolder(t) // 3 real videos (see synthFolder)
+	writeFile(t, filepath.Join(root, "render", "clips_ring_0001.mp4"), "rendered output, not evidence")
+	writeFile(t, filepath.Join(root, "render", "clips_ring_0001.srt"),
+		"1\n00:00:01,000 --> 00:00:02,000\nre-based subtitle\n")
+
+	idx, err := Index(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Videos) != 3 {
+		t.Fatalf("Index() found %d videos, want 3 (render/ output must not count as footage): %+v", len(idx.Videos), idx.Videos)
+	}
+	for _, v := range idx.Videos {
+		if v.Name == "clips_ring_0001.mp4" {
+			t.Fatalf("a rendered export leaked into the video index: %+v", v)
+		}
+	}
+	for _, o := range idx.Orphans {
+		if filepath.Base(o.Path) == "clips_ring_0001.srt" {
+			t.Fatalf("a rendered export's sidecar .srt leaked into Orphans: %+v", o)
+		}
+	}
+}
+
 func TestGrepTranscripts(t *testing.T) {
 	root := synthFolder(t)
 	idx, err := Index(root)

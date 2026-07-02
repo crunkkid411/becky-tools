@@ -559,16 +559,17 @@ body {
 .clip .rh { flex: none; width: 8px; cursor: ew-resize; background: var(--clip-col, var(--neon-dim)); touch-action: none; z-index: 2; }
 .clip .rh:hover { background: #fff; }
 
-/* playhead */
+/* playhead: a solid black line (no white outline ring) through the track, with a
+   wider black head that covers the full gray ruler band (24px, matches .ruler). */
 #playhead {
   position: absolute; top: 0; bottom: 0; width: 2px;
-  background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,.85);
+  background: #000;
   pointer-events: none; z-index: 5;
 }
 #playhead::before {
   content: ""; position: absolute; top: 0; left: -4px;
-  border-left: 5px solid transparent; border-right: 5px solid transparent;
-  border-top: 6px solid #000;
+  width: 10px; height: 24px;
+  background: #000;
 }
 
 /* reorder drop indicator (CHANGE A): a bright insertion line marking where the
@@ -579,6 +580,19 @@ body {
   background: var(--blue); box-shadow: 0 0 8px var(--blue);
   pointer-events: none; z-index: 6;
 }
+
+/* ============================ BUSY BAR ====================================== */
+/* Non-intrusive: a thin animated strip at the very top, shown only once an
+   in-flight engine call has taken over a second (see app.js busyStart/busyEnd) —
+   never appears for anything fast, never blocks input. */
+#busyBar {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, transparent, var(--neon), transparent);
+  background-size: 200% 100%;
+  animation: busySlide 1.1s linear infinite;
+  z-index: 1001; opacity: .85; pointer-events: none;
+}
+@keyframes busySlide { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
 /* ============================ TOAST ======================================== */
 .toast {

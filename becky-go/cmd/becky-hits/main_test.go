@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"becky-go/internal/footage"
@@ -81,6 +82,36 @@ func TestBuildReelSnapsToCue(t *testing.T) {
 	}
 	if !reel.Overlay.Enabled {
 		t.Error("forensic overlay should be enabled on a hits reel")
+	}
+}
+
+// TestEDLSidecar covers Jordan's ask: Open Forensic Hits.bat's output should also
+// be directly importable into Vegas Pro. edlPathFor names the sibling beside the
+// reel; writeEDLSidecar must produce a real CMX3600 EDL carrying audio (not the
+// video-only "V" that dropped Vegas's audio track — see internal/edl/cmx3600.go).
+func TestEDLSidecar(t *testing.T) {
+	if got, want := edlPathFor(`C:\case\becky-hits.reel.json`), `C:\case\becky-hits.reel.edl`; got != want {
+		t.Fatalf("edlPathFor = %q, want %q", got, want)
+	}
+
+	idx := writeFixtureFolder(t)
+	hits := []hit{{SRT: "kitchen.srt", T: "00:00:11"}}
+	reel, _, _ := buildReel(idx, hits, "case", 0.5, 4.0)
+
+	edlPath := filepath.Join(t.TempDir(), "hits.edl")
+	if err := writeEDLSidecar(edlPath, reel); err != nil {
+		t.Fatalf("writeEDLSidecar: %v", err)
+	}
+	data, err := os.ReadFile(edlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "AA/V") {
+		t.Fatalf("EDL sidecar has no audio channel designator:\n%s", out)
+	}
+	if !strings.Contains(out, "TITLE: case") {
+		t.Fatalf("EDL sidecar missing the reel title:\n%s", out)
 	}
 }
 
