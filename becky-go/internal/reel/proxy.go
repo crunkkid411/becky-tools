@@ -240,6 +240,20 @@ func ScrubProxySegment(source string, inSec, outSec float64, outDir string) (str
 	if cfg.FFmpeg == "" || !available(cfg.FFmpeg) {
 		return "", fmt.Errorf("ffmpeg not available (config FFmpeg=%q); cannot build windowed scrub proxy", cfg.FFmpeg)
 	}
+	// Reuse a WIDER, already-cached proxy of this source when one fully covers
+	// [inSec,outSec): a fast stream-copy trim (no re-encode — every frame is
+	// already a keyframe) instead of a fresh transcode from the raw source. This
+	// is the fix for splitting/trimming an already-scrubbed clip paying a full
+	// multi-second re-encode every time: the clip's ORIGINAL wider window is
+	// still sitting on disk, just under a now-different window key.
+	if container, offset, ok := findContainingProxy(source, inSec, outSec, outDir); ok {
+		if err := runFFmpeg(cfg.FFmpeg, false, trimExistingProxyArgs(container, out, offset, outSec-inSec)); err == nil {
+			if fi, e := os.Stat(out); e == nil && fi.Size() > 0 {
+				return out, nil
+			}
+		}
+		// fall through to a full re-encode from the raw source on any failure
+	}
 	if err := runFFmpeg(cfg.FFmpeg, false, scrubProxySegmentArgs(source, out, inSec, outSec)); err != nil {
 		return "", err
 	}
@@ -247,6 +261,85 @@ func ScrubProxySegment(source string, inSec, outSec float64, outDir string) (str
 		return "", fmt.Errorf("windowed scrub proxy transcode produced no file: %s", out)
 	}
 	return out, nil
+}
+
+// findContainingProxy scans outDir for an existing, fresh WINDOWED scrub proxy of
+// source whose span fully contains [inSec,outSec), so a NARROWER clip (the
+// result of splitting/trimming a WIDER one that was already proxied) can reuse
+// it instead of paying a fresh encode from the raw source. Picks the TIGHTEST
+// containing window when more than one qualifies (least excess to trim
+// through). ok=false when nothing usable is cached — the caller falls back to
+// the raw-source encode, today's behavior, never a regression.
+func findContainingProxy(source string, inSec, outSec float64, outDir string) (path string, offsetSec float64, ok bool) {
+	base := pathx.Base(source)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	ext := scrubCodecFor(os.Getenv("BECKY_PROXY_CODEC")).ext
+	segPrefix := stem + "."
+	segSuffix := ".scrub" + ext
+
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return "", 0, false
+	}
+	si, serr := os.Stat(source)
+	inMs, outMs := millis(inSec), millis(outSec)
+	bestSpan := int64(-1)
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, segPrefix) || !strings.HasSuffix(name, segSuffix) {
+			continue
+		}
+		mid := strings.TrimSuffix(strings.TrimPrefix(name, segPrefix), segSuffix)
+		parts := strings.SplitN(mid, "-", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		winInMs, e1 := strconv.ParseInt(parts[0], 10, 64)
+		winOutMs, e2 := strconv.ParseInt(parts[1], 10, 64)
+		if e1 != nil || e2 != nil || winInMs >= winOutMs {
+			continue
+		}
+		if winInMs > inMs || winOutMs < outMs {
+			continue // does not fully contain the requested window
+		}
+		full := filepath.Join(outDir, name)
+		fi, ferr := os.Stat(full)
+		if ferr != nil || fi.Size() == 0 {
+			continue
+		}
+		if serr == nil && fi.ModTime().Before(si.ModTime()) {
+			continue // stale — source changed since this proxy was built
+		}
+		span := winOutMs - winInMs
+		if bestSpan < 0 || span < bestSpan {
+			bestSpan = span
+			offsetSec = inSec - float64(winInMs)/1000.0
+			path = full
+			ok = true
+		}
+	}
+	return path, offsetSec, ok
+}
+
+// trimExistingProxyArgs builds the ffmpeg argv to cut [offsetSec,offsetSec+durSec)
+// out of an EXISTING intra-frame scrub proxy via stream copy (-c copy) — no
+// re-encode needed since every frame is already a keyframe (scrubCodecFor's
+// -g 1). A container-level cut of an already-small, already-low-res file is near
+// instant, unlike a fresh transcode of the raw (possibly slow-drive, long-GOP)
+// source. PURE (unit-tested).
+func trimExistingProxyArgs(container, out string, offsetSec, durSec float64) []string {
+	return []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-ss", formatSeconds(offsetSec),
+		"-i", container,
+		"-t", formatSeconds(durSec),
+		"-c", "copy",
+		out,
+	}
 }
 
 // SegmentProxyPath returns the deterministic path a windowed scrub proxy for
@@ -268,22 +361,35 @@ func SegmentProxyPath(source, outDir string, inSec, outSec float64) string {
 	return scrubProxySegmentPath(source, outDir, inSec, outSec)
 }
 
-// CachedScrubProxySegment returns (path, true) when a FRESH windowed scrub proxy
-// for source's [inSec,outSec) window already exists in outDir (present, non-empty,
-// and not older than the source), WITHOUT building anything; ("", false) otherwise.
-// This lets TimelineEDL PREFER a proxy the UI has already built lazily while safely
-// falling back to the raw source when none exists yet — so the timeline can never
-// regress to un-playable, only to today's raw-source behavior.
-func CachedScrubProxySegment(source string, inSec, outSec float64, outDir string) (string, bool) {
+// ScrubProxyPadSec is how many extra seconds a built windowed scrub proxy
+// covers on EACH side of the requested clip window (see ScrubSegment in
+// cmd/clip/export.go, which pads before calling ScrubProxySegment). SRT-derived
+// cut points aren't frame-exact, and dragging a trim handle to fine-tune them is
+// normal workflow — a minor adjustment should land inside the ALREADY-BUILT
+// padded proxy (served via findContainingProxy) instead of invalidating the
+// exact-window cache and paying a fresh raw-source encode on every small drag.
+const ScrubProxyPadSec = 15.0
+
+// CachedScrubProxySegment returns (path, offsetSec, true) when a windowed scrub
+// proxy that COVERS source's [inSec,outSec) window already exists in outDir —
+// either the exact window, or (via findContainingProxy) a WIDER one built with
+// ScrubProxyPadSec margin — WITHOUT building anything; ("", 0, false) otherwise.
+// offsetSec is where inSec begins inside the returned file (0 for an exact
+// match, >0 when the match is a wider padded proxy). This lets TimelineEDL
+// PREFER a proxy the UI has already built lazily while safely falling back to
+// the raw source when none exists yet — so the timeline can never regress to
+// un-playable, only to today's raw-source behavior.
+func CachedScrubProxySegment(source string, inSec, outSec float64, outDir string) (string, float64, bool) {
 	path := SegmentProxyPath(source, outDir, inSec, outSec)
-	fi, err := os.Stat(path)
-	if err != nil || fi.Size() == 0 {
-		return "", false
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		if si, serr := os.Stat(source); serr != nil || !fi.ModTime().Before(si.ModTime()) {
+			return path, 0, true
+		}
 	}
-	if si, err := os.Stat(source); err == nil && fi.ModTime().Before(si.ModTime()) {
-		return "", false // stale — source changed since the proxy was built
+	if wide, offset, ok := findContainingProxy(source, inSec, outSec, outDir); ok {
+		return wide, offset, true
 	}
-	return path, true
+	return "", 0, false
 }
 
 // scrubProxySegmentPath builds "<stem>.<inMs>-<outMs>.scrub.<ext>" inside

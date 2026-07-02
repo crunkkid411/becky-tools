@@ -342,27 +342,60 @@ func TestCachedScrubProxySegment(t *testing.T) {
 	if err := os.WriteFile(src, []byte("src"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir); ok {
+	if _, _, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir); ok {
 		t.Fatal("no proxy on disk yet — must report not-cached")
 	}
 	pp := SegmentProxyPath(src, dir, 0.5, 5.2)
 	if err := os.WriteFile(pp, []byte("proxy-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir)
-	if !ok || got != pp {
-		t.Fatalf("fresh proxy should be cached: got %q ok=%v (want %q)", got, ok, pp)
+	got, off, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir)
+	if !ok || got != pp || off != 0 {
+		t.Fatalf("fresh exact-match proxy should be cached at offset 0: got %q off=%v ok=%v (want %q)", got, off, ok, pp)
 	}
-	if _, ok := CachedScrubProxySegment(src, 6.0, 9.0, dir); ok {
-		t.Fatal("a different window must not resolve to the first window's proxy")
+	if _, _, ok := CachedScrubProxySegment(src, 20.0, 25.0, dir); ok {
+		t.Fatal("a window nothing on disk contains must not resolve to an unrelated proxy")
 	}
 	// source newer than the proxy => stale => not cached
 	future := time.Now().Add(2 * time.Hour)
 	if err := os.Chtimes(src, future, future); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir); ok {
+	if _, _, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir); ok {
 		t.Fatal("a proxy older than its source must be treated as stale")
+	}
+}
+
+// TestCachedScrubProxySegment_FallsBackToWiderContainingProxy is the
+// regression for Jordan's real bug: a small trim-handle drag (SRT cut points
+// aren't frame-exact) changes a clip's [in,out) just slightly, which used to
+// miss the EXACT-window cache and force a fresh raw-source encode every time —
+// "dragging clips around... breaks the whole program". A WIDER proxy (built
+// with ScrubProxyPadSec margin) must now be found and used, with the correct
+// offset into it.
+func TestCachedScrubProxySegment_FallsBackToWiderContainingProxy(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "clip.mp4")
+	if err := os.WriteFile(src, []byte("src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A padded proxy covering [10,50) already exists (as ScrubSegment would build).
+	wide := SegmentProxyPath(src, dir, 10, 50)
+	if err := os.WriteFile(wide, []byte("wide-proxy-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A minor drag narrows the clip to [12,45) — no exact-match proxy for THIS
+	// window, but it's fully inside the padded one.
+	got, off, ok := CachedScrubProxySegment(src, 12, 45, dir)
+	if !ok || got != wide {
+		t.Fatalf("a window inside a wider cached proxy should resolve to it: got %q ok=%v (want %q)", got, ok, wide)
+	}
+	if off != 2 { // 12 - 10 = 2s into the wide proxy
+		t.Fatalf("offset into the wider proxy = %v, want 2", off)
+	}
+	// A window NOT fully inside the wide proxy must still miss.
+	if _, _, ok := CachedScrubProxySegment(src, 5, 45, dir); ok {
+		t.Fatal("a window extending before the cached proxy's start must not match")
 	}
 }
 

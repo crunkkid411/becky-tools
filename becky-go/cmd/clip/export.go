@@ -328,12 +328,14 @@ func (a *App) TimelineEDL() (EDLResult, error) {
 		}
 		// Prefer a FRESH cached windowed scrub proxy (built lazily by the UI) — an
 		// intra-frame proxy of just this clip's [in,out) window scrubs far faster than
-		// the raw long-GOP source. The proxy IS the window, so it starts at 0. When
-		// none exists yet, fall back to the raw source at its in-point — today's exact
-		// behavior, so a missing/absent proxy can never regress seamless playback.
+		// the raw long-GOP source. The proxy may be padded wider than the exact clip
+		// (ScrubProxyPadSec), so inOff is whatever offset CachedScrubProxySegment says
+		// the window actually starts at inside it (0 for an exact match). When no
+		// proxy exists yet, fall back to the raw source at its in-point — today's
+		// exact behavior, so a missing/absent proxy can never regress seamless playback.
 		src, inOff := c.Source, c.In
-		if p, ok := reel.CachedScrubProxySegment(c.Source, c.In, c.Out, work); ok && !strings.ContainsRune(p, ',') {
-			src, inOff = p, 0
+		if p, off, ok := reel.CachedScrubProxySegment(c.Source, c.In, c.Out, work); ok && !strings.ContainsRune(p, ',') {
+			src, inOff = p, off
 		}
 		fmt.Fprintf(&b, "%s,%.3f,%.3f\n", src, inOff, length)
 		total += length
@@ -403,7 +405,15 @@ func (a *App) ScrubSegment(source string, inSec, outSec float64) ScrubSegmentRes
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return ScrubSegmentResult{}
 	}
-	path, err := reel.ScrubProxySegment(v.Path, inSec, outSec, work)
+	// Pad the built window on each side (reel.ScrubProxyPadSec): SRT-derived cut
+	// points aren't frame-exact and dragging a trim handle to fine-tune them is
+	// normal workflow — a minor adjustment should land inside the ALREADY-BUILT
+	// padded proxy (served instantly, see findContainingProxy in internal/reel)
+	// instead of invalidating the exact-window cache and paying a fresh
+	// raw-source encode on every small drag.
+	padIn := clampNonNeg(inSec - reel.ScrubProxyPadSec)
+	padOut := outSec + reel.ScrubProxyPadSec
+	path, err := reel.ScrubProxySegment(v.Path, padIn, padOut, work)
 	if err != nil {
 		return ScrubSegmentResult{}
 	}
