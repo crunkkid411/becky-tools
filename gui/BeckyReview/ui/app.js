@@ -1433,13 +1433,19 @@
   var proxyQueue = [];
   var proxyActive = 0;
   var PROXY_MAX = 1;         // one segment-transcode at a time — a background nicety, don't peg CPU
+  // Proxies build for EVERY clip on the timeline, not just the ones on screen
+  // right now — unlike thumbnails, the point of this queue is that a clip is
+  // ALREADY scrub-ready by the time a human scrolls to or plays it (the real
+  // workflow: an agent finds clips and puts them on the timeline, a human
+  // reviews later). PROXY_MAX=1 keeps this a slow background trickle, never a
+  // "storm" — it just doesn't stop at the screen edge anymore.
   function applyProxies() {
     var blocks = trackEl.querySelectorAll('.clip');
     for (var i = 0; i < blocks.length; i++) {
       var clip = clipById(blocks[i].dataset.id);
       if (!clip || !clip.source) { continue; }
       var key = waveKey(clip.source, clip.in || 0, clip.out || 0);   // same window key as the waveform
-      if (proxyRequested[key] || !clipVisible(clip.id)) { continue; }
+      if (proxyRequested[key]) { continue; }
       proxyRequested[key] = true;
       proxyQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0 });
       pumpProxies();
