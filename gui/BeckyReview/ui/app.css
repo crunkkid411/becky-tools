@@ -559,18 +559,22 @@ body {
 .clip .rh { flex: none; width: 8px; cursor: ew-resize; background: var(--clip-col, var(--neon-dim)); touch-action: none; z-index: 2; }
 .clip .rh:hover { background: #fff; }
 
-/* playhead: a solid black line through the track, with a WHITE head that covers
-   the full gray ruler band (24px, matches .ruler) so it reads clearly against it. */
+/* playhead: a solid black line through the track, with a WHITE flag-shaped head
+   that covers the full gray RULER band above the track (not just the clip it's
+   drawn inside of — #playhead lives inside #track, which sits below the
+   separate #ruler element, so the head needs a negative top reaching up over
+   it: .ruler is 24px + a 1px border = 25px). Tapers to a point at the bottom
+   where it meets the line, like a map-pin flag. */
 #playhead {
   position: absolute; top: 0; bottom: 0; width: 2px;
   background: #000;
   pointer-events: none; z-index: 5;
 }
 #playhead::before {
-  content: ""; position: absolute; top: 0; left: -8px;
-  width: 18px; height: 24px;
+  content: ""; position: absolute; top: -25px; left: -8px;
+  width: 18px; height: 25px;
   background: #fff;
-  border-radius: 4px;
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
   box-shadow: 0 0 0 1px rgba(0,0,0,.45);
 }
 

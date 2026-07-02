@@ -1555,9 +1555,19 @@
   // drag that fires many seeks before the load finishes coalesces to the latest
   // target (edlLoading guard), so a ruler scrub never reloads mpv repeatedly.
   var edlLoading = false, pendingSeek = null;
+  // A paused seek (keyboard nav / click) races an in-flight {t:"time"} message that
+  // was already queued from BEFORE mpvSeek was sent — it can arrive AFTER the fresh,
+  // correct position report and silently overwrite it with the stale pre-seek value.
+  // onTime ignores anything that disagrees with the seek we JUST asked for, for a
+  // short settle window, while paused. Without this, Ctrl+Left/Right could snap back
+  // right after landing, so the next press recomputed from the wrong spot and got
+  // stuck re-finding the same boundary instead of walking further.
+  var lastSeekTarget = null, lastSeekAt = 0;
+  var SEEK_SETTLE_MS = 500, SEEK_TOL_SEC = 0.25;
   async function seekTimeline(comp, play) {
     if (!(state.timeline.clips || []).length) { return; }
     if (isTimelineLoaded() && state.edlVersion === state.tlVersion) {
+      if (!play) { lastSeekTarget = comp; lastSeekAt = performance.now(); }
       mpvSeek(comp);                                  // already the current EDL -> just seek
       if (play && !state.playing) { mpvSend('resume'); }
       else if (!play && state.playing) { mpvSend('pause'); }
@@ -1580,6 +1590,16 @@
     state.pos = (typeof pos === 'number') ? pos : 0;
     state.dur = (typeof dur === 'number') ? dur : 0;
     if (isTimelineLoaded()) {
+      if (!state.playing && lastSeekTarget != null) {
+        if (performance.now() - lastSeekAt > SEEK_SETTLE_MS) {
+          lastSeekTarget = null;                        // settle window elapsed either way
+        } else if (Math.abs(state.pos - lastSeekTarget) > SEEK_TOL_SEC) {
+          updatePlayhead();
+          return;                                       // stale report — don't clobber playheadComp
+        } else {
+          lastSeekTarget = null;                         // this IS the seek landing — done watching
+        }
+      }
       state.playheadComp = state.pos;                 // EDL position IS the compilation position
       var c = clipAtComp(state.pos);
       state.activeClipId = c ? c.id : null;
@@ -1660,11 +1680,18 @@
     var leftPx = g.left + frac * g.width;
     playheadEl.style.left = leftPx + 'px';
     playheadEl.style.display = 'block';
-    // Keep the playhead centered in the visible timeline (playback, keyboard
-    // nav, clicks) — but never fight an in-progress drag, or the content would
-    // shift out from under the cursor while resizing/reordering/scrubbing.
+    // The timeline stays PUT — it only jumps when the playhead reaches the
+    // edge of what's visible, landing it back near the center, then holds
+    // still again until the next edge. Not continuous re-centering (that
+    // fights the view while you're trying to look at something else), and
+    // never during an in-progress drag, or the content would shift out from
+    // under the cursor while resizing/reordering/scrubbing.
     if (tlBodyEl && !resizing && !clipGesture && !scrubbing) {
-      tlBodyEl.scrollLeft = Math.max(0, leftPx - tlBodyEl.clientWidth / 2);
+      var EDGE_MARGIN = 40;
+      var viewL = tlBodyEl.scrollLeft, viewR = viewL + tlBodyEl.clientWidth;
+      if (leftPx < viewL + EDGE_MARGIN || leftPx > viewR - EDGE_MARGIN) {
+        tlBodyEl.scrollLeft = Math.max(0, leftPx - tlBodyEl.clientWidth / 2);
+      }
     }
   }
 
@@ -2187,10 +2214,13 @@
     state.activeClipId = clip.id;
     selectOnly(clip.id);                            // a plain click/scrub selects ONLY this clip
     state.playheadComp = comp;
-    // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, held PAUSED — a
-    // click never starts playback (that's the ▶/space job). seekTimeline reuses the
-    // loaded EDL (a fast seek) or loads it once. (isStart kept for the shared signature.)
-    seekTimeline(comp, false);
+    // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, KEEPING whatever
+    // play state was already true — clicking elsewhere while playing should keep
+    // playing from the new spot, not silently pause; clicking while paused stays
+    // paused (a click doesn't force playback to start on its own). seekTimeline
+    // reuses the loaded EDL (a fast seek) or loads it once. (isStart kept for the
+    // shared signature.)
+    seekTimeline(comp, state.playing);
     updatePlayhead();
   }
   // Ruler gesture (the gray bar above the clips): a CLICK places the playhead; a DRAG
@@ -2442,9 +2472,14 @@
      also gets "Open transcript in left panel" which jumps the list to the clip's time.
      ===================================================================== */
   // Clicking the timeline returns keyboard focus to it: blur the chat/answer field so
-  // the timeline shortcuts (space, delete, arrows) work again — the Q&A answer box would
-  // otherwise trap them. Only the chat column's field is blurred, never the left search.
+  // the timeline shortcuts (space, delete, arrows) work again. Also blurs the left
+  // search list — a click is the highest-priority signal of intent, so clicking the
+  // timeline must hand it keyboard focus even if a search row still "has" it, or
+  // Space/Enter keep controlling the last-clicked quote instead of the timeline
+  // (that's what made Play always resume the search-panel preview after adding a
+  // quote to the timeline, until the ▶ button was clicked directly).
   function blurChatField() {
+    if ($listScroll && document.activeElement === $listScroll) { $listScroll.blur(); }
     var el = document.activeElement;
     if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) { return; }
     if (el === $ask || (el.closest && el.closest('.chat'))) { el.blur(); }
