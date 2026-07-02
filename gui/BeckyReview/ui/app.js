@@ -22,7 +22,7 @@
   /* ----------------------------- constants -------------------------------- */
   var DEFAULT_PXPS = 8;    // default timeline scale (px per second) - see state.pxPerSec
   var ZOOM_MIN = 2;        // zoom clamp (px per second) - standard-NLE timeline zoom
-  var ZOOM_MAX = 120;
+  var ZOOM_MAX = 2000;     // high ceiling so the 10s default is a STARTING point, not a limit — zoom in to frame level
   var MINW = 96;           // base/cap for the min clip-block width; the live floor scales with zoom
   var MAX_ROWS = 3000;     // cap RENDERED quote rows (results are date-sorted, so this shows the newest first; the "Showing X of N" note tells the user when more exist)
   var CALL_TIMEOUT_MS = 35 * 60 * 1000;   // 35-minute safety timeout per spec
@@ -1799,11 +1799,16 @@
     ensureSourceDuration(clip.source);   // warm THIS source's bound for the drag
     var w = block.offsetWidth;
     var dur = Math.max(0.001, clipDur(clip));
+    // The clip's waveform SVG covers [origIn,origOut] over viewBox 0..waveN; during the
+    // drag we crop that viewBox to the new window (moveResize) instead of stretching it.
+    var waveSvg = block.querySelector('.cwave svg');
+    var waveN = (waveSvg && waveSvg.viewBox && waveSvg.viewBox.baseVal) ? waveSvg.viewBox.baseVal.width : 0;
     resizing = {
       id: clip.id, edge: handle.dataset.edge, startX: e.clientX,
       block: block, clip: clip, pxPerSec: w / dur,
       origIn: clip.in || 0, origOut: clip.out || 0,
-      newIn: clip.in || 0, newOut: clip.out || 0
+      newIn: clip.in || 0, newOut: clip.out || 0,
+      waveSvg: waveSvg, waveN: waveN
     };
     try { handle.setPointerCapture(e.pointerId); } catch (_) {}
   }
@@ -1822,6 +1827,17 @@
     r.newIn = nIn; r.newOut = nOut;
     var newDur = nOut - nIn;
     r.block.style.width = Math.max(minClipW(), newDur * r.pxPerSec) + 'px';   // live optimistic width
+    // Crop the waveform to the visible [nIn,nOut] window (a viewBox sub-range) so it
+    // reveals/hides at a CONSTANT scale — a real trim, not a time-stretch — and you can
+    // land on a zero-crossing. renderTimeline rebuilds it full-width on release.
+    if (r.waveSvg && r.waveN > 0) {
+      var od = r.origOut - r.origIn;
+      if (od > 0) {
+        var minX = (nIn - r.origIn) / od * r.waveN;
+        var wX = Math.max(0.01, newDur / od * r.waveN);
+        r.waveSvg.setAttribute('viewBox', minX.toFixed(2) + ' 0 ' + wX.toFixed(2) + ' 1');
+      }
+    }
     r.block.title = (r.block.title || '').replace(/\s*\([^)]*\)\s*$/, '') + '  (' + mmss(newDur) + ')';
     updatePlayhead();
   }

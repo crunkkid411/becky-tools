@@ -444,7 +444,9 @@ body {
 #tRenderSel { color: var(--blue); border-color: #14506a; }
 #tRenderSel:hover { color: #fff; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.4); }
 
-.tlbody { overflow-x: auto; overflow-y: hidden; }
+/* overflow-x: scroll (not auto) keeps the horizontal scrollbar's space ALWAYS reserved,
+   so zooming past the fit-width can't make a scrollbar appear and shove the panels up. */
+.tlbody { overflow-x: scroll; overflow-y: hidden; }
 .tlinner { display: flex; flex-direction: column; width: max-content; min-width: 100%; }
 
 /* ruler = the timecode bar: CLICK places the playhead, DRAG pans the timeline
@@ -453,8 +455,8 @@ body {
    labels (rendered by app.js) so the gray bar shows real compilation timecodes. */
 .ruler {
   position: relative;
-  height: 24px; cursor: text; touch-action: none;
-  background-color: var(--chrome);
+  height: 24px; cursor: default; touch-action: none;
+  background-color: #676767;
   border-bottom: 1px solid var(--line-2);
   overflow: hidden;
 }
@@ -463,15 +465,15 @@ body {
    none so it never blocks a click/drag on the ruler beneath it. */
 .rtick {
   position: absolute; top: 0; bottom: 0;
-  padding-left: 4px; border-left: 1px solid var(--line);
-  color: var(--dim); font-size: 11px; line-height: 24px;
+  padding-left: 4px; border-left: 1px solid #111;
+  color: #111; font-size: 11px; line-height: 24px;
   font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
 }
 
 /* the clip track. I-beam cursor (not a hand) across the scrub surface — the
    timeline-edit cursor a producer expects. */
 .track {
-  position: relative; cursor: text;
+  position: relative; cursor: default;
   display: flex; gap: 6px; align-items: stretch;
   padding: 8px 0; min-height: 96px;
   background:
@@ -491,7 +493,7 @@ body {
   display: flex; align-items: stretch;
   background: var(--neon-soft);
   border: 1px solid transparent; border-radius: 6px;   /* colour set inline (per source) */
-  overflow: hidden; cursor: text;
+  overflow: hidden; cursor: default;
   transition: box-shadow .12s;
 }
 .clip:hover { box-shadow: 0 0 6px rgba(255,255,255,.35); }   /* glow on hover; never recolours the source outline */
@@ -516,9 +518,6 @@ body {
 /* the clip currently being dragged to a new slot (CHANGE A): lifted + dimmed so the
    eye follows it, tinted blue to read apart from the green hover + yellow selection */
 .clip.dragging {
-  opacity: .55;
-  border-color: var(--blue);
-  box-shadow: 0 0 10px rgba(0, 174, 239, .5);
   cursor: grabbing;
   z-index: 4;
 }
@@ -563,13 +562,13 @@ body {
 /* playhead */
 #playhead {
   position: absolute; top: 0; bottom: 0; width: 2px;
-  background: var(--neon); box-shadow: 0 0 8px var(--neon);
+  background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,.85);
   pointer-events: none; z-index: 5;
 }
 #playhead::before {
   content: ""; position: absolute; top: 0; left: -4px;
   border-left: 5px solid transparent; border-right: 5px solid transparent;
-  border-top: 6px solid var(--neon);
+  border-top: 6px solid #000;
 }
 
 /* reorder drop indicator (CHANGE A): a bright insertion line marking where the

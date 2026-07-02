@@ -545,52 +545,61 @@ public partial class MainWindow : Window
             else { dispW = w; dispH = (int)Math.Round(w / videoAspect); yoff = (h - dispH) / 2; }
         }
 
-        // Font ~1/11 of the host height (large + readable on playback), clamped to a
-        // sane on-screen range. The Date/Link lines are a touch smaller.
-        var fs = Math.Min(80, Math.Max(26, (int)Math.Round(h / 11.0)));
-        var meta2 = Math.Max(22, fs * 5 / 6);
+        // MATCH THE RENDER (drawtext.go): white monospace lines on a semi-transparent black
+        // panel. The render draws 42px text on the source-resolution frame; scale that fixed
+        // px to the video's DISPLAYED size so the preview reads the SAME as the burned
+        // overlay (the old preview scaled to the window and came out ~4x too big + coloured).
+        double scaleY = _ovH > 0 ? (double)dispH / _ovH : dispH / 1000.0;
+        double scaleX = _ovW > 0 ? (double)dispW / _ovW : dispW / 1000.0;
+        int fontSize = Math.Max(12, (int)Math.Round(42 * scaleY)); // render ltFontSize = 42
+        int lineStep = Math.Max(fontSize + 2, (int)Math.Round(58 * scaleY)); // render ltLineH = 58
+        int marginX = Math.Max(6, (int)Math.Round(20 * scaleX));   // render ltMarginX = 20
+        int botPad = Math.Max(8, (int)Math.Round(61 * scaleY));    // render ltBottomPad = 61
 
-        // yt-dlp puts the provenance in the file name ("YYYY-MM-DD_Title_[VIDEOID]"):
-        // when no becky sidecar supplied a date/link, recover them so the overlay still
-        // shows the source date + URL. An explicit sidecar value always wins.
+        // yt-dlp provenance recovery (date/link from the file name) when no sidecar supplied it.
         var date = _ovDate.Length > 0 ? _ovDate : DateFromName(_ovFile);
         var link = _ovLink.Length > 0 ? _ovLink : LinkFromName(_ovFile);
-
-        // ORIG TC is the timecode in the SOURCE. During seamless EDL playback mpv's
-        // position is the COMPILATION time, so _ovTcOffset (clip.in - clip.start_sec,
-        // sent by the page) maps it back to the current clip's real source time.
-        var line2 = "ORIG TC " + Smpte(pos + _ovTcOffset, _ovFps);
-        // yt-dlp dates are UTC — label them so (matches the source's own timezone).
+        var tcLine = "ORIG TC " + Smpte(pos + _ovTcOffset, _ovFps);
         var dateLine = date.Length > 0 ? "Date: " + date + " UTC" : "";
-        var linkLine = link; // the URL is self-evidently the link — no "Link:" label
 
-        // A long filename/URL WRAPS to extra lines (at the readable base font) rather
-        // than shrinking to nothing or running off the video — critical info must
-        // always be shown in full and legibly (a glyph is ~0.55*font wide).
-        // \an1 = bottom-left, \pos at the video rect's bottom-left so the block grows
-        // upward from the bottom-left corner OF THE VIDEO; OverlayBottomPad keeps it
-        // off the very bottom edge. \bord2 outline keeps it legible on any background.
-        int px = xoff + 16, py = yoff + dispH - OverlayBottomPad;
+        // Display lines top -> bottom (Date, ORIG TC, filename, link), each wrapped to the
+        // video width — the render's exact order + wrapping.
+        var lines = new List<string>();
+        void Add(string t) { if (t.Length > 0) { foreach (var s in WrapToWidth(t, fontSize, dispW)) { lines.Add(s); } } }
+        Add(dateLine);
+        Add(tcLine);
+        if (_ovShowName) { Add(_ovFile); }
+        Add(link);
+        if (lines.Count == 0) { ClearOverlay(); return; }
+
+        int px = xoff + marginX;
+        int py = yoff + dispH - botPad;   // the text block's bottom-left (\an1 grows upward)
+        int n = lines.Count;
+
+        // Panel (osd id 1, painted UNDER the text): one semi-transparent black rectangle
+        // behind the whole block — the render uses per-line boxes@0.6; a single snug panel
+        // reads the same at this size and is reliable in libass. Generous pad so it covers.
+        int widest = 0;
+        foreach (var s in lines) { widest = Math.Max(widest, s.Length); }
+        int blockW = (int)Math.Round(widest * fontSize * 0.55); // monospace glyph ~0.55*font
+        int pad = Math.Max(4, fontSize / 5);
+        int bx1 = px - pad, by1 = py - n * lineStep - pad, bx2 = px + blockW + pad, by2 = py + pad;
+        var box = new StringBuilder();
+        box.Append("{\\an7}{\\pos(0,0)}{\\bord0}{\\1c&H000000&}{\\1a&H66&}{\\p1}")   // 0x66 alpha = ~60% opaque (render box@0.6)
+           .Append("m ").Append(bx1).Append(' ').Append(by1)
+           .Append(" l ").Append(bx2).Append(' ').Append(by1)
+           .Append(' ').Append(bx2).Append(' ').Append(by2)
+           .Append(' ').Append(bx1).Append(' ').Append(by2)
+           .Append("{\\p0}");
+        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", box.ToString(), w, h, 0, false, false);
+
+        // Text (osd id 2, ON TOP — mpv paints higher ids above lower ones): white Consolas,
+        // \N-stacked, bottom-left anchored at the video rect.
         var sb = new StringBuilder();
-        // \fnConsolas matches the render's monospaced Consolas so the preview reads the
-        // same as the burned lower-third.
-        sb.Append("{\\an1}{\\fnConsolas}{\\pos(").Append(px).Append(',').Append(py).Append(")}{\\bord2}{\\3c&H000000&}");
-        var emittedAny = false;
-        void Emit(string text, int fontSize, string colorBGR)
-        {
-            foreach (var sub in WrapToWidth(text, fontSize, dispW))
-            {
-                if (emittedAny) { sb.Append("\\N"); }
-                emittedAny = true;
-                sb.Append("{\\fs").Append(fontSize).Append("}{\\1c&H").Append(colorBGR).Append("&}").Append(AssEscape(sub));
-            }
-        }
-        // Line order (top -> bottom): Date, ORIG TC, filename, link (Jordan's layout).
-        Emit(dateLine, meta2, "D7D7D7");                    // Date — gray (top)
-        Emit(line2, fs, "FFFFFF");                          // ORIG TC — white (short, won't wrap)
-        if (_ovShowName) { Emit(_ovFile, fs, "39FF14"); }   // filename — green #14FF39 (ASS is BGR, so B/R swap)
-        Emit(linkLine, meta2, "D7D7D7");                    // Link — gray (bottom)
-        _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", sb.ToString(), w, h, 0, false, false);
+        sb.Append("{\\an1}{\\fnConsolas}{\\pos(").Append(px).Append(',').Append(py)
+          .Append(")}{\\bord1}{\\3c&H000000&}{\\1c&HFFFFFF&}{\\fs").Append(fontSize).Append('}');
+        for (int i = 0; i < n; i++) { if (i > 0) { sb.Append("\\N"); } sb.Append(AssEscape(lines[i])); }
+        _ = _mpv!.SendAsync(default, "osd-overlay", 2, "ass-events", sb.ToString(), w, h, 0, false, false);
     }
 
     // Inset (px) from the video's bottom edge to the lowest overlay line, so the
@@ -655,7 +664,9 @@ public partial class MainWindow : Window
 
     private void ClearOverlay()
     {
+        // The lower-third now uses two overlays (1 = black panel, 2 = white text) — clear both.
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "none", "", 0, 0, 0, false, false);
+        _ = _mpv!.SendAsync(default, "osd-overlay", 2, "none", "", 0, 0, 0, false, false);
     }
 
     // --- folder open (native pick OR remembered) ---------------------------------

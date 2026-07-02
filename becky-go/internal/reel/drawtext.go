@@ -12,21 +12,11 @@ import (
 const (
 	ltFontSize   = 42 // filename / Date / link lines (large — readable on playback)
 	ltTCFontSize = 45 // the original-timecode line (slightly larger — it's the anchor)
+	ltBoxAlpha   = "0.6"
 	ltMarginX    = 20 // px from the left edge
 	ltLineH      = 58 // vertical step between stacked lines (must exceed the font size)
 	ltBottomPad  = 61 // px from the bottom edge to the lowest line's TOP (clears the big font)
 	ltTopPad     = 20 // px from the top edge to the highest line (Position == "top")
-)
-
-// Lower-third line colours + outline — MATCH the live preview (MainWindow.UpdateOverlay)
-// so the burned render looks like what Jordan sees while editing. Colours are ffmpeg
-// 0xRRGGBB; a black outline (borderw) replaces the old opaque box, matching the preview's
-// \bord2 look. Date + link are gray, the filename is green, ORIG TC is white.
-const (
-	ltGray    = "0xD7D7D7"
-	ltGreen   = "0x14FF39"
-	ltWhite   = "white"
-	ltBorderW = "3"
 )
 
 // defaultFont is the deterministic forensic font. Consolas is monospaced so the
@@ -69,31 +59,30 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w
 	// to multiple sub-lines so it stays within the video width. The timecode line
 	// is special (drawtext timecode=) and short, so it is never wrapped.
 	type ltLine struct {
-		tc    bool
-		text  string
-		size  int
-		color string
+		tc   bool
+		text string
+		size int
 	}
 	var lines []ltLine
-	addText := func(text string, size int, color string) {
+	addText := func(text string, size int) {
 		for _, sub := range wrapToWidth(text, size, w) {
-			lines = append(lines, ltLine{text: sub, size: size, color: color})
+			lines = append(lines, ltLine{text: sub, size: size})
 		}
 	}
-	// Line order + colours (top -> bottom): Date (gray), ORIG TC (white), filename
-	// (green), Link (gray) — matching the live preview overlay. Date leads because it is
-	// the forensic anchor; yt-dlp dates are UTC, so label them (the source's own timezone).
+	// Line order (top -> bottom): Date, ORIG TC, filename/identity, Link — matching the
+	// live preview overlay. Date leads because it is the forensic anchor; yt-dlp dates are
+	// UTC, so label them (the source's own timezone).
 	if date := overlayDate(o, c); date != "" {
-		addText("Date: "+date+" UTC", ltFontSize, ltGray)
+		addText("Date: "+date+" UTC", ltFontSize)
 	}
 	if o.ShowTimecode {
-		lines = append(lines, ltLine{tc: true, size: ltTCFontSize, color: ltWhite})
+		lines = append(lines, ltLine{tc: true, size: ltTCFontSize})
 	}
 	if meta := metaLine(o, c); meta != "" {
-		addText(meta, ltFontSize, ltGreen)
+		addText(meta, ltFontSize)
 	}
 	if link := overlayLink(o, c); link != "" {
-		addText(link, ltFontSize, ltGray) // the URL is self-evidently the link — no "Link:" label
+		addText(link, ltFontSize) // the URL is self-evidently the link — no "Link:" label
 	}
 	if len(lines) == 0 {
 		return ""
@@ -115,9 +104,9 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w
 				"x=" + itoa(ltMarginX),
 				"y=" + y,
 				"fontsize=" + itoa(ln.size),
-				"fontcolor=" + ln.color,
-				"borderw=" + ltBorderW,
-				"bordercolor=black",
+				"fontcolor=white",
+				"box=1",
+				"boxcolor=black@" + ltBoxAlpha,
 				"fontfile=" + escFont,
 			}))
 			continue
@@ -127,9 +116,9 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w
 			"x=" + itoa(ltMarginX),
 			"y=" + y,
 			"fontsize=" + itoa(ln.size),
-			"fontcolor=" + ln.color,
-			"borderw=" + ltBorderW,
-			"bordercolor=black",
+			"fontcolor=white",
+			"box=1",
+			"boxcolor=black@" + ltBoxAlpha,
 			"fontfile=" + escFont,
 		}))
 	}
