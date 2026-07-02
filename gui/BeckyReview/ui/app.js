@@ -1083,7 +1083,15 @@
     return t;
   }
 
-  function applyTimeline(tl) {
+  // resumeAt (optional): the compilation position to resume playback at when this
+  // edit landed while playing, INSTEAD OF the live state.playheadComp. Needed by
+  // multi-await callers (splitAtPlayhead awaits set_trim, then add_clip, then
+  // reorder): during those round trips playback keeps advancing, so by the time
+  // this runs state.playheadComp has drifted PAST the position the edit was
+  // actually made at — resuming there can land in the NEXT clip entirely (the
+  // "split skips playback to the next clip" bug). Callers that captured their
+  // own frozen position pass it; everyone else keeps today's behavior.
+  function applyTimeline(tl, resumeAt) {
     if (!tl || typeof tl !== 'object') { return; }
     var wasEmpty = !((state.timeline.clips) || []).length;   // to auto-fit the view on the FIRST clip
     state.timeline = {
@@ -1113,8 +1121,11 @@
       // playing: tlVersion was bumped above, so the loaded EDL is now stale. Reload
       // it right away at the same compilation position so playback keeps going on
       // the EDITED timeline instead of silently drifting on the old one — that
-      // drift is what "makes a cut while playing break the timeline".
-      seekTimeline(state.playheadComp || 0, true);
+      // drift is what "makes a cut while playing break the timeline". Prefer the
+      // caller's frozen resumeAt over the live (possibly drifted) playheadComp.
+      var at = (typeof resumeAt === 'number') ? resumeAt : (state.playheadComp || 0);
+      state.playheadComp = at;
+      seekTimeline(at, true);
     }
   }
 
@@ -1640,8 +1651,15 @@
     var d = clipDur(clip);
     var frac = d > 0 ? (comp - (clip.start_sec || 0)) / d : 0;
     frac = Math.max(0, Math.min(1, frac));
-    playheadEl.style.left = (g.left + frac * g.width) + 'px';
+    var leftPx = g.left + frac * g.width;
+    playheadEl.style.left = leftPx + 'px';
     playheadEl.style.display = 'block';
+    // Keep the playhead centered in the visible timeline (playback, keyboard
+    // nav, clicks) — but never fight an in-progress drag, or the content would
+    // shift out from under the cursor while resizing/reordering/scrubbing.
+    if (tlBodyEl && !resizing && !clipGesture && !scrubbing) {
+      tlBodyEl.scrollLeft = Math.max(0, leftPx - tlBodyEl.clientWidth / 2);
+    }
   }
 
   /* ---- selection: toggle .selected + repaint each clip's opacity, no re-render ---- */
@@ -1767,11 +1785,16 @@
       if (!repL.ok) { toast('Split failed' + (repL.error ? ': ' + repL.error : '')); return; }
       var repR = await beckyCall('add_clip', { source: clip.source, in: srcSplit, out: clip.out || 0, label: clip.label || '' });
       if (!repR.ok || !repR.data) {
-        if (repL.data) { applyTimeline(repL.data); }
+        if (repL.data) { applyTimeline(repL.data, ph); }
         toast('Split failed' + (repR.error ? ': ' + repR.error : ''));
         return;
       }
-      applyTimeline(repR.data);
+      // Pin the resume position to ph (captured BEFORE any awaits) on every
+      // apply below — two more awaits follow (this one already happened, then
+      // reorder), and playback keeps advancing during each one, so the LIVE
+      // playheadComp would have drifted past ph by the time we get here. Using
+      // the drifted value to resume is what skipped playback into the next clip.
+      applyTimeline(repR.data, ph);
 
       // add_clip appends to the END; move the new right half to just after the left half.
       var now = state.timeline.clips || [];
@@ -1780,7 +1803,7 @@
       for (var j = 0; j < now.length; j++) { if (String(now[j].id) === String(leftId)) { leftIdx = j; break; } }
       if (newClip && leftIdx >= 0 && String(newClip.id) !== String(leftId)) {
         var repO = await beckyCall('reorder', { id: newClip.id, to: leftIdx + 1 });
-        if (repO.ok && repO.data) { applyTimeline(repO.data); }
+        if (repO.ok && repO.data) { applyTimeline(repO.data, ph); }
       }
       // The clip AFTER the playhead (the new right half) becomes the selection — it
       // used to stay on the pre-split left half, which is backwards from what a

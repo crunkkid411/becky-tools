@@ -559,17 +559,19 @@ body {
 .clip .rh { flex: none; width: 8px; cursor: ew-resize; background: var(--clip-col, var(--neon-dim)); touch-action: none; z-index: 2; }
 .clip .rh:hover { background: #fff; }
 
-/* playhead: a solid black line (no white outline ring) through the track, with a
-   wider black head that covers the full gray ruler band (24px, matches .ruler). */
+/* playhead: a solid black line through the track, with a WHITE head that covers
+   the full gray ruler band (24px, matches .ruler) so it reads clearly against it. */
 #playhead {
   position: absolute; top: 0; bottom: 0; width: 2px;
   background: #000;
   pointer-events: none; z-index: 5;
 }
 #playhead::before {
-  content: ""; position: absolute; top: 0; left: -4px;
-  width: 10px; height: 24px;
-  background: #000;
+  content: ""; position: absolute; top: 0; left: -8px;
+  width: 18px; height: 24px;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.45);
 }
 
 /* reorder drop indicator (CHANGE A): a bright insertion line marking where the
