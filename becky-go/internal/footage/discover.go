@@ -108,19 +108,27 @@ const LocalTranscriptMarker = "_parakeet_transcription"
 //  2. a sibling subtitle subfolder (subs/subtitles/captions/transcripts/srt)
 //     containing such a match;
 //  3. lone-pair: the directory holds exactly one video and exactly one subtitle.
-func resolveTranscript(videoPath string, claimed map[string]bool) string {
+func resolveTranscript(videoPath string, claimed map[string]bool, dis disambig) string {
 	dir := filepath.Dir(videoPath)
 	stem := strings.ToLower(stemOf(videoPath))
+	token := videoIDToken(filepath.Base(videoPath))
 
-	// Rule 0: YouTube-id token match (tried first — it is the most confident pair
-	// real-world yt-dlp footage offers, and it links files whose names otherwise
-	// differ). Searches the same dir AND the conventional caption subfolders.
-	if hit := idMatch(dir, filepath.Base(videoPath), claimed); hit != "" {
-		return hit
+	// Rule 0: YouTube-id token match — but ONLY when the id is UNIQUE among the folder's
+	// videos. Two cuts of the SAME source (a trimmed clip and a "_FULL" clip) carry the
+	// same bracketed id, so keying off it alone cross-wires a transcript to the wrong
+	// clip (Jordan's real bug: "..._[ID].mp4" grabbing "..._[ID]_FULL_...srt"). When the
+	// id is ambiguous we skip Rule 0 and let the stem-boundary rules (which respect the
+	// "_FULL" distinction) decide. dis.stolenFrom is a second guard for the same hazard.
+	if token != "" && !dis.ambiguousToken[token] {
+		if hit := idMatch(dir, filepath.Base(videoPath), claimed); hit != "" && !dis.stolenFrom(hit, stem) {
+			return hit
+		}
 	}
 
-	// Rule 1: same directory, boundary-prefix match.
-	if hit := boundaryMatch(dir, stem, claimed); hit != "" {
+	// Rule 1: same directory, boundary-prefix match — but never claim a subtitle that
+	// boundary-belongs to a MORE-SPECIFIC sibling video (so a base clip can't steal
+	// "<base>_FULL_...srt", which is the _FULL clip's transcript).
+	if hit := boundaryMatch(dir, stem, claimed); hit != "" && !dis.stolenFrom(hit, stem) {
 		return hit
 	}
 
@@ -130,21 +138,65 @@ func resolveTranscript(videoPath string, claimed map[string]bool) string {
 	// test-locked rather than incidental.) It runs AFTER the official boundary match, and the
 	// strict sidecar.FindSubtitle runs before resolveTranscript at all, so an
 	// official transcript is always preferred when both exist.
-	if hit := localMatch(dir, stem, claimed); hit != "" {
+	if hit := localMatch(dir, stem, claimed); hit != "" && !dis.stolenFrom(hit, stem) {
 		return hit
 	}
 
 	// Rule 2: sibling subtitle subfolders next to the video.
-	if hit := siblingSubdirMatch(dir, stem, claimed); hit != "" {
+	if hit := siblingSubdirMatch(dir, stem, claimed); hit != "" && !dis.stolenFrom(hit, stem) {
 		return hit
 	}
 
-	// Rule 3: lone-pair fallback (exactly one video + one subtitle in the dir).
+	// Rule 3: lone-pair fallback (exactly one video + one subtitle in the dir — no
+	// ambiguity is possible, so no disambiguation guard is needed).
 	if hit := lonePairMatch(dir, videoPath, claimed); hit != "" {
 		return hit
 	}
 
 	return ""
+}
+
+// disambig carries the folder-wide context resolveTranscript needs to avoid pairing a
+// transcript to the WRONG clip when two cuts of the same source coexist: the set of
+// yt-id tokens that appear on MORE THAN ONE video (so keying off the id is unsafe), and
+// every video's lowercased stem (so a less-specific clip never steals a subtitle whose
+// stem a more-specific sibling clip owns). The empty value disables both guards.
+type disambig struct {
+	ambiguousToken map[string]bool
+	stems          []string
+}
+
+// newDisambig builds the disambiguation context from every video base-name in the folder.
+func newDisambig(videoBases []string) disambig {
+	tokenCount := map[string]int{}
+	stems := make([]string, 0, len(videoBases))
+	for _, b := range videoBases {
+		stems = append(stems, strings.ToLower(stemOf(b)))
+		if tok := videoIDToken(b); tok != "" {
+			tokenCount[tok]++
+		}
+	}
+	amb := map[string]bool{}
+	for tok, n := range tokenCount {
+		if n > 1 {
+			amb[tok] = true
+		}
+	}
+	return disambig{ambiguousToken: amb, stems: stems}
+}
+
+// stolenFrom reports whether subPath's subtitle boundary-belongs to a MORE-SPECIFIC
+// (longer-stem) sibling video than thisStem — i.e. a clip whose stem is a longer valid
+// boundary-prefix of the subtitle stem. Such a subtitle is that sibling's, not this
+// clip's, so this clip must not claim it.
+func (d disambig) stolenFrom(subPath, thisStem string) bool {
+	sub := strings.ToLower(stemOf(filepath.Base(subPath)))
+	for _, s := range d.stems {
+		if len(s) > len(thisStem) && stemMatchesBoundary(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // idMatch implements rule 0: if videoName carries a bracketed YouTube-id token,

@@ -86,6 +86,29 @@ type FolderIndex struct {
 // never opens a video. Unreadable subdirectories are skipped (degrade, never
 // crash). The returned Videos slice is sorted by Path so the output is
 // deterministic across platforms.
+// collectVideoBases returns the base filename of every video under root, from one quick
+// read-only directory walk. It feeds newDisambig so the transcript resolver knows about
+// ALL clips (especially two cuts of one source) before it pairs any transcript.
+func collectVideoBases(root string) []string {
+	var out []string
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if videoExts[strings.ToLower(filepath.Ext(path))] {
+			out = append(out, filepath.Base(path))
+		}
+		return nil
+	})
+	return out
+}
+
 func Index(folder string) (FolderIndex, error) {
 	abs, err := filepath.Abs(folder)
 	if err != nil {
@@ -107,6 +130,13 @@ func Index(folder string) (FolderIndex, error) {
 	// that the same-dir / known-caption-subdir rules miss. The id is effectively unique, so
 	// this can never create a false pair — only recover real ones that were becoming orphans.
 	idIndex := buildSubtitleIDIndex(abs)
+
+	// Disambiguation context: collect every video's base name up front so the transcript
+	// resolver never cross-wires two cuts of the same source. A "_FULL" clip and a trimmed
+	// clip share a yt-id (and one's stem prefixes the other), so keying off the id or a
+	// bare stem-prefix would pair a transcript to the WRONG clip — a forensic error worth
+	// one extra read-only directory walk to prevent. See resolveTranscript / disambig.
+	dis := newDisambig(collectVideoBases(abs))
 
 	walkErr := filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -132,12 +162,13 @@ func Index(folder string) (FolderIndex, error) {
 		// the forgiving, boundary-aware resolver for real-world transcript names.
 		sub := sidecar.FindSubtitle(path)
 		if sub == "" {
-			sub = resolveTranscript(path, claimed)
+			sub = resolveTranscript(path, claimed, dis)
 		}
 		if sub == "" {
 			// Whole-tree yt-id fallback: pair by the shared bracketed id even across
-			// unrecognised subfolders (the case the other rules miss).
-			if tok := videoIDToken(filepath.Base(path)); tok != "" {
+			// unrecognised subfolders — but ONLY when the id is UNIQUE among the folder's
+			// videos (an ambiguous id would cross-wire two cuts of the same source).
+			if tok := videoIDToken(filepath.Base(path)); tok != "" && !dis.ambiguousToken[tok] {
 				if cand, ok := idIndex[tok]; ok && !claimed[filepath.Clean(cand)] {
 					sub = cand
 				}

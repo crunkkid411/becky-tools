@@ -17,6 +17,41 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
+// TestIndex_DoesNotCrossWireSameYouTubeIDClips is the regression for Jordan's real bug:
+// two cuts of ONE YouTube video (a trimmed clip and a "_FULL" clip) share the [id] token,
+// and the trimmed clip's name is a prefix of the _FULL clip's. Only the _FULL clip has a
+// (local parakeet) transcript. The trimmed clip must NOT steal it — a wrong transcript is
+// a wrong evidence source.
+func TestIndex_DoesNotCrossWireSameYouTubeIDClips(t *testing.T) {
+	root := t.TempDir()
+	base := "2026-07-01_balljoints_[OwQNGa2XaJ4]"
+	full := "2026-07-01_balljoints_[OwQNGa2XaJ4]_FULL"
+	writeFile(t, filepath.Join(root, base+".mp4"), "v")
+	writeFile(t, filepath.Join(root, full+".mp4"), "v")
+	fullSRT := full + "_parakeet_transcription.srt"
+	writeFile(t, filepath.Join(root, fullSRT), "1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+
+	idx, err := Index(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseTP, fullTP string
+	for _, v := range idx.Videos {
+		switch v.Name {
+		case base + ".mp4":
+			baseTP = v.TranscriptPath
+		case full + ".mp4":
+			fullTP = v.TranscriptPath
+		}
+	}
+	if filepath.Base(fullTP) != fullSRT {
+		t.Fatalf("the _FULL clip should own its transcript %q, got %q", fullSRT, fullTP)
+	}
+	if baseTP != "" {
+		t.Fatalf("the trimmed clip must NOT steal the _FULL clip's transcript, got %q", baseTP)
+	}
+}
+
 // synthFolder builds a tiny case folder: two videos in the root + one in a
 // subdir, two with SRT sidecars, one with a beckymeta sidecar, plus a stray
 // non-video file. Returns the root.
