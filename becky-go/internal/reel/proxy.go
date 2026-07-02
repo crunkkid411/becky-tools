@@ -249,6 +249,43 @@ func ScrubProxySegment(source string, inSec, outSec float64, outDir string) (str
 	return out, nil
 }
 
+// SegmentProxyPath returns the deterministic path a windowed scrub proxy for
+// source's [inSec,outSec) window WOULD occupy in outDir — without building it or
+// checking whether it exists. Exported so the engine (and its tests) can locate
+// the proxy the UI builds lazily. Normalizes the window exactly as ScrubSegment
+// does (swap a reversed span, clamp a negative in) so the path matches what
+// ScrubProxySegment actually writes.
+func SegmentProxyPath(source, outDir string, inSec, outSec float64) string {
+	if outSec < inSec {
+		inSec, outSec = outSec, inSec
+	}
+	if inSec < 0 {
+		inSec = 0
+	}
+	if outDir == "" {
+		outDir = "."
+	}
+	return scrubProxySegmentPath(source, outDir, inSec, outSec)
+}
+
+// CachedScrubProxySegment returns (path, true) when a FRESH windowed scrub proxy
+// for source's [inSec,outSec) window already exists in outDir (present, non-empty,
+// and not older than the source), WITHOUT building anything; ("", false) otherwise.
+// This lets TimelineEDL PREFER a proxy the UI has already built lazily while safely
+// falling back to the raw source when none exists yet — so the timeline can never
+// regress to un-playable, only to today's raw-source behavior.
+func CachedScrubProxySegment(source string, inSec, outSec float64, outDir string) (string, bool) {
+	path := SegmentProxyPath(source, outDir, inSec, outSec)
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() == 0 {
+		return "", false
+	}
+	if si, err := os.Stat(source); err == nil && fi.ModTime().Before(si.ModTime()) {
+		return "", false // stale — source changed since the proxy was built
+	}
+	return path, true
+}
+
 // scrubProxySegmentPath builds "<stem>.<inMs>-<outMs>.scrub.<ext>" inside
 // outDir — the windowed sibling of scrubProxyPath, so each distinct timeline
 // span of a source caches to its own file instead of colliding with the

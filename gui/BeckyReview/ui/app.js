@@ -1235,15 +1235,16 @@
     prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
     applyThumbs();               // paint each clip's cached first-frame thumbnail (async, cheap)
     applyWaves();                // paint each clip's cached audio waveform (async, windowed)
+    applyProxies();              // build each visible clip's windowed scrub proxy (async, cached)
   }
 
-  // Scrolling the timeline horizontally reveals more clips: fetch their thumb/waveform
-  // then (debounced), so a big reel only ever spends ffmpeg on what's actually on screen.
+  // Scrolling the timeline horizontally reveals more clips: fetch their thumb/waveform/
+  // proxy then (debounced), so a big reel only ever spends ffmpeg on what's on screen.
   var mediaScrollTimer = null;
   if (tlBodyEl) {
     tlBodyEl.addEventListener('scroll', function () {
       clearTimeout(mediaScrollTimer);
-      mediaScrollTimer = setTimeout(function () { applyThumbs(); applyWaves(); }, 120);
+      mediaScrollTimer = setTimeout(function () { applyThumbs(); applyWaves(); applyProxies(); }, 120);
     });
   }
 
@@ -1355,6 +1356,51 @@
         });
       })(job);
     }
+  }
+
+  /* ---- windowed scrub proxy (engine 'scrub_segment') --------------------------------
+     For each ON-SCREEN clip, ask the engine to build (once, cached on disk) an
+     intra-frame proxy of ONLY that clip's [in,out) window — the raw long-GOP source is
+     what scrubs slowly. TimelineEDL then PREFERS a cached proxy (else the raw source, so
+     it can never regress). We don't use the returned path here; the engine caches it and
+     the EDL finds it. When proxies land, mark the loaded EDL stale so the next idle
+     seek/play adopts them (never reloads mpv on its own — no scrub hitch, no blink). */
+  var proxyRequested = {};   // window-key -> true (asked this session; the file is cached on disk)
+  var proxyQueue = [];
+  var proxyActive = 0;
+  var PROXY_MAX = 1;         // one segment-transcode at a time — a background nicety, don't peg CPU
+  function applyProxies() {
+    var blocks = trackEl.querySelectorAll('.clip');
+    for (var i = 0; i < blocks.length; i++) {
+      var clip = clipById(blocks[i].dataset.id);
+      if (!clip || !clip.source) { continue; }
+      var key = waveKey(clip.source, clip.in || 0, clip.out || 0);   // same window key as the waveform
+      if (proxyRequested[key] || !clipVisible(clip.id)) { continue; }
+      proxyRequested[key] = true;
+      proxyQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0 });
+      pumpProxies();
+    }
+  }
+  function pumpProxies() {
+    while (proxyActive < PROXY_MAX && proxyQueue.length) {
+      var job = proxyQueue.shift();
+      proxyActive++;
+      beckyCall('scrub_segment', { source: job.src, in: job.in, out: job.out }).then(function (rep) {
+        proxyActive--;
+        if (rep && rep.ok && rep.data && rep.data.path) { markEdlStaleWhenIdle(); }
+        pumpProxies();
+      });
+    }
+  }
+  var proxySettleTimer = null;
+  function markEdlStaleWhenIdle() {
+    clearTimeout(proxySettleTimer);
+    proxySettleTimer = setTimeout(function () {
+      // Only when idle (not playing, not mid-scrub): invalidate the loaded EDL so the
+      // NEXT seek/play rebuilds it to adopt the freshly-built proxies. This never reloads
+      // mpv on its own, so it can't interrupt playback or hitch an active scrub.
+      if (!state.playing && !scrubbing && state.edlPath) { state.edlVersion = -1; }
+    }, 1500);
   }
 
   function updateOverlayBtn() {

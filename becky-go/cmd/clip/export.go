@@ -326,7 +326,16 @@ func (a *App) TimelineEDL() (EDLResult, error) {
 		if length <= 0 || strings.ContainsRune(c.Source, ',') {
 			continue
 		}
-		fmt.Fprintf(&b, "%s,%.3f,%.3f\n", c.Source, c.In, length)
+		// Prefer a FRESH cached windowed scrub proxy (built lazily by the UI) — an
+		// intra-frame proxy of just this clip's [in,out) window scrubs far faster than
+		// the raw long-GOP source. The proxy IS the window, so it starts at 0. When
+		// none exists yet, fall back to the raw source at its in-point — today's exact
+		// behavior, so a missing/absent proxy can never regress seamless playback.
+		src, inOff := c.Source, c.In
+		if p, ok := reel.CachedScrubProxySegment(c.Source, c.In, c.Out, work); ok && !strings.ContainsRune(p, ',') {
+			src, inOff = p, 0
+		}
+		fmt.Fprintf(&b, "%s,%.3f,%.3f\n", src, inOff, length)
 		total += length
 	}
 	out := filepath.Join(work, "timeline.edl")

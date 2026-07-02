@@ -1,9 +1,12 @@
 package reel
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"becky-go/internal/config"
 	"becky-go/internal/edl"
@@ -326,6 +329,40 @@ func TestLowerThirdFilter_OrderAndLabels(t *testing.T) {
 	iName := strings.Index(got, "v.mp4")
 	if !(iDate >= 0 && iTC > iDate && iName > iTC) {
 		t.Fatalf("overlay order must be Date < ORIG TC < filename (got %d,%d,%d):\n%s", iDate, iTC, iName, got)
+	}
+}
+
+// TestCachedScrubProxySegment verifies the non-building cache check TimelineEDL relies
+// on: a fresh proxy at the deterministic window path is found; a missing one, a
+// different window, or a proxy older than its source are all reported as not-cached
+// (so the EDL falls back to the raw source).
+func TestCachedScrubProxySegment(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "clip.mp4")
+	if err := os.WriteFile(src, []byte("src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir); ok {
+		t.Fatal("no proxy on disk yet — must report not-cached")
+	}
+	pp := SegmentProxyPath(src, dir, 0.5, 5.2)
+	if err := os.WriteFile(pp, []byte("proxy-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir)
+	if !ok || got != pp {
+		t.Fatalf("fresh proxy should be cached: got %q ok=%v (want %q)", got, ok, pp)
+	}
+	if _, ok := CachedScrubProxySegment(src, 6.0, 9.0, dir); ok {
+		t.Fatal("a different window must not resolve to the first window's proxy")
+	}
+	// source newer than the proxy => stale => not cached
+	future := time.Now().Add(2 * time.Hour)
+	if err := os.Chtimes(src, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := CachedScrubProxySegment(src, 0.5, 5.2, dir); ok {
+		t.Fatal("a proxy older than its source must be treated as stale")
 	}
 }
 
