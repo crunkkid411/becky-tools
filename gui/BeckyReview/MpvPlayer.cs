@@ -76,6 +76,10 @@ public sealed class MpvPlayer : IDisposable
         args.Append(" --hr-seek=yes");          // seek to the EXACT frame (forensic)
         args.Append(" --hwdec=auto-safe");       // GPU decode (D3D11VA/NVDEC on the 3070)
         args.Append(" --keep-open=yes");         // hold the last frame at EOF
+        // Prebuffer ahead so crossing a cut (the next EDL segment/clip is a separate file)
+        // doesn't hitch. Cheap for the small 540p scrub proxies the timeline now plays.
+        args.Append(" --cache=yes");
+        args.Append(" --demuxer-readahead-secs=20");
         args.Append(" --idle=yes");              // stay alive with no file
         args.Append(" --force-window=yes");      // show the pane immediately
         args.Append(" --no-osc --osc=no");       // becky draws its own controls

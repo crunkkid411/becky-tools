@@ -109,6 +109,11 @@ public partial class MainWindow : Window
         core.NavigationCompleted += OnNavigationCompleted;
         core.Navigate($"https://{VirtualHost}/index.html");
 
+        // Whenever the pointer enters the WebView, make sure it holds focus — so the
+        // timeline's mouse-wheel-to-zoom works "no matter what" (even right after the user
+        // was interacting with the native mpv pane), not only after a click in the page.
+        WebView.MouseEnter += (s, e) => { try { WebView.Focus(); } catch { } };
+
         _webReady = true;
         StatusLabel.Text = "Pick a case folder to begin.";
     }
@@ -152,6 +157,11 @@ public partial class MainWindow : Window
                 {
                     _paused = !_paused;
                     _ = _mpv.SetPauseAsync(_paused);
+                    // Clicking the native mpv pane steals focus from the WebView, after which
+                    // the page stops receiving mouse-wheel events (so timeline scroll-to-zoom
+                    // silently dies until the user clicks a page button). Hand focus straight
+                    // back to the WebView so the wheel keeps working.
+                    Dispatcher.BeginInvoke(() => { try { WebView.Focus(); } catch { } });
                 }
             };
 
@@ -562,7 +572,9 @@ public partial class MainWindow : Window
         // off the very bottom edge. \bord2 outline keeps it legible on any background.
         int px = xoff + 16, py = yoff + dispH - OverlayBottomPad;
         var sb = new StringBuilder();
-        sb.Append("{\\an1}{\\pos(").Append(px).Append(',').Append(py).Append(")}{\\bord2}{\\3c&H000000&}");
+        // \fnConsolas matches the render's monospaced Consolas so the preview reads the
+        // same as the burned lower-third.
+        sb.Append("{\\an1}{\\fnConsolas}{\\pos(").Append(px).Append(',').Append(py).Append(")}{\\bord2}{\\3c&H000000&}");
         var emittedAny = false;
         void Emit(string text, int fontSize, string colorBGR)
         {
@@ -576,7 +588,7 @@ public partial class MainWindow : Window
         // Line order (top -> bottom): Date, ORIG TC, filename, link (Jordan's layout).
         Emit(dateLine, meta2, "D7D7D7");                    // Date — gray (top)
         Emit(line2, fs, "FFFFFF");                          // ORIG TC — white (short, won't wrap)
-        if (_ovShowName) { Emit(_ovFile, fs, "14FF39"); }   // filename — green (optional, Jordan)
+        if (_ovShowName) { Emit(_ovFile, fs, "39FF14"); }   // filename — green #14FF39 (ASS is BGR, so B/R swap)
         Emit(linkLine, meta2, "D7D7D7");                    // Link — gray (bottom)
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", sb.ToString(), w, h, 0, false, false);
     }

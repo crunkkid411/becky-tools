@@ -330,6 +330,17 @@ func TestLowerThirdFilter_OrderAndLabels(t *testing.T) {
 	if !(iDate >= 0 && iTC > iDate && iName > iTC) {
 		t.Fatalf("overlay order must be Date < ORIG TC < filename (got %d,%d,%d):\n%s", iDate, iTC, iName, got)
 	}
+	// The render matches the preview's colours + outline (WYSIWYG): filename green, Date
+	// gray, a black outline instead of the old opaque box.
+	if !strings.Contains(got, "fontcolor=0x14FF39") {
+		t.Fatalf("filename line should be green (0x14FF39):\n%s", got)
+	}
+	if !strings.Contains(got, "fontcolor=0xD7D7D7") {
+		t.Fatalf("Date line should be gray (0xD7D7D7):\n%s", got)
+	}
+	if !strings.Contains(got, "borderw=") || strings.Contains(got, "box=1") {
+		t.Fatalf("lines should use a black outline (borderw), not an opaque box:\n%s", got)
+	}
 }
 
 // TestCachedScrubProxySegment verifies the non-building cache check TimelineEDL relies

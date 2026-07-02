@@ -118,15 +118,16 @@ func NewApp() *App {
 }
 
 // newReel returns a fresh empty reel with sane forensic-overlay defaults: the
-// lower-third is OFF by default (Jordan toggles it on) but pre-configured so a
-// single toggle shows filename + original timecode + date + person + location.
+// lower-third is ON by default for a new project (Jordan's preference — a forensic
+// review almost always wants the provenance lower-third) showing filename + original
+// timecode + date + person + location; he can toggle it off per reel.
 func newReel(name string) edl.Reel {
 	return edl.Reel{
 		Version: "1",
 		Name:    name,
 		Clips:   []edl.Clip{},
 		Overlay: edl.Overlay{
-			Enabled:      false,
+			Enabled:      true,
 			ShowFilename: true,
 			ShowTimecode: true,
 			ShowDate:     true,

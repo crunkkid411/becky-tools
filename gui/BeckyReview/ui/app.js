@@ -64,7 +64,7 @@
     viewVideoName: '',     // the video whose cues are shown (cueMode header)
 
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
-    overlayOn: false,
+    overlayOn: true,       // forensic lower-third defaults ON for a new project (synced from the reel)
     overlayShowName: true, // the overlay's filename line is optional (Date/TC/link always shown)
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
@@ -1072,10 +1072,15 @@
     state.selectedClipIds = (state.selectedClipIds || []).filter(function (id) { return !!clipById(id); });
     if (state.selectedClipId != null && !clipById(state.selectedClipId)) { state.selectedClipId = null; }
     renderTimeline();
-    // First clip added to an empty timeline: fit the view to ~10s (or the clip if longer)
-    // so Jordan isn't zoomed way out. Later edits leave his manual zoom alone.
+    // Loading clips into an empty timeline: fit the view to ~10s, or to the WHOLE
+    // compilation if it's longer than 10s (so every clip is visible at once), and put
+    // the playhead at the very beginning. Later edits leave his manual zoom alone.
     if (wasEmpty && state.timeline.clips.length) {
-      fitTimelineZoom(Math.max(10, clipDur(state.timeline.clips[0])));
+      var totalDur = state.timeline.duration_sec || sumDur(state.timeline.clips);
+      fitTimelineZoom(Math.max(10, totalDur));
+      state.activeClipId = state.timeline.clips[0].id;
+      state.playheadComp = state.timeline.clips[0].start_sec || 0;
+      updatePlayhead();
     }
   }
 
@@ -1334,7 +1339,11 @@
       if (!el) { continue; }
       if (cached !== undefined) {
         if (el.dataset.waveKey !== key) { el.innerHTML = cached; el.dataset.waveKey = key; }
-      } else if (!waveInflight[key] && clipVisible(clip.id)) {
+      } else if (!waveInflight[key]) {
+        // Waveforms load for EVERY clip (not just on-screen ones): peak extraction is
+        // cheap audio-only work, so a full reel's waveforms warm up fast (throttled to
+        // WAVE_MAX). Thumbnails + proxies stay viewport-gated — those are the heavy
+        // video transcodes that caused the "storm".
         waveInflight[key] = true;
         waveQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0, key: key });
         pumpWaves();
@@ -2503,6 +2512,10 @@
     // Empty project → default the view to ~10s (a restored timeline with clips was
     // already fitted by applyTimeline). Deferred so the track has laid out.
     setTimeout(function () { if (!(state.timeline.clips || []).length) { fitTimelineZoom(10); } }, 250);
+    // Push the (default-on) overlay state to mpv so the lower-third is armed; it draws
+    // once a clip is loaded/played.
+    updateOverlayBtn();
+    sendOverlayUpdate();
 
     // Human-review Q&A cards (pre-loaded by the engine from a hits sidecar, if any).
     var q = await beckyCall('questions', {});
