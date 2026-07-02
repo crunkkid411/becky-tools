@@ -65,6 +65,7 @@
 
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
     overlayOn: false,
+    overlayShowName: true, // the overlay's filename line is optional (Date/TC/link always shown)
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
     activeSource: null,    // path currently loaded in mpv (a single source for preview, OR the timeline EDL)
@@ -103,10 +104,12 @@
   var $tPlay     = document.getElementById('tPlay');
   var $tFrameBack= document.getElementById('tFrameBack');
   var $tFrameFwd = document.getElementById('tFrameFwd');
+  var $tSpeed    = document.getElementById('tSpeed');     // 1× / 2× playback-speed toggle
   var $tSplit    = document.getElementById('tSplit');     // split clip at playhead (CHANGE 4)
   var $tExtendL  = document.getElementById('tExtendL');   // extend selected clip 1 frame left (earlier)
   var $tExtendR  = document.getElementById('tExtendR');   // extend selected clip 1 frame right (later)
   var $tOverlay  = document.getElementById('tOverlay');
+  var $tOverlayName = document.getElementById('tOverlayName');  // include the filename line in the overlay
   var $tUndo     = document.getElementById('tUndo');
   var $tRedo     = document.getElementById('tRedo');
   var $tSave     = document.getElementById('tSave');
@@ -434,14 +437,17 @@
     var key = rowKey(r, i);
     var tonly = !!r.transcript_only || !r.source;
     var tc = r.timecode || hms(r.start);
+    // In cue mode (one video's transcript) the source name is redundant — it's already
+    // in the header — so drop the per-row filename for a minimal Descript-style list.
+    var srcLine = state.cueMode ? '' :
+      '<div class="qsrc">' + escapeHtml(r.name || baseName(r.source)) +
+        (tonly ? ' <span class="qbadge">transcript only</span>' : '') + '</div>';
     return '<div class="qrow' + (tonly ? ' tonly' : '') + (state.activeResultKey === key ? ' active' : '') +
              '" data-idx="' + i + '" data-key="' + attr(key) + '">' +
              '<div class="qtc">' + escapeHtml(tc) + '</div>' +
              '<div class="qbody">' +
                '<div class="qtext">' + highlight(r.text || '', state.terms) + '</div>' +
-               '<div class="qsrc">' + escapeHtml(r.name || baseName(r.source)) +
-                 (tonly ? ' <span class="qbadge">transcript only</span>' : '') +
-               '</div>' +
+               srcLine +
              '</div>' +
            '</div>';
   }
@@ -1026,6 +1032,7 @@
     };
     state.tlVersion++;   // the timeline changed -> the seamless EDL must regenerate before next play/seek
     state.overlayOn = !!(state.timeline.overlay && state.timeline.overlay.enabled);
+    state.overlayShowName = state.timeline.overlay.show_filename !== false;   // init the filename toggle from the reel
     if (state.activeClipId != null && !clipById(state.activeClipId)) { state.activeClipId = null; }
     // Drop any selected ids whose clips no longer exist (after remove/undo/load).
     state.selectedClipIds = (state.selectedClipIds || []).filter(function (id) { return !!clipById(id); });
@@ -1147,8 +1154,9 @@
     var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
     var tip = truncate(label, 80) + '  (' + mmss(dur) + ')';
     var seld = isClipSelected(clip.id);
+    var bord = clipBorder(clip.source, seld);   // border AND trim handles share this (never plain green)
     return '<div class="clip' + (seld ? ' selected' : '') + '" data-id="' + attr(clip.id) +
-             '" style="width:' + w + 'px;background:' + clipColor(clip.source, seld) + ';border-color:' + clipBorder(clip.source, seld) + '" title="' + attr(tip) + '">' +
+             '" style="width:' + w + 'px;background:' + clipColor(clip.source, seld) + ';border-color:' + bord + ';--clip-col:' + bord + '" title="' + attr(tip) + '">' +
              '<div class="rh rh-l" data-edge="l" title="trim in"></div>' +
              '<div class="cthumb"></div>' +
              '<div class="cbody"></div>' +
@@ -1231,6 +1239,7 @@
   function updateOverlayBtn() {
     $tOverlay.classList.toggle('on', !!state.overlayOn);
     $tOverlay.textContent = state.overlayOn ? 'overlay ✓' : 'overlay';
+    if ($tOverlayName) { $tOverlayName.classList.toggle('on', state.overlayShowName !== false); }
   }
 
   /* ---- which clip/video supplies the overlay's static fields ---- */
@@ -1266,7 +1275,7 @@
       var m = activeMeta(); date = m.date || ''; link = m.link || ''; fps = m.fps || 30;
     }
     lastOverlayClipId = clipId;
-    mpvSend('overlay', { on: state.overlayOn, file: file, date: date, link: link, fps: fps, tc_off: tcOff });
+    mpvSend('overlay', { on: state.overlayOn, file: file, date: date, link: link, fps: fps, tc_off: tcOff, showName: state.overlayShowName !== false });
   }
 
   /* ---- seamless timeline playback via an mpv EDL --------------------------------
@@ -1391,8 +1400,10 @@
       blocks[i].classList.toggle('selected', sel);
       var c = clipById(blocks[i].dataset.id);
       if (c) {
+        var bcol = clipBorder(c.source, sel);
         blocks[i].style.background = clipColor(c.source, sel);   // opaque when selected
-        blocks[i].style.borderColor = clipBorder(c.source, sel); // own colour, or white when selected
+        blocks[i].style.borderColor = bcol;                       // own colour, or white when selected
+        blocks[i].style.setProperty('--clip-col', bcol);          // trim handles match the clip (never plain green)
       }
     }
     updateRenderSelButton();
@@ -1456,6 +1467,21 @@
     if (rep.ok && rep.data) { applyTimeline(rep.data); }
   }
 
+  // deleteSelectedClips ripple-deletes ALL selected clips. Bound to Delete/Backspace
+  // AND Escape (Jordan wants two hotkeys for delete). The engine auto-ripples start_sec.
+  async function deleteSelectedClips() {
+    var ids = (state.selectedClipIds || []).slice();
+    if (!ids.length) { return; }
+    clearSelection();
+    var okAny = false, lastTl = null;
+    for (var i = 0; i < ids.length; i++) {
+      var rep = await beckyCall('remove_clip', { id: ids[i] });   // server-side remove auto-ripples start_sec
+      if (rep.ok && rep.data) { okAny = true; lastTl = rep.data; }
+    }
+    if (lastTl) { applyTimeline(lastTl); }
+    toast(okAny ? ('Removed ' + ids.length + ' clip' + (ids.length === 1 ? '' : 's')) : 'Could not remove clip');
+  }
+
   /* ---- split / cut at the playhead (CHANGE 4): button + "s" key ----
      The clip under the COMPILATION playhead (start_sec <= playheadComp < start_sec+dur) is cut
      into two at the equivalent SOURCE time. There is no engine "split" verb, so we re-trim the
@@ -1504,7 +1530,8 @@
         var repO = await beckyCall('reorder', { id: newClip.id, to: leftIdx + 1 });
         if (repO.ok && repO.data) { applyTimeline(repO.data); }
       }
-      toast('Split clip');
+      // No success toast on a cut — the two new clips are the visible confirmation
+      // (Jordan: the "split clip" popup should not appear when making a cut).
     } finally {
       splitting = false;
     }
@@ -1735,6 +1762,15 @@
   var kbIndex = -1;
   function listRows() { return $listScroll.querySelectorAll('.file, .qrow'); }
   function listIsFocused() { return document.activeElement === $listScroll; }
+  // The row already highlighted (a clicked quote is .active; the keyboard cursor is
+  // .kbsel) so Up/Down can resume FROM the current selection instead of the top.
+  function selectedRowIndex() {
+    var rows = listRows();
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].classList.contains('kbsel') || rows[i].classList.contains('active')) { return i; }
+    }
+    return -1;
+  }
   function paintListSel() {
     var rows = listRows();
     for (var i = 0; i < rows.length; i++) { rows[i].classList.toggle('kbsel', i === kbIndex); }
@@ -1743,6 +1779,7 @@
   function moveListSelection(delta) {
     var rows = listRows();
     if (!rows.length) { return; }
+    if (kbIndex < 0) { kbIndex = selectedRowIndex(); }   // resume from the selection, not the top
     kbIndex = (kbIndex < 0) ? (delta > 0 ? 0 : rows.length - 1)
                             : Math.max(0, Math.min(kbIndex + delta, rows.length - 1));
     paintListSel();
@@ -1751,8 +1788,10 @@
     var rows = listRows();
     var row = (kbIndex >= 0) ? rows[kbIndex] : null;
     if (!row) { return; }
+    // Enter mirrors a double-click: a video opens its transcript, a quote is added to
+    // the timeline (not merely previewed like a single click).
     if (row.classList.contains('file')) { onFileClick(row.dataset.name); }
-    else { guardRowClick(row); }
+    else { onRowDbl(+row.dataset.idx); }
   }
   // Clicking anywhere in the list (except an input/button) focuses the panel so the
   // Up/Down keys take over immediately.
@@ -1763,6 +1802,7 @@
   /* ---- the unified track pointer handlers ---- */
   trackEl.addEventListener('pointerdown', function (e) {
     if (e.button !== undefined && e.button !== 0) { return; }   // left button only
+    blurChatField();   // selecting on the timeline returns keyboard focus from the Q&A answer box
     var h = e.target.closest('.rh');
     if (h) { startResize(h, e); return; }                       // 1) trim handle -> RESIZE
     if (e.target.closest('[data-act="remove"]')) { return; }    // 2) remove "x" -> the click handler
@@ -1848,6 +1888,7 @@
   rulerEl.addEventListener('pointerdown', function (e) {
     if (e.button !== undefined && e.button !== 0) { return; }
     if (!(state.timeline.clips || []).length) { return; }
+    blurChatField();   // scrubbing the ruler returns keyboard focus from the Q&A answer box
     e.preventDefault();
     rulerPan = { startX: e.clientX, startScroll: tlBodyEl ? tlBodyEl.scrollLeft : 0, panned: false };
     try { rulerEl.setPointerCapture(e.pointerId); } catch (_) {}
@@ -1874,6 +1915,18 @@
   $tFrameBack.addEventListener('click', function () { mpvSend('frame', { dir: -1 }); });
   $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
   if ($tSplit) { $tSplit.addEventListener('click', function () { splitAtPlayhead(); }); }  // CHANGE 4
+
+  /* ---- playback speed: 1× / 2× (button click + Shift+Space) ---- */
+  var playSpeed = 1;
+  function setSpeed(v) {
+    playSpeed = (v >= 2) ? 2 : 1;
+    mpvSend('speed', { value: playSpeed });   // mpv keeps pitch-corrected audio at 2×
+    if ($tSpeed) {
+      $tSpeed.textContent = playSpeed + '×';
+      $tSpeed.classList.toggle('on', playSpeed === 2);
+    }
+  }
+  if ($tSpeed) { $tSpeed.addEventListener('click', function () { setSpeed(playSpeed === 2 ? 1 : 2); }); }
 
   /* ---- undo / redo (engine-side history; Ctrl+Z / Ctrl+Shift+Z) ---- */
   async function undoTimeline() {
@@ -1990,6 +2043,17 @@
     sendOverlayUpdate();   // push the CURRENT clip's name + source TC (handles EDL playback)
   });
 
+  // Toggle the OPTIONAL filename line (Date / ORIG TC / link are always shown). Persists
+  // as the reel's ShowFilename so the RENDER honours it too, then refreshes the preview.
+  if ($tOverlayName) {
+    $tOverlayName.addEventListener('click', async function () {
+      state.overlayShowName = !state.overlayShowName;
+      updateOverlayBtn();
+      await beckyCall('set_overlay', { field: 'filename', value: state.overlayShowName });
+      sendOverlayUpdate();
+    });
+  }
+
   // Save/Load use a NATIVE file dialog from the host (save_dialog/load_dialog are
   // intercepted in MainWindow before the engine). The old window.prompt() froze the
   // UI: its modal rendered BEHIND the always-on-top native mpv surface, so the page's
@@ -2033,6 +2097,133 @@
   });
 
   /* =======================================================================
+     CONTEXT MENUS (right-click) + focus return
+     Clips + left-panel rows get "Open file in File Browser" (host reveal_file) and
+     "Copy file name" (host copy_text, the VIDEO filename, not the transcript); a clip
+     also gets "Open transcript in left panel" which jumps the list to the clip's time.
+     ===================================================================== */
+  // Clicking the timeline returns keyboard focus to it: blur the chat/answer field so
+  // the timeline shortcuts (space, delete, arrows) work again — the Q&A answer box would
+  // otherwise trap them. Only the chat column's field is blurred, never the left search.
+  function blurChatField() {
+    var el = document.activeElement;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) { return; }
+    if (el === $ask || (el.closest && el.closest('.chat'))) { el.blur(); }
+  }
+
+  var ctxEl = null;
+  function closeContextMenu() {
+    if (ctxEl && ctxEl.parentNode) { ctxEl.parentNode.removeChild(ctxEl); }
+    ctxEl = null;
+  }
+  function showContextMenu(x, y, items) {
+    closeContextMenu();
+    items = (items || []).filter(Boolean);
+    if (!items.length) { return; }
+    ctxEl = document.createElement('div');
+    ctxEl.className = 'ctxmenu';
+    items.forEach(function (it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = it.label;
+      b.addEventListener('click', function (ev) { ev.stopPropagation(); closeContextMenu(); try { it.fn(); } catch (_) {} });
+      ctxEl.appendChild(b);
+    });
+    document.body.appendChild(ctxEl);
+    // clamp to the viewport so the menu never opens partly off-screen
+    var r = ctxEl.getBoundingClientRect();
+    ctxEl.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 6)) + 'px';
+    ctxEl.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 6)) + 'px';
+  }
+  // dismiss on any outside press / scroll / resize / window blur (Escape is handled in
+  // the global key handler so it doesn't also fire the delete shortcut).
+  document.addEventListener('pointerdown', function (e) {
+    if (ctxEl && !ctxEl.contains(e.target)) { closeContextMenu(); }
+  }, true);
+  window.addEventListener('blur', closeContextMenu);
+  window.addEventListener('resize', closeContextMenu);
+  if (tlBodyEl) { tlBodyEl.addEventListener('scroll', closeContextMenu); }
+  $listScroll.addEventListener('scroll', closeContextMenu);
+
+  // host-backed actions (see MainWindow reveal_file / copy_text)
+  function revealFile(path) { if (path) { beckyCall('reveal_file', { path: path }); } }
+  function copyFileName(path) {
+    var name = baseName(path || '');   // the VIDEO file's name+extension, never the transcript
+    if (name) { beckyCall('copy_text', { text: name }).then(function () { toast('Copied: ' + name); }); }
+  }
+  function videoByName(name) {
+    for (var i = 0; i < state.videos.length; i++) { if (state.videos[i].name === name) { return state.videos[i]; } }
+    return null;
+  }
+
+  // Open a source's transcript in the LEFT panel and land on the cue at `atSec` (the
+  // clip's source in-point) — does NOT disturb the video/timeline that's playing.
+  async function openTranscriptAtTime(source, atSec) {
+    var name = baseName(source || '');
+    var v = videoByName(name);
+    if (!v) { toast('No indexed transcript for ' + name); return; }
+    if (state.mode === 'files') { state.fileScrollTop = $listScroll.scrollTop; }
+    var rep = await beckyCall('transcript', { name: v.name });
+    var cues = (rep.ok && Array.isArray(rep.data)) ? rep.data : [];
+    state.mode = 'results'; state.cueMode = true; state.viewVideoName = v.name;
+    state.cueAll = cues; state.cueFilter = ''; state.rows = cues.slice(); state.terms = [];
+    // the cue playing at atSec = the LAST cue whose start <= atSec (cues are chronological)
+    var bestIdx = state.rows.length ? 0 : -1;
+    for (var j = 0; j < state.rows.length; j++) {
+      if ((state.rows[j].start || 0) <= (atSec || 0) + 0.001) { bestIdx = j; } else { break; }
+    }
+    state.activeResultKey = (bestIdx >= 0) ? rowKey(state.rows[bestIdx], bestIdx) : null;
+    state.headerText = cueHeaderText();
+    renderFind();
+    if (state.activeResultKey) {
+      var rows = $listScroll.querySelectorAll('.qrow');
+      for (var k = 0; k < rows.length; k++) {
+        if (rows[k].dataset.key === state.activeResultKey) { rows[k].scrollIntoView({ block: 'center' }); break; }
+      }
+    }
+  }
+
+  // right-click a timeline clip
+  trackEl.addEventListener('contextmenu', function (e) {
+    var block = e.target.closest('.clip');
+    if (!block) { return; }
+    var clip = clipById(block.dataset.id);
+    if (!clip || !clip.source) { return; }
+    e.preventDefault();
+    var src = clip.source;
+    showContextMenu(e.clientX, e.clientY, [
+      { label: 'Open file in File Browser', fn: function () { revealFile(src); } },
+      { label: 'Copy file name', fn: function () { copyFileName(src); } },
+      { label: 'Open transcript in left panel', fn: function () { openTranscriptAtTime(src, clip.in || 0); } }
+    ]);
+  });
+
+  // right-click a left-panel video row or quote row
+  $listScroll.addEventListener('contextmenu', function (e) {
+    var file = e.target.closest('.file');
+    if (file) {
+      var v = videoByName(file.dataset.name);
+      if (!v || !v.path) { return; }
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        { label: 'Open file in File Browser', fn: function () { revealFile(v.path); } },
+        { label: 'Copy file name', fn: function () { copyFileName(v.path); } }
+      ]);
+      return;
+    }
+    var row = e.target.closest('.qrow');
+    if (row) {
+      var r = state.rows[+row.dataset.idx];
+      if (!r || !r.source) { return; }   // transcript-only rows have no video file
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        { label: 'Open file in File Browser', fn: function () { revealFile(r.source); } },
+        { label: 'Copy file name', fn: function () { copyFileName(r.source); } }
+      ]);
+    }
+  });
+
+  /* =======================================================================
      GLOBAL KEYS (CHANGE 3/4/5) - guarded so typing in search/ask is untouched (CHANGE 8)
      ===================================================================== */
   function typingInField() {
@@ -2043,6 +2234,9 @@
   }
 
   document.addEventListener('keydown', async function (e) {
+    // A right-click context menu open: Escape closes it (and nothing else — so it never
+    // also fires the delete-selected shortcut).
+    if (e.key === 'Escape' && ctxEl) { e.preventDefault(); closeContextMenu(); return; }
     if (typingInField()) { return; }   // never hijack keys while the user is typing (Ctrl+Z in a field = native text undo)
 
     // Undo / Redo: Ctrl+Z, Ctrl+Shift+Z (and Ctrl+Y) for the timeline.
@@ -2078,9 +2272,10 @@
       return;
     }
 
-    // Space = play / pause (CHANGE 3)
+    // Space = play / pause; Shift+Space = play at 2× (Jordan's 2× shortcut).
     if (e.key === ' ') {
       e.preventDefault();
+      if (e.shiftKey) { setSpeed(2); }
       togglePlay();
       return;
     }
@@ -2090,24 +2285,11 @@
       splitAtPlayhead();
       return;
     }
-    // Delete / Backspace = ripple-delete ALL selected clips.
-    if ((e.key === 'Delete' || e.key === 'Backspace') && (state.selectedClipIds || []).length) {
+    // Delete / Backspace / Escape = ripple-delete ALL selected clips. Jordan wants Esc
+    // to double as delete (two hotkeys for the same action).
+    if ((e.key === 'Delete' || e.key === 'Backspace' || e.key === 'Escape') && (state.selectedClipIds || []).length) {
       e.preventDefault();
-      var ids = state.selectedClipIds.slice();
-      clearSelection();
-      var okAny = false, lastTl = null;
-      for (var i = 0; i < ids.length; i++) {
-        var rep = await beckyCall('remove_clip', { id: ids[i] });   // server-side remove auto-ripples start_sec
-        if (rep.ok && rep.data) { okAny = true; lastTl = rep.data; }
-      }
-      if (lastTl) { applyTimeline(lastTl); }
-      toast(okAny ? ('Removed ' + ids.length + ' clip' + (ids.length === 1 ? '' : 's')) : 'Could not remove clip');
-      return;
-    }
-    // Escape = clear the selection (does NOT delete).
-    if (e.key === 'Escape' && (state.selectedClipIds || []).length) {
-      e.preventDefault();
-      clearSelection();
+      deleteSelectedClips();
       return;
     }
   });

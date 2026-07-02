@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -36,6 +37,7 @@ public partial class MainWindow : Window
     // but \pos'd onto the letterbox-aware video rect so it tracks the VIDEO and never
     // runs wider than it. _ovW/_ovH (the real video dims) drive that rect.
     private bool _overlayOn;
+    private bool _ovShowName = true;   // the filename line is optional (Jordan) — off shows only Date/TC/link
     private string _ovFile = "";
     private string _ovDate = "";
     private string _ovLink = "";
@@ -279,6 +281,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Host-handled context-menu verbs: reveal a file in Explorer / copy text to the
+        // clipboard. The headless engine can't touch the shell or the WPF clipboard, so
+        // the host does it. Args: reveal_file {path}, copy_text {text}.
+        if (verb == "reveal_file" || verb == "copy_text")
+        {
+            var val = "";
+            if (args is JsonElement ce && ce.ValueKind == JsonValueKind.Object)
+            {
+                var key = verb == "reveal_file" ? "path" : "text";
+                if (ce.TryGetProperty(key, out var vEl2) && vEl2.ValueKind == JsonValueKind.String)
+                {
+                    val = vEl2.GetString() ?? "";
+                }
+            }
+            var ok = verb == "reveal_file" ? RevealInExplorer(val) : CopyToClipboard(val);
+            PostToPage(new { t = "reply", id, reply = new { ok, data = new { } } });
+            return;
+        }
+
         JsonElement reply = default;
         if (_engine != null)
         {
@@ -342,6 +363,30 @@ public partial class MainWindow : Window
                 return dlg.ShowDialog(this) == true ? dlg.FileName : "";
             }
         }).Task;
+    }
+
+    /// <summary>Open Explorer with the file selected. Best-effort; returns false on failure.</summary>
+    private static bool RevealInExplorer(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) { return false; }
+            Process.Start("explorer.exe", "/select,\"" + path + "\"");
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Copy text to the Windows clipboard on the UI thread. Best-effort.</summary>
+    private bool CopyToClipboard(string text)
+    {
+        if (string.IsNullOrEmpty(text)) { return false; }   // WPF Clipboard.SetText throws on empty
+        try
+        {
+            Dispatcher.Invoke(() => Clipboard.SetText(text));
+            return true;
+        }
+        catch { return false; }
     }
 
     /// <summary>Position the native mpv pane over the page's #videoHole (CSS px == DIP at 100% zoom).</summary>
@@ -424,6 +469,12 @@ public partial class MainWindow : Window
                 _paused = true;
                 _ = Num(root, "dir") < 0 ? _mpv.FrameBackStepAsync() : _mpv.FrameStepAsync();
                 break;
+            case "speed":
+            {
+                var sp = Num(root, "value");
+                if (sp > 0) { _ = _mpv.SetSpeedAsync(sp); }
+                break;
+            }
             case "overlay":
                 _overlayOn = root.TryGetProperty("on", out var onEl) && onEl.ValueKind == JsonValueKind.True;
                 var f = Str(root, "file");
@@ -431,6 +482,9 @@ public partial class MainWindow : Window
                 _ovDate = Str(root, "date");
                 _ovLink = Str(root, "link");
                 _ovTcOffset = Num(root, "tc_off");   // 0 for a single-source preview; set during EDL playback
+                // The filename line is optional: honor showName (absent => shown, matching
+                // the engine's ShowFilename default). Preview + render stay consistent.
+                _ovShowName = !root.TryGetProperty("showName", out var snEl) || snEl.ValueKind != JsonValueKind.False;
                 var fps = Num(root, "fps");
                 if (fps > 0) { _ovFps = fps; }
                 if (_overlayOn) { UpdateOverlay(_lastPos); } else { ClearOverlay(); }
@@ -520,10 +574,10 @@ public partial class MainWindow : Window
             }
         }
         // Line order (top -> bottom): Date, ORIG TC, filename, link (Jordan's layout).
-        Emit(dateLine, meta2, "D7D7D7"); // Date — gray (top)
-        Emit(line2, fs, "FFFFFF");       // ORIG TC — white (short, won't wrap)
-        Emit(_ovFile, fs, "14FF39");     // filename — green
-        Emit(linkLine, meta2, "D7D7D7"); // Link — gray (bottom)
+        Emit(dateLine, meta2, "D7D7D7");                    // Date — gray (top)
+        Emit(line2, fs, "FFFFFF");                          // ORIG TC — white (short, won't wrap)
+        if (_ovShowName) { Emit(_ovFile, fs, "14FF39"); }   // filename — green (optional, Jordan)
+        Emit(linkLine, meta2, "D7D7D7");                    // Link — gray (bottom)
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "ass-events", sb.ToString(), w, h, 0, false, false);
     }
 

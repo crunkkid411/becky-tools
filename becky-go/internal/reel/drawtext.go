@@ -30,9 +30,10 @@ const defaultFont = `C:/Windows/Fonts/consola.ttf`
 // It returns "" when nothing should be drawn (overlay disabled or no enabled
 // line has content), so the caller can omit the filter entirely.
 //
-// Each enabled field is its OWN stacked line (top -> bottom: filename, ORIG TC,
-// Date, Link), so a long filename or URL never gets concatenated into one
-// over-wide row. Lines are positioned by index off the chosen edge.
+// Each enabled field is its OWN stacked line (top -> bottom: Date, ORIG TC,
+// filename, Link), so a long filename or URL never gets concatenated into one
+// over-wide row. This order MATCHES the live preview (MainWindow.UpdateOverlay);
+// the two must stay in sync. Lines are positioned by index off the chosen edge.
 //   - the ORIGINAL-file running timecode: drawtext timecode='<src-in TC>' with
 //     timecode_rate=<fps>, which ffmpeg advances one frame at a time, so the
 //     burned value equals the position in the ORIGINAL file (the verification
@@ -68,14 +69,17 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w
 			lines = append(lines, ltLine{text: sub, size: size})
 		}
 	}
-	if meta := metaLine(o, c); meta != "" {
-		addText(meta, ltFontSize)
+	// Line order (top -> bottom): Date, ORIG TC, filename/identity, Link — matching
+	// the live preview overlay. Date leads because it is the forensic anchor; yt-dlp
+	// dates are UTC, so label them (the source's own timezone).
+	if date := overlayDate(o, c); date != "" {
+		addText("Date: "+date+" UTC", ltFontSize)
 	}
 	if o.ShowTimecode {
 		lines = append(lines, ltLine{tc: true, size: ltTCFontSize})
 	}
-	if date := overlayDate(o, c); date != "" {
-		addText("Date: "+date, ltFontSize)
+	if meta := metaLine(o, c); meta != "" {
+		addText(meta, ltFontSize)
 	}
 	if link := overlayLink(o, c); link != "" {
 		addText(link, ltFontSize) // the URL is self-evidently the link — no "Link:" label
@@ -94,7 +98,9 @@ func lowerThirdFilter(o edl.Overlay, c edl.Clip, fontFile string, fps float64, w
 			parts = append(parts, joinDrawtext([]string{
 				"timecode='" + escapeColons(tc) + "'",
 				"timecode_rate=" + formatRate(fps),
-				"text='" + escapeDrawtextText("ORIG TC") + "'",
+				// ffmpeg draws text then the timecode with NO separator, so the trailing
+				// space is what yields "ORIG TC 01:02:03:04" (not "ORIG TC01:02:03:04").
+				"text='" + escapeDrawtextText("ORIG TC ") + "'",
 				"x=" + itoa(ltMarginX),
 				"y=" + y,
 				"fontsize=" + itoa(ln.size),

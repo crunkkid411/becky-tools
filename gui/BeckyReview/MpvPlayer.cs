@@ -300,6 +300,11 @@ public sealed class MpvPlayer : IDisposable
     public Task SetPauseAsync(bool paused, CancellationToken ct = default)
         => SendAsync(ct, "set_property", "pause", paused);
 
+    /// <summary>Set the playback speed multiplier (1.0 = normal, 2.0 = 2×). mpv keeps
+    /// audio pitch-corrected by default, so 2× review stays intelligible.</summary>
+    public Task SetSpeedAsync(double speed, CancellationToken ct = default)
+        => SendAsync(ct, "set_property", "speed", speed);
+
     public Task FrameStepAsync(CancellationToken ct = default)
         => SendAsync(ct, "frame-step");
 

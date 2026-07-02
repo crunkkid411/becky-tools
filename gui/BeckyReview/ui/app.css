@@ -542,9 +542,12 @@ body {
 .clip:hover .cx { opacity: 1; pointer-events: auto; }
 .clip .cx:hover { color: #000; background: var(--crimson); border-color: var(--crimson); }
 
-/* resize handles = the subtle left/right edges; the only in-clip drag targets */
-.clip .rh { flex: none; width: 8px; cursor: ew-resize; background: var(--neon-dim); touch-action: none; z-index: 2; }
-.clip .rh:hover { background: var(--neon); }
+/* resize handles = the subtle left/right edges; the only in-clip drag targets. The
+   handle is the clip's OWN source colour (--clip-col, set inline by app.js) so it
+   matches the clip + border instead of always being green; it brightens to white on
+   hover to read as "grab me" on any hue. */
+.clip .rh { flex: none; width: 8px; cursor: ew-resize; background: var(--clip-col, var(--neon-dim)); touch-action: none; z-index: 2; }
+.clip .rh:hover { background: #fff; }
 
 /* playhead */
 #playhead {
@@ -577,3 +580,19 @@ body {
   opacity: 0; transition: opacity .2s, transform .2s; z-index: 999;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================ CONTEXT MENU ================================= */
+/* right-click menu for timeline clips + left-panel rows (open in Explorer, copy
+   file name, open transcript). A small neon-bordered popup positioned at the
+   cursor; closes on the next click / scroll / Escape (see app.js). */
+.ctxmenu {
+  position: fixed; z-index: 1000; min-width: 210px;
+  background: #0c0c0c; border: 1px solid var(--neon); border-radius: 7px; padding: 5px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.7), 0 0 12px rgba(57,255,20,.2);
+}
+.ctxmenu button {
+  display: block; width: 100%; text-align: left;
+  background: transparent; color: var(--text); border: 0; border-radius: 5px;
+  font-size: 14px; padding: 8px 12px; cursor: pointer; white-space: nowrap;
+}
+.ctxmenu button:hover { background: var(--neon-soft); color: var(--neon); }

@@ -302,6 +302,33 @@ func TestOverlayProvenanceFromFilename(t *testing.T) {
 	}
 }
 
+// TestLowerThirdFilter_OrderAndLabels pins Jordan's overlay layout: Date (UTC) on
+// top, then ORIG TC (a space before the digits), then the filename — matching the
+// live preview. Regression for becky-review-user-feedback4 (the burned render had
+// lagged the preview: no space, no UTC, filename-first order).
+func TestLowerThirdFilter_OrderAndLabels(t *testing.T) {
+	clip := edl.Clip{Source: `X:\c\v.mp4`, In: 10, Out: 12,
+		Meta: edl.ClipMeta{Date: "2026-06-18", SourceFPS: 30}}
+	o := edl.Overlay{Enabled: true, ShowFilename: true, ShowTimecode: true, ShowDate: true}
+	got := lowerThirdFilter(o, clip, "", 30, 1280, 720)
+
+	// ORIG TC keeps a trailing space so the burned text reads "ORIG TC 00:00:10:00".
+	if !strings.Contains(got, "text='ORIG TC '") {
+		t.Fatalf("ORIG TC line must keep a trailing space:\n%s", got)
+	}
+	// yt-dlp dates are UTC — the label must say so.
+	if !strings.Contains(got, "Date\\: 2026-06-18 UTC") {
+		t.Fatalf("Date line must be labeled UTC:\n%s", got)
+	}
+	// Top -> bottom order in the joined filter: Date, then ORIG TC, then filename.
+	iDate := strings.Index(got, "Date\\: 2026-06-18")
+	iTC := strings.Index(got, "ORIG TC ")
+	iName := strings.Index(got, "v.mp4")
+	if !(iDate >= 0 && iTC > iDate && iName > iTC) {
+		t.Fatalf("overlay order must be Date < ORIG TC < filename (got %d,%d,%d):\n%s", iDate, iTC, iName, got)
+	}
+}
+
 func TestWrapToWidth(t *testing.T) {
 	// A short string is returned as a single line.
 	if got := wrapToWidth("short.mp4", 26, 1280); len(got) != 1 {
