@@ -541,12 +541,29 @@ load-bearing rules, in brief:
   threshold T, critical classes, long-doc in v1?, agreement tol, escalate-only vs `--thorough`);
   then cloud can build the deterministic core with no models.
 
-### Current state of master (as of 2026-06-29)
+### Current state of master (as of 2026-07-02)
 
 Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
 blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
 FAIL is pre-existing/environmental (the local TTS model is present, so "degrades when no model"
-inverts); `build-all-tools.bat` builds all 84 `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+inverts); `build-all-tools.bat` builds all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+
+- **Becky Review round-5 fixes — 12 reported bugs + 3 new features, all live-verified (2026-07-02,
+  local):** the real root cause of "scroll-to-zoom randomly stops working" was found —
+  `round(2*1.15)=round(2.3)=2`, a rounding fixed point at small zoom values that NO amount of
+  wheel-scrolling can escape (only a bigger jump, like the +/- buttons' 1.5x, crosses it) — fixed in
+  `setZoom` (`ui/app.js`). Also fixed: Ctrl+Left/Right getting stuck re-landing on the current clip's
+  own edges instead of traversing the whole timeline; cutting/trimming a clip while the timeline is
+  actively playing used to leave mpv silently drifting on the stale pre-edit EDL (now reloads
+  immediately at the same position); splitting a clip left the pre-split (left) half selected instead
+  of the new right half; left-panel mouse+keyboard selection showing two highlights at once after
+  arrow-key nav; the CMX3600 `.edl` writer used a video-only `"V"` channel, so Vegas Pro imports had no
+  audio (now `"AA/V"`; `becky-hits` also emits this sidecar). Plus: `render/` output folder excluded
+  from search/browse, the named toast popups removed, playhead restyled, Up/Down zooms when the list
+  isn't focused, Spacebar plays the keyboard-selected row, a screenshot button
+  (`Screenshot_NNNN.png`), and a non-intrusive busy bar for slow (>1s) engine calls. Every item verified
+  against a real running instance (CDP + real Win32 mouse/keyboard input, real ffmpeg renders, real mpv
+  playback) — not just code review. Nothing left for local; this session did both halves itself.
 
 - **becky-transcribe gap-fill — long-clip transcripts no longer come up ~48 min short (2026-06-29, local,
   `claude/transcribe-audio-gapfill`):** sources whose audio drops out mid-stream (yt-dlp livestream VODs) have
