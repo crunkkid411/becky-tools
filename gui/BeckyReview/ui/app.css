@@ -516,10 +516,13 @@ body {
 }
 
 /* the clip currently being dragged to a new slot (CHANGE A): lifted + dimmed so the
-   eye follows it, tinted blue to read apart from the green hover + yellow selection */
+   eye follows it, tinted blue to read apart from the green hover + yellow selection.
+   The dimming was described here but never actually applied — the clip's own
+   thumbnail stayed fully opaque and blocked the view of the drop target underneath. */
 .clip.dragging {
   cursor: grabbing;
   z-index: 4;
+  opacity: 0.45;
 }
 
 /* the fill between the two trim handles — the scrub/seek surface. The first-frame

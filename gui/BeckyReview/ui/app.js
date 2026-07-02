@@ -78,6 +78,14 @@
     edlInflight: null,     // in-flight EDL (re)generation promise so we never request it twice
     pos: 0, dur: 0,        // last {t:"time"} report
     playheadComp: 0,       // current COMPILATION position (active clip start_sec + offset) - drives split (CHANGE 4)
+    // pauseReturnComp: where Pause snaps back to — the position playback STARTED
+    // from, or wherever a clip-body click landed while playing (a bookmark for
+    // "audition ahead without losing my place"; Enter commits the current spot
+    // instead). autoScrollSuspended: once that bookmark diverges from the live
+    // playhead, sticky-scroll stops following so the view doesn't yank away from
+    // wherever the user deliberately clicked to look.
+    pauseReturnComp: null,
+    autoScrollSuspended: false,
     selectedClipId: null,  // anchor/primary selected clip (Shift-range anchor + extend-frame + playhead)
     selectedClipIds: [],   // ALL selected clips (Ctrl+click toggles, Shift+click ranges) - ripple-delete + render-selection targets
 
@@ -1169,6 +1177,19 @@
   }
   function zoomBy(factor) { setZoom(state.pxPerSec * factor); }
   function zoomAt(factor, clientX) { setZoom(state.pxPerSec * factor, clientX); }
+  // The playhead's current CLIENT-space x (converting its content-space left, which
+  // is relative to the scrollable track, through the current scroll offset) — so a
+  // zoom can anchor on the playhead instead of wherever the mouse happens to be.
+  function playheadClientX() {
+    if (!tlBodyEl || playheadEl.style.display === 'none') { return null; }
+    // tlBodyEl (the scroll viewport) sits at a FIXED screen position; trackEl (the
+    // scrolled content) does not, so anchoring off trackEl's rect here double-counted
+    // the scroll offset. playheadEl.style.left is content-space (see updatePlayhead);
+    // subtract scrollLeft to land in tlBodyEl's own viewport space, then add its rect.
+    var rect = tlBodyEl.getBoundingClientRect();
+    var leftPx = parseFloat(playheadEl.style.left || '0');
+    return rect.left + (leftPx - tlBodyEl.scrollLeft);
+  }
   // fitTimelineZoom sets the scale so `seconds` fills the visible track width — the
   // default view (Jordan: a new project should show ~10s, not be zoomed way out; a
   // first clip longer than 10s expands to fit itself). setZoom clamps + re-renders.
@@ -1433,19 +1454,20 @@
   var proxyQueue = [];
   var proxyActive = 0;
   var PROXY_MAX = 1;         // one segment-transcode at a time — a background nicety, don't peg CPU
-  // Proxies build for EVERY clip on the timeline, not just the ones on screen
-  // right now — unlike thumbnails, the point of this queue is that a clip is
-  // ALREADY scrub-ready by the time a human scrolls to or plays it (the real
-  // workflow: an agent finds clips and puts them on the timeline, a human
-  // reviews later). PROXY_MAX=1 keeps this a slow background trickle, never a
-  // "storm" — it just doesn't stop at the screen edge anymore.
+  // REVERTED (2026-07-02): building proxies for the WHOLE reel regardless of
+  // visibility sounded good on paper, but every proxy that finishes calls
+  // markEdlStaleWhenIdle() below, which invalidates the loaded EDL — so a
+  // reel with many un-proxied clips turned into a marathon of background
+  // builds that kept yanking the EDL out from under playback the whole time
+  // ("timeline doesn't play at all while a new segment is building a proxy").
+  // Back to viewport-gated: only build for what's actually on screen.
   function applyProxies() {
     var blocks = trackEl.querySelectorAll('.clip');
     for (var i = 0; i < blocks.length; i++) {
       var clip = clipById(blocks[i].dataset.id);
       if (!clip || !clip.source) { continue; }
       var key = waveKey(clip.source, clip.in || 0, clip.out || 0);   // same window key as the waveform
-      if (proxyRequested[key]) { continue; }
+      if (proxyRequested[key] || !clipVisible(clip.id)) { continue; }
       proxyRequested[key] = true;
       proxyQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0 });
       pumpProxies();
@@ -1457,7 +1479,14 @@
       proxyActive++;
       beckyCall('scrub_segment', { source: job.src, in: job.in, out: job.out }).then(function (rep) {
         proxyActive--;
-        if (rep && rep.ok && rep.data && rep.data.path) { markEdlStaleWhenIdle(); }
+        // Only invalidate the EDL once the WHOLE batch has drained, not after each
+        // individual clip — with several clips queued, invalidating per-clip meant
+        // the EDL kept getting yanked out from under playback for the entire
+        // stretch while more proxies were still building ("timeline doesn't play
+        // at all while a new segment is building a proxy").
+        if (rep && rep.ok && rep.data && rep.data.path && proxyActive === 0 && !proxyQueue.length) {
+          markEdlStaleWhenIdle();
+        }
         pumpProxies();
       });
     }
@@ -1629,7 +1658,21 @@
   // EDL, or a search-result preview).
   function togglePlay() {
     var clips = state.timeline.clips || [];
-    if (clips.length && !state.playing && (!isTimelineLoaded() || state.edlVersion !== state.tlVersion)) {
+    if (state.playing) {
+      // Pausing snaps BACK to the bookmark (wherever this play session started, or
+      // wherever a clip-body click landed while auditioning ahead) instead of
+      // stopping wherever playback happens to be — that's what Enter is for.
+      mpvSend('pause');
+      if (typeof state.pauseReturnComp === 'number' && isTimelineLoaded()) {
+        seekTimeline(state.pauseReturnComp, false);
+      }
+      state.autoScrollSuspended = false;
+      return;
+    }
+    // Starting (or resuming) playback: this position becomes the NEW return point.
+    state.pauseReturnComp = state.playheadComp;
+    state.autoScrollSuspended = false;
+    if (clips.length && (!isTimelineLoaded() || state.edlVersion !== state.tlVersion)) {
       seekTimeline(state.playheadComp || 0, true);
     } else {
       mpvSend('toggle');
@@ -1686,7 +1729,7 @@
     // fights the view while you're trying to look at something else), and
     // never during an in-progress drag, or the content would shift out from
     // under the cursor while resizing/reordering/scrubbing.
-    if (tlBodyEl && !resizing && !clipGesture && !scrubbing) {
+    if (tlBodyEl && !resizing && !clipGesture && !scrubbing && !state.autoScrollSuspended) {
       var EDGE_MARGIN = 40;
       var viewL = tlBodyEl.scrollLeft, viewR = viewL + tlBodyEl.clientWidth;
       if (leftPx < viewL + EDGE_MARGIN || leftPx > viewR - EDGE_MARGIN) {
@@ -1777,11 +1820,43 @@
     if (!ids.length) { return; }
     clearSelection();
     var okAny = false, lastTl = null;
+    // A delete ripples subsequent clips left, which shifts the playhead's rendered
+    // pixel position even though the user didn't navigate anywhere — that shift
+    // could trip the sticky-scroll edge check and jump the view. Deleting should
+    // only move the CLIPS (the ripple), never the viewport, so pin scrollLeft
+    // across the reload and restore it (clamped in case the timeline got shorter).
+    var keepScroll = tlBodyEl ? tlBodyEl.scrollLeft : null;
+
+    // If the playhead sits on a clip that ISN'T being deleted, remember its id +
+    // offset WITHIN that clip — the ripple shifts every later clip's start_sec, so
+    // the playhead's old absolute compilation position no longer means "the same
+    // spot in that clip" afterward. Re-anchor it once the ripple lands.
+    var rippleClip = (typeof state.playheadComp === 'number') ? clipAtComp(state.playheadComp) : null;
+    var rippleOffset = null;
+    if (rippleClip && ids.indexOf(rippleClip.id) === -1) {
+      rippleOffset = state.playheadComp - (rippleClip.start_sec || 0);
+    }
+
     for (var i = 0; i < ids.length; i++) {
       var rep = await beckyCall('remove_clip', { id: ids[i] });   // server-side remove auto-ripples start_sec
       if (rep.ok && rep.data) { okAny = true; lastTl = rep.data; }
     }
     if (lastTl) { applyTimeline(lastTl); }
+
+    if (rippleOffset != null) {
+      var movedClip = clipById(rippleClip.id);
+      if (movedClip) {
+        var newComp = (movedClip.start_sec || 0) + rippleOffset;
+        state.playheadComp = newComp;
+        state.activeClipId = movedClip.id;
+        if (!state.playing) { seekTimeline(newComp, false); }
+        updatePlayhead();
+      }
+    }
+
+    if (tlBodyEl && keepScroll != null) {
+      tlBodyEl.scrollLeft = Math.min(keepScroll, tlBodyEl.scrollWidth - tlBodyEl.clientWidth);
+    }
     if (!okAny) { toast('Could not remove clip'); }
   }
 
@@ -2152,7 +2227,7 @@
     e.preventDefault();
     scrubbing = true;
     try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
-    scrubTo(e, true);
+    scrubTo(e, true, true);
   });
 
   trackEl.addEventListener('pointermove', function (e) {
@@ -2203,7 +2278,7 @@
     }
     return best;
   }
-  function scrubTo(e, isStart) {
+  function scrubTo(e, isStart, isRuler) {
     var rect = trackEl.getBoundingClientRect();   // ruler shares the track's left edge + width
     var x = e.clientX - rect.left;
     var hit = findClipAtX(x);
@@ -2211,9 +2286,22 @@
     var clip = clipById(hit.id);
     if (!clip) { return; }
     var comp = (clip.start_sec || 0) + hit.frac * clipDur(clip);   // the compilation position clicked
+
+    if (state.playing && !isRuler) {
+      // A click WITHIN a clip (not the ruler) while playing doesn't touch the
+      // ongoing preview at all — playback keeps running from wherever it already
+      // was. It only marks where Pause should land instead of wherever playback
+      // happens to be when you hit it — audition ahead without losing your place.
+      state.pauseReturnComp = comp;
+      state.autoScrollSuspended = true;   // the user is now deliberately looking elsewhere
+      return;
+    }
+
     state.activeClipId = clip.id;
     selectOnly(clip.id);                            // a plain click/scrub selects ONLY this clip
     state.playheadComp = comp;
+    state.pauseReturnComp = comp;
+    state.autoScrollSuspended = false;    // a real navigation — resume following it
     // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, KEEPING whatever
     // play state was already true — clicking elsewhere while playing should keep
     // playing from the new spot, not silently pause; clicking while paused stays
@@ -2247,7 +2335,7 @@
     if (!rulerPan) { return; }
     var g = rulerPan; rulerPan = null;
     rulerEl.classList.remove('panning');
-    if (!g.panned) { scrubTo(e, true); }   // a click (no real drag) -> move the playhead here
+    if (!g.panned) { scrubTo(e, true, true); }   // a click (no real drag) -> move the playhead here
   }
   rulerEl.addEventListener('pointerup', endRulerGesture);
   rulerEl.addEventListener('pointercancel', function () { rulerPan = null; rulerEl.classList.remove('panning'); });
@@ -2367,7 +2455,10 @@
         if (d) { e.preventDefault(); tlBodyEl.scrollLeft += d; }   // Ctrl+wheel = horizontal pan
       } else {
         e.preventDefault();
-        zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);          // plain wheel = zoom to cursor
+        // plain wheel = zoom to the PLAYHEAD (Jordan's ask), falling back to the
+        // cursor position when there's no playhead to anchor on yet (empty timeline).
+        var anchorX = playheadClientX();
+        zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, anchorX != null ? anchorX : e.clientX);
       }
     }, { passive: false });
 
@@ -2478,11 +2569,14 @@
   // Space/Enter keep controlling the last-clicked quote instead of the timeline
   // (that's what made Play always resume the search-panel preview after adding a
   // quote to the timeline, until the ▶ button was clicked directly).
+  // A click on the timeline is the highest-priority signal of intent, so it blurs
+  // WHATEVER currently has focus — the search box, the chat box, the search list —
+  // not a hardcoded subset. The earlier version only covered the chat field, then
+  // the list; the search box was still missed until Jordan hit it directly.
   function blurChatField() {
-    if ($listScroll && document.activeElement === $listScroll) { $listScroll.blur(); }
     var el = document.activeElement;
-    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) { return; }
-    if (el === $ask || (el.closest && el.closest('.chat'))) { el.blur(); }
+    if (!el) { return; }
+    if (el === $listScroll || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { el.blur(); }
   }
 
   var ctxEl = null;
@@ -2633,6 +2727,16 @@
     if (e.key === 'Enter' && listIsFocused() && kbIndex >= 0) {
       e.preventDefault();
       activateListSelection();
+      return;
+    }
+    if (e.key === 'Enter' && !listIsFocused()) {
+      // Commit the CURRENT position as the new bookmark (unlike Pause, which snaps
+      // back to wherever playback started / a clip-body click last landed) — "stop
+      // where it is."
+      e.preventDefault();
+      mpvSend('pause');
+      state.pauseReturnComp = state.playheadComp;
+      state.autoScrollSuspended = false;
       return;
     }
     // Up/Down elsewhere (the list isn't focused) = zoom the timeline in/out — a
