@@ -597,15 +597,15 @@ body {
   clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
   box-shadow: 0 0 0 1px rgba(0,0,0,.45);
 }
-/* two tiny vertical grip hashmarks inside the white flag head (item 7 / playhead.JPG).
-   The flag spans x -8..10 (its centre ~ +1); the pair straddles that centre in the
-   flag's straight upper part, above where it tapers to the point. */
+/* two vertical grip hashmarks inside the white flag head (item 7 / playhead.JPG),
+   2px thick and evenly spaced around the flag's centre (~ +1), in its straight upper
+   part above where it tapers to the point. */
 #playhead::after {
-  content: ""; position: absolute; top: -22px; left: -2px;
-  width: 6px; height: 11px;
+  content: ""; position: absolute; top: -22px; left: -3px;
+  width: 8px; height: 12px;
   background:
-    linear-gradient(#3a3a3a, #3a3a3a) 2px 0 / 1px 100% no-repeat,
-    linear-gradient(#3a3a3a, #3a3a3a) 4px 0 / 1px 100% no-repeat;
+    linear-gradient(#3a3a3a, #3a3a3a) 1px 0 / 2px 100% no-repeat,
+    linear-gradient(#3a3a3a, #3a3a3a) 5px 0 / 2px 100% no-repeat;
   pointer-events: none;
 }
 
@@ -614,8 +614,12 @@ body {
    flag head (only the moving #playhead does). z-index 4 sits it UNDER the moving playhead
    (z 5), so when the two coincide (paused) you simply see the playhead. */
 #stock {
-  position: absolute; top: 0; bottom: 0; width: 2px;
+  position: absolute; top: 0; bottom: 0; width: 3px;
   background: #000;
+  /* a permanent thin white ring so the bar stays VISIBLE even in its black blink phase —
+     without it, a black bar on the near-black timeline vanished and the "flash" read as a
+     thin line flickering in and out instead of a clean black<->white blink. */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
   pointer-events: none; z-index: 4;
 }
 /* blink black<->white at ~standard-text-cursor speed when moved during playback (item 2).
@@ -639,7 +643,9 @@ body {
   box-shadow: inset 1px 0 0 rgba(0,0,0,.6), inset -1px 0 0 rgba(0,0,0,.6);
 }
 #threshold {
-  position: absolute; left: 0; right: 0; height: 14px; margin-top: -7px;
+  /* width is set inline by renderThreshold to span only the clips (not the empty
+     trailing scroll space), so the level line sits ON the waveforms. */
+  position: absolute; left: 0; height: 14px; margin-top: -7px;
   cursor: ns-resize; z-index: 6; touch-action: none;
 }
 #threshold::before {   /* the visible line, centred in the 14px grab strip */

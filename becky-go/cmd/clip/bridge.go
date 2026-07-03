@@ -109,6 +109,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	// ---- timeline mutation ----
 	case "add_clip":
 		return a.AddClip(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argString(args, "label"))
+	case "add_external":
+		// Add a whole video dragged in from OUTSIDE the case folder (item 21): authorize
+		// the exact file, probe its duration, append it.
+		return a.AddExternalClip(argString(args, "path"))
 	case "remove_clip":
 		return a.RemoveClip(argString(args, "id"))
 	case "reorder":

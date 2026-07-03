@@ -245,6 +245,7 @@
         case 'play':   onPlayState(!!m.paused); break;
         case 'folder': onFolder(m.reply);    break;
         case 'screenshot': onScreenshot(m.path); break;
+        case 'reloadTimeline': reloadTimelineFromEngine(); break;   // host added external footage (item 21 drop)
       }
     });
   }
@@ -969,6 +970,13 @@
     else { toast('Could not open folder' + (reply && reply.error ? ': ' + reply.error : '')); }
   }
 
+  // The host added footage dropped from an external folder (item 21) straight through the
+  // engine; reload the shared reel so the new clip appears on the timeline.
+  async function reloadTimelineFromEngine() {
+    var rep = await beckyCall('timeline', {});
+    if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Added dropped footage to the timeline'); }
+  }
+
   /* =======================================================================
      CHAT COLUMN
      ===================================================================== */
@@ -1427,6 +1435,33 @@
     block.style.setProperty('--clip-col', bord);
     var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
     block.title = truncate(label, 80) + '  (' + mmss(dur) + ')';
+    refitWave(block, clip);   // keep the reused waveform at the right scale (no split/trim squish)
+  }
+
+  // refitWave crops a reused clip's waveform SVG to the clip's CURRENT [in,out] window
+  // when that window shrank (a split or a trim). Without it, the reconcile reuses the
+  // clip's old full-window SVG stretched to the now-narrower clip for a frame — the
+  // "waveform compresses into the previous clip for a millisecond, then fixes itself"
+  // glitch. Cropping the viewBox (the same thing moveResize does live) shows the correct
+  // portion at the correct scale immediately; applyWaves later refetches the exact one.
+  function refitWave(block, clip) {
+    var el = block.querySelector('.cwave');
+    if (!el || !el.dataset.waveKey) { return; }
+    var curKey = waveKey(clip.source, clip.in || 0, clip.out || 0);
+    if (el.dataset.waveKey === curKey) { return; }   // SVG already matches this window
+    var svg = el.querySelector('svg');
+    var N = parseFloat(el.dataset.waveN || '0');
+    var at = el.dataset.waveKey.lastIndexOf('@');
+    if (!svg || !(N > 0) || at < 0) { return; }
+    var win = el.dataset.waveKey.slice(at + 1).split('-');
+    if (win.length !== 2) { return; }
+    var oldIn = parseFloat(win[0]), oldOut = parseFloat(win[1]), od = oldOut - oldIn;
+    var nin = clip.in || 0, nout = clip.out || 0;
+    if (od > 0 && nin >= oldIn - 1e-6 && nout <= oldOut + 1e-6) {
+      var minX = (nin - oldIn) / od * N;
+      var wX = Math.max(0.01, (nout - nin) / od * N);
+      svg.setAttribute('viewBox', minX.toFixed(3) + ' 0 ' + wX.toFixed(3) + ' 1');
+    }
   }
 
   // reconcileTrack makes the track's .clip nodes match `clips` by REUSING existing nodes
@@ -1598,7 +1633,13 @@
       var el = b.querySelector('.cwave');
       if (!el) { continue; }
       if (cached !== undefined) {
-        if (el.dataset.waveKey !== key) { el.innerHTML = cached; el.dataset.waveKey = key; }
+        if (el.dataset.waveKey !== key) {
+          el.innerHTML = cached; el.dataset.waveKey = key;
+          // Record the SVG's full viewBox width so a later trim/split can CROP it to the
+          // new window at the correct scale (refitWave) instead of squishing it.
+          var wsvg = el.querySelector('svg');
+          el.dataset.waveN = (wsvg && wsvg.viewBox && wsvg.viewBox.baseVal) ? String(wsvg.viewBox.baseVal.width) : '0';
+        }
       } else if (!waveInflight[key]) {
         // Waveforms load for EVERY clip (not just on-screen ones): peak extraction is
         // cheap audio-only work, so a full reel's waveforms warm up fast (throttled to
@@ -1749,16 +1790,37 @@
     var l = trackLane();
     return Math.max(0.01, Math.min(1, (0.5 - (y - l.top) / l.height) * 2));
   }
+  // compToPixel maps a compilation time to a track pixel via the ACTUAL clip geometry
+  // (respecting each clip's min-width floor) — the SAME mapping the playhead uses. The
+  // dim rects MUST use this, not comp*pxPerSec: whenever a short clip is drawn wider than
+  // its true time (the min-width floor), a time-based position drifts from the clip it's
+  // supposed to sit on, and the drift accumulates rightward — the exact "the dim doesn't
+  // correspond to the waveform" inaccuracy.
+  function compToPixel(comp) {
+    var clip = clipAtComp(comp);
+    if (!clip) { return comp * state.pxPerSec; }
+    var g = clipGeom[clip.id];
+    if (!g) { var b = blockById(clip.id); if (!b) { return comp * state.pxPerSec; } g = { left: b.offsetLeft, width: b.offsetWidth }; }
+    var d = clipDur(clip);
+    var frac = d > 0 ? (comp - (clip.start_sec || 0)) / d : 0;
+    return g.left + Math.max(0, Math.min(1, frac)) * g.width;
+  }
+
   // renderThreshold positions the bar + paints the dim rectangles over the quiet
   // stretches. Called on render, zoom, threshold change, and as peaks arrive.
   function renderThreshold() {
     if (!state.thresholdOn) { quietLayerEl.style.display = 'none'; thresholdBarEl.style.display = 'none'; return; }
+    // Span the bar over the CLIPS only (not the empty trailing scroll space), so it reads
+    // as a level ON the waveforms rather than a line across the whole timeline.
+    var blocks = trackEl.querySelectorAll('.clip');
+    var lastRight = blocks.length ? (blocks[blocks.length - 1].offsetLeft + blocks[blocks.length - 1].offsetWidth) : 0;
     thresholdBarEl.style.display = 'block';
     thresholdBarEl.style.top = thresholdBarY() + 'px';
+    thresholdBarEl.style.width = lastRight + 'px';
     var iv = quietIntervals(), html = '';
     for (var i = 0; i < iv.length; i++) {
-      var x = Math.round(iv[i].start * state.pxPerSec);
-      var w = Math.max(1, Math.round((iv[i].end - iv[i].start) * state.pxPerSec));
+      var x = Math.round(compToPixel(iv[i].start));
+      var w = Math.max(1, Math.round(compToPixel(iv[i].end) - x));
       html += '<div class="qdim" style="left:' + x + 'px;width:' + w + 'px"></div>';
     }
     quietLayerEl.innerHTML = html;
@@ -2493,10 +2555,12 @@
       // Ctrl/Cmd+click: toggle this clip in the multi-selection; don't move the playhead.
       toggleInSelection(g.id);
     } else if (g.shift) {
-      // Shift+click: select every clip from the anchor to here, and move the playhead
-      // to the clicked clip's start so the preview follows.
+      // Shift+click: select every clip from the anchor to here. When PAUSED, also move
+      // the playhead to the clicked clip so the preview follows; while PLAYING, only
+      // extend the selection — seekClipById(...,false) would pause, which it must not
+      // do mid-playback (that was the "shift-click pauses playback" bug).
       selectRange(g.id);
-      seekClipById(g.id, false);
+      if (!state.playing) { seekClipById(g.id, false); }
     } else {
       // a plain CLICK (moved <= DRAG_PX) -> select ONLY this clip + seek to the exact spot.
       scrubTo(e, true);

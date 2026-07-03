@@ -190,6 +190,32 @@ func TestAddRemoveReorderClip(t *testing.T) {
 	}
 }
 
+func TestAddExternalClip(t *testing.T) {
+	app, _ := openFixture(t)
+	ext := filepath.Join(t.TempDir(), "outside.mp4") // a file OUTSIDE the open case folder
+	mustWrite(t, ext, "x")
+	// a normal add_clip must REJECT an out-of-folder source...
+	if _, err := app.AddClip(ext, 0, 2, ""); err == nil {
+		t.Error("AddClip should reject an out-of-folder source")
+	}
+	// ...but AddExternalClip authorizes + adds it as a whole clip.
+	tl, err := app.AddExternalClip(ext)
+	if err != nil {
+		t.Fatalf("AddExternalClip: %v", err)
+	}
+	if len(tl.Clips) != 1 || tl.Clips[0].Source == "" {
+		t.Fatalf("external clip not added: %+v", tl.Clips)
+	}
+	// once authorized, resolveSource accepts it (so thumb/peaks/probe can read it).
+	if _, ok := app.resolveSource(ext); !ok {
+		t.Error("resolveSource should accept an authorized external file")
+	}
+	// a missing path errors and adds nothing.
+	if _, err := app.AddExternalClip(filepath.Join(t.TempDir(), "nope.mp4")); err == nil {
+		t.Error("AddExternalClip should error on a missing file")
+	}
+}
+
 func TestAddClipRejectsOutOfFolderSource(t *testing.T) {
 	app, _ := openFixture(t)
 	outside := filepath.Join(t.TempDir(), "evil.mp4")

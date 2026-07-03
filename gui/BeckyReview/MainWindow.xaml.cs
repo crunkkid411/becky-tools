@@ -109,6 +109,14 @@ public partial class MainWindow : Window
         core.NavigationCompleted += OnNavigationCompleted;
         core.Navigate($"https://{VirtualHost}/index.html");
 
+        // External drag-and-drop (item 21): let the HOST handle OS file drops so we get
+        // the real file paths (WebView2's own drop handling hides them from the page).
+        // A video dropped from ANY folder is added to the timeline via add_external.
+        WebView.AllowExternalDrop = false;
+        WebView.AllowDrop = true;
+        WebView.PreviewDragOver += OnWebDragOver;
+        WebView.Drop += OnWebDrop;
+
         // Whenever the pointer enters the WebView, make sure it holds focus — so the
         // timeline's mouse-wheel-to-zoom works "no matter what" (even right after the user
         // was interacting with the native mpv pane), not only after a click in the page.
@@ -274,6 +282,35 @@ public partial class MainWindow : Window
                 break;
         }
     }
+
+    // ---- external file drop (item 21) ----------------------------------------
+
+    private void OnWebDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    // A video dragged in from ANY folder is added as a whole clip via the engine's
+    // add_external, then we ask the page to reload the timeline. The engine and the page
+    // share the one reel, so the page's timeline call picks up the add.
+    private async void OnWebDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { return; }
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths || _engine == null) { return; }
+        var added = 0;
+        foreach (var p in paths)
+        {
+            if (!IsVideoFile(p)) { continue; }
+            try { await _engine.CallAsync("add_external", new { path = p }); added++; }
+            catch { /* degrade: skip a file the engine can't add */ }
+        }
+        if (added > 0) { PostToPage(new { t = "reloadTimeline" }); }
+    }
+
+    private static readonly HashSet<string> VideoExts = new(StringComparer.OrdinalIgnoreCase)
+    { ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".ts", ".m2ts", ".wmv", ".flv", ".mpg", ".mpeg" };
+    private static bool IsVideoFile(string path) => VideoExts.Contains(Path.GetExtension(path));
 
     private async Task HandleCallAsync(JsonElement root)
     {

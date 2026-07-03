@@ -100,6 +100,12 @@ type App struct {
 	// waveform lane (zoom, reorder, re-open) decodes ffmpeg PCM nothing twice.
 	// Guarded by mu like every other App field; nil until the first Peaks call.
 	peaksCache map[string]PeaksResult
+
+	// extraFiles are absolute paths of videos the user EXPLICITLY dragged onto the
+	// timeline from OUTSIDE the open case folder (item 21 external drag). Only these
+	// exact files are accepted by resolveSource / served — a per-FILE allow-list, so
+	// dropping one external clip never widens the scope to a whole other folder.
+	extraFiles map[string]bool
 }
 
 // NewApp builds an empty App with config loaded and a fresh empty reel. The
@@ -545,6 +551,34 @@ func (a *App) AddClip(source string, in, out float64, label string) (TimelineVie
 	return a.Timeline(), nil
 }
 
+// AddExternalClip adds a video from ANYWHERE on disk (dragged onto the timeline from
+// outside the open case folder — item 21) as one whole clip: it authorizes the EXACT
+// file (extraFiles, a per-file allow-list), probes its duration, and appends it. A path
+// that isn't a real file is an error. The file is only ever opened READ-ONLY
+// (probe/thumbnail/mpv), like every other source.
+func (a *App) AddExternalClip(path string) (TimelineView, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	abs = filepath.Clean(abs)
+	fi, err := os.Stat(abs)
+	if err != nil || fi.IsDir() {
+		return a.Timeline(), fmt.Errorf("not a file: %s", path)
+	}
+	a.mu.Lock()
+	if a.extraFiles == nil {
+		a.extraFiles = map[string]bool{}
+	}
+	a.extraFiles[abs] = true
+	a.mu.Unlock()
+	dur := a.Probe(abs).Duration
+	if dur <= 0 {
+		dur = 3600 // unknown duration -> a generous window the user can trim back
+	}
+	return a.AddClip(abs, 0, dur, "")
+}
+
 // RemoveClip drops the clip with the given id. Unknown id is a no-op error.
 func (a *App) RemoveClip(id string) (TimelineView, error) {
 	a.mu.Lock()
@@ -941,9 +975,12 @@ func (a *App) ResolveMediaPath(reqPath string) (string, bool) {
 	a.mu.Lock()
 	folder := a.folder
 	work := a.workDir
+	extra := a.extraFiles[abs]
 	a.mu.Unlock()
 
-	if !underRoot(abs, folder) && !underRoot(abs, work) {
+	// Serve paths under the case folder, the work dir, OR an explicitly dragged-in
+	// external file (item 21) — the last is a single authorized path, not a folder.
+	if !underRoot(abs, folder) && !underRoot(abs, work) && !extra {
 		return "", false
 	}
 	fi, err := os.Stat(abs)
@@ -990,6 +1027,11 @@ func (a *App) resolveSource(source string) (footage.Video, bool) {
 		if filepath.Clean(v.Path) == abs {
 			return v, true
 		}
+	}
+	// A file the user explicitly dragged in from outside the folder (item 21). No
+	// sidecar meta — external footage has no forensic sidecar; the path is enough.
+	if a.extraFiles[abs] {
+		return footage.Video{Path: abs, Name: baseName(abs)}, true
 	}
 	base := baseName(source)
 	for _, v := range a.index.Videos {
