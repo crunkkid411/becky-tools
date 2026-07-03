@@ -199,7 +199,7 @@ func TestAddExternalClip(t *testing.T) {
 		t.Error("AddClip should reject an out-of-folder source")
 	}
 	// ...but AddExternalClip authorizes + adds it as a whole clip.
-	tl, err := app.AddExternalClip(ext)
+	tl, err := app.AddExternalClip(ext, -1)
 	if err != nil {
 		t.Fatalf("AddExternalClip: %v", err)
 	}
@@ -211,8 +211,30 @@ func TestAddExternalClip(t *testing.T) {
 		t.Error("resolveSource should accept an authorized external file")
 	}
 	// a missing path errors and adds nothing.
-	if _, err := app.AddExternalClip(filepath.Join(t.TempDir(), "nope.mp4")); err == nil {
+	if _, err := app.AddExternalClip(filepath.Join(t.TempDir(), "nope.mp4"), -1); err == nil {
 		t.Error("AddExternalClip should error on a missing file")
+	}
+}
+
+func TestAddClipAtInsertsAfterIndex(t *testing.T) {
+	app, dir := openFixture(t)
+	ring := filepath.Join(dir, "ring.mp4")
+	app.AddClip(ring, 0, 1, "a") // c1
+	app.AddClip(ring, 1, 2, "b") // c2
+	app.AddClip(ring, 2, 3, "c") // c3
+	// insert a new clip AT index 1 (right after c1) -> c1, NEW, c2, c3
+	tl, err := app.AddClipAt(ring, 5, 6, "mid", 1)
+	if err != nil {
+		t.Fatalf("AddClipAt: %v", err)
+	}
+	ids := []string{tl.Clips[0].ID, tl.Clips[1].ID, tl.Clips[2].ID, tl.Clips[3].ID}
+	if ids[0] != "c1" || ids[1] != "c4" || ids[2] != "c2" || ids[3] != "c3" {
+		t.Fatalf("insert-at-1 order wrong: %v", ids)
+	}
+	// at<0 and at>=len both append.
+	tl, _ = app.AddClipAt(ring, 7, 8, "end", -1)
+	if tl.Clips[len(tl.Clips)-1].Label != "end" {
+		t.Errorf("at<0 should append, got last=%q", tl.Clips[len(tl.Clips)-1].Label)
 	}
 }
 

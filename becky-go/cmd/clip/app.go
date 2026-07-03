@@ -515,11 +515,18 @@ type MarkerView struct {
 	Label string  `json:"label,omitempty"`
 }
 
-// AddClip appends a clip {source,in,out,label} to the reel, pulling per-video
-// meta (date/person/location/fps) from the read-only sidecar. The source must be
-// a video in the open folder (path security: an add can only reference indexed
-// originals). Returns the updated timeline.
+// AddClip appends a clip {source,in,out,label} to the reel. See AddClipAt.
 func (a *App) AddClip(source string, in, out float64, label string) (TimelineView, error) {
+	return a.AddClipAt(source, in, out, label, -1)
+}
+
+// AddClipAt inserts a clip {source,in,out,label} at position `at` (a zero-based index
+// among the current clips), pulling per-video meta from the read-only sidecar. at<0 or
+// past the end APPENDS; otherwise the clip lands at `at` and everything from `at` on is
+// pushed back (used to add a clip right after the one under the playhead). The source
+// must be a video in the open folder (path security: an add can only reference indexed
+// originals — external files come through AddExternalClip). Returns the updated timeline.
+func (a *App) AddClipAt(source string, in, out float64, label string, at int) (TimelineView, error) {
 	if out < in {
 		in, out = out, in
 	}
@@ -545,18 +552,26 @@ func (a *App) AddClip(source string, in, out float64, label string) (TimelineVie
 			SourceFPS: v.Meta.SourceFPS,
 		},
 	}
-	a.reel.Clips = append(a.reel.Clips, clip)
+	if at < 0 || at >= len(a.reel.Clips) {
+		a.reel.Clips = append(a.reel.Clips, clip)
+	} else {
+		next := make([]edl.Clip, 0, len(a.reel.Clips)+1)
+		next = append(next, a.reel.Clips[:at]...)
+		next = append(next, clip)
+		next = append(next, a.reel.Clips[at:]...)
+		a.reel.Clips = next
+	}
 	a.mu.Unlock()
 
 	return a.Timeline(), nil
 }
 
 // AddExternalClip adds a video from ANYWHERE on disk (dragged onto the timeline from
-// outside the open case folder — item 21) as one whole clip: it authorizes the EXACT
-// file (extraFiles, a per-file allow-list), probes its duration, and appends it. A path
-// that isn't a real file is an error. The file is only ever opened READ-ONLY
-// (probe/thumbnail/mpv), like every other source.
-func (a *App) AddExternalClip(path string) (TimelineView, error) {
+// outside the open case folder — item 21) as one whole clip at index `at` (see
+// AddClipAt; at<0 appends): it authorizes the EXACT file (extraFiles, a per-file
+// allow-list), probes its duration, and inserts it. A path that isn't a real file is an
+// error. The file is only ever opened READ-ONLY (probe/thumbnail/mpv), like every source.
+func (a *App) AddExternalClip(path string, at int) (TimelineView, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
@@ -576,7 +591,7 @@ func (a *App) AddExternalClip(path string) (TimelineView, error) {
 	if dur <= 0 {
 		dur = 3600 // unknown duration -> a generous window the user can trim back
 	}
-	return a.AddClip(abs, 0, dur, "")
+	return a.AddClipAt(abs, 0, dur, "", at)
 }
 
 // RemoveClip drops the clip with the given id. Unknown id is a no-op error.

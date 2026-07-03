@@ -109,13 +109,14 @@ public partial class MainWindow : Window
         core.NavigationCompleted += OnNavigationCompleted;
         core.Navigate($"https://{VirtualHost}/index.html");
 
-        // External drag-and-drop (item 21): let the HOST handle OS file drops so we get
-        // the real file paths (WebView2's own drop handling hides them from the page).
-        // A video dropped from ANY folder is added to the timeline via add_external.
+        // External drag-and-drop (item 21): WebView2's own drop handling hides the file
+        // paths, so disable it and let the WINDOW handle the drop (robust to the native
+        // child-window airspace — a WebView-level handler can miss the drop). The paths
+        // are posted to the page, which does the add (so it lands at the playhead).
         WebView.AllowExternalDrop = false;
-        WebView.AllowDrop = true;
-        WebView.PreviewDragOver += OnWebDragOver;
-        WebView.Drop += OnWebDrop;
+        AllowDrop = true;
+        PreviewDragOver += OnWebDragOver;
+        Drop += OnWebDrop;
 
         // Whenever the pointer enters the WebView, make sure it holds focus — so the
         // timeline's mouse-wheel-to-zoom works "no matter what" (even right after the user
@@ -291,21 +292,20 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    // A video dragged in from ANY folder is added as a whole clip via the engine's
-    // add_external, then we ask the page to reload the timeline. The engine and the page
-    // share the one reel, so the page's timeline call picks up the add.
-    private async void OnWebDrop(object sender, DragEventArgs e)
+    // A video dragged in from ANY folder: post its path(s) to the page, which calls the
+    // engine's add_external so the clip lands at the playhead (like a panel add) and shows
+    // a toast. Posting to the page (not calling the engine here) keeps ONE add path.
+    private void OnWebDrop(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { return; }
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths || _engine == null) { return; }
-        var added = 0;
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) { return; }
+        var vids = new List<string>();
         foreach (var p in paths)
         {
-            if (!IsVideoFile(p)) { continue; }
-            try { await _engine.CallAsync("add_external", new { path = p }); added++; }
-            catch { /* degrade: skip a file the engine can't add */ }
+            if (IsVideoFile(p)) { vids.Add(p); }
         }
-        if (added > 0) { PostToPage(new { t = "reloadTimeline" }); }
+        if (vids.Count > 0) { PostToPage(new { t = "externalDrop", paths = vids }); }
+        e.Handled = true;
     }
 
     private static readonly HashSet<string> VideoExts = new(StringComparer.OrdinalIgnoreCase)

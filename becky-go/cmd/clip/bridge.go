@@ -108,11 +108,13 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 
 	// ---- timeline mutation ----
 	case "add_clip":
-		return a.AddClip(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argString(args, "label"))
+		// Optional "at": insert index (a clip added at the playhead lands after that clip);
+		// omitted -> append.
+		return a.AddClipAt(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argString(args, "label"), argIntDefault(args, "at", -1))
 	case "add_external":
 		// Add a whole video dragged in from OUTSIDE the case folder (item 21): authorize
-		// the exact file, probe its duration, append it.
-		return a.AddExternalClip(argString(args, "path"))
+		// the exact file, probe its duration, insert it (optional "at", else append).
+		return a.AddExternalClip(argString(args, "path"), argIntDefault(args, "at", -1))
 	case "remove_clip":
 		return a.RemoveClip(argString(args, "id"))
 	case "reorder":
@@ -329,6 +331,15 @@ func argInt(m map[string]any, key string) int {
 	default:
 		return 0
 	}
+}
+
+// argIntDefault reads an int arg, returning def when the key is ABSENT (so a caller can
+// distinguish "not given" from an explicit 0 — e.g. an insert index where -1 = append).
+func argIntDefault(m map[string]any, key string, def int) int {
+	if _, ok := m[key]; !ok {
+		return def
+	}
+	return argInt(m, key)
 }
 
 // argBool reads a bool arg (JSON bool, or a truthy string/number). Missing →

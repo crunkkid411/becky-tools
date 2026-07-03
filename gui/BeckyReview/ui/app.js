@@ -245,7 +245,7 @@
         case 'play':   onPlayState(!!m.paused); break;
         case 'folder': onFolder(m.reply);    break;
         case 'screenshot': onScreenshot(m.path); break;
-        case 'reloadTimeline': reloadTimelineFromEngine(); break;   // host added external footage (item 21 drop)
+        case 'externalDrop': onExternalDrop(m.paths); break;   // OS files dropped onto the window (item 21)
       }
     });
   }
@@ -712,7 +712,8 @@
     if (!r || r.transcript_only || !r.source) { return; }
     var inSec = r.start || 0;
     var outSec = (r.end != null && r.end > inSec) ? r.end : inSec + 4;
-    var rep = await beckyCall('add_clip', { source: r.source, in: inSec, out: outSec, label: r.text || '' });
+    // insert at the playhead (after the current clip), not always at the end.
+    var rep = await beckyCall('add_clip', { source: r.source, in: inSec, out: outSec, label: r.text || '', at: insertIndexAtPlayhead() });
     if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Added to timeline'); }
     else { toast('Could not add clip' + (rep.error ? ': ' + rep.error : '')); }
   }
@@ -921,7 +922,7 @@
     var pr = await beckyCall('probe', { source: v.path });
     if (pr.ok && pr.data && pr.data.duration > 0) { out = pr.data.duration; }
     if (out <= 0) { out = 3600; }   // unknown duration -> a generous window the user can trim back
-    var rep = await beckyCall('add_clip', { source: v.path, in: 0, out: out, label: '' });
+    var rep = await beckyCall('add_clip', { source: v.path, in: 0, out: out, label: '', at: insertIndexAtPlayhead() });
     if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Added ' + name + ' to the timeline'); }
     else { toast('Could not add video' + (rep.error ? ': ' + rep.error : '')); }
   }
@@ -970,11 +971,28 @@
     else { toast('Could not open folder' + (reply && reply.error ? ': ' + reply.error : '')); }
   }
 
-  // The host added footage dropped from an external folder (item 21) straight through the
-  // engine; reload the shared reel so the new clip appears on the timeline.
-  async function reloadTimelineFromEngine() {
-    var rep = await beckyCall('timeline', {});
-    if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Added dropped footage to the timeline'); }
+  // insertIndexAtPlayhead returns the index a NEW clip should land at so it sits right
+  // AFTER the clip under the playhead (pushing the rest back). Empty timeline / no
+  // playhead / past the end -> -1 (append).
+  function insertIndexAtPlayhead() {
+    var clips = state.timeline.clips || [];
+    if (!clips.length || typeof state.playheadComp !== 'number') { return -1; }
+    var c = clipAtComp(state.playheadComp);
+    if (!c) { return -1; }
+    var idx = clipIndexById(c.id);
+    return idx < 0 ? -1 : idx + 1;
+  }
+
+  // Files dropped from Windows Explorer onto the window (item 21). Each video is added as
+  // a whole clip AT the playhead (like a panel add), authorized as an external file.
+  async function onExternalDrop(paths) {
+    if (!Array.isArray(paths) || !paths.length) { return; }
+    var at = insertIndexAtPlayhead(), added = 0;
+    for (var i = 0; i < paths.length; i++) {
+      var rep = await beckyCall('add_external', { path: paths[i], at: at });
+      if (rep.ok && rep.data) { applyTimeline(rep.data); added++; if (at >= 0) { at++; } }
+    }
+    toast(added ? ('Added ' + added + ' dropped video' + (added === 1 ? '' : 's')) : 'Could not add the dropped file');
   }
 
   /* =======================================================================
@@ -1438,30 +1456,12 @@
     refitWave(block, clip);   // keep the reused waveform at the right scale (no split/trim squish)
   }
 
-  // refitWave crops a reused clip's waveform SVG to the clip's CURRENT [in,out] window
-  // when that window shrank (a split or a trim). Without it, the reconcile reuses the
-  // clip's old full-window SVG stretched to the now-narrower clip for a frame — the
-  // "waveform compresses into the previous clip for a millisecond, then fixes itself"
-  // glitch. Cropping the viewBox (the same thing moveResize does live) shows the correct
-  // portion at the correct scale immediately; applyWaves later refetches the exact one.
+  // refitWave re-crops a reused clip's waveform to its CURRENT window. The waveform SVG
+  // is NEVER replaced on an edit (replacing innerHTML is the jarring flash) — cropWave
+  // just moves the viewBox over the same SVG, which is instant and flicker-free.
   function refitWave(block, clip) {
     var el = block.querySelector('.cwave');
-    if (!el || !el.dataset.waveKey) { return; }
-    var curKey = waveKey(clip.source, clip.in || 0, clip.out || 0);
-    if (el.dataset.waveKey === curKey) { return; }   // SVG already matches this window
-    var svg = el.querySelector('svg');
-    var N = parseFloat(el.dataset.waveN || '0');
-    var at = el.dataset.waveKey.lastIndexOf('@');
-    if (!svg || !(N > 0) || at < 0) { return; }
-    var win = el.dataset.waveKey.slice(at + 1).split('-');
-    if (win.length !== 2) { return; }
-    var oldIn = parseFloat(win[0]), oldOut = parseFloat(win[1]), od = oldOut - oldIn;
-    var nin = clip.in || 0, nout = clip.out || 0;
-    if (od > 0 && nin >= oldIn - 1e-6 && nout <= oldOut + 1e-6) {
-      var minX = (nin - oldIn) / od * N;
-      var wX = Math.max(0.01, (nout - nin) / od * N);
-      svg.setAttribute('viewBox', minX.toFixed(3) + ' 0 ' + wX.toFixed(3) + ' 1');
-    }
+    if (el) { cropWave(el, clip); }
   }
 
   // reconcileTrack makes the track's .clip nodes match `clips` by REUSING existing nodes
@@ -1622,29 +1622,103 @@
     for (var j = n - 1; j >= 0; j--) { var b = Math.max(0, Math.min(1, peaks[j])); pts.push(j + ',' + (0.5 + b * 0.5).toFixed(3)); }
     return '<svg viewBox="0 0 ' + (n - 1) + ' 1" preserveAspectRatio="none"><path d="M' + pts.join(' L') + ' Z"/></svg>';
   }
+  // Waveforms are keyed by SOURCE and CROPPED per clip — the load-bearing anti-flash.
+  // A source's waveform is fetched once for some window; any clip whose [in,out] falls
+  // INSIDE that window reuses the SAME SVG, cropped to its portion. Editing (trim/split)
+  // then only moves a viewBox — it never re-fetches or replaces the SVG, so there is no
+  // "redraw the whole waveform" flash and no wrong-scale squish. A split's two halves
+  // both crop from the parent's waveform (no fetch at all).
+  var sourceWaves = {};     // source -> [{covIn, covOut, svg, n}] fetched waveforms (by window)
+
+  // findCoveringWave returns the TIGHTEST cached waveform of `source` whose window fully
+  // contains [inS,outS], or null.
+  function findCoveringWave(source, inS, outS) {
+    var list = sourceWaves[source];
+    if (!list) { return null; }
+    var best = null;
+    for (var i = 0; i < list.length; i++) {
+      var w = list[i];
+      if (inS >= w.covIn - 1e-6 && outS <= w.covOut + 1e-6) {
+        if (!best || (w.covOut - w.covIn) < (best.covOut - best.covIn)) { best = w; }
+      }
+    }
+    return best;
+  }
+  // peaksForClip returns the raw [0..1] peaks over a clip's [in,out] — either the exact
+  // window's peaks, or (for a clip whose waveform was seeded from a wider covering window,
+  // e.g. a split half) that window's peaks sliced to the clip. Keeps the playback
+  // threshold (item 16) accurate even when no per-clip peaks were ever fetched.
+  function peaksForClip(c) {
+    var src = c.source, cin = c.in || 0, cout = c.out || 0;
+    var exact = peakData[waveKey(src, cin, cout)];
+    if (exact && exact.length) { return exact; }
+    var list = sourceWaves[src];
+    if (!list) { return null; }
+    for (var i = 0; i < list.length; i++) {
+      var w = list[i];
+      if (cin >= w.covIn - 1e-6 && cout <= w.covOut + 1e-6) {
+        var full = peakData[waveKey(src, w.covIn, w.covOut)];
+        if (full && full.length) {
+          var od = w.covOut - w.covIn;
+          var a = Math.floor((cin - w.covIn) / od * full.length);
+          var b = Math.ceil((cout - w.covIn) / od * full.length);
+          return full.slice(Math.max(0, a), Math.min(full.length, b));
+        }
+      }
+    }
+    return null;
+  }
+  // cropWave moves the .cwave SVG's viewBox to show exactly the clip's [in,out] slice of
+  // its stored coverage window (set by setWave). No innerHTML change -> no flash.
+  function cropWave(el, clip) {
+    var svg = el.querySelector('svg');
+    var covIn = parseFloat(el.dataset.waveCovIn), covOut = parseFloat(el.dataset.waveCovOut), N = parseFloat(el.dataset.waveN);
+    if (!svg || !(N > 0) || !(covOut > covIn)) { return; }
+    var od = covOut - covIn;
+    var nin = Math.max(covIn, clip.in || 0), nout = Math.min(covOut, clip.out || 0);
+    if (nout <= nin) { return; }
+    var minX = (nin - covIn) / od * N;
+    var wX = Math.max(0.01, (nout - nin) / od * N);
+    svg.setAttribute('viewBox', minX.toFixed(3) + ' 0 ' + wX.toFixed(3) + ' 1');
+  }
+  // setWave installs a cached waveform (once) + records the window it covers, then crops
+  // it to the clip. This is the ONLY place .cwave innerHTML is written for a clip.
+  function setWave(el, wave, clip) {
+    el.innerHTML = wave.svg;
+    el.dataset.waveCovIn = String(wave.covIn);
+    el.dataset.waveCovOut = String(wave.covOut);
+    el.dataset.waveN = String(wave.n);
+    cropWave(el, clip);
+  }
+  // waveCovers allows a small TOLERANCE past the covered window, so a frame-extend or a
+  // tiny trim just clamps to the coverage edge (imperceptible) instead of refetching +
+  // replacing the whole SVG (a flash). Only a MEANINGFUL extend beyond that re-fetches.
+  function waveCovers(el, clip) {
+    var covIn = parseFloat(el.dataset.waveCovIn), covOut = parseFloat(el.dataset.waveCovOut);
+    var TOL = 0.5;
+    return (covOut > covIn) && (clip.in || 0) >= covIn - TOL && (clip.out || 0) <= covOut + TOL;
+  }
+
   function applyWaves() {
     var blocks = trackEl.querySelectorAll('.clip');
     for (var i = 0; i < blocks.length; i++) {
       var b = blocks[i];
       var clip = clipById(b.dataset.id);
       if (!clip || !clip.source) { continue; }
-      var key = waveKey(clip.source, clip.in || 0, clip.out || 0);
-      var cached = waveCache[key];
       var el = b.querySelector('.cwave');
       if (!el) { continue; }
-      if (cached !== undefined) {
-        if (el.dataset.waveKey !== key) {
-          el.innerHTML = cached; el.dataset.waveKey = key;
-          // Record the SVG's full viewBox width so a later trim/split can CROP it to the
-          // new window at the correct scale (refitWave) instead of squishing it.
-          var wsvg = el.querySelector('svg');
-          el.dataset.waveN = (wsvg && wsvg.viewBox && wsvg.viewBox.baseVal) ? String(wsvg.viewBox.baseVal.width) : '0';
-        }
-      } else if (!waveInflight[key]) {
-        // Waveforms load for EVERY clip (not just on-screen ones): peak extraction is
-        // cheap audio-only work, so a full reel's waveforms warm up fast (throttled to
-        // WAVE_MAX). Thumbnails + proxies stay viewport-gated — those are the heavy
-        // video transcodes that caused the "storm".
+      // Already has a waveform whose window COVERS this clip -> leave the SVG untouched
+      // (refitWave crops it on edits). Never re-set an existing covering SVG: that
+      // innerHTML replace is exactly the flash.
+      if (el.querySelector('svg') && waveCovers(el, clip)) { continue; }
+      // No usable SVG: reuse a cached waveform of this source that covers the window (a
+      // split's new half, a re-add, a trim) -> crop it. No fetch, no flash.
+      var cov = findCoveringWave(clip.source, clip.in || 0, clip.out || 0);
+      if (cov) { setWave(el, cov, clip); continue; }
+      // Otherwise fetch this window once.
+      var key = waveKey(clip.source, clip.in || 0, clip.out || 0);
+      if (waveCache[key] === '') { continue; }   // known no-audio for this window
+      if (!waveInflight[key]) {
         waveInflight[key] = true;
         waveQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0, key: key });
         pumpWaves();
@@ -1660,8 +1734,13 @@
           waveActive--;
           delete waveInflight[job.key];
           var peaks = (rep && rep.ok && rep.data && Array.isArray(rep.data.peaks)) ? rep.data.peaks : [];
-          waveCache[job.key] = peaks.length ? buildWaveSvg(peaks) : '';
+          var svg = peaks.length ? buildWaveSvg(peaks) : '';
+          waveCache[job.key] = svg;
           peakData[job.key] = peaks;      // keep raw peaks for the threshold's quiet-detection
+          if (svg) {
+            if (!sourceWaves[job.src]) { sourceWaves[job.src] = []; }
+            sourceWaves[job.src].push({ covIn: job.in, covOut: job.out, svg: svg, n: peaks.length - 1 });
+          }
           invalidateQuiet();              // fresh peaks -> recompute which stretches are quiet
           if (state.thresholdOn) { renderThreshold(); }
           applyWaves();
@@ -1747,7 +1826,7 @@
     var clips = state.timeline.clips || [], raw = [];
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i];
-      var peaks = peakData[waveKey(c.source, c.in || 0, c.out || 0)];
+      var peaks = peaksForClip(c);
       if (!peaks || !peaks.length) { continue; }   // no peaks yet -> treat as loud (never skip blindly)
       var n = peaks.length, dur = clipDur(c), start = c.start_sec || 0, runStart = -1;
       for (var b = 0; b <= n; b++) {
@@ -2390,16 +2469,19 @@
     ensureSourceDuration(clip.source);   // warm THIS source's bound for the drag
     var w = block.offsetWidth;
     var dur = Math.max(0.001, clipDur(clip));
-    // The clip's waveform SVG covers [origIn,origOut] over viewBox 0..waveN; during the
-    // drag we crop that viewBox to the new window (moveResize) instead of stretching it.
-    var waveSvg = block.querySelector('.cwave svg');
-    var waveN = (waveSvg && waveSvg.viewBox && waveSvg.viewBox.baseVal) ? waveSvg.viewBox.baseVal.width : 0;
+    // The waveform SVG covers [waveCovIn,waveCovOut] over viewBox 0..waveN; during the
+    // drag we crop that COVERAGE to the new window (moveResize) instead of stretching it.
+    var cwave = block.querySelector('.cwave');
+    var waveSvg = cwave ? cwave.querySelector('svg') : null;
     resizing = {
       id: clip.id, edge: handle.dataset.edge, startX: e.clientX,
       block: block, clip: clip, pxPerSec: w / dur,
       origIn: clip.in || 0, origOut: clip.out || 0,
       newIn: clip.in || 0, newOut: clip.out || 0,
-      waveSvg: waveSvg, waveN: waveN
+      waveSvg: waveSvg,
+      waveCovIn: cwave ? parseFloat(cwave.dataset.waveCovIn) : NaN,
+      waveCovOut: cwave ? parseFloat(cwave.dataset.waveCovOut) : NaN,
+      waveN: cwave ? parseFloat(cwave.dataset.waveN) : 0
     };
     try { handle.setPointerCapture(e.pointerId); } catch (_) {}
   }
@@ -2421,11 +2503,12 @@
     // Crop the waveform to the visible [nIn,nOut] window (a viewBox sub-range) so it
     // reveals/hides at a CONSTANT scale — a real trim, not a time-stretch — and you can
     // land on a zero-crossing. renderTimeline rebuilds it full-width on release.
-    if (r.waveSvg && r.waveN > 0) {
-      var od = r.origOut - r.origIn;
-      if (od > 0) {
-        var minX = (nIn - r.origIn) / od * r.waveN;
-        var wX = Math.max(0.01, newDur / od * r.waveN);
+    if (r.waveSvg && r.waveN > 0 && r.waveCovOut > r.waveCovIn) {
+      var od = r.waveCovOut - r.waveCovIn;
+      var a = Math.max(r.waveCovIn, nIn), z = Math.min(r.waveCovOut, nOut);
+      if (z > a) {
+        var minX = (a - r.waveCovIn) / od * r.waveN;
+        var wX = Math.max(0.01, (z - a) / od * r.waveN);
         r.waveSvg.setAttribute('viewBox', minX.toFixed(2) + ' 0 ' + wX.toFixed(2) + ' 1');
       }
     }
@@ -2439,10 +2522,8 @@
     setTimeout(function () { justResized = false; }, 350);
     var changed = Math.abs(r.newIn - r.origIn) > 0.001 || Math.abs(r.newOut - r.origOut) > 0.001;
     if (!changed) {
-      // No net change: restore the waveform's FULL viewBox (moveResize may have cropped
-      // it live during the drag) before the reconciling re-render reuses this block's
-      // .cwave — with reconcile it isn't rebuilt from scratch, so a stale crop would stick.
-      if (r.waveSvg && r.waveN > 0) { r.waveSvg.setAttribute('viewBox', '0 0 ' + r.waveN + ' 1'); }
+      // No net change: re-render (reconcile -> refitWave re-crops the waveform to this
+      // clip's own window). No manual viewBox reset needed.
       renderTimeline();
       return;   // snap back to the committed widths
     }
