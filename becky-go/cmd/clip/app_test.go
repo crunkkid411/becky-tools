@@ -338,6 +338,32 @@ func TestReorderManyMovesBlockOneUndo(t *testing.T) {
 	}
 }
 
+func TestSetClipsReplacesAllOneUndo(t *testing.T) {
+	app, dir := openFixture(t)
+	ring := filepath.Join(dir, "ring.mp4")
+	app.AddClip(ring, 0, 5, "orig") // c1
+	tl, err := app.SetClips([]ClipSpec{
+		{Source: ring, In: 0, Out: 1, Label: "a"},
+		{Source: ring, In: 3, Out: 4, Label: "b"},
+	})
+	if err != nil {
+		t.Fatalf("SetClips: %v", err)
+	}
+	if len(tl.Clips) != 2 || tl.Clips[0].In != 0 || tl.Clips[0].Out != 1 || tl.Clips[1].In != 3 || tl.Clips[1].Out != 4 {
+		t.Fatalf("replaced clips wrong: %+v", tl.Clips)
+	}
+	// ONE undo restores the original single clip.
+	undone, ok := app.Undo()
+	if !ok || len(undone.Clips) != 1 || undone.Clips[0].Out != 5 {
+		t.Errorf("one undo did not restore the pre-trim reel: %+v", undone.Clips)
+	}
+	// out-of-folder + zero-length specs are skipped (not an error), yielding 0 clips.
+	tl2, _ := app.SetClips([]ClipSpec{{Source: "nope.mp4", In: 0, Out: 2}, {Source: ring, In: 2, Out: 2}})
+	if len(tl2.Clips) != 0 {
+		t.Errorf("bad specs should yield 0 clips, got %d", len(tl2.Clips))
+	}
+}
+
 func TestSplitRejectsNearEdge(t *testing.T) {
 	app, dir := openFixture(t)
 	app.AddClip(filepath.Join(dir, "ring.mp4"), 1, 5, "")

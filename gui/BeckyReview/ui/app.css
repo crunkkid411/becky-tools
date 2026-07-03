@@ -488,7 +488,9 @@ body {
    timeline-edit cursor a producer expects. */
 .track {
   position: relative; cursor: default;
-  display: flex; gap: 6px; align-items: stretch;
+  /* gap:0 so splitting a clip adds no space between the halves -> a cut doesn't shift the
+     following clips sideways (the clip's own border is the divider). */
+  display: flex; gap: 0; align-items: stretch;
   /* Clips are ~2x taller than before (item 15) so there is vertical room to SEE the
      waveform and cut on a zero crossing; the thumbnail stays small (fixed height,
      below) instead of stretching to fill, so it no longer covers the waveform. */
@@ -576,8 +578,17 @@ body {
    handle is the clip's OWN source colour (--clip-col, set inline by app.js) so it
    matches the clip + border instead of always being green; it brightens to white on
    hover to read as "grab me" on any hue. */
-.clip .rh { flex: none; width: 8px; cursor: ew-resize; background: var(--clip-col, var(--neon-dim)); touch-action: none; z-index: 2; }
-.clip .rh:hover { background: #fff; }
+.clip .rh {
+  position: absolute; top: 0; bottom: 0; width: 8px; z-index: 2;
+  cursor: ew-resize; touch-action: none;
+  /* semi-transparent OVERLAYS on the edges (not flex items) so they add NO width — a cut
+     no longer shifts the following clips — and the waveform + zero crossings show THROUGH
+     them. They brighten on hover; a click (no drag) selects the clip (see endResize). */
+  background: var(--clip-col, var(--neon-dim)); opacity: 0.35;
+}
+.clip .rh-l { left: 0; }
+.clip .rh-r { right: 0; }
+.clip .rh:hover { opacity: 0.9; background: #fff; }
 
 /* playhead: a solid black line through the track, with a WHITE flag-shaped head
    that covers the full gray RULER band above the track (not just the clip it's
@@ -620,7 +631,7 @@ body {
 }
 /* blink black<->white at ~standard-text-cursor speed when moved during playback (item 2).
    The 50%->50.01% jump is an instant switch (a blink), not a fade. */
-#stock.flashing { animation: stockBlink 1.06s infinite; }
+#stock.flashing { animation: stockBlink 0.8s infinite; }
 @keyframes stockBlink {
   0%, 50%      { background: #000; }
   50.01%, 100% { background: #fff; }

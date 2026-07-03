@@ -124,6 +124,7 @@
   var $tSplit    = document.getElementById('tSplit');     // split clip at playhead (CHANGE 4)
   var $tScreenshot = document.getElementById('tScreenshot'); // screenshot the preview -> Screenshot_NNNN.png
   var $tThreshold  = document.getElementById('tThreshold');   // playback-threshold toggle (skip quiet parts)
+  var $tTrimSilence = document.getElementById('tTrimSilence'); // cut out the quiet parts below the threshold
   var $tExtendL  = document.getElementById('tExtendL');   // extend selected clip 1 frame left (earlier)
   var $tExtendR  = document.getElementById('tExtendR');   // extend selected clip 1 frame right (later)
   var $tOverlay  = document.getElementById('tOverlay');
@@ -1257,9 +1258,12 @@
 
   /* ---- zoom (CHANGE 5): one px-per-second scale drives clip widths + the ruler ---- */
   function minClipW() {
-    // The floor keeps a clip grabbable (two 8px trim handles + a body) and SCALES with
-    // zoom, but is capped at MINW so zooming still spreads the timeline.
-    return Math.max(24, Math.min(MINW, state.pxPerSec * 4));
+    // A SMALL floor so a clip stays visible + clickable at any zoom. The handles are
+    // absolute overlays now and a click anywhere on the clip selects it, so a clip no
+    // longer needs room for two flex handles. Keeping this floor small is what stops a
+    // cut from shifting the following clips: with the old 96px floor, splitting any clip
+    // whose halves fell under it doubled their width. Now only sub-second clips floor.
+    return Math.max(3, Math.min(16, state.pxPerSec * 3));
   }
   function clipW(dur) { return Math.max(minClipW(), (dur || 0) * state.pxPerSec); }
   function updateZoomLabel() { if ($tZoom) { $tZoom.textContent = state.pxPerSec + ' px/s'; } }
@@ -1609,6 +1613,8 @@
   var waveActive = 0;
   var WAVE_MAX = 2;         // max concurrent ffmpeg peak extractions
   var WAVE_BUCKETS = 200;
+  var WAVE_PAD = 6;         // seconds of extra waveform fetched each side, so trims/extends
+                           // stay INSIDE the coverage and just crop (never refetch = no flash)
   function waveKey(src, inS, outS) {
     return (src || '') + '@' + (Math.round((inS || 0) * 1000) / 1000) + '-' + (Math.round((outS || 0) * 1000) / 1000);
   }
@@ -1715,12 +1721,27 @@
       // split's new half, a re-add, a trim) -> crop it. No fetch, no flash.
       var cov = findCoveringWave(clip.source, clip.in || 0, clip.out || 0);
       if (cov) { setWave(el, cov, clip); continue; }
-      // Otherwise fetch this window once.
-      var key = waveKey(clip.source, clip.in || 0, clip.out || 0);
+      // Otherwise fetch this window ONCE, PADDED each side (so later trims/extends stay
+      // inside the coverage and just crop, never refetch = no flash). The right pad must
+      // be clamped to the real source duration (ffmpeg returns fewer samples past the
+      // end), so defer the fetch until the duration is probed — a fast, one-time wait.
+      if (!sourceDur.has(clip.source)) {
+        // Probe the duration ONCE, then re-run applyWaves when it lands. Attach the
+        // re-run only when NO probe is in flight — attaching it to an already-pending
+        // ensureSourceDuration (which returns an immediately-resolved promise) would
+        // reschedule applyWaves every microtask and hang the page.
+        if (!sourceDurPending[clip.source]) { ensureSourceDuration(clip.source).then(function () { applyWaves(); }); }
+        continue;
+      }
+      var srcDur = knownSourceDuration(clip.source);
+      var fin = Math.max(0, (clip.in || 0) - WAVE_PAD);
+      var fout = (clip.out || 0) + WAVE_PAD;
+      if (srcDur > 0) { fout = Math.min(fout, srcDur); }
+      var key = waveKey(clip.source, fin, fout);
       if (waveCache[key] === '') { continue; }   // known no-audio for this window
       if (!waveInflight[key]) {
         waveInflight[key] = true;
-        waveQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0, key: key });
+        waveQueue.push({ src: clip.source, in: fin, out: fout, key: key });
         pumpWaves();
       }
     }
@@ -1927,11 +1948,53 @@
     $tThreshold.addEventListener('click', function () {
       state.thresholdOn = !state.thresholdOn;
       $tThreshold.classList.toggle('on', state.thresholdOn);
+      if ($tTrimSilence) { $tTrimSilence.disabled = !state.thresholdOn; }   // trim-silence needs the level set
       invalidateQuiet();
       renderThreshold();
       if (state.thresholdOn) { toast('Playback threshold on — quiet parts are skipped during playback (evidence is not cut)'); }
     });
   }
+
+  // trimSilence REBUILDS the timeline as the LOUD segments of the current clips (dropping
+  // everything below the threshold) — a REAL edit, one undoable step (Ctrl+Z restores it).
+  // For basic editing, NOT forensics. Uses the same peaks + level the on-timeline
+  // threshold shows.
+  var trimming = false;
+  async function trimSilence() {
+    if (trimming) { return; }
+    var clips = state.timeline.clips || [];
+    if (!clips.length) { toast('Timeline is empty.'); return; }
+    var MIN_KEEP = 0.3;   // drop loud runs shorter than this (clicks / noise)
+    var specs = [];
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i];
+      var peaks = peaksForClip(c);
+      if (!peaks || !peaks.length) {   // no peak data -> keep the whole clip (never blind-cut)
+        specs.push({ source: c.source, in: c.in || 0, out: c.out || 0, label: c.label || '' });
+        continue;
+      }
+      var n = peaks.length, dur = clipDur(c), inS = c.in || 0, runStart = -1;
+      for (var b = 0; b <= n; b++) {
+        var loud = (b < n) && (peaks[b] >= state.thresholdLevel);
+        if (loud && runStart < 0) { runStart = b; }
+        else if (!loud && runStart >= 0) {
+          var s0 = inS + (runStart / n) * dur, s1 = inS + (b / n) * dur;
+          if (s1 - s0 >= MIN_KEEP) { specs.push({ source: c.source, in: s0, out: s1, label: c.label || '' }); }
+          runStart = -1;
+        }
+      }
+    }
+    if (!specs.length) { toast('Nothing above the threshold to keep.'); return; }
+    trimming = true;
+    try {
+      var rep = await beckyCall('set_clips', { clips: specs });
+      if (rep.ok && rep.data) {
+        applyTimeline(rep.data);
+        toast('Trimmed to the loud parts (' + specs.length + ' clip' + (specs.length === 1 ? '' : 's') + ') — Ctrl+Z to undo');
+      } else { toast('Trim failed' + (rep.error ? ': ' + rep.error : '')); }
+    } finally { trimming = false; }
+  }
+  if ($tTrimSilence) { $tTrimSilence.addEventListener('click', trimSilence); }
 
   function updateOverlayBtn() {
     // Three states (item 14): render-on/preview-off (default) | render-on/preview-on |
@@ -2196,6 +2259,12 @@
   // (item 2) while the user is auditioning ahead during playback (autoScrollSuspended).
   // Same clip-geometry math as the playhead. Hidden when there's no timeline / no stock.
   function updateStock() {
+    // When paused, the stock rides WITH the playhead — so arrow-key navigation (and any
+    // paused seek) moves it too, and resuming returns to where you are. During playback
+    // it stays put (or wherever you clicked ahead).
+    if (!state.playing && typeof state.playheadComp === 'number' && isTimelineLoaded()) {
+      state.pauseReturnComp = state.playheadComp;
+    }
     var comp = state.pauseReturnComp;
     if (typeof comp !== 'number' || !isTimelineLoaded()) { stockEl.style.display = 'none'; return; }
     var clip = clipAtComp(comp);
@@ -2367,9 +2436,12 @@
     if (splitting) { return; }
     var clips = state.timeline.clips || [];
     if (!clips.length) { toast('Timeline is empty — add clips first.'); return; }
-    // WHERE to cut: during playback, the SECONDARY STOCK (item 4) — the spot the user
-    // clicked ahead to — NOT the live moving playhead; paused, the playhead itself.
-    var cutPos = (state.playing && typeof state.pauseReturnComp === 'number')
+    // WHERE to cut: during playback, cut at the STOCK only if the user actually clicked
+    // AHEAD (autoScrollSuspended) — otherwise cut at the LIVE moving playhead so rapid
+    // live cuts land at successive positions, never stuck at one fixed spot (which
+    // becomes a boundary after the first cut -> "too close to a clip edge" on every
+    // one after). Paused, the playhead.
+    var cutPos = (state.playing && state.autoScrollSuspended && typeof state.pauseReturnComp === 'number')
                ? state.pauseReturnComp
                : (typeof state.playheadComp === 'number' ? state.playheadComp : null);
     if (cutPos == null) { toast('Play or scrub to a point on the timeline first.'); return; }
@@ -2522,10 +2594,12 @@
     setTimeout(function () { justResized = false; }, 350);
     var changed = Math.abs(r.newIn - r.origIn) > 0.001 || Math.abs(r.newOut - r.origOut) > 0.001;
     if (!changed) {
-      // No net change: re-render (reconcile -> refitWave re-crops the waveform to this
-      // clip's own window). No manual viewBox reset needed.
+      // A CLICK on a handle (no drag) SELECTS its clip — so a handle is never just "in the
+      // way" when zoomed out; you can still select the clip by clicking its edge. Then
+      // re-render (reconcile -> refitWave re-crops the waveform to this clip's window).
+      selectOnly(r.id);
       renderTimeline();
-      return;   // snap back to the committed widths
+      return;
     }
     var rep = await beckyCall('set_trim', { id: r.id, in: r.newIn, out: r.newOut });
     if (rep.ok && rep.data) { applyTimeline(rep.data); } else { renderTimeline(); }
@@ -2884,16 +2958,23 @@
   if ($tScreenshot) { $tScreenshot.addEventListener('click', function () { mpvSend('screenshot'); }); }
 
   /* ---- playback speed: 1× / 2× (button click + Shift+Space) ---- */
+  var SPEEDS = [1, 1.5, 2];
   var playSpeed = 1;
   function setSpeed(v) {
-    playSpeed = (v >= 2) ? 2 : 1;
-    mpvSend('speed', { value: playSpeed });   // mpv keeps pitch-corrected audio at 2×
+    playSpeed = (SPEEDS.indexOf(v) >= 0) ? v : 1;
+    mpvSend('speed', { value: playSpeed });   // mpv keeps pitch-corrected audio at >1×
     if ($tSpeed) {
       $tSpeed.textContent = playSpeed + '×';
-      $tSpeed.classList.toggle('on', playSpeed === 2);
+      $tSpeed.classList.toggle('on', playSpeed !== 1);
     }
   }
-  if ($tSpeed) { $tSpeed.addEventListener('click', function () { setSpeed(playSpeed === 2 ? 1 : 2); }); }
+  // cycleSpeed steps 1× -> 1.5× -> 2× -> 1× (the button + Shift+Space). It never
+  // changes play/pause — only the speed.
+  function cycleSpeed() {
+    var i = SPEEDS.indexOf(playSpeed);
+    setSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
+  }
+  if ($tSpeed) { $tSpeed.addEventListener('click', cycleSpeed); }
 
   /* ---- undo / redo (engine-side history; Ctrl+Z / Ctrl+Shift+Z) ---- */
   async function undoTimeline() {
@@ -3275,13 +3356,18 @@
       return;
     }
     if (e.key === 'Enter' && !listIsFocused()) {
-      // Commit the CURRENT position as the new bookmark (unlike Pause, which snaps
-      // back to wherever playback started / a clip-body click last landed) — "stop
-      // where it is."
       e.preventDefault();
-      mpvSend('pause');
-      state.pauseReturnComp = state.playheadComp;
-      state.autoScrollSuspended = false;
+      if (state.playing) {
+        // Stop where it IS (commit the current position; no snap-back to a bookmark).
+        mpvSend('pause');
+        state.pauseReturnComp = state.playheadComp;
+        state.autoScrollSuspended = false;
+      } else {
+        // Enter also STARTS playback from the current playhead (like Space).
+        state.pauseReturnComp = state.playheadComp;
+        state.autoScrollSuspended = false;
+        if ((state.timeline.clips || []).length) { seekTimeline(state.playheadComp || 0, true); }
+      }
       return;
     }
     // Up/Down elsewhere (the list isn't focused) = zoom the timeline in/out — a
@@ -3316,7 +3402,8 @@
           return;
         }
       }
-      if (e.shiftKey) { setSpeed(2); }
+      // Shift+Space cycles the playback SPEED only — never starts/stops (even mid-play).
+      if (e.shiftKey) { cycleSpeed(); return; }
       togglePlay();
       return;
     }

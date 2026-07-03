@@ -122,6 +122,9 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "reorder_many":
 		// Move a SET of clips as one block (dragging a multi-selection), one undoable edit.
 		return a.ReorderMany(argStringSlice(args, "ids"), argInt(args, "to"))
+	case "set_clips":
+		// Replace the whole clip list (the "trim to the loud parts" action), one undoable edit.
+		return a.SetClips(argClipSpecs(args, "clips"))
 	case "set_trim":
 		return a.SetTrim(argString(args, "id"), argFloat(args, "in"), argFloat(args, "out"))
 	case "split":
@@ -378,6 +381,33 @@ func argStringSlice(m map[string]any, key string) []string {
 		if s, ok := e.(string); ok && s != "" {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+// argClipSpecs parses a JSON array of {source,in,out,label} objects (the "trim to the
+// loud parts" clip list). Missing / malformed entries are skipped, never an error.
+func argClipSpecs(m map[string]any, key string) []ClipSpec {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]ClipSpec, 0, len(arr))
+	for _, e := range arr {
+		o, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, ClipSpec{
+			Source: argString(o, "source"),
+			In:     argFloat(o, "in"),
+			Out:    argFloat(o, "out"),
+			Label:  argString(o, "label"),
+		})
 	}
 	return out
 }

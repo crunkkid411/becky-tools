@@ -594,6 +594,58 @@ func (a *App) AddExternalClip(path string, at int) (TimelineView, error) {
 	return a.AddClipAt(abs, 0, dur, "", at)
 }
 
+// ClipSpec is one clip to (re)build in SetClips: a source + [in,out] window + label.
+type ClipSpec struct {
+	Source string  `json:"source"`
+	In     float64 `json:"in"`
+	Out    float64 `json:"out"`
+	Label  string  `json:"label"`
+}
+
+// SetClips REPLACES the whole clip list with `specs` as ONE undoable edit — used by the
+// "trim to the loud parts" action, which recomputes the timeline as the above-threshold
+// segments of the current clips. Each spec's source is re-validated (skipped if unknown /
+// out-of-folder) and its meta re-pulled; new stable ids are assigned. Reversible with one
+// Ctrl+Z.
+func (a *App) SetClips(specs []ClipSpec) (TimelineView, error) {
+	built := make([]edl.Clip, 0, len(specs))
+	for _, s := range specs {
+		in, out := s.In, s.Out
+		if out < in {
+			in, out = out, in
+		}
+		if out-in <= 0 {
+			continue
+		}
+		v, ok := a.resolveSource(s.Source) // locks internally — must not hold a.mu here
+		if !ok {
+			continue
+		}
+		built = append(built, edl.Clip{
+			Source: v.Path,
+			In:     clampNonNeg(in),
+			Out:    clampNonNeg(out),
+			Label:  strings.TrimSpace(s.Label),
+			Meta: edl.ClipMeta{
+				Date:      v.Meta.Date,
+				Link:      v.Meta.Link,
+				Person:    v.Meta.Person,
+				Location:  v.Meta.Location,
+				SourceFPS: v.Meta.SourceFPS,
+			},
+		})
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.pushUndoLocked()
+	for i := range built {
+		a.nextID++
+		built[i].ID = fmt.Sprintf("c%d", a.nextID)
+	}
+	a.reel.Clips = built
+	return a.timelineLocked(), nil
+}
+
 // RemoveClip drops the clip with the given id. Unknown id is a no-op error.
 func (a *App) RemoveClip(id string) (TimelineView, error) {
 	a.mu.Lock()
