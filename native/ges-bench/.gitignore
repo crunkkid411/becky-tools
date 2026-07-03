@@ -1,0 +1,10 @@
+# build output + local media — only the .c harnesses + README are tracked
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.mp4
+*.rgba
+*.raw
+*.png
+_build*.bat
