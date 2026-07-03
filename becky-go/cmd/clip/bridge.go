@@ -113,8 +113,19 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		return a.RemoveClip(argString(args, "id"))
 	case "reorder":
 		return a.Reorder(argString(args, "id"), argInt(args, "to"))
+	case "reorder_many":
+		// Move a SET of clips as one block (dragging a multi-selection), one undoable edit.
+		return a.ReorderMany(argStringSlice(args, "ids"), argInt(args, "to"))
 	case "set_trim":
 		return a.SetTrim(argString(args, "id"), argFloat(args, "in"), argFloat(args, "out"))
+	case "split":
+		// Cut one clip into two at a source time, as ONE undoable edit (so Ctrl+Z
+		// reverses the whole split at once). {timeline, new_id}.
+		tl, newID, err := a.Split(argString(args, "id"), argFloat(args, "at"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"timeline": tl, "new_id": newID}, nil
 	case "set_label":
 		return a.SetLabel(argString(args, "id"), argString(args, "text"))
 	case "set_overlay":

@@ -64,7 +64,17 @@
     viewVideoName: '',     // the video whose cues are shown (cueMode header)
 
     timeline: { clips: [], overlay: {}, duration_sec: 0 },
-    overlayOn: true,       // forensic lower-third defaults ON for a new project (synced from the reel)
+    // Overlay is a 3-state cycle (item 14): the lower-third can RENDER (burned into
+    // the exported MP4) independently of whether it's shown in this PREVIEW. Default =
+    // renders but hidden in preview (so the video isn't obscured while reviewing).
+    overlayRender: true,   // burn the lower-third into the render (synced from the reel's overlay.enabled)
+    overlayPreview: false, // show the lower-third in THIS mpv preview (UI-only; not persisted to the reel)
+    // Playback threshold (item 16): when ON, playback seek-SKIPS the quiet stretches (a
+    // faster review of a long clip) WITHOUT ever cutting the forensic evidence — the reel
+    // is untouched. thresholdLevel (0..1) is the waveform amplitude below which a stretch
+    // counts as "quiet"; the on-timeline bar drags it. OFF by default = zero impact.
+    thresholdOn: false,
+    thresholdLevel: 0.14,
     overlayShowName: true, // the overlay's filename line is optional (Date/TC/link always shown)
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
@@ -110,11 +120,10 @@
 
   var $tlCount   = document.getElementById('tlCount');
   var $tPlay     = document.getElementById('tPlay');
-  var $tFrameBack= document.getElementById('tFrameBack');
-  var $tFrameFwd = document.getElementById('tFrameFwd');
   var $tSpeed    = document.getElementById('tSpeed');     // 1× / 2× playback-speed toggle
   var $tSplit    = document.getElementById('tSplit');     // split clip at playhead (CHANGE 4)
   var $tScreenshot = document.getElementById('tScreenshot'); // screenshot the preview -> Screenshot_NNNN.png
+  var $tThreshold  = document.getElementById('tThreshold');   // playback-threshold toggle (skip quiet parts)
   var $tExtendL  = document.getElementById('tExtendL');   // extend selected clip 1 frame left (earlier)
   var $tExtendR  = document.getElementById('tExtendR');   // extend selected clip 1 frame right (later)
   var $tOverlay  = document.getElementById('tOverlay');
@@ -139,6 +148,24 @@
   var playheadEl = document.createElement('div');
   playheadEl.id = 'playhead';
   playheadEl.style.display = 'none';
+
+  // Secondary "playhead stock" (item 1): a 2nd, identical black bar marking
+  // pauseReturnComp — where Pause snaps back to, and where cut/split act during
+  // playback. It has NO white flag head (only the MOVING playhead does). Re-appended
+  // each render like the playhead; positioned + blinked by updateStock.
+  var stockEl = document.createElement('div');
+  stockEl.id = 'stock';
+  stockEl.style.display = 'none';
+
+  // Playback-threshold layer (item 16): a full-width dim layer that greys the quiet
+  // stretches, plus a draggable horizontal bar that sets the threshold. Both are
+  // children of the track (so they scroll + scale with it); shown only when thresholdOn.
+  var quietLayerEl = document.createElement('div');
+  quietLayerEl.id = 'quietLayer';
+  quietLayerEl.style.display = 'none';
+  var thresholdBarEl = document.createElement('div');
+  thresholdBarEl.id = 'threshold';
+  thresholdBarEl.style.display = 'none';
 
   /* =======================================================================
      HOST BRIDGE
@@ -252,6 +279,7 @@
     }
   }
   window.addEventListener('resize', reportVideoRect);
+  window.addEventListener('resize', function () { updateTrailingSpace(); });   // keep the past-the-end scroll room = one screen (item 19)
   if (window.ResizeObserver && videoHoleEl) {
     try { new ResizeObserver(reportVideoRect).observe(videoHoleEl); } catch (_) {}
   }
@@ -401,9 +429,14 @@
       btn = '<button class="tbtn add" data-name="' + attr(v.name) + '" title="transcribe this video (local Parakeet ASR)">+</button>';
     }
     var sub = [v.date, v.person, v.location].filter(Boolean).join(' · ');
+    // A green outline marks the transcript just viewed, so returning to the list with
+    // "back" shows at a glance which video you were reading (item 18). state.viewVideoName
+    // is the last transcript opened (onFileClick / openTranscriptAtTime).
+    var lastViewed = (state.viewVideoName && v.name === state.viewVideoName) ? ' lastviewed' : '';
     // title= holds the FULL name so a long filename (the tail differentiates
     // duplicates) is always readable on hover even when the row ellipsises it.
-    return '<div class="file" data-name="' + attr(v.name) + '" title="' + attr(v.name) + '">' +
+    // draggable => drag the whole video onto the timeline (item 21).
+    return '<div class="file' + lastViewed + '" draggable="true" data-name="' + attr(v.name) + '" title="' + attr(v.name) + '">' +
              '<div class="fmeta">' +
                '<div class="fname">' + escapeHtml(v.name) + '</div>' +
                (sub ? '<div class="fsub">' + escapeHtml(sub) + '</div>' : '') +
@@ -477,7 +510,7 @@
       '<div class="qsrc">' + escapeHtml(r.name || baseName(r.source)) +
         (tonly ? ' <span class="qbadge">transcript only</span>' : '') + '</div>';
     return '<div class="qrow' + (tonly ? ' tonly' : '') + (state.activeResultKey === key ? ' active' : '') +
-             '" data-idx="' + i + '" data-key="' + attr(key) + '">' +
+             '" draggable="true" data-idx="' + i + '" data-key="' + attr(key) + '">' +
              '<div class="qtc">' + escapeHtml(tc) + '</div>' +
              '<div class="qbody">' +
                '<div class="qtext">' + highlight(r.text || '', state.terms) + '</div>' +
@@ -834,6 +867,64 @@
     onRowDbl(+row.dataset.idx);
   });
 
+  /* ---- drag a video / quote from the LEFT PANEL onto the timeline (item 21) ----------
+     Dragging any listed video (from any subfolder of the open case folder) onto the
+     timeline adds the WHOLE video as a clip; dragging a search/cue row adds that quote's
+     clip. This is an in-app HTML5 drag, so it composes with click-to-play / double-click.
+     External OS files are NOT added here — the forensic model serves only the open case
+     folder; bring outside footage in by opening/pointing the case folder at it. */
+  var panelDragPayload = null;
+  $listScroll.addEventListener('dragstart', function (e) {
+    var file = e.target.closest('.file');
+    var row = e.target.closest('.qrow');
+    if (file) {
+      panelDragPayload = { kind: 'video', name: file.dataset.name };
+    } else if (row) {
+      var r = state.rows[+row.dataset.idx];
+      if (!r || r.transcript_only || !r.source) { e.preventDefault(); return; }   // not a playable clip
+      panelDragPayload = { kind: 'quote', idx: +row.dataset.idx };
+    } else { return; }
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'copy';
+      try { e.dataTransfer.setData('text/plain', 'becky-clip'); } catch (_) {}   // some engines require data set
+    }
+  });
+  $listScroll.addEventListener('dragend', function () { panelDragPayload = null; });
+
+  var $timelineSection = document.querySelector('.timeline');
+  if ($timelineSection) {
+    $timelineSection.addEventListener('dragover', function (e) {
+      if (!panelDragPayload) { return; }   // only our own panel drag; ignore anything else
+      e.preventDefault();                  // preventDefault on dragover is what allows a drop
+      if (e.dataTransfer) { e.dataTransfer.dropEffect = 'copy'; }
+      $timelineSection.classList.add('droptarget');
+    });
+    $timelineSection.addEventListener('dragleave', function (e) {
+      if (!$timelineSection.contains(e.relatedTarget)) { $timelineSection.classList.remove('droptarget'); }
+    });
+    $timelineSection.addEventListener('drop', function (e) {
+      $timelineSection.classList.remove('droptarget');
+      var p = panelDragPayload; panelDragPayload = null;
+      if (!p) { return; }
+      e.preventDefault();
+      if (p.kind === 'quote') { onRowDbl(p.idx); }
+      else if (p.kind === 'video') { addWholeVideo(p.name); }
+    });
+  }
+
+  // addWholeVideo probes the source duration and appends the ENTIRE video as one clip.
+  async function addWholeVideo(name) {
+    var v = videoByName(name);
+    if (!v || !v.path) { toast('Video not found: ' + name); return; }
+    var out = 0;
+    var pr = await beckyCall('probe', { source: v.path });
+    if (pr.ok && pr.data && pr.data.duration > 0) { out = pr.data.duration; }
+    if (out <= 0) { out = 3600; }   // unknown duration -> a generous window the user can trim back
+    var rep = await beckyCall('add_clip', { source: v.path, in: 0, out: out, label: '' });
+    if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Added ' + name + ' to the timeline'); }
+    else { toast('Could not add video' + (rep.error ? ': ' + rep.error : '')); }
+  }
+
   $search.addEventListener('input', function () {
     $searchClear.hidden = !$search.value;
     clearTimeout(searchTimer);
@@ -1108,7 +1199,8 @@
       duration_sec: typeof tl.duration_sec === 'number' ? tl.duration_sec : 0
     };
     state.tlVersion++;   // the timeline changed -> the seamless EDL must regenerate before next play/seek
-    state.overlayOn = !!(state.timeline.overlay && state.timeline.overlay.enabled);
+    invalidateQuiet();   // clip positions/durations changed -> recompute the threshold's quiet stretches (item 16)
+    state.overlayRender = !!(state.timeline.overlay && state.timeline.overlay.enabled);
     state.overlayShowName = state.timeline.overlay.show_filename !== false;   // init the filename toggle from the reel
     if (state.activeClipId != null && !clipById(state.activeClipId)) { state.activeClipId = null; }
     // Drop any selected ids whose clips no longer exist (after remove/undo/load).
@@ -1200,6 +1292,17 @@
     setZoom(w / Math.max(1, seconds || 10));
   }
 
+  // Trailing scroll space: reserve ~one viewport-width of empty room to the RIGHT of the
+  // last clip so you can always scroll a little past the end (item 19). Without it the
+  // scrollable width ended exactly at the last clip, so its end "locked" against the
+  // right edge and the only way to see empty space was to zoom ALL the way out until the
+  // whole reel fit. Set as the track's right padding (clips keep their left offsets, so
+  // playhead/scrub math is unaffected).
+  function updateTrailingSpace() {
+    if (!trackEl || !tlBodyEl) { return; }
+    trackEl.style.paddingRight = Math.max(0, tlBodyEl.clientWidth || 0) + 'px';
+  }
+
   /* Scale the TRACK grid lines to the current zoom (a faint line every 5s). The ruler
      now shows real labelled timecode ticks instead — see renderRulerTicks. */
   function applyTimelineScale() {
@@ -1252,17 +1355,23 @@
     h = h.replace('#', '');
     return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
   }
-  // sourceColorIndex maps a source path to a PALETTE slot by its order of first
-  // appearance on the timeline. ponytail: O(n) scan per call; fine for dozens of clips.
+  // sourceColorIndex maps a source path to a PALETTE slot, assigned the FIRST time the
+  // source is seen and REMEMBERED for the whole project session (item 17). Colours are
+  // handed out by a monotonic counter, NOT recomputed from the current clip order — so
+  // deleting every clip of one video never shifts another video's colour (the old
+  // recompute-from-order code did exactly that). A freshly LOADED reel resets the map
+  // (see $tLoad) so a new project starts back at green.
+  var sourceColorMap = {};   // source path -> palette index (session-persistent)
+  var sourceColorNext = 0;   // next slot to hand out
   function sourceColorIndex(src) {
-    var clips = state.timeline.clips || [], seen = [];
-    for (var i = 0; i < clips.length; i++) {
-      var s = clips[i].source || '';
-      if (seen.indexOf(s) < 0) { seen.push(s); }
+    var key = String(src || '');
+    if (!(key in sourceColorMap)) {
+      sourceColorMap[key] = sourceColorNext % PALETTE.length;
+      sourceColorNext++;
     }
-    var idx = seen.indexOf(String(src || ''));
-    return (idx < 0 ? 0 : idx) % PALETTE.length;
+    return sourceColorMap[key];
   }
+  function resetSourceColors() { sourceColorMap = {}; sourceColorNext = 0; }
   // clipColor tints the clip CENTRE with its source colour: faint when unselected,
   // SOLID/opaque when selected (the selection cue).
   function clipColor(src, selected) {
@@ -1295,6 +1404,64 @@
            '</div>';
   }
 
+  // makeClipBlock builds ONE clip node from clipBlockHTML (so a new clip gets the full
+  // markup + initial inline styling from the single source of truth).
+  function makeClipBlock(clip) {
+    var tmp = document.createElement('div');
+    tmp.innerHTML = clipBlockHTML(clip);
+    return tmp.firstChild;
+  }
+
+  // updateClipBlock patches an EXISTING clip node in place (width, colour, selection,
+  // tooltip) WITHOUT touching its .cwave / .cthumb children — that is what keeps the
+  // waveform + thumbnail ALIVE across an edit (the anti-flash, item 11). applyWaves /
+  // applyThumbs refresh those only when the clip's own window actually changed.
+  function updateClipBlock(block, clip) {
+    var dur = clipDur(clip);
+    var seld = isClipSelected(clip.id);
+    var bord = clipBorder(clip.source, seld);
+    block.classList.toggle('selected', seld);
+    block.style.width = clipW(dur) + 'px';
+    block.style.background = clipColor(clip.source, seld);
+    block.style.borderColor = bord;
+    block.style.setProperty('--clip-col', bord);
+    var label = clip.label || (clip.source ? baseName(clip.source) : 'clip');
+    block.title = truncate(label, 80) + '  (' + mmss(dur) + ')';
+  }
+
+  // reconcileTrack makes the track's .clip nodes match `clips` by REUSING existing nodes
+  // (matched by data-id) instead of wiping trackEl.innerHTML (item 11). A surviving clip
+  // keeps its DOM — and therefore its rendered waveform + thumbnail — through a trim /
+  // cut / reorder / delete, so nothing goes blank-then-repaints (the "flash"). Only
+  // genuinely new clips are created; removed clips are dropped; order is fixed up. The
+  // stock + playhead (non-.clip children) are untouched here and re-appended by the caller.
+  function reconcileTrack(clips) {
+    var existing = {};
+    var old = Array.prototype.slice.call(trackEl.querySelectorAll('.clip'));
+    for (var i = 0; i < old.length; i++) { existing[old[i].dataset.id] = old[i]; }
+
+    var wanted = {}, nodes = [];
+    for (var j = 0; j < clips.length; j++) {
+      var clip = clips[j], id = String(clip.id);
+      wanted[id] = true;
+      var block = existing[id];
+      if (block) { updateClipBlock(block, clip); } else { block = makeClipBlock(clip); }
+      nodes.push(block);
+    }
+    // drop clip nodes no longer present
+    for (var k = 0; k < old.length; k++) {
+      if (!wanted[old[k].dataset.id] && old[k].parentNode === trackEl) { trackEl.removeChild(old[k]); }
+    }
+    // order the clip nodes at the FRONT of the track, in clips order
+    var ref = null;
+    for (var m = 0; m < nodes.length; m++) {
+      var node = nodes[m];
+      var want = ref ? ref.nextSibling : trackEl.firstChild;
+      if (node !== want) { trackEl.insertBefore(node, want); }
+      ref = node;
+    }
+  }
+
   function renderTimeline() {
     var clips = state.timeline.clips || [];
     var dur = state.timeline.duration_sec || sumDur(clips);
@@ -1302,16 +1469,32 @@
     updateOverlayBtn();
     updateZoomLabel();
     applyTimelineScale();
+    updateTrailingSpace();   // room to scroll past the last clip (item 19)
     renderRulerTicks();   // timecode marks in the gray ruler
 
+    // Reconcile clip nodes by id instead of wiping innerHTML, so a surviving clip keeps
+    // its waveform + thumbnail across an edit — no flash (item 11). The "no clips" hint
+    // is a lone non-.clip child managed alongside the reconcile.
+    var hint = trackEl.querySelector('.tlempty');
     if (!clips.length) {
-      trackEl.innerHTML = '<div class="tlempty">No clips yet — double-click a quote to add one to the timeline.</div>';
+      reconcileTrack([]);   // remove every clip block
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.className = 'tlempty';
+        hint.textContent = 'No clips yet — double-click a quote to add one to the timeline.';
+        trackEl.insertBefore(hint, trackEl.firstChild);
+      }
     } else {
-      trackEl.innerHTML = clips.map(clipBlockHTML).join('');
+      if (hint && hint.parentNode === trackEl) { trackEl.removeChild(hint); }
+      reconcileTrack(clips);
     }
+    trackEl.appendChild(quietLayerEl); // playback-threshold dim layer (item 16); z-index keeps it under the bars
+    trackEl.appendChild(stockEl);      // secondary stock (item 1) — under the moving playhead
     trackEl.appendChild(playheadEl);
+    trackEl.appendChild(thresholdBarEl); // the draggable threshold bar (item 16), on top
     refreshClipGeom();           // cache clip left/width once so playback ticks don't reflow
     updatePlayhead();
+    renderThreshold();           // reposition the threshold bar + dim rects at the new scale (item 16)
     updateRenderSelButton();     // keep the render-selection button in sync with the redraw
     prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
     applyThumbs();               // paint each clip's cached first-frame thumbnail (async, cheap)
@@ -1385,6 +1568,7 @@
      as a stretch-to-fit SVG so zoom needs no redraw. Degrades to no waveform (empty
      peaks) when there's no audio/ffmpeg — never blocks. */
   var waveCache = {};       // key -> SVG string ('' = known none, don't retry)
+  var peakData = {};        // key -> raw [0..1] peaks (drives the playback threshold, item 16)
   var waveInflight = {};
   var waveQueue = [];
   var waveActive = 0;
@@ -1436,6 +1620,9 @@
           delete waveInflight[job.key];
           var peaks = (rep && rep.ok && rep.data && Array.isArray(rep.data.peaks)) ? rep.data.peaks : [];
           waveCache[job.key] = peaks.length ? buildWaveSvg(peaks) : '';
+          peakData[job.key] = peaks;      // keep raw peaks for the threshold's quiet-detection
+          invalidateQuiet();              // fresh peaks -> recompute which stretches are quiet
+          if (state.thresholdOn) { renderThreshold(); }
           applyWaves();
           pumpWaves();
         });
@@ -1502,9 +1689,122 @@
     }, 1500);
   }
 
+  /* ---- playback threshold (item 16): skip the quiet stretches during playback --------
+     A view-faster aid for long clips. From each clip's cached waveform peaks, the
+     stretches whose amplitude stays below thresholdLevel are "quiet"; during playback we
+     SEEK past them (never cut the reel — the forensic evidence is untouched). The
+     on-timeline bar drags thresholdLevel; the quiet stretches are dimmed. OFF by default
+     => zero effect on normal playback. */
+  var MIN_SKIP_SEC = 0.35;   // don't bother seeking past a quiet gap shorter than this
+  var quietCache = null;     // memoized quiet intervals (compilation seconds); null = stale
+  function invalidateQuiet() { quietCache = null; }
+
+  // quietIntervals returns merged [start,end] compilation-time stretches below the
+  // threshold and longer than MIN_SKIP_SEC. Memoized until threshold/clips/peaks change.
+  function quietIntervals() {
+    if (quietCache) { return quietCache; }
+    var clips = state.timeline.clips || [], raw = [];
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i];
+      var peaks = peakData[waveKey(c.source, c.in || 0, c.out || 0)];
+      if (!peaks || !peaks.length) { continue; }   // no peaks yet -> treat as loud (never skip blindly)
+      var n = peaks.length, dur = clipDur(c), start = c.start_sec || 0, runStart = -1;
+      for (var b = 0; b <= n; b++) {
+        var quiet = (b < n) && (peaks[b] < state.thresholdLevel);
+        if (quiet && runStart < 0) { runStart = b; }
+        else if (!quiet && runStart >= 0) {
+          raw.push({ start: start + (runStart / n) * dur, end: start + (b / n) * dur });
+          runStart = -1;
+        }
+      }
+    }
+    raw.sort(function (a, b) { return a.start - b.start; });
+    var merged = [];
+    for (var k = 0; k < raw.length; k++) {
+      var last = merged[merged.length - 1];
+      if (last && raw[k].start <= last.end + 0.06) { last.end = Math.max(last.end, raw[k].end); }
+      else { merged.push({ start: raw[k].start, end: raw[k].end }); }
+    }
+    quietCache = merged.filter(function (iv) { return (iv.end - iv.start) >= MIN_SKIP_SEC; });
+    return quietCache;
+  }
+  // quietEndAt returns the END of the quiet stretch covering comp (to seek past), or null.
+  function quietEndAt(comp) {
+    var iv = quietIntervals();
+    for (var i = 0; i < iv.length; i++) {
+      if (comp >= iv[i].start && comp < iv[i].end - 0.05) { return iv[i].end; }
+    }
+    return null;
+  }
+  // thresholdLevel <-> the bar's Y within the track's clip lane (top half = louder).
+  function trackLane() {
+    var h = trackEl.clientHeight || 180, pad = 8;
+    return { top: pad, height: Math.max(1, h - 2 * pad) };
+  }
+  function thresholdBarY() {
+    var l = trackLane();
+    return l.top + (0.5 - state.thresholdLevel / 2) * l.height;   // t=0 -> lane centre; t=1 -> lane top
+  }
+  function levelFromY(y) {
+    var l = trackLane();
+    return Math.max(0.01, Math.min(1, (0.5 - (y - l.top) / l.height) * 2));
+  }
+  // renderThreshold positions the bar + paints the dim rectangles over the quiet
+  // stretches. Called on render, zoom, threshold change, and as peaks arrive.
+  function renderThreshold() {
+    if (!state.thresholdOn) { quietLayerEl.style.display = 'none'; thresholdBarEl.style.display = 'none'; return; }
+    thresholdBarEl.style.display = 'block';
+    thresholdBarEl.style.top = thresholdBarY() + 'px';
+    var iv = quietIntervals(), html = '';
+    for (var i = 0; i < iv.length; i++) {
+      var x = Math.round(iv[i].start * state.pxPerSec);
+      var w = Math.max(1, Math.round((iv[i].end - iv[i].start) * state.pxPerSec));
+      html += '<div class="qdim" style="left:' + x + 'px;width:' + w + 'px"></div>';
+    }
+    quietLayerEl.innerHTML = html;
+    quietLayerEl.style.display = 'block';
+  }
+  // Drag the threshold bar up/down to set the level.
+  var thresholdDrag = false;
+  thresholdBarEl.addEventListener('pointerdown', function (e) {
+    if (!state.thresholdOn) { return; }
+    e.preventDefault(); e.stopPropagation();
+    thresholdDrag = true;
+    try { thresholdBarEl.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  thresholdBarEl.addEventListener('pointermove', function (e) {
+    if (!thresholdDrag) { return; }
+    var rect = trackEl.getBoundingClientRect();
+    state.thresholdLevel = levelFromY(e.clientY - rect.top);
+    invalidateQuiet();
+    renderThreshold();
+  });
+  function endThresholdDrag() { thresholdDrag = false; }
+  thresholdBarEl.addEventListener('pointerup', endThresholdDrag);
+  thresholdBarEl.addEventListener('pointercancel', endThresholdDrag);
+  if ($tThreshold) {
+    $tThreshold.addEventListener('click', function () {
+      state.thresholdOn = !state.thresholdOn;
+      $tThreshold.classList.toggle('on', state.thresholdOn);
+      invalidateQuiet();
+      renderThreshold();
+      if (state.thresholdOn) { toast('Playback threshold on — quiet parts are skipped during playback (evidence is not cut)'); }
+    });
+  }
+
   function updateOverlayBtn() {
-    $tOverlay.classList.toggle('on', !!state.overlayOn);
-    $tOverlay.textContent = state.overlayOn ? 'overlay ✓' : 'overlay';
+    // Three states (item 14): render-on/preview-off (default) | render-on/preview-on |
+    // off. Green highlight = shown in THIS preview; ✓ = rendering, 👁 = also previewed,
+    // ✗ = off entirely. The label swaps only the trailing glyph so its width stays put.
+    var previewed = !!state.overlayPreview, renders = !!state.overlayRender;
+    $tOverlay.classList.toggle('on', previewed);
+    $tOverlay.classList.toggle('off', !renders);
+    $tOverlay.textContent = !renders ? 'overlay ✗' : (previewed ? 'overlay 👁' : 'overlay ✓');
+    $tOverlay.title = !renders
+      ? 'Overlay OFF — not shown here, not burned into the render. Click to turn it back on.'
+      : (previewed
+          ? 'Overlay ON and shown in this preview (also burned into the render). Click to turn it off.'
+          : 'Overlay ON — burned into the render, but hidden in this preview so it doesn’t cover the video. Click to also show it here.');
     if ($tOverlayName) { $tOverlayName.classList.toggle('on', state.overlayShowName !== false); }
   }
 
@@ -1541,7 +1841,7 @@
       var m = activeMeta(); date = m.date || ''; link = m.link || ''; fps = m.fps || 30;
     }
     lastOverlayClipId = clipId;
-    mpvSend('overlay', { on: state.overlayOn, file: file, date: date, link: link, fps: fps, tc_off: tcOff, showName: state.overlayShowName !== false });
+    mpvSend('overlay', { on: state.overlayPreview, file: file, date: date, link: link, fps: fps, tc_off: tcOff, showName: state.overlayShowName !== false });
   }
 
   /* ---- seamless timeline playback via an mpv EDL --------------------------------
@@ -1630,10 +1930,22 @@
         }
       }
       state.playheadComp = state.pos;                 // EDL position IS the compilation position
+      // Playback threshold (item 16): if playback has entered a quiet stretch, seek PAST
+      // it (skip it) — a faster review, never a cut. Gated by thresholdOn so it's a no-op
+      // otherwise. The seek settles at the stretch's end, where it's no longer quiet.
+      if (state.thresholdOn && state.playing) {
+        var qEnd = quietEndAt(state.pos);
+        if (qEnd != null) {
+          state.playheadComp = qEnd;
+          mpvSeek(qEnd);
+          updatePlayhead();
+          return;
+        }
+      }
       var c = clipAtComp(state.pos);
       state.activeClipId = c ? c.id : null;
       // as the seamless compilation crosses a cut, refresh the overlay to the new clip's name + TC
-      if (state.overlayOn && state.activeClipId !== lastOverlayClipId) { sendOverlayUpdate(); }
+      if (state.overlayPreview && state.activeClipId !== lastOverlayClipId) { sendOverlayUpdate(); }
     } else if (state.activeClipId != null) {
       var ac = clipById(state.activeClipId);
       if (ac) { state.playheadComp = (ac.start_sec || 0) + (state.pos - (ac.in || 0)); }
@@ -1701,6 +2013,7 @@
     return (g.left + g.width) >= lo && g.left <= hi;
   }
   function updatePlayhead() {
+    updateStock();   // keep the secondary stock positioned + blinking alongside the playhead
     var comp, clip;
     if (isTimelineLoaded()) {
       comp = state.playheadComp || 0; clip = clipAtComp(comp);
@@ -1738,6 +2051,30 @@
     }
   }
 
+  // updateStock positions the secondary playhead stock at pauseReturnComp and blinks it
+  // (item 2) while the user is auditioning ahead during playback (autoScrollSuspended).
+  // Same clip-geometry math as the playhead. Hidden when there's no timeline / no stock.
+  function updateStock() {
+    var comp = state.pauseReturnComp;
+    if (typeof comp !== 'number' || !isTimelineLoaded()) { stockEl.style.display = 'none'; return; }
+    var clip = clipAtComp(comp);
+    if (!clip) { stockEl.style.display = 'none'; return; }
+    var g = clipGeom[clip.id];
+    if (!g) {
+      var block = blockById(clip.id);
+      if (!block) { stockEl.style.display = 'none'; return; }
+      g = { left: block.offsetLeft, width: block.offsetWidth };
+    }
+    var d = clipDur(clip);
+    var frac = d > 0 ? (comp - (clip.start_sec || 0)) / d : 0;
+    frac = Math.max(0, Math.min(1, frac));
+    stockEl.style.left = (g.left + frac * g.width) + 'px';
+    stockEl.style.display = 'block';
+    // Blink only while auditioning ahead during playback; steady otherwise (paused, or
+    // coincident with the playhead right after play-start / Enter).
+    stockEl.classList.toggle('flashing', !!(state.playing && state.autoScrollSuspended));
+  }
+
   /* ---- selection: toggle .selected + repaint each clip's opacity, no re-render ---- */
   function markSelectedClip() {
     var blocks = trackEl.querySelectorAll('.clip');
@@ -1755,13 +2092,16 @@
     updateRenderSelButton();
   }
 
-  // The "render selection" button appears only while clips are selected, labelled
-  // with the count so Jordan knows exactly what will render.
+  // The "render selection" button is ALWAYS present (item 12): grayed/disabled with no
+  // selection, active + count-labelled when clips are selected. It used to be hidden
+  // when nothing was selected, which shifted every other toolbar button sideways. A
+  // reserved min-width (app.css) keeps its width constant so the count never nudges the
+  // export button either.
   function updateRenderSelButton() {
     if (!$tRenderSel) { return; }
     var n = (state.selectedClipIds || []).length;
-    $tRenderSel.hidden = n === 0;
-    if (n > 0) { $tRenderSel.textContent = 'render selection (' + n + ')'; }
+    $tRenderSel.disabled = n === 0;
+    $tRenderSel.textContent = n > 0 ? ('render selection (' + n + ')') : 'render selection';
   }
 
   // Selection mutators. clearSelection / selectOnly / toggleInSelection / selectRange
@@ -1830,7 +2170,7 @@
     // If the playhead sits on a clip that ISN'T being deleted, remember its id +
     // offset WITHIN that clip — the ripple shifts every later clip's start_sec, so
     // the playhead's old absolute compilation position no longer means "the same
-    // spot in that clip" afterward. Re-anchor it once the ripple lands.
+    // spot in that clip" afterward. Re-anchor it once the ripple lands (item 6).
     var rippleClip = (typeof state.playheadComp === 'number') ? clipAtComp(state.playheadComp) : null;
     var rippleOffset = null;
     if (rippleClip && ids.indexOf(rippleClip.id) === -1) {
@@ -1841,17 +2181,34 @@
       var rep = await beckyCall('remove_clip', { id: ids[i] });   // server-side remove auto-ripples start_sec
       if (rep.ok && rep.data) { okAny = true; lastTl = rep.data; }
     }
-    if (lastTl) { applyTimeline(lastTl); }
 
-    if (rippleOffset != null) {
-      var movedClip = clipById(rippleClip.id);
-      if (movedClip) {
-        var newComp = (movedClip.start_sec || 0) + rippleOffset;
-        state.playheadComp = newComp;
-        state.activeClipId = movedClip.id;
-        if (!state.playing) { seekTimeline(newComp, false); }
-        updatePlayhead();
+    // Re-anchor the playhead to the SAME spot in its (now-shifted) clip. Compute it from
+    // the FINAL timeline BEFORE applying it, so we can hand applyTimeline the correct
+    // resume position: passing resumeAt makes a delete WHILE PLAYING keep playing from
+    // the right place (item 6) instead of the stale pre-ripple position — the whole
+    // point of "playback is not affected".
+    var resumeAt = null, movedId = null;
+    if (rippleOffset != null && lastTl && Array.isArray(lastTl.clips)) {
+      for (var k = 0; k < lastTl.clips.length; k++) {
+        if (String(lastTl.clips[k].id) === String(rippleClip.id)) {
+          resumeAt = (lastTl.clips[k].start_sec || 0) + rippleOffset;
+          movedId = lastTl.clips[k].id;
+          break;
+        }
       }
+    }
+
+    if (lastTl) { applyTimeline(lastTl, resumeAt == null ? undefined : resumeAt); }
+
+    if (resumeAt != null) {
+      state.playheadComp = resumeAt;
+      if (movedId != null) { state.activeClipId = movedId; }
+      // Re-sync the stock to the playhead so pause-after-delete returns somewhere sane
+      // (the audition target, if any, was on a clip that may have just moved).
+      state.pauseReturnComp = resumeAt;
+      state.autoScrollSuspended = false;
+      if (!state.playing) { seekTimeline(resumeAt, false); }
+      updatePlayhead();
     }
 
     if (tlBodyEl && keepScroll != null) {
@@ -1869,56 +2226,42 @@
     if (splitting) { return; }
     var clips = state.timeline.clips || [];
     if (!clips.length) { toast('Timeline is empty — add clips first.'); return; }
-    var ph = (typeof state.playheadComp === 'number') ? state.playheadComp : null;
-    if (ph == null) { toast('Play or scrub to a point on the timeline first.'); return; }
+    // WHERE to cut: during playback, the SECONDARY STOCK (item 4) — the spot the user
+    // clicked ahead to — NOT the live moving playhead; paused, the playhead itself.
+    var cutPos = (state.playing && typeof state.pauseReturnComp === 'number')
+               ? state.pauseReturnComp
+               : (typeof state.playheadComp === 'number' ? state.playheadComp : null);
+    if (cutPos == null) { toast('Play or scrub to a point on the timeline first.'); return; }
 
     var clip = null;
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i], s = c.start_sec || 0, d = clipDur(c);
-      if (ph >= s && ph < s + d) { clip = c; break; }
+      if (cutPos >= s && cutPos < s + d) { clip = c; break; }
     }
-    if (!clip) { toast('No clip under the playhead.'); return; }
+    if (!clip) { toast('No clip under the ' + (state.playing ? 'stock' : 'playhead') + '.'); return; }
 
-    var srcSplit = (clip.in || 0) + (ph - (clip.start_sec || 0));
-    // must land strictly inside the clip, with a >= 0.1s margin on each side
-    if (srcSplit <= (clip.in || 0) + 0.1 || srcSplit >= (clip.out || 0) - 0.1) {
-      toast('Playhead is too close to a clip edge to split.');
-      return;
-    }
+    var srcSplit = (clip.in || 0) + (cutPos - (clip.start_sec || 0));
+    // A split preserves the compilation timeline (same order + total duration), so the
+    // LIVE playhead stays valid. While playing, resume there — pass undefined so
+    // applyTimeline uses the CURRENT (post-await) live playhead — and the cut never
+    // interrupts playback (item 4). Paused, applyTimeline doesn't re-seek and the marker
+    // stays on the new cut edge.
+    var resumeAt = state.playing ? undefined : cutPos;
 
     splitting = true;
     try {
-      var leftId = clip.id;
-      var repL = await beckyCall('set_trim', { id: leftId, in: clip.in || 0, out: srcSplit });
-      if (!repL.ok) { toast('Split failed' + (repL.error ? ': ' + repL.error : '')); return; }
-      var repR = await beckyCall('add_clip', { source: clip.source, in: srcSplit, out: clip.out || 0, label: clip.label || '' });
-      if (!repR.ok || !repR.data) {
-        if (repL.data) { applyTimeline(repL.data, ph); }
-        toast('Split failed' + (repR.error ? ': ' + repR.error : ''));
+      // ONE atomic engine edit: the whole split is a single undoable step, so Ctrl+Z
+      // reverses it at once (it used to be set_trim + add_clip + reorder — three
+      // separate undo steps, the item-8 bug). The engine rejects a cut too near an edge.
+      var rep = await beckyCall('split', { id: clip.id, at: srcSplit });
+      if (!rep.ok || !rep.data || !rep.data.timeline) {
+        toast(rep.error ? ('Split: ' + rep.error) : 'Too close to a clip edge to split.');
         return;
       }
-      // Pin the resume position to ph (captured BEFORE any awaits) on every
-      // apply below — two more awaits follow (this one already happened, then
-      // reorder), and playback keeps advancing during each one, so the LIVE
-      // playheadComp would have drifted past ph by the time we get here. Using
-      // the drifted value to resume is what skipped playback into the next clip.
-      applyTimeline(repR.data, ph);
-
-      // add_clip appends to the END; move the new right half to just after the left half.
-      var now = state.timeline.clips || [];
-      var newClip = now.length ? now[now.length - 1] : null;   // appended clip is last
-      var leftIdx = -1;
-      for (var j = 0; j < now.length; j++) { if (String(now[j].id) === String(leftId)) { leftIdx = j; break; } }
-      if (newClip && leftIdx >= 0 && String(newClip.id) !== String(leftId)) {
-        var repO = await beckyCall('reorder', { id: newClip.id, to: leftIdx + 1 });
-        if (repO.ok && repO.data) { applyTimeline(repO.data, ph); }
-      }
-      // The clip AFTER the playhead (the new right half) becomes the selection — it
-      // used to stay on the pre-split left half, which is backwards from what a
-      // producer expects right after a cut.
-      if (newClip) { selectOnly(newClip.id); }
-      // No success toast on a cut — the two new clips are the visible confirmation
-      // (Jordan: the "split clip" popup should not appear when making a cut).
+      applyTimeline(rep.data.timeline, resumeAt);
+      // The new right half (the clip AFTER the cut) becomes the selection — what a
+      // producer expects next. No success toast: the two clips are the confirmation.
+      if (rep.data.new_id) { selectOnly(rep.data.new_id); }
     } finally {
       splitting = false;
     }
@@ -2033,7 +2376,14 @@
     justResized = true;
     setTimeout(function () { justResized = false; }, 350);
     var changed = Math.abs(r.newIn - r.origIn) > 0.001 || Math.abs(r.newOut - r.origOut) > 0.001;
-    if (!changed) { renderTimeline(); return; }   // snap back to the committed widths
+    if (!changed) {
+      // No net change: restore the waveform's FULL viewBox (moveResize may have cropped
+      // it live during the drag) before the reconciling re-render reuses this block's
+      // .cwave — with reconcile it isn't rebuilt from scratch, so a stale crop would stick.
+      if (r.waveSvg && r.waveN > 0) { r.waveSvg.setAttribute('viewBox', '0 0 ' + r.waveN + ' 1'); }
+      renderTimeline();
+      return;   // snap back to the committed widths
+    }
     var rep = await beckyCall('set_trim', { id: r.id, in: r.newIn, out: r.newOut });
     if (rep.ok && rep.data) { applyTimeline(rep.data); } else { renderTimeline(); }
   }
@@ -2051,19 +2401,25 @@
   function eventTrackX(e) { return e.clientX - trackEl.getBoundingClientRect().left; }
   // The reorder destination = how many OTHER clips sit left of the cursor centre.
   // That is exactly the engine's stable remove-then-insert index (App.Reorder).
-  function dropInsertIndex(id, x) {
+  // excl is an ARRAY of clip ids to skip (the clip(s) being dragged). For a single drag
+  // it's [id]; for a multi-selection drag (item 10) it's the whole group.
+  function excludes(excl, id) {
+    for (var i = 0; i < excl.length; i++) { if (String(excl[i]) === String(id)) { return true; } }
+    return false;
+  }
+  function dropInsertIndex(excl, x) {
     var blocks = trackEl.querySelectorAll('.clip');
     var insert = 0;
     for (var i = 0; i < blocks.length; i++) {
-      if (blocks[i].dataset.id === String(id)) { continue; }
+      if (excludes(excl, blocks[i].dataset.id)) { continue; }
       if (x > blocks[i].offsetLeft + blocks[i].offsetWidth / 2) { insert++; }
     }
     return insert;
   }
-  function positionDropmark(id, x) {
+  function positionDropmark(excl, x) {
     var others = [], all = trackEl.querySelectorAll('.clip');
-    for (var i = 0; i < all.length; i++) { if (all[i].dataset.id !== String(id)) { others.push(all[i]); } }
-    var insert = dropInsertIndex(id, x), leftPx;
+    for (var i = 0; i < all.length; i++) { if (!excludes(excl, all[i].dataset.id)) { others.push(all[i]); } }
+    var insert = dropInsertIndex(excl, x), leftPx;
     if (!others.length) { leftPx = 0; }
     else if (insert <= 0) { leftPx = others[0].offsetLeft - 2; }
     else if (insert >= others.length) {
@@ -2080,10 +2436,17 @@
   /* ---- CLIP-BODY gesture: PENDING -> click (seek) OR drag (reorder) (CHANGE A) ---- */
   function startClipGesture(block, e) {
     e.preventDefault();                  // keep the drag clean (no text selection)
+    var id = block.dataset.id;
+    // If the pressed clip is part of a multi-selection, the WHOLE selection drags
+    // together as one block (item 10). Captured on press — selection itself is set on
+    // release / Ctrl / Shift, so this reads the state from BEFORE this gesture.
+    var group = (isClipSelected(id) && (state.selectedClipIds || []).length > 1)
+              ? (state.selectedClipIds || []).slice() : null;
     clipGesture = {
-      id: block.dataset.id, block: block, startX: e.clientX, dragging: false,
+      id: id, block: block, startX: e.clientX, dragging: false,
       ctrl: e.ctrlKey || e.metaKey,      // Ctrl/Cmd+click = toggle in multi-selection
-      shift: e.shiftKey                  // Shift+click = select range from the anchor
+      shift: e.shiftKey,                 // Shift+click = select range from the anchor
+      group: group                       // non-null => a group drag moves all of these
     };
     try { trackEl.setPointerCapture(e.pointerId); } catch (_) {}
   }
@@ -2092,30 +2455,39 @@
     if (!g.dragging) {
       if (Math.abs(e.clientX - g.startX) <= DRAG_PX) { return; }   // below threshold -> still a click
       g.dragging = true;                                           // crossed it -> become a reorder drag
-      g.block.classList.add('dragging');
+      var grp = g.group || [g.id];
+      for (var i = 0; i < grp.length; i++) { var b = blockById(grp[i]); if (b) { b.classList.add('dragging'); } }
       trackEl.appendChild(dropmarkEl);
     }
-    positionDropmark(g.id, eventTrackX(e));
+    positionDropmark(g.group || [g.id], eventTrackX(e));
   }
   async function endClipGesture(e) {
     if (!clipGesture) { return; }
     var g = clipGesture; clipGesture = null;
-    if (g.block) { g.block.classList.remove('dragging'); }
+    var grp = g.group || [g.id];
+    for (var gi = 0; gi < grp.length; gi++) { var gb = blockById(grp[gi]); if (gb) { gb.classList.remove('dragging'); } }
     if (dropmarkEl.parentNode) { dropmarkEl.parentNode.removeChild(dropmarkEl); }
     dropmarkEl.style.display = 'none';
     justScrubbed = true;                              // eat the trailing click in BOTH cases
     setTimeout(function () { justScrubbed = false; }, 350);
 
     if (g.dragging) {
-      // a DRAG happened -> reorder, but only when the target index truly differs.
-      var to = dropInsertIndex(g.id, eventTrackX(e));
-      var from = clipIndexById(g.id);
-      if (from >= 0 && to !== from) {
-        var rep = await beckyCall('reorder', { id: g.id, to: to });
-        if (rep.ok && rep.data) { applyTimeline(rep.data); }
-        else { renderTimeline(); toast('Could not reorder' + (rep.error ? ': ' + rep.error : '')); }
+      // a DRAG happened -> reorder. `to` is the drop index among the clips NOT being moved.
+      var to = dropInsertIndex(grp, eventTrackX(e));
+      if (g.group && g.group.length > 1) {
+        // Move the whole multi-selection as ONE block (item 10) — one undoable edit.
+        var repM = await beckyCall('reorder_many', { ids: g.group, to: to });
+        if (repM.ok && repM.data) { applyTimeline(repM.data); }
+        else { renderTimeline(); toast('Could not move clips' + (repM.error ? ': ' + repM.error : '')); }
       } else {
-        renderTimeline();                             // no change -> just clear the drag visuals
+        var from = clipIndexById(g.id);
+        if (from >= 0 && to !== from) {               // only reorder when the target index truly differs
+          var rep = await beckyCall('reorder', { id: g.id, to: to });
+          if (rep.ok && rep.data) { applyTimeline(rep.data); }
+          else { renderTimeline(); toast('Could not reorder' + (rep.error ? ': ' + rep.error : '')); }
+        } else {
+          renderTimeline();                           // no change -> just clear the drag visuals
+        }
       }
     } else if (g.ctrl) {
       // Ctrl/Cmd+click: toggle this clip in the multi-selection; don't move the playhead.
@@ -2152,13 +2524,31 @@
     var last = clips[clips.length - 1];
     points.push((last.start_sec || 0) + clipDur(last));   // the compilation's very end
     points.sort(function (a, b) { return a - b; });
-    var comp = state.playheadComp || 0, target = null, i;
-    if (toEnd) {
-      for (i = 0; i < points.length; i++) { if (points[i] > comp + 0.01) { target = points[i]; break; } }
-      if (target == null) { target = points[points.length - 1]; }   // already at/after the end
+    var comp = state.playheadComp || 0;
+    // SNAP the playhead onto the edit point it is sitting on (within EDGE_SNAP), then
+    // step to the neighbour. The old "previous point strictly < comp - 0.01" got STUCK
+    // whenever a seek landed a hair PAST the boundary (mpv's seek jitter): "< comp"
+    // then re-found the SAME clip's own start. A fixed one-sided epsilon can't win —
+    // an UNDERshoot would break the forward jump the same way. Snapping to the nearest
+    // point absorbs jitter in BOTH directions. EDGE_SNAP (0.12) < MIN_CLIP/2, so a
+    // position is ever within snap of at most ONE edit point (never the wrong one).
+    var EDGE_SNAP = 0.12;
+    var nearIdx = 0, nearDist = Infinity;
+    for (var i = 0; i < points.length; i++) {
+      var dd = Math.abs(points[i] - comp);
+      if (dd < nearDist) { nearDist = dd; nearIdx = i; }
+    }
+    var target;
+    if (nearDist <= EDGE_SNAP) {
+      // sitting ON an edit point -> step to the adjacent one (clamped at the ends)
+      target = toEnd ? points[Math.min(nearIdx + 1, points.length - 1)]
+                     : points[Math.max(nearIdx - 1, 0)];
+    } else if (toEnd) {
+      target = points[points.length - 1];                 // between points -> next one up
+      for (var j = 0; j < points.length; j++) { if (points[j] > comp) { target = points[j]; break; } }
     } else {
-      for (i = points.length - 1; i >= 0; i--) { if (points[i] < comp - 0.01) { target = points[i]; break; } }
-      if (target == null) { target = points[0]; }   // already at/before the start
+      target = points[0];                                 // between points -> next one down
+      for (var k = points.length - 1; k >= 0; k--) { if (points[k] < comp) { target = points[k]; break; } }
     }
     state.activeClipId = (clipAtComp(target) || clips[0]).id;
     state.playheadComp = target;
@@ -2288,26 +2678,28 @@
     var comp = (clip.start_sec || 0) + hit.frac * clipDur(clip);   // the compilation position clicked
 
     if (state.playing && !isRuler) {
-      // A click WITHIN a clip (not the ruler) while playing doesn't touch the
-      // ongoing preview at all — playback keeps running from wherever it already
-      // was. It only marks where Pause should land instead of wherever playback
-      // happens to be when you hit it — audition ahead without losing your place.
+      // A clip-body click WHILE PLAYING moves the SECONDARY STOCK here — where Pause
+      // snaps back to, and where cut/split act (items 3/4) — and SELECTS this clip so it
+      // can be deleted WITHOUT interrupting playback (item 3). The live preview is left
+      // untouched: it keeps running from wherever it already was. The stock blinks to
+      // show it moved (item 2, via updateStock while autoScrollSuspended).
       state.pauseReturnComp = comp;
-      state.autoScrollSuspended = true;   // the user is now deliberately looking elsewhere
+      state.autoScrollSuspended = true;
+      selectOnly(clip.id);
+      updateStock();
       return;
     }
 
+    // Move the playhead (+ the coincident stock) to the click. A RULER click does this
+    // WITHOUT changing the selected clip (item 5); a clip-body click also selects it.
+    if (!isRuler) { selectOnly(clip.id); }
     state.activeClipId = clip.id;
-    selectOnly(clip.id);                            // a plain click/scrub selects ONLY this clip
     state.playheadComp = comp;
     state.pauseReturnComp = comp;
     state.autoScrollSuspended = false;    // a real navigation — resume following it
-    // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, KEEPING whatever
-    // play state was already true — clicking elsewhere while playing should keep
-    // playing from the new spot, not silently pause; clicking while paused stays
-    // paused (a click doesn't force playback to start on its own). seekTimeline
-    // reuses the loaded EDL (a fast seek) or loads it once. (isStart kept for the
-    // shared signature.)
+    // Navigate the SEAMLESS timeline (the mpv EDL): seek to comp, KEEPING whatever play
+    // state was already true — clicking elsewhere while playing keeps playing from the
+    // new spot; clicking while paused stays paused. (isStart kept for the signature.)
     seekTimeline(comp, state.playing);
     updatePlayhead();
   }
@@ -2342,8 +2734,7 @@
 
   /* ---- transport + reel actions ---- */
   $tPlay.addEventListener('click', function () { togglePlay(); });
-  $tFrameBack.addEventListener('click', function () { mpvSend('frame', { dir: -1 }); });
-  $tFrameFwd.addEventListener('click', function () { mpvSend('frame', { dir: 1 }); });
+  // (previous/next-frame BUTTONS removed — the Left/Right arrow shortcuts still frame-step.)
   if ($tSplit) { $tSplit.addEventListener('click', function () { splitAtPlayhead(); }); }  // CHANGE 4
   if ($tScreenshot) { $tScreenshot.addEventListener('click', function () { mpvSend('screenshot'); }); }
 
@@ -2482,12 +2873,21 @@
   }
 
   $tOverlay.addEventListener('click', async function () {
-    state.overlayOn = !state.overlayOn;
+    // Cycle the 3 states (item 14): render-on/preview-off -> render-on/preview-on ->
+    // off -> (back to) render-on/preview-off.
+    if (state.overlayRender && !state.overlayPreview) {
+      state.overlayPreview = true;                                   // a -> b: also show it here
+    } else if (state.overlayRender && state.overlayPreview) {
+      state.overlayRender = false; state.overlayPreview = false;     // b -> c: off entirely
+    } else {
+      state.overlayRender = true; state.overlayPreview = false;      // c -> a: back to render-only
+    }
     updateOverlayBtn();
-    await beckyCall('set_overlay', { field: 'enabled', value: state.overlayOn });
-    // Don't re-applyTimeline here (it would needlessly invalidate the loaded EDL);
-    // the stored overlay flag is persisted server-side and re-synced on the next load.
-    sendOverlayUpdate();   // push the CURRENT clip's name + source TC (handles EDL playback)
+    // Persist ONLY the render flag (the reel's overlay.enabled). Preview is a UI-only
+    // display toggle, never written to the reel. Don't re-applyTimeline (it would
+    // needlessly invalidate the loaded EDL); the flag is persisted server-side.
+    await beckyCall('set_overlay', { field: 'enabled', value: state.overlayRender });
+    sendOverlayUpdate();   // push the CURRENT clip's name + source TC + preview on/off to mpv
   });
 
   // Toggle the OPTIONAL filename line (Date / ORIG TC / link are always shown). Persists
@@ -2519,7 +2919,7 @@
     var dlg = await beckyCall('load_dialog', { default: state.folder || '' });
     if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
     var rep = await beckyCall('load_reel', { path: dlg.data.path });
-    if (rep.ok && rep.data) { applyTimeline(rep.data); toast('Loaded reel'); }
+    if (rep.ok && rep.data) { resetSourceColors(); applyTimeline(rep.data); toast('Loaded reel'); }
     else { toast('Load failed' + (rep.error ? ': ' + rep.error : '')); }
   });
 
@@ -2850,6 +3250,12 @@
     clearSelection: clearSelection,
     buildWaveSvg: buildWaveSvg,
     fitTimelineZoom: fitTimelineZoom,
+    // exposed for the CDP self-verify loop (the new feedback-7 features)
+    seekClipEdge: seekClipEdge,
+    deleteSelectedClips: deleteSelectedClips,
+    quietIntervals: quietIntervals,
+    renderTimeline: renderTimeline,
+    peakData: peakData,
     state: state
   };
 

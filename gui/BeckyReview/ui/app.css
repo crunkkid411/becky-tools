@@ -69,6 +69,8 @@ body {
 .find     { grid-area: find;     border-right: 1px solid var(--line); }
 .chat     { grid-area: chat;     border-left: 1px solid var(--line); }
 .timeline { grid-area: timeline; border-top: 1px solid var(--line); background: var(--chrome); }
+/* highlight while dragging footage from the left panel over the timeline (item 21) */
+.timeline.droptarget { box-shadow: inset 0 0 0 2px var(--neon); }
 
 /* draggable column splitters (find | video | chat) */
 .vsplit { background: var(--line); cursor: col-resize; touch-action: none; }
@@ -176,6 +178,9 @@ body {
   cursor: pointer; transition: border-color .12s, background .12s;
 }
 .file:hover { border-color: var(--neon); background: #0f130c; }
+/* the transcript just viewed — a green outline so returning with "back" shows at a
+   glance which video you were reading (item 18). outline doesn't change layout. */
+.file.lastviewed { outline: 2px solid var(--neon); outline-offset: -1px; }
 .file .fmeta { flex: 1; min-width: 0; }
 .file .fname {
   font-size: 16px; font-weight: 600;
@@ -434,15 +439,24 @@ body {
 .btn.primary:hover { color: #000; box-shadow: 0 0 10px rgba(57,255,20,.4); }
 .tbtn2 { min-width: 40px; font-size: 16px; line-height: 1; }
 .tbtn2.on { background: var(--neon); color: #000; border-color: var(--neon); box-shadow: 0 0 10px rgba(57,255,20,.4); }
+/* overlay 3-state (item 14): .on = shown in preview (green); .off = off entirely (gray).
+   A reserved width keeps the changing ✓/👁/✗ glyph from nudging the "name" button. */
+#tOverlay { min-width: 96px; text-align: center; }
+.tbtn2.off, .tbtn2.off:hover { color: var(--dim-2); border-color: var(--line); background: var(--panel); box-shadow: none; }
 
 /* extend-clip-by-a-frame buttons — BLUE so they read distinctly from the green
    prev/next-frame buttons sitting right beside them. */
 .tbtn2.extend { color: var(--blue); border-color: #14506a; font-size: 13px; }
 .tbtn2.extend:hover { color: #fff; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.5); }
 
-/* render-just-the-selection button — blue, only shown when clips are selected */
-#tRenderSel { color: var(--blue); border-color: #14506a; }
+/* render-just-the-selection button — blue, ALWAYS present (item 12): grayed when no
+   clips are selected, active + count-labelled otherwise. A reserved min-width keeps
+   its width constant so the "(N)" count never nudges the export button beside it. */
+#tRenderSel { color: var(--blue); border-color: #14506a; min-width: 152px; text-align: center; }
 #tRenderSel:hover { color: #fff; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.4); }
+#tRenderSel:disabled, #tRenderSel:disabled:hover {
+  color: var(--dim-2); border-color: var(--line); box-shadow: none; opacity: .55; cursor: default;
+}
 
 /* overflow-x: scroll (not auto) keeps the horizontal scrollbar's space ALWAYS reserved,
    so zooming past the fit-width can't make a scrollbar appear and shove the panels up. */
@@ -475,7 +489,10 @@ body {
 .track {
   position: relative; cursor: default;
   display: flex; gap: 6px; align-items: stretch;
-  padding: 8px 0; min-height: 96px;
+  /* Clips are ~2x taller than before (item 15) so there is vertical room to SEE the
+     waveform and cut on a zero crossing; the thumbnail stays small (fixed height,
+     below) instead of stretching to fill, so it no longer covers the waveform. */
+  padding: 8px 0; min-height: 180px;
   background:
     repeating-linear-gradient(90deg, transparent 0 149px, var(--line-2) 149px 150px);
 }
@@ -503,7 +520,7 @@ body {
    old full-bleed thumbnail did). pointer-events none so the scrub body underneath
    still gets the click. */
 .clip .cthumb {
-  position: absolute; left: 10px; top: 9px; bottom: 9px; width: 46px;
+  position: absolute; left: 10px; top: 9px; width: 46px; height: 58px;
   background-size: cover; background-position: center; background-repeat: no-repeat;
   border-radius: 3px; border: 1px solid rgba(0,0,0,.5);
   pointer-events: none; z-index: 1;
@@ -579,6 +596,59 @@ body {
   background: #fff;
   clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
   box-shadow: 0 0 0 1px rgba(0,0,0,.45);
+}
+/* two tiny vertical grip hashmarks inside the white flag head (item 7 / playhead.JPG).
+   The flag spans x -8..10 (its centre ~ +1); the pair straddles that centre in the
+   flag's straight upper part, above where it tapers to the point. */
+#playhead::after {
+  content: ""; position: absolute; top: -22px; left: -2px;
+  width: 6px; height: 11px;
+  background:
+    linear-gradient(#3a3a3a, #3a3a3a) 2px 0 / 1px 100% no-repeat,
+    linear-gradient(#3a3a3a, #3a3a3a) 4px 0 / 1px 100% no-repeat;
+  pointer-events: none;
+}
+
+/* the SECONDARY playhead stock (item 1): a 2nd, identical black bar at pauseReturnComp —
+   where Pause snaps back to, and where cut/split act during playback. It has NO white
+   flag head (only the moving #playhead does). z-index 4 sits it UNDER the moving playhead
+   (z 5), so when the two coincide (paused) you simply see the playhead. */
+#stock {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #000;
+  pointer-events: none; z-index: 4;
+}
+/* blink black<->white at ~standard-text-cursor speed when moved during playback (item 2).
+   The 50%->50.01% jump is an instant switch (a blink), not a fade. */
+#stock.flashing { animation: stockBlink 1.06s infinite; }
+@keyframes stockBlink {
+  0%, 50%      { background: #000; }
+  50.01%, 100% { background: #fff; }
+}
+
+/* playback threshold (item 16): the quiet stretches are dimmed (a dark overlay), and a
+   bright horizontal bar spans the track — drag it up/down to set how quiet counts as
+   skippable. Both only appear while the threshold is toggled on. */
+#quietLayer {
+  position: absolute; top: 8px; bottom: 8px; left: 0; right: 0;
+  pointer-events: none; z-index: 3;
+}
+#quietLayer .qdim {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.62);
+  box-shadow: inset 1px 0 0 rgba(0,0,0,.6), inset -1px 0 0 rgba(0,0,0,.6);
+}
+#threshold {
+  position: absolute; left: 0; right: 0; height: 14px; margin-top: -7px;
+  cursor: ns-resize; z-index: 6; touch-action: none;
+}
+#threshold::before {   /* the visible line, centred in the 14px grab strip */
+  content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 2px;
+  background: var(--yellow); box-shadow: 0 0 5px rgba(0,0,0,.9), 0 0 3px var(--yellow);
+}
+#threshold::after {    /* a small grab knob so it's obvious the line is draggable */
+  content: ""; position: absolute; left: 10px; top: 3px; width: 10px; height: 8px;
+  background: var(--yellow); border-radius: 2px; box-shadow: 0 0 4px rgba(0,0,0,.8);
 }
 
 /* reorder drop indicator (CHANGE A): a bright insertion line marking where the

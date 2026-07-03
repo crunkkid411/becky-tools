@@ -226,6 +226,93 @@ func TestSetTrimAndLabel(t *testing.T) {
 	}
 }
 
+func TestSplitIsOneUndoableEdit(t *testing.T) {
+	app, dir := openFixture(t)
+	ring := filepath.Join(dir, "ring.mp4")
+	if _, err := app.AddClip(ring, 1, 5, "money"); err != nil {
+		t.Fatalf("AddClip: %v", err)
+	}
+
+	tl, newID, err := app.Split("c1", 3)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+	if len(tl.Clips) != 2 {
+		t.Fatalf("want 2 clips after split, got %d", len(tl.Clips))
+	}
+	// left half keeps c1 and ends at the cut; the right half is new and starts there.
+	if tl.Clips[0].ID != "c1" || tl.Clips[0].In != 1 || tl.Clips[0].Out != 3 {
+		t.Errorf("left half wrong: %+v", tl.Clips[0])
+	}
+	if tl.Clips[1].ID != newID || tl.Clips[1].In != 3 || tl.Clips[1].Out != 5 {
+		t.Errorf("right half wrong (newID=%s): %+v", newID, tl.Clips[1])
+	}
+	// the right half copies the source + label + meta.
+	if tl.Clips[1].Source != tl.Clips[0].Source || tl.Clips[1].Label != "money" || tl.Clips[1].Date != "2026-06-14" {
+		t.Errorf("right half did not inherit source/label/meta: %+v", tl.Clips[1])
+	}
+
+	// THE item-8 fix: ONE undo reverses the whole split back to a single clip.
+	undone, ok := app.Undo()
+	if !ok {
+		t.Fatal("Undo reported nothing to undo after a split")
+	}
+	if len(undone.Clips) != 1 || undone.Clips[0].ID != "c1" || undone.Clips[0].In != 1 || undone.Clips[0].Out != 5 {
+		t.Errorf("one undo did not restore the pre-split clip: %+v", undone.Clips)
+	}
+}
+
+func TestReorderManyMovesBlockOneUndo(t *testing.T) {
+	app, dir := openFixture(t)
+	ring := filepath.Join(dir, "ring.mp4")
+	kitchen := filepath.Join(dir, "kitchen.mov")
+	app.AddClip(ring, 0, 1, "a")    // c1
+	app.AddClip(kitchen, 0, 1, "b") // c2
+	app.AddClip(ring, 1, 2, "c")    // c3
+	app.AddClip(kitchen, 1, 2, "d") // c4
+
+	// Move c1 + c3 (non-contiguous) as a block to position 1 among the rest [c2,c4].
+	tl, err := app.ReorderMany([]string{"c1", "c3"}, 1)
+	if err != nil {
+		t.Fatalf("ReorderMany: %v", err)
+	}
+	got := []string{tl.Clips[0].ID, tl.Clips[1].ID, tl.Clips[2].ID, tl.Clips[3].ID}
+	want := []string{"c2", "c1", "c3", "c4"} // c2, then the moved block c1,c3 (relative order kept), then c4
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order after move = %v, want %v", got, want)
+		}
+	}
+	// ONE undo restores the original order.
+	undone, ok := app.Undo()
+	if !ok || undone.Clips[0].ID != "c1" || undone.Clips[1].ID != "c2" || undone.Clips[2].ID != "c3" || undone.Clips[3].ID != "c4" {
+		t.Errorf("one undo did not restore the pre-move order: %+v", undone.Clips)
+	}
+}
+
+func TestSplitRejectsNearEdge(t *testing.T) {
+	app, dir := openFixture(t)
+	app.AddClip(filepath.Join(dir, "ring.mp4"), 1, 5, "")
+	if _, _, err := app.Split("c1", 1.05); err == nil {
+		t.Error("split within the edge margin should error")
+	}
+	if _, _, err := app.Split("c1", 4.95); err == nil {
+		t.Error("split within the edge margin should error")
+	}
+	// a failed split must not touch the timeline or the undo stack. The only undo
+	// step present is the AddClip above, so the FIRST undo restores to empty and a
+	// SECOND undo finds nothing — proving neither failed split pushed a step.
+	if got := app.Timeline(); len(got.Clips) != 1 {
+		t.Errorf("failed split changed the timeline: %d clips", len(got.Clips))
+	}
+	if undone, ok := app.Undo(); !ok || len(undone.Clips) != 0 {
+		t.Errorf("first undo should restore the empty pre-AddClip state, got ok=%v clips=%d", ok, len(undone.Clips))
+	}
+	if _, ok := app.Undo(); ok {
+		t.Error("a failed split should not have pushed an extra undo step")
+	}
+}
+
 func TestSetOverlay(t *testing.T) {
 	app, _ := openFixture(t)
 	tl, err := app.SetOverlay("enabled", true, "")

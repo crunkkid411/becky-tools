@@ -603,6 +603,45 @@ func (a *App) Reorder(id string, to int) (TimelineView, error) {
 	return a.timelineLocked(), nil
 }
 
+// ReorderMany moves a SET of clips (by id) as one contiguous block to position `to`
+// (an index among the clips that are NOT being moved), preserving the moved clips'
+// relative order. This is ONE undoable edit — a single pushUndoLocked — so dragging a
+// multi-selection (item 10) undoes in one Ctrl+Z, unlike calling Reorder per clip. An
+// empty/unknown id set is a no-op error.
+func (a *App) ReorderMany(ids []string, to int) (TimelineView, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	idset := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idset[id] = true
+	}
+	moved := make([]edl.Clip, 0, len(ids))
+	rest := make([]edl.Clip, 0, len(a.reel.Clips))
+	for _, c := range a.reel.Clips {
+		if idset[c.ID] {
+			moved = append(moved, c) // keep timeline order among the moved clips
+		} else {
+			rest = append(rest, c)
+		}
+	}
+	if len(moved) == 0 {
+		return a.timelineLocked(), fmt.Errorf("no clips to move")
+	}
+	if to < 0 {
+		to = 0
+	}
+	if to > len(rest) {
+		to = len(rest)
+	}
+	a.pushUndoLocked()
+	out := make([]edl.Clip, 0, len(a.reel.Clips))
+	out = append(out, rest[:to]...)
+	out = append(out, moved...)
+	out = append(out, rest[to:]...)
+	a.reel.Clips = out
+	return a.timelineLocked(), nil
+}
+
 // SetTrim updates a clip's In/Out (a manual trim). Out<In is swapped; negatives
 // clamp to zero. Returns the updated timeline.
 func (a *App) SetTrim(id string, in, out float64) (TimelineView, error) {
@@ -620,6 +659,52 @@ func (a *App) SetTrim(id string, in, out float64) (TimelineView, error) {
 		}
 	}
 	return a.timelineLocked(), fmt.Errorf("no clip %q", id)
+}
+
+// Split cuts the clip id into two at source time atSource (seconds into the
+// source, strictly inside [In,Out]). The left half keeps the id and becomes
+// [In, atSource]; a new clip [atSource, Out] (same source/label/meta) is inserted
+// directly after it. This is ONE undoable edit — a single pushUndoLocked — so
+// Ctrl+Z reverses the whole split at once. Doing the same thing from the client as
+// set_trim + add_clip + reorder recorded THREE undo steps, which is why undoing a
+// split used to walk backwards through three weird intermediate states. Returns the
+// updated timeline and the new right-half clip id. A split too close to either edge
+// (< splitEdgeMargin) is a no-op error.
+func (a *App) Split(id string, atSource float64) (TimelineView, string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	idx := -1
+	for i := range a.reel.Clips {
+		if a.reel.Clips[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return a.timelineLocked(), "", fmt.Errorf("no clip %q", id)
+	}
+	c := a.reel.Clips[idx]
+	const splitEdgeMargin = 0.1
+	if atSource <= c.In+splitEdgeMargin || atSource >= c.Out-splitEdgeMargin {
+		return a.timelineLocked(), "", fmt.Errorf("split point too close to a clip edge")
+	}
+	a.pushUndoLocked()
+	a.nextID++
+	right := edl.Clip{
+		ID:     fmt.Sprintf("c%d", a.nextID),
+		Source: c.Source,
+		In:     atSource,
+		Out:    c.Out,
+		Label:  c.Label,
+		Meta:   c.Meta,
+	}
+	a.reel.Clips[idx].Out = atSource // left half keeps the id
+	out := make([]edl.Clip, 0, len(a.reel.Clips)+1)
+	out = append(out, a.reel.Clips[:idx+1]...)
+	out = append(out, right)
+	out = append(out, a.reel.Clips[idx+1:]...)
+	a.reel.Clips = out
+	return a.timelineLocked(), right.ID, nil
 }
 
 // SetLabel renames a clip's Label.

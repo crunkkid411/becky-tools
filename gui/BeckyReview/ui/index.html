@@ -83,15 +83,14 @@
       </div>
       <div class="tlspacer"></div>
       <div class="transport" role="group" aria-label="Transport">
-        <button id="tFrameBack" class="tbtn2" title="previous frame" aria-label="previous frame">&#9204;</button>
-        <button id="tPlay"      class="tbtn2" title="play / pause"    aria-label="play or pause">&#9199;</button>
-        <button id="tFrameFwd"  class="tbtn2" title="next frame"      aria-label="next frame">&#9205;</button>
+        <button id="tPlay"      class="tbtn2" title="play / pause (Space) — step one frame with Left / Right arrows" aria-label="play or pause">&#9199;</button>
         <button id="tSpeed"     class="tbtn2" title="playback speed — click to toggle 2&times; (Shift+Space plays at 2&times;)" aria-label="toggle 2x playback speed">1&times;</button>
         <!-- extend the SELECTED clip by one frame (distinct blue icons, beside the frame-step buttons) -->
         <button id="tExtendL"   class="tbtn2 extend" title="extend selected clip 1 frame to the LEFT (earlier)"  aria-label="extend clip left one frame">&#91;&#9664;</button>
         <button id="tExtendR"   class="tbtn2 extend" title="extend selected clip 1 frame to the RIGHT (later)"   aria-label="extend clip right one frame">&#9654;&#93;</button>
         <button id="tSplit"     class="tbtn2" title="Split clip at playhead (s)" aria-label="split clip at playhead">&#9986;</button>
         <button id="tScreenshot" class="tbtn2" title="Screenshot the preview (saved as Screenshot_0001.png, etc.)" aria-label="screenshot the preview">&#128247;</button>
+        <button id="tThreshold" class="tbtn2" title="Playback threshold — during playback, skip the quiet parts so a long clip reviews faster (the evidence is NOT cut). Drag the bar up/down to set how quiet counts as skippable." aria-label="toggle playback threshold">&#127939;</button>
         <button id="tOverlay"   class="tbtn2" title="forensic lower-third on / off">overlay</button>
         <button id="tOverlayName" class="tbtn2 on" title="include the filename line in the overlay (off = Date / TC / link only)" aria-label="toggle overlay filename line">name</button>
       </div>
@@ -100,7 +99,7 @@
         <button id="tRedo"   class="tbtn2"        title="redo (Ctrl+Shift+Z)"  aria-label="redo">&#8635;</button>
         <button id="tSave"   class="btn"          title="save reel to a file">save</button>
         <button id="tLoad"   class="btn"          title="load a reel from a file">load</button>
-        <button id="tRenderSel" class="btn"       title="render only the selected clips" hidden>render selection</button>
+        <button id="tRenderSel" class="btn"       title="render only the selected clips" disabled>render selection</button>
         <button id="tExport" class="btn primary"  title="export the compilation">export</button>
       </div>
     </header>

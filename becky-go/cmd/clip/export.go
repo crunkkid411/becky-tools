@@ -263,7 +263,7 @@ func (a *App) Thumb(source string, t float64) ThumbResult {
 	if !ok {
 		return ThumbResult{}
 	}
-	dir, err := a.renderDir()
+	dir, err := a.thumbDir()
 	if err != nil {
 		return ThumbResult{}
 	}
@@ -442,6 +442,21 @@ func writeTextFile(path string, fn func(*bufio.Writer) error) error {
 // forensic invariant holds). Only when no folder is open (e.g. a headless call with
 // an explicit timeline) does it fall back to the becky work dir so a render still
 // has somewhere to land.
+// thumbDir is a dedicated subfolder of the render dir for the timeline's clip
+// thumbnails, so those many tiny jpegs don't clutter render/ beside the actual
+// rendered compilations (Jordan's ask). Created on demand.
+func (a *App) thumbDir() (string, error) {
+	base, err := a.renderDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "timeline_thumbnails")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create thumbnail dir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
 func (a *App) renderDir() (string, error) {
 	a.mu.Lock()
 	folder := a.folder
