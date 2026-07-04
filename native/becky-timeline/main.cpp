@@ -1,12 +1,15 @@
-// becky-timeline - native NLE editor: a real multi-clip timeline over the proven video engine.
+// becky-timeline - native NLE editor over the proven video engine (../ges-bench).
 //
-// Track A = a sequence of clips (segments of a source, laid end-to-end); Track B = a PiP overlay.
-// Two independent GStreamer d3d11 decoders (../ges-bench, proven 2325 fps), each seeked to the
-// source-time the playhead maps to, composited (A full + B PiP). Custom ImGui track timeline:
-// drag = scrub, Space = play. All-intra proxies -> every seek is one light decode.
+// Two clip TRACKS (A main, B PiP), each a list of clips. Two independent GStreamer d3d11 decoders,
+// each seeked to the source-time the playhead maps to, composited (A full + B PiP). Custom ImGui
+// track timeline. HUMAN and AI drive the SAME edit path (applyOp): human via keys/mouse, AI via
+// NDJSON on stdin ({"op":"split","t":30}); every edit emits the timeline state as NDJSON on stdout.
 //
-// v2: real multi-clip track + custom NLE timeline. Next: multi-SOURCE track (pre-warm on cut),
-// cut/split/trim, GPU composite for full-res, editmodel/NDJSON bridge.
+// controls: drag = scrub | Space = play | S = split | Del = delete | I/O = trim in/out | G = group
+// group ON -> split/delete/trim apply to BOTH tracks at the same comp time, so the layers stay synced.
+//
+// v5: two-track clip model + group toggle + AI-in-the-loop NDJSON bridge.
+// Next: multi-SOURCE track, full-res GPU composite (drop CPU readback), Becky Review Native embed.
 //
 //   usage: becky-timeline.exe <proxyA.mp4> <proxyB.mp4>
 #define WIN32_LEAN_AND_MEAN
@@ -16,6 +19,7 @@
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_opengl3.h"
+#include "json.hpp"
 
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
@@ -24,11 +28,15 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <iostream>
+using json = nlohmann::json;
 
 // ---------------- GStreamer decoder (one per layer) ----------------
 struct Layer { GstElement* pipe = nullptr; GstBus* bus = nullptr; };
-static Layer g_layer[2];                 // 0 = track A source, 1 = track B (PiP) source
-static std::vector<uint8_t> g_rgba;      // composited RGBA
+static Layer g_layer[2];
+static std::vector<uint8_t> g_rgba;
 static int g_vw = 0, g_vh = 0;
 static double g_composeMs = 0;
 
@@ -48,7 +56,6 @@ static bool layerInit(Layer& L, std::string file) {
     return gst_element_get_state(L.pipe, nullptr, nullptr, 15 * GST_SECOND) == GST_STATE_CHANGE_SUCCESS;
 }
 
-// seek a layer to an ABSOLUTE source time and map its frame; caller unmaps+unrefs.
 static bool layerFrame(Layer& L, double srcSec, GstVideoFrame* f, GstSample** out) {
     GstClockTime pos = (GstClockTime)(srcSec * GST_SECOND);
     gst_element_seek_simple(L.pipe, GST_FORMAT_TIME,
@@ -67,44 +74,45 @@ static bool layerFrame(Layer& L, double srcSec, GstVideoFrame* f, GstSample** ou
     *out = smp; return true;
 }
 
-// ---------------- clip model ----------------
-struct Clip { double in, out, compStart; std::string label; };  // in/out = source seconds
-static std::vector<Clip> g_trackA;   // laid end-to-end on the comp timeline
-static Clip g_trackB;                // one PiP clip spanning the comp timeline
+// ---------------- two clip tracks ----------------
+struct Clip { double in, out, compStart; std::string label; };
+static std::vector<Clip> g_track[2];   // 0 = A (main), 1 = B (PiP)
 static double g_compDur = 0;
+static bool g_group = true;            // grouped by default -> layers stay in sync
 
-// comp seconds -> source seconds on track A (holds the last clip past the end).
-static double mapTrackA(double t) {
-    for (auto& c : g_trackA) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) return c.in + (t - c.compStart); }
-    if (!g_trackA.empty()) { auto& c = g_trackA.back(); return (t < 0) ? c.in : c.out; }
+static double mapTrack(int tr, double t) {
+    for (auto& c : g_track[tr]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) return c.in + (t - c.compStart); }
+    if (!g_track[tr].empty()) { auto& c = g_track[tr].back(); return (t < 0) ? c.in : c.out; }
     return 0;
 }
-
-static void relabelA() { for (size_t i = 0; i < g_trackA.size(); i++) g_trackA[i].label = "clip " + std::to_string(i + 1); }
-// Split the track-A clip under comp time t into two at that point.
-static void splitA(double t) {
-    for (size_t i = 0; i < g_trackA.size(); i++) { Clip& c = g_trackA[i]; double d = c.out - c.in;
+static void relabel(int tr) {
+    const char* p = tr == 0 ? "clip " : "pip ";
+    for (size_t i = 0; i < g_track[tr].size(); i++) g_track[tr][i].label = p + std::to_string(i + 1);
+}
+static void splitTrack(int tr, double t) {
+    for (size_t i = 0; i < g_track[tr].size(); i++) { Clip& c = g_track[tr][i]; double d = c.out - c.in;
         if (t > c.compStart + 0.05 && t < c.compStart + d - 0.05) {
             double srcT = c.in + (t - c.compStart);
             Clip right{ srcT, c.out, t, "" }; c.out = srcT;
-            g_trackA.insert(g_trackA.begin() + i + 1, right); relabelA(); return; } }
+            g_track[tr].insert(g_track[tr].begin() + i + 1, right); relabel(tr); return; } }
 }
-// Delete the track-A clip under comp time t and ripple the rest left.
-static void deleteA(double t) {
-    for (size_t i = 0; i < g_trackA.size(); i++) { Clip& c = g_trackA[i]; double d = c.out - c.in;
+static void deleteTrack(int tr, double t) {
+    for (size_t i = 0; i < g_track[tr].size(); i++) { Clip& c = g_track[tr][i]; double d = c.out - c.in;
         if (t >= c.compStart && t < c.compStart + d) {
-            g_trackA.erase(g_trackA.begin() + i);
-            for (size_t j = i; j < g_trackA.size(); j++) g_trackA[j].compStart -= d;
-            g_compDur -= d; relabelA(); return; } }
+            g_track[tr].erase(g_track[tr].begin() + i);
+            for (size_t j = i; j < g_track[tr].size(); j++) g_track[tr][j].compStart -= d;
+            relabel(tr); return; } }
+}
+static void recomputeDur() {   // comp duration = longest track
+    g_compDur = 0;
+    for (int tr = 0; tr < 2; tr++) if (!g_track[tr].empty()) { auto& c = g_track[tr].back(); g_compDur = (c.compStart + (c.out - c.in) > g_compDur) ? c.compStart + (c.out - c.in) : g_compDur; }
 }
 
-// Composite track A (full) + track B (PiP top-right, alpha 0.5) at comp time t into g_rgba.
 static void compose(double t) {
     LARGE_INTEGER fq, a, b; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&a);
     GstVideoFrame fa, fb; GstSample* sa = nullptr; GstSample* sb = nullptr;
-    if (!layerFrame(g_layer[0], mapTrackA(t), &fa, &sa)) return;
-    double bt = (t >= g_trackB.compStart) ? g_trackB.in + (t - g_trackB.compStart) : g_trackB.in;
-    if (!layerFrame(g_layer[1], bt, &fb, &sb)) { gst_video_frame_unmap(&fa); gst_sample_unref(sa); return; }
+    if (!layerFrame(g_layer[0], mapTrack(0, t), &fa, &sa)) return;
+    if (!layerFrame(g_layer[1], mapTrack(1, t), &fb, &sb)) { gst_video_frame_unmap(&fa); gst_sample_unref(sa); return; }
     int wa = GST_VIDEO_FRAME_WIDTH(&fa), ha = GST_VIDEO_FRAME_HEIGHT(&fa);
     int wb = GST_VIDEO_FRAME_WIDTH(&fb), hb = GST_VIDEO_FRAME_HEIGHT(&fb);
     uint8_t* da = (uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&fa, 0); int sta = GST_VIDEO_FRAME_PLANE_STRIDE(&fa, 0);
@@ -121,7 +129,37 @@ static void compose(double t) {
     QueryPerformanceCounter(&b); g_composeMs = 1000.0 * (b.QuadPart - a.QuadPart) / fq.QuadPart;
 }
 
-// ---------------- WGL boilerplate ----------------
+// ---------------- AI-in-the-loop: NDJSON edit ops on stdin ----------------
+static std::mutex g_mx; static std::vector<json> g_pending;
+static void stdinReader() {
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) continue;
+        try { json j = json::parse(line); std::lock_guard<std::mutex> lk(g_mx); g_pending.push_back(j); } catch (...) {}
+    }
+}
+static void emitState(double curSec, bool playing) {   // becky's AI reads this to see the result
+    json s; s["t"] = curSec; s["dur"] = g_compDur; s["playing"] = playing; s["group"] = g_group;
+    for (int tr = 0; tr < 2; tr++) { json arr = json::array();
+        for (auto& c : g_track[tr]) arr.push_back({ {"in", c.in}, {"out", c.out}, {"start", c.compStart} });
+        s[tr == 0 ? "trackA" : "trackB"] = arr; }
+    std::cout << s.dump() << std::endl; std::cout.flush();
+}
+
+// one edit path for BOTH human and AI. returns true if the model changed.
+static bool applyOp(const std::string& op, double t, const json& j, double& curSec, bool& playing) {
+    auto clampT = [&](double x){ return x < 0 ? 0 : (x > g_compDur ? g_compDur : x); };
+    if (op == "seek") { curSec = clampT(t); return true; }
+    if (op == "play") { playing = j.value("on", !playing); return true; }
+    if (op == "group") { g_group = j.value("on", !g_group); return true; }
+    if (op == "split") { splitTrack(0, t); if (g_group) splitTrack(1, t); return true; }
+    if (op == "delete") { deleteTrack(0, t); if (g_group) deleteTrack(1, t); recomputeDur(); curSec = clampT(curSec); return true; }
+    if (op == "trim_out") { splitTrack(0, t); deleteTrack(0, t); if (g_group) { splitTrack(1, t); deleteTrack(1, t); } recomputeDur(); curSec = clampT(curSec); return true; }
+    if (op == "trim_in") { splitTrack(0, t); deleteTrack(0, t - 0.02); if (g_group) { splitTrack(1, t); deleteTrack(1, t - 0.02); } recomputeDur(); curSec = clampT(curSec); return true; }
+    return false;
+}
+
+// ---------------- WGL ----------------
 static HGLRC g_rc; static HDC g_dc; static int g_W = 1100, g_H = 900; static GLuint g_tex = 0;
 static bool CreateGL(HWND h) {
     g_dc = GetDC(h);
@@ -140,7 +178,14 @@ static LRESULT WINAPI WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-// draw the custom NLE timeline; sets scrubbed + returns the scrubbed comp-second while dragging.
+static void drawTrack(ImDrawList* dl, float tlX, float pps, float y, float trackH, int tr, ImU32 fill) {
+    for (auto& c : g_track[tr]) {
+        float x0 = tlX + (float)(c.compStart * pps), x1 = tlX + (float)((c.compStart + (c.out - c.in)) * pps);
+        dl->AddRectFilled({ x0 + 1, y }, { x1 - 1, y + trackH }, fill, 3);
+        dl->AddRect({ x0 + 1, y }, { x1 - 1, y + trackH }, IM_COL32(255, 255, 255, 90), 3);
+        dl->AddText({ x0 + 5, y + 8 }, IM_COL32(255, 255, 255, 230), c.label.c_str());
+    }
+}
 static double drawTimeline(double curSec, bool& scrubbed) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -149,21 +194,13 @@ static double drawTimeline(double curSec, bool& scrubbed) {
     float pps = (g_compDur > 0) ? tlW / (float)g_compDur : 1;
     float ay = p.y + rulerH + gap, by = ay + trackH + gap, bot = by + trackH;
     dl->AddRectFilled(p, { p.x + tlW + 16, bot + 4 }, IM_COL32(20, 22, 26, 255));
-    for (int s = 0; s <= (int)g_compDur; s += 5) {   // ruler ticks every 5s
+    for (int s = 0; s <= (int)g_compDur; s += 5) {
         float x = tlX + s * pps; dl->AddLine({ x, p.y }, { x, p.y + rulerH }, IM_COL32(90, 94, 104, 255));
         char b[8]; snprintf(b, 8, "%d", s); dl->AddText({ x + 2, p.y + 3 }, IM_COL32(150, 155, 165, 255), b);
     }
-    for (auto& c : g_trackA) {   // track A clips
-        float x0 = tlX + c.compStart * pps, x1 = tlX + (c.compStart + (c.out - c.in)) * pps;
-        dl->AddRectFilled({ x0 + 1, ay }, { x1 - 1, ay + trackH }, IM_COL32(58, 123, 255, 255), 3);
-        dl->AddRect({ x0 + 1, ay }, { x1 - 1, ay + trackH }, IM_COL32(180, 200, 255, 200), 3);
-        dl->AddText({ x0 + 5, ay + 8 }, IM_COL32(255, 255, 255, 230), c.label.c_str());
-    }
-    float bx0 = tlX + (float)(g_trackB.compStart * pps);   // track B (PiP)
-    float bx1 = tlX + (float)((g_trackB.compStart + (g_trackB.out - g_trackB.in)) * pps);
-    dl->AddRectFilled({ bx0 + 1, by }, { bx1 - 1, by + trackH }, IM_COL32(0, 200, 120, 255), 3);
-    dl->AddText({ bx0 + 5, by + 8 }, IM_COL32(255, 255, 255, 230), g_trackB.label.c_str());
-    float px = tlX + (float)curSec * pps;   // playhead
+    drawTrack(dl, tlX, pps, ay, trackH, 0, IM_COL32(58, 123, 255, 255));   // A main
+    drawTrack(dl, tlX, pps, by, trackH, 1, IM_COL32(0, 200, 120, 255));    // B PiP
+    float px = tlX + (float)curSec * pps;
     dl->AddLine({ px, p.y }, { px, bot }, IM_COL32(255, 210, 0, 255), 2);
 
     ImGui::SetCursorScreenPos(p);
@@ -182,15 +219,13 @@ int main(int argc, char** argv) {
     gst_init(&argc, &argv);
     if (!layerInit(g_layer[0], argv[1]) || !layerInit(g_layer[1], argv[2])) { fprintf(stderr, "layer init failed\n"); return 3; }
 
-    // Track A = a real reel: 4 segments of source A laid end-to-end. (Same-source clips scrub with
-    // no reload; multi-SOURCE with a pre-warmed decoder-per-source is the next increment.)
-    struct Seg { double in, out; const char* label; };
-    Seg segs[] = { {5,25,"clip 1"}, {40,60,"clip 2"}, {75,95,"clip 3"}, {100,115,"clip 4"} };
-    double cs = 0;
-    for (auto& s : segs) { g_trackA.push_back({ s.in, s.out, cs, s.label }); cs += s.out - s.in; }
-    g_compDur = cs;
-    relabelA();
-    g_trackB = { 0, g_compDur, 0, "PiP (source B)" };   // PiP overlay spans the whole comp timeline
+    // Track A = 4 segments of source A; Track B = the PiP overlay (one clip spanning the reel).
+    struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
+    double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "" }); cs += s.out - s.in; }
+    g_track[1].push_back({ 0, cs, 0, "" });
+    recomputeDur(); relabel(0); relabel(1);
+
+    std::thread(stdinReader).detach();   // AI-in-the-loop: NDJSON ops on stdin
 
     WNDCLASSEXW wc = { sizeof wc, CS_OWNDC, WndProc, 0, 0, GetModuleHandle(nullptr), nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"beckytl", nullptr };
     RegisterClassExW(&wc);
@@ -213,12 +248,19 @@ int main(int argc, char** argv) {
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
         double dt = (double)(now.QuadPart - prev.QuadPart) / fq.QuadPart; prev = now;
 
+        // AI ops from stdin
+        std::vector<json> ops; { std::lock_guard<std::mutex> lk(g_mx); ops.swap(g_pending); }
+        for (auto& j : ops) { std::string op = j.value("op", std::string()); double t = j.value("t", curSec);
+            if (applyOp(op, t, j, curSec, playing)) { lastComposed = -1; emitState(curSec, playing); } }
+
+        // human keys -> same applyOp path
         if (GetForegroundWindow() == hwnd) {
-            if (GetAsyncKeyState(VK_SPACE) & 1) playing = !playing;
-            if (GetAsyncKeyState('S') & 1) { splitA(curSec); lastComposed = -1; }
-            if (GetAsyncKeyState(VK_DELETE) & 1) { deleteA(curSec); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; }
-            if (GetAsyncKeyState('O') & 1) { splitA(curSec); deleteA(curSec); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; }         // trim OUT to playhead
-            if (GetAsyncKeyState('I') & 1) { splitA(curSec); deleteA(curSec - 0.02); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; } // trim IN to playhead
+            if (GetAsyncKeyState(VK_SPACE) & 1) { applyOp("play", curSec, json::object(), curSec, playing); }
+            if (GetAsyncKeyState('S') & 1) { applyOp("split", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
+            if (GetAsyncKeyState(VK_DELETE) & 1) { applyOp("delete", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
+            if (GetAsyncKeyState('O') & 1) { applyOp("trim_out", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
+            if (GetAsyncKeyState('I') & 1) { applyOp("trim_in", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
+            if (GetAsyncKeyState('G') & 1) { applyOp("group", curSec, json::object(), curSec, playing); }
         }
         if (playing) { curSec += dt; if (curSec >= g_compDur) curSec = 0; }
 
@@ -236,12 +278,13 @@ int main(int argc, char** argv) {
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
         ImGui::SetNextWindowPos({ 0, 0 }); ImGui::SetNextWindowSize({ (float)g_W, (float)g_H });
         ImGui::Begin("becky", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
-        ImGui::Text("becky-timeline   %s   %.1fs / %.0fs   compose %.2f ms (%.0f fps)   [Space = play]   drag the timeline to scrub",
+        ImGui::Text("becky-timeline   %s   %.1fs / %.0fs   compose %.2f ms (%.0f fps)",
             playing ? "PLAYING" : "paused", curSec, g_compDur, g_composeMs, g_composeMs > 0 ? 1000.0 / g_composeMs : 0);
-        ImGui::SameLine(); ImGui::TextDisabled("  |  [S]plit  trim [I]n/[O]ut  [Del]ete  |  drag = scrub");
+        ImGui::SameLine(); ImGui::TextColored(g_group ? ImVec4(1, 0.82f, 0, 1) : ImVec4(0.5f, 0.5f, 0.5f, 1), "  [G]roup %s", g_group ? "ON" : "off");
+        ImGui::SameLine(); ImGui::TextDisabled("  [S]plit  trim [I]/[O]  [Del]  |  drag=scrub  Space=play");
 
         if (g_vw > 0) {
-            float availW = ImGui::GetContentRegionAvail().x, availH = g_H * 0.60f;
+            float availW = ImGui::GetContentRegionAvail().x, availH = g_H * 0.58f;
             float sc = availH / g_vh; if (g_vw * sc > availW) sc = availW / g_vw;
             float iw = g_vw * sc, ih = g_vh * sc;
             ImGui::SetCursorPosX((availW - iw) * 0.5f + ImGui::GetCursorPosX());

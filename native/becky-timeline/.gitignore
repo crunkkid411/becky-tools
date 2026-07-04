@@ -4,3 +4,4 @@
 *.pdb
 *.ilk
 _build.bat
+ops.ndjson
