@@ -352,6 +352,14 @@ load-bearing rules, in brief:
   state chunk (dialed-in plugin settings), and render-through for bounce-in-place. The host already does
   effect-render + `vst.state.load`; the gaps (a WAV reader, a `render.chain` verb, a `Bus.FX` field) are
   spelled out with proofs. VST3 SDK is MIT (v3.8, Oct 2025) so this path is license-clean.
+- `HANDOFF-NATIVE-TIMELINE.md` — **THE handoff for the native GPU timeline that REPLACES Becky Review's
+  WebView2 DOM timeline in-window** (read before any `native/becky-timeline/` or `gui/BeckyReviewNative/`
+  work). Jordan is the fastest human editor alive; every "good enough" NLE lags his hands. Records the
+  engine bake-off (what's ruled out + why — Vegas/Shotcut/MLT/GES/2×libmpv), the WebView2 AIRSPACE
+  breakthrough (embed via D3D11 + a FLIP-model swapchain — OpenGL/BitBlt don't composite; the weeks-long
+  wall), what's BUILT (embeds + scrubs at 130fps, committed `49f90e0`), and the complete roadmap to port
+  EVERY Becky Review feature/integration into the native timeline. `gui/BeckyReviewNative` is a DELIBERATE
+  throwaway copy of `gui/BeckyReview` — iterate freely; the goal is to replace that timeline entirely.
 - `SKILL.md` — how to *use* the tools (human + agent usage guide).
 - `FORENSIC-OUTPUT-PHILOSOPHY.md` — how findings must be reported. Governs every
   human-facing output.
