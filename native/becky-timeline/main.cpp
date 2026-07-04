@@ -128,26 +128,30 @@ static void compose(double t) {
     for (auto& c : g_track[1]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) { cb = &c; break; } }
     if (!ca && !g_track[0].empty()) ca = &g_track[0].back();
     if (!cb && !g_track[1].empty()) cb = &g_track[1].back();
-    if (!ca || !cb) return;
-    if (!layerLoad(g_layer[0], ca->source) || !layerLoad(g_layer[1], cb->source)) return;   // reload only on source change
+    if (!ca) return;                                        // track A required; track B (PiP) optional
+    if (!layerLoad(g_layer[0], ca->source)) return;
+    bool haveB = cb && layerLoad(g_layer[1], cb->source);
     double ta = ca->in + (t > ca->compStart ? t - ca->compStart : 0); if (ta > ca->out) ta = ca->out;
-    double tb = cb->in + (t > cb->compStart ? t - cb->compStart : 0); if (tb > cb->out) tb = cb->out;
-    layerSeek(g_layer[0], ta); layerSeek(g_layer[1], tb);   // both seeks first -> decoders run in parallel
+    layerSeek(g_layer[0], ta);
+    if (haveB) { double tb = cb->in + (t > cb->compStart ? t - cb->compStart : 0); if (tb > cb->out) tb = cb->out; layerSeek(g_layer[1], tb); }
     if (!layerPull(g_layer[0], &fa, &sa)) return;
-    if (!layerPull(g_layer[1], &fb, &sb)) { gst_video_frame_unmap(&fa); gst_sample_unref(sa); return; }
+    if (haveB && !layerPull(g_layer[1], &fb, &sb)) haveB = false;
     int wa = GST_VIDEO_FRAME_WIDTH(&fa), ha = GST_VIDEO_FRAME_HEIGHT(&fa);
-    int wb = GST_VIDEO_FRAME_WIDTH(&fb), hb = GST_VIDEO_FRAME_HEIGHT(&fb);
     uint8_t* da = (uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&fa, 0); int sta = GST_VIDEO_FRAME_PLANE_STRIDE(&fa, 0);
-    uint8_t* db = (uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&fb, 0); int stb = GST_VIDEO_FRAME_PLANE_STRIDE(&fb, 0);
     g_vw = wa; g_vh = ha; g_rgba.resize((size_t)wa * ha * 4);
     for (int y = 0; y < ha; y++) memcpy(&g_rgba[(size_t)y * wa * 4], da + (size_t)y * sta, (size_t)wa * 4);
-    int pw = wb / 2, ph = hb / 2, ox = wa - pw - wa / 20, oy = ha / 20;
-    for (int y = 0; y < ph; y++) { int dy = oy + y; if (dy < 0 || dy >= ha) continue;
-        for (int x = 0; x < pw; x++) { int dx = ox + x; if (dx < 0 || dx >= wa) continue;
-            uint8_t* src = db + (size_t)(y * 2) * stb + (size_t)(x * 2) * 4;
-            uint8_t* dst = &g_rgba[((size_t)dy * wa + dx) * 4];
-            for (int c = 0; c < 3; c++) dst[c] = (uint8_t)((dst[c] + src[c]) / 2); } }
-    gst_video_frame_unmap(&fa); gst_video_frame_unmap(&fb); gst_sample_unref(sa); gst_sample_unref(sb);
+    if (haveB) {
+        int wb = GST_VIDEO_FRAME_WIDTH(&fb), hb = GST_VIDEO_FRAME_HEIGHT(&fb);
+        uint8_t* db = (uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&fb, 0); int stb = GST_VIDEO_FRAME_PLANE_STRIDE(&fb, 0);
+        int pw = wb / 2, ph = hb / 2, ox = wa - pw - wa / 20, oy = ha / 20;
+        for (int y = 0; y < ph; y++) { int dy = oy + y; if (dy < 0 || dy >= ha) continue;
+            for (int x = 0; x < pw; x++) { int dx = ox + x; if (dx < 0 || dx >= wa) continue;
+                uint8_t* src = db + (size_t)(y * 2) * stb + (size_t)(x * 2) * 4;
+                uint8_t* dst = &g_rgba[((size_t)dy * wa + dx) * 4];
+                for (int c = 0; c < 3; c++) dst[c] = (uint8_t)((dst[c] + src[c]) / 2); } }
+        gst_video_frame_unmap(&fb); gst_sample_unref(sb);
+    }
+    gst_video_frame_unmap(&fa); gst_sample_unref(sa);
     QueryPerformanceCounter(&b); g_composeMs = 1000.0 * (b.QuadPart - a.QuadPart) / fq.QuadPart;
 }
 
@@ -249,7 +253,7 @@ int main(int argc, char** argv) {
         std::string sa = r.value("sourceA", std::string()), sb = r.value("sourceB", std::string());
         double cs = 0; for (auto& c : r["trackA"]) { double i = c.at("in"), o = c.at("out"); g_track[0].push_back({ i, o, cs, "", c.value("source", sa) }); cs += o - i; }
         if (r.contains("trackB") && !r["trackB"].empty()) { double bs = 0; for (auto& c : r["trackB"]) { double i = c.at("in"), o = c.at("out"); g_track[1].push_back({ i, o, bs, "", c.value("source", sb) }); bs += o - i; } }
-        else g_track[1].push_back({ 0, cs, 0, "", sb });
+        else if (!sb.empty()) g_track[1].push_back({ 0, cs, 0, "", sb });   // no sourceB -> single-track reel (no PiP)
     } else {
         // demo reel: 4 segments of source A; source B as a PiP overlay spanning it.
         struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };

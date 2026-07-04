@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>becky review</title>
+<!--
+  Becky Review - the HTML UI of the WebView2 window (find | video | chat + timeline).
+  The CENTER column is an EMPTY #videoHole: a NATIVE mpv player is drawn by the C#
+  host ON TOP of that reserved rectangle. We report its geometry to the host with
+  {t:"videoRect", x, y, w, h} (see app.js reportVideoRect) so the native surface
+  lands exactly over the hole. There is deliberately NO <video> element here. All
+  backend access goes through window.chrome.webview (see app.js beckyCall + the
+  {t:"mpv"} message helpers). High-contrast neon-on-black is an accessibility AID
+  per ACCESSIBILITY.md - keep the color.
+-->
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============== FIND COLUMN: brand + search + (files | quotes) ============== -->
+  <section class="find" aria-label="Find">
+    <header class="brandbar">
+      <span class="brand"><span class="diamond" aria-hidden="true"></span>becky<span class="accent">&nbsp;review</span></span>
+      <span class="sub">forensic video review</span>
+    </header>
+
+    <div class="searchbar">
+      <span class="mag" aria-hidden="true">&#128269;</span>
+      <input id="search" type="text" placeholder="search the transcripts..."
+             autocomplete="off" spellcheck="false" aria-label="Search transcripts">
+      <button id="smartToggle" class="smartbtn" type="button" aria-pressed="false"
+              title="Smart search: finds meaning (hybrid AI), not just exact words. Off = keyword search.">smart</button>
+      <button id="searchClear" class="iconbtn" title="clear search" aria-label="clear search" hidden>&times;</button>
+    </div>
+
+    <!-- File list (pre-search) OR ranked quote results render here -->
+    <div id="listScroll" class="listscroll" tabindex="0"></div>
+  </section>
+
+  <!-- drag to resize the find | video columns -->
+  <div id="splitL" class="vsplit" title="drag to resize" aria-hidden="true"></div>
+
+  <!-- ===================== VIDEO COLUMN: reserved native-mpv hole ==============
+       Intentionally EMPTY. The C# host overlays a native mpv surface on top of
+       this rect; app.js reports its geometry via {t:"videoRect", x, y, w, h}.
+       Do NOT put children or text here - it must read as a transparent/black hole. -->
+  <div id="videoHole" aria-label="Video preview" role="img"></div>
+
+  <!-- drag to resize the video | chat columns -->
+  <div id="splitR" class="vsplit" title="drag to resize" aria-hidden="true"></div>
+
+  <!-- ============================ CHAT COLUMN: ask becky ======================== -->
+  <section class="chat" aria-label="Ask becky">
+    <header class="chathead">
+      <span class="chattitle"><span class="robot" aria-hidden="true">&#129302;</span>ask becky</span>
+      <label class="claude" title="Use Claude (online) instead of local Gemma">
+        <input type="checkbox" id="useClaude">
+        <span>use Claude</span>
+      </label>
+    </header>
+
+    <div id="questions" class="questions" hidden></div>
+    <div id="messages" class="messages" aria-live="polite"></div>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="askbar">
+      <input id="ask" type="text" placeholder="ask becky..." autocomplete="off" aria-label="Ask becky">
+      <button id="send" class="sendbtn" title="send" aria-label="send">&#10148;</button>
+    </div>
+  </section>
+
+  <!-- ====================== TIMELINE STRIP (full width, bottom) ================= -->
+  <section class="timeline" aria-label="Timeline">
+    <header class="tlhead">
+      <span id="tlCount" class="tlcount">0 clips &middot; 0:00</span>
+      <div class="tlzoom" role="group" aria-label="Timeline zoom">
+        <button id="tZoomOut" class="tbtn2" title="zoom out (Ctrl+scroll)" aria-label="zoom timeline out">&minus;</button>
+        <span id="tZoom" class="tlzoomval" title="timeline scale">8 px/s</span>
+        <button id="tZoomIn" class="tbtn2" title="zoom in (Ctrl+scroll)" aria-label="zoom timeline in">+</button>
+      </div>
+      <div class="tlspacer"></div>
+      <div class="transport" role="group" aria-label="Transport">
+        <button id="tPlay"      class="tbtn2" title="play / pause (Space) — step one frame with Left / Right arrows" aria-label="play or pause">&#9199;</button>
+        <button id="tSpeed"     class="tbtn2" title="playback speed — click to toggle 2&times; (Shift+Space plays at 2&times;)" aria-label="toggle 2x playback speed">1&times;</button>
+        <!-- extend the SELECTED clip by one frame (distinct blue icons, beside the frame-step buttons) -->
+        <button id="tExtendL"   class="tbtn2 extend" title="extend selected clip 1 frame to the LEFT (earlier)"  aria-label="extend clip left one frame">&#91;&#9664;</button>
+        <button id="tExtendR"   class="tbtn2 extend" title="extend selected clip 1 frame to the RIGHT (later)"   aria-label="extend clip right one frame">&#9654;&#93;</button>
+        <button id="tSplit"     class="tbtn2" title="Split clip at playhead (s)" aria-label="split clip at playhead">&#9986;</button>
+        <button id="tScreenshot" class="tbtn2" title="Screenshot the preview (saved as Screenshot_0001.png, etc.)" aria-label="screenshot the preview">&#128247;</button>
+        <button id="tThreshold" class="tbtn2" title="Playback threshold — during playback, skip the quiet parts so a long clip reviews faster (the evidence is NOT cut). Drag the bar up/down to set how quiet counts as skippable." aria-label="toggle playback threshold">&#127939;</button>
+        <button id="tTrimSilence" class="tbtn2" title="Cut out the quiet stretches below the threshold (a REAL edit — for basic editing, not forensic review). Turn the threshold on first, set the level, then click." aria-label="cut out the quiet parts" disabled>&#129529;</button>
+        <button id="tOverlay"   class="tbtn2" title="forensic lower-third on / off">overlay</button>
+        <button id="tOverlayName" class="tbtn2 on" title="include the filename line in the overlay (off = Date / TC / link only)" aria-label="toggle overlay filename line">name</button>
+      </div>
+      <div class="tlactions">
+        <button id="tlNative" class="tbtn2" title="Open this reel in the native GPU editor (faster scrub)" aria-label="open native timeline">native</button>
+        <button id="tUndo"   class="tbtn2"        title="undo (Ctrl+Z)"        aria-label="undo">&#8634;</button>
+        <button id="tRedo"   class="tbtn2"        title="redo (Ctrl+Shift+Z)"  aria-label="redo">&#8635;</button>
+        <button id="tSave"   class="btn"          title="save reel to a file">save</button>
+        <button id="tLoad"   class="btn"          title="load a reel from a file">load</button>
+        <button id="tRenderSel" class="btn"       title="render only the selected clips" disabled>render selection</button>
+        <button id="tExport" class="btn primary"  title="export the compilation">export</button>
+      </div>
+    </header>
+
+    <div class="tlbody">
+      <div class="tlinner">
+        <div id="ruler" class="ruler" title="click or drag to scrub"></div>
+        <div id="track" class="track"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div id="busyBar" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
