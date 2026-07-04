@@ -1,0 +1,714 @@
+/* =============================================================================
+   Becky Review - LEFT pane styles.
+   becky neon-on-dark forensic theme (matches becky-clip / becky-canvas).
+   High-contrast neon-green #39FF14 on black is an accessibility AID for Jordan's
+   impaired (but sighted) vision - KEEP the color, keep it large + readable.
+   ========================================================================== */
+
+:root {
+  --neon: #39ff14;
+  --neon-dim: #1e6a10;
+  --neon-soft: rgba(57, 255, 20, 0.16);
+  --blue: #00aeef;
+  --yellow: #ffd700;
+  --crimson: #dc143c;
+
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --panel-2: #0e0e0e;
+  --chrome: #121212;
+  --line: #262626;
+  --line-2: #1a1a1a;
+
+  --text: #ffffff;
+  --dim: #8a8a8a;
+  --dim-2: #6a6a6a;
+
+  --r: 8px;
+  /* default timeline scale; the live value is state.pxPerSec in app.js (zoomable 2..120) */
+  --pxps: 8;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* scrollbars */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1c1c1c; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #2e2e2e; }
+
+:focus-visible { outline: 2px solid var(--neon); outline-offset: 2px; }
+
+/* ============================ APP GRID =====================================
+   Three top columns - find (left) | VIDEO hole (center) | chat (right) - over a
+   full-width timeline row. The center column is reserved for the NATIVE mpv pane
+   the C# host overlays; we only leave the hole + report its rect (see app.js). */
+#app {
+  display: grid;
+  /* outer column widths are draggable (set by the splitters as --findw / --chatw);
+     the center video hole is 1fr and follows. 6px splitter columns sit between. */
+  grid-template-columns: var(--findw, 28%) 6px 1fr 6px var(--chatw, 28%);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "find sl video sr chat"
+    "timeline timeline timeline timeline timeline";
+  height: 100vh;
+  width: 100vw;
+}
+
+.find     { grid-area: find;     border-right: 1px solid var(--line); }
+.chat     { grid-area: chat;     border-left: 1px solid var(--line); }
+.timeline { grid-area: timeline; border-top: 1px solid var(--line); background: var(--chrome); }
+/* highlight while dragging footage from the left panel over the timeline (item 21) */
+.timeline.droptarget { box-shadow: inset 0 0 0 2px var(--neon); }
+
+/* draggable column splitters (find | video | chat) */
+.vsplit { background: var(--line); cursor: col-resize; touch-action: none; }
+.vsplit:hover { background: var(--neon); box-shadow: 0 0 8px rgba(57,255,20,.5); }
+#splitL { grid-area: sl; }
+#splitR { grid-area: sr; }
+
+.find, .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+
+/* the reserved hole the native mpv surface is drawn over - keep it EMPTY + black */
+#videoHole {
+  grid-area: video;
+  min-width: 0; min-height: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+/* ============================ BRAND ======================================== */
+.brand, .chattitle {
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: .3px;
+  display: inline-flex;
+  align-items: center;
+}
+.brand .accent { color: var(--neon); }
+.diamond {
+  display: inline-block;
+  width: 13px; height: 13px;
+  margin-right: 8px;
+  background: var(--neon);
+  transform: rotate(45deg);
+  box-shadow: 0 0 12px var(--neon);
+}
+.diamond.sm { width: 10px; height: 10px; margin-right: 7px; box-shadow: 0 0 8px var(--neon); }
+/* chat-header robot mark (replaces the small diamond - CHANGE 6) */
+.robot { display: inline-block; font-size: 18px; line-height: 1; margin-right: 7px; }
+
+.brandbar {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.brandbar .sub { color: var(--dim); font-size: 13px; margin-left: auto; }
+
+/* ============================ SEARCH ======================================= */
+.searchbar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px 14px;
+  padding: 11px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.searchbar:focus-within {
+  border-color: var(--neon);
+  box-shadow: 0 0 0 1px var(--neon-soft);
+}
+.searchbar .mag { color: var(--dim); font-size: 16px; }
+#search {
+  flex: 1; min-width: 0;
+  background: transparent; border: 0; outline: none;
+  color: var(--text); font-size: 17px;
+}
+#search::placeholder { color: var(--dim-2); }
+
+.iconbtn {
+  background: transparent; border: 0; color: var(--dim);
+  font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.iconbtn:hover { color: var(--neon); }
+
+/* smart-search toggle: off = keyword (grep), on = qmd hybrid (meaning). Blue when on. */
+.smartbtn {
+  flex: none; cursor: pointer; font-size: 12px; font-weight: 700;
+  padding: 4px 9px; border-radius: 999px; line-height: 1;
+  background: transparent; color: var(--dim); border: 1px solid var(--line);
+  transition: color .12s, border-color .12s, background .12s;
+}
+.smartbtn:hover { color: var(--blue); border-color: var(--blue); }
+.smartbtn.on { color: #fff; background: #0c2a3a; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.4); }
+
+/* ============================ LIST / RESULTS =============================== */
+.listscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 16px; }
+
+.empty { color: var(--dim); text-align: center; padding: 52px 16px; }
+.empty .big { font-size: 42px; margin-bottom: 14px; opacity: .8; }
+.empty p { margin: 0; line-height: 1.5; }
+
+/* file-list header (count + transcribe-all) */
+.findhead {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 8px 2px 10px;
+  background: var(--bg);
+  color: var(--dim); font-size: 14px;
+}
+
+/* file rows */
+.filelist { display: flex; flex-direction: column; gap: 8px; }
+.file {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  cursor: pointer; transition: border-color .12s, background .12s;
+}
+.file:hover { border-color: var(--neon); background: #0f130c; }
+/* the transcript just viewed — a green outline so returning with "back" shows at a
+   glance which video you were reading (item 18). outline doesn't change layout. */
+.file.lastviewed { outline: 2px solid var(--neon); outline-offset: -1px; }
+.file .fmeta { flex: 1; min-width: 0; }
+.file .fname {
+  font-size: 16px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.file .fsub { color: var(--dim); font-size: 13px; margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* small round transcribe button */
+.tbtn {
+  flex: none;
+  width: 34px; height: 34px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 800; line-height: 1;
+  cursor: pointer; transition: transform .1s, background .12s, color .12s;
+  border: 1px solid var(--line);
+}
+.tbtn.add { background: var(--neon); color: #000; border-color: var(--neon);
+  box-shadow: 0 0 10px rgba(57,255,20,.35); }
+.tbtn.add:hover { transform: scale(1.08); }
+.tbtn.done { background: transparent; color: var(--dim); font-size: 17px; }
+.tbtn.done:hover { color: var(--neon); border-color: var(--neon); transform: rotate(45deg); }
+.tbtn.busy { background: transparent; cursor: default; }
+.tbtn[disabled] { cursor: default; }
+
+.spin {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid rgba(57,255,20,.25);
+  border-top-color: var(--neon);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* back arrow — above any results (a search OR a clicked video's cues), so there is
+   always a one-click way back to the full file list. A compact arrow, no label. */
+.backbtn {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 34px; padding: 0;
+  background: var(--panel); color: var(--neon);
+  border: 1px solid var(--neon-dim); border-radius: 7px;
+  font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.backbtn:hover { border-color: var(--neon); background: var(--neon-soft); }
+
+/* results header (search / transcript cues) — a sticky bar holding the back
+   button + the count/header text. */
+.resultshead {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 2px 12px;
+  background: var(--bg);
+  color: var(--text); font-size: 14px; font-weight: 600;
+  border-bottom: 1px solid var(--line-2);
+}
+.resultshead .rhtext { flex: 1; min-width: 0; }
+.more { color: var(--dim); font-size: 13px; text-align: center; padding: 12px 0 0; }
+
+/* left-panel sort toggle (videos + quotes): a tiny segmented control */
+.sortbar { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.sortlbl { color: var(--dim-2); font-size: 12px; margin-right: 2px; }
+.sortbtn {
+  font-size: 12px; padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  background: var(--panel); color: var(--dim); border: 1px solid var(--line);
+}
+.sortbtn:hover { border-color: var(--neon); color: var(--neon); }
+.sortbtn.on { background: var(--neon-dim); color: #eaffea; border-color: var(--neon); }
+/* "most relevant" sort = a crown button (no text), blue like the render-selection button */
+.sortbtn.crown { color: var(--blue); border-color: #14506a; font-size: 14px; padding: 3px 8px; }
+.sortbtn.crown:hover { color: #fff; border-color: var(--blue); }
+.sortbtn.crown.on { background: #0c2a3a; color: #fff; border-color: var(--blue); box-shadow: 0 0 6px rgba(0,174,239,.4); }
+
+/* keyboard-nav cursor over the file / quote rows (Up/Down arrows) */
+.file.kbsel, .qrow.kbsel { border-color: var(--neon); box-shadow: 0 0 0 2px var(--neon-soft); }
+
+/* file-list header now holds a count row + the sort toggle; let it wrap */
+.findhead { flex-wrap: wrap; row-gap: 8px; }
+.findhead .findcount { font-weight: 600; }
+
+/* "search within this transcript" box, shown in a clicked video's cue header */
+.cuesearch {
+  flex: 1; min-width: 0; margin-left: 4px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); font-size: 14px; padding: 6px 9px; outline: none;
+}
+.cuesearch::placeholder { color: var(--dim-2); }
+.cuesearch:focus { border-color: var(--neon); box-shadow: 0 0 0 1px var(--neon-soft); }
+/* the cue header stacks its top row (back + title) over the sort/search row */
+.resultshead.cue { flex-direction: column; align-items: stretch; gap: 8px; }
+.resultshead .rhrow { display: flex; align-items: center; gap: 10px; }
+.resultshead .rhrow.tools { gap: 8px; }
+
+/* quote / cue rows */
+.qlist { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+.qrow {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 11px 13px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  cursor: pointer; transition: border-color .12s, background .12s;
+}
+.qrow:hover { border-color: var(--neon); background: #0f130c; }
+.qrow.active { border-color: var(--neon); box-shadow: 0 0 0 1px rgba(57,255,20,.45); background: #0f130c; }
+.qrow.tonly { cursor: default; opacity: .92; }
+.qrow.tonly:hover { border-color: var(--blue); background: #07111a; }
+
+.qtc {
+  flex: none; min-width: 72px;
+  font-variant-numeric: tabular-nums;
+  color: var(--neon); font-weight: 800; font-size: 16px;
+  padding-top: 1px;
+}
+.qbody { flex: 1; min-width: 0; }
+.qtext { font-size: 16px; line-height: 1.4; word-break: break-word; }
+.qtext mark {
+  background: var(--neon); color: #000; padding: 0 2px; border-radius: 3px; font-weight: 700;
+}
+.qsrc {
+  color: var(--dim); font-size: 13px; margin-top: 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.qbadge {
+  display: inline-block; margin-left: 6px;
+  font-size: 11px; font-weight: 700; color: #000; background: var(--blue);
+  padding: 1px 7px; border-radius: 9px; vertical-align: middle;
+}
+
+/* ============================ CHAT ========================================= */
+.chathead {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.claude {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--dim); font-size: 14px; cursor: pointer; user-select: none;
+}
+.claude input { width: 18px; height: 18px; accent-color: var(--neon); cursor: pointer; }
+
+.messages { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Human-review Q&A cards — sit above the chat, in the right panel */
+.questions { flex: none; max-height: 45%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.qhead { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa8b5); display: flex; justify-content: space-between; align-items: center; }
+.qcount { color: var(--neon); font-weight: 600; }
+.qcard { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 8px 10px; background: rgba(255,255,255,.03); cursor: pointer; transition: box-shadow .12s, background .12s; }
+.qcard:hover { box-shadow: 0 0 6px rgba(255,255,255,.25); }
+.qcard.active { background: rgba(255,255,255,.08); box-shadow: 0 0 0 1px var(--neon) inset; }
+.qcard.answered { opacity: .6; }
+.qtext { color: var(--text); font-size: 14px; line-height: 1.35; }
+.qmeta { color: var(--muted, #9aa8b5); font-size: 12px; margin-top: 3px; }
+.qans { color: var(--text); font-size: 13px; margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--line); white-space: pre-wrap; }
+
+.intro {
+  color: var(--dim); font-size: 14px; line-height: 1.5;
+  padding: 10px 12px; border: 1px dashed var(--line);
+  border-radius: var(--r); background: var(--panel);
+}
+
+.msg { display: flex; flex-direction: column; max-width: 92%; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.becky { align-self: flex-start; align-items: flex-start; }
+.bubble {
+  padding: 10px 13px; border-radius: 12px; font-size: 15px;
+  line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+}
+.msg.user .bubble { background: var(--neon-dim); color: #eaffea; border: 1px solid var(--neon); }
+.msg.becky .bubble { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+.caption { color: var(--dim-2); font-size: 12px; margin-top: 4px; }
+
+/* proposal card */
+.card {
+  align-self: flex-start; max-width: 96%;
+  border: 1px solid var(--neon); border-radius: var(--r);
+  background: #0c1108; padding: 11px 12px;
+}
+.card.applied { border-color: var(--neon); opacity: .96; }
+.card.rejected { border-color: var(--line); opacity: .6; }
+.card-actions-label { color: var(--neon); font-size: 12px; font-weight: 700; margin-bottom: 7px; text-transform: uppercase; letter-spacing: .4px; }
+.card-preview { display: flex; flex-direction: column; gap: 4px; margin-bottom: 9px; }
+.pv { font-size: 14px; line-height: 1.4; color: var(--text); padding-left: 12px; position: relative; }
+.pv::before { content: "\203A"; position: absolute; left: 0; color: var(--neon); }
+.pv.dim { color: var(--dim); }
+.psrc { color: var(--dim); font-size: 12px; margin-bottom: 9px; }
+.card-actions { display: flex; gap: 8px; }
+.card-actions button {
+  font-size: 14px; font-weight: 700; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+}
+.card-actions .approve { background: var(--neon); color: #000; border-color: var(--neon); }
+.card-actions .approve:hover { box-shadow: 0 0 10px rgba(57,255,20,.4); }
+.card-actions .reject:hover { border-color: var(--crimson); color: var(--crimson); }
+.card-actions button[disabled] { opacity: .5; cursor: default; box-shadow: none; }
+.done-tag { font-size: 13px; font-weight: 700; color: var(--neon); }
+.done-tag.dim { color: var(--dim); }
+
+/* chips */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 14px; }
+.chip {
+  font-size: 13px; color: var(--neon); background: transparent;
+  border: 1px solid var(--neon-dim); border-radius: 999px;
+  padding: 6px 12px; cursor: pointer; transition: background .12s, border-color .12s;
+}
+.chip:hover { background: var(--neon-soft); border-color: var(--neon); }
+
+/* ask input */
+.askbar {
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line);
+}
+#ask {
+  flex: 1; min-width: 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
+  color: var(--text); font-size: 16px; padding: 11px 12px; outline: none;
+}
+#ask:focus { border-color: var(--neon); box-shadow: 0 0 0 1px var(--neon-soft); }
+#ask::placeholder { color: var(--dim-2); }
+/* send button = the ➤ arrow (CHANGE 7): a compact, centered green square */
+.sendbtn {
+  flex: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 700; line-height: 1;
+  background: var(--neon); color: #000; border: 1px solid var(--neon);
+  border-radius: 7px; padding: 0 16px; min-width: 48px; height: 44px;
+}
+.sendbtn:hover { box-shadow: 0 0 10px rgba(57,255,20,.4); }
+
+/* ============================ TIMELINE ===================================== */
+.tlhead {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-bottom: 1px solid var(--line-2);
+}
+.tlcount { color: var(--neon); font-weight: 800; font-size: 15px; font-variant-numeric: tabular-nums; }
+.tlspacer { flex: 1; }
+.transport { display: flex; gap: 6px; }
+.tlactions { display: flex; gap: 6px; }
+
+/* timeline zoom control */
+.tlzoom { display: flex; align-items: center; gap: 6px; }
+.tlzoomval {
+  min-width: 52px; text-align: center;
+  color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; user-select: none;
+}
+
+.btn, .tbtn2 {
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 12px; transition: border-color .12s, background .12s, color .12s;
+}
+.btn:hover, .tbtn2:hover { border-color: var(--neon); color: var(--neon); }
+.btn.small { padding: 5px 10px; font-size: 13px; }
+.btn.primary { background: var(--neon); color: #000; border-color: var(--neon); }
+.btn.primary:hover { color: #000; box-shadow: 0 0 10px rgba(57,255,20,.4); }
+.tbtn2 { min-width: 40px; font-size: 16px; line-height: 1; }
+.tbtn2.on { background: var(--neon); color: #000; border-color: var(--neon); box-shadow: 0 0 10px rgba(57,255,20,.4); }
+/* overlay 3-state (item 14): .on = shown in preview (green); .off = off entirely (gray).
+   A reserved width keeps the changing ✓/👁/✗ glyph from nudging the "name" button. */
+#tOverlay { min-width: 96px; text-align: center; }
+.tbtn2.off, .tbtn2.off:hover { color: var(--dim-2); border-color: var(--line); background: var(--panel); box-shadow: none; }
+
+/* extend-clip-by-a-frame buttons — BLUE so they read distinctly from the green
+   prev/next-frame buttons sitting right beside them. */
+.tbtn2.extend { color: var(--blue); border-color: #14506a; font-size: 13px; }
+.tbtn2.extend:hover { color: #fff; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.5); }
+
+/* render-just-the-selection button — blue, ALWAYS present (item 12): grayed when no
+   clips are selected, active + count-labelled otherwise. A reserved min-width keeps
+   its width constant so the "(N)" count never nudges the export button beside it. */
+#tRenderSel { color: var(--blue); border-color: #14506a; min-width: 152px; text-align: center; }
+#tRenderSel:hover { color: #fff; border-color: var(--blue); box-shadow: 0 0 8px rgba(0,174,239,.4); }
+#tRenderSel:disabled, #tRenderSel:disabled:hover {
+  color: var(--dim-2); border-color: var(--line); box-shadow: none; opacity: .55; cursor: default;
+}
+
+/* overflow-x: scroll (not auto) keeps the horizontal scrollbar's space ALWAYS reserved,
+   so zooming past the fit-width can't make a scrollbar appear and shove the panels up. */
+.tlbody { overflow-x: scroll; overflow-y: hidden; }
+.tlinner { display: flex; flex-direction: column; width: max-content; min-width: 100%; }
+
+/* ruler = the timecode bar: CLICK places the playhead, DRAG pans the timeline
+   sideways (see app.js). The I-beam cursor (not a hand) signals "click to position"
+   — the producer's expected timeline cursor. Ticks are absolute-positioned .rtick
+   labels (rendered by app.js) so the gray bar shows real compilation timecodes. */
+.ruler {
+  position: relative;
+  height: 24px; cursor: default; touch-action: none;
+  background-color: #676767;
+  border-bottom: 1px solid var(--line-2);
+  overflow: hidden;
+}
+.ruler.panning { cursor: grabbing; }
+/* a timecode tick: a faint left rule + the M:SS / H:MM:SS label. pointer-events
+   none so it never blocks a click/drag on the ruler beneath it. */
+.rtick {
+  position: absolute; top: 0; bottom: 0;
+  padding-left: 4px; border-left: 1px solid #111;
+  color: #111; font-size: 11px; line-height: 24px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
+}
+
+/* the clip track. I-beam cursor (not a hand) across the scrub surface — the
+   timeline-edit cursor a producer expects. */
+.track {
+  position: relative; cursor: default;
+  /* gap:0 so splitting a clip adds no space between the halves -> a cut doesn't shift the
+     following clips sideways (the clip's own border is the divider). */
+  display: flex; gap: 0; align-items: stretch;
+  /* Clips are ~2x taller than before (item 15) so there is vertical room to SEE the
+     waveform and cut on a zero crossing; the thumbnail stays small (fixed height,
+     below) instead of stretching to fill, so it no longer covers the waveform. */
+  padding: 8px 0; min-height: 180px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 149px, var(--line-2) 149px 150px);
+}
+.tlempty { color: var(--dim); font-size: 14px; padding: 28px 14px; }
+
+/* a clip block - a SOLID neon-tinted slab; NO text on it (label + duration live
+   only in the title= tooltip). The whole body is a scrub/seek surface. */
+/* A clip is tinted by its SOURCE video (the whole block, not a stripe): app.js sets
+   the inline background to that source's colour at LOW alpha when unselected and FULL
+   alpha when selected — so clips from the same video share a hue, and the selected
+   clip stands out by being solid/opaque (no separate outline needed). */
+.clip {
+  position: relative;
+  flex: none;
+  display: flex; align-items: stretch;
+  background: var(--neon-soft);
+  border: 1px solid transparent; border-radius: 6px;   /* colour set inline (per source) */
+  overflow: hidden; cursor: default;
+  transition: box-shadow .12s;
+}
+.clip:hover { box-shadow: 0 0 6px rgba(255,255,255,.35); }   /* glow on hover; never recolours the source outline */
+
+/* clip thumbnail = a SMALL FIXED icon pinned at the clip's left (after the trim
+   handle). Fixed size so it never resizes/reflows as the clip width changes (the
+   old full-bleed thumbnail did). pointer-events none so the scrub body underneath
+   still gets the click. */
+.clip .cthumb {
+  position: absolute; left: 10px; top: 9px; width: 46px; height: 58px;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  border-radius: 3px; border: 1px solid rgba(0,0,0,.5);
+  pointer-events: none; z-index: 1;
+}
+
+/* a selected clip is shown by its SOLID (opaque) source colour — set inline by
+   app.js — plus a thin white border for an unmistakable edge. No yellow outline. */
+.clip.selected {
+  z-index: 3;   /* the white edge + opaque fill are set inline (app.js clipBorder/clipColor) */
+}
+
+/* the clip currently being dragged to a new slot (CHANGE A): lifted + dimmed so the
+   eye follows it, tinted blue to read apart from the green hover + yellow selection.
+   The dimming was described here but never actually applied — the clip's own
+   thumbnail stayed fully opaque and blocked the view of the drop target underneath. */
+.clip.dragging {
+  cursor: grabbing;
+  z-index: 4;
+  opacity: 0.45;
+}
+
+/* the fill between the two trim handles — the scrub/seek surface. The first-frame
+   still now rides in a fixed-size .cthumb pinned at the left (above), so this stays
+   a plain transparent body that forwards every click to the scrubber. */
+.clip .cbody {
+  flex: 1; min-width: 0;
+}
+
+/* per-clip audio waveform — a single SVG stretched to fill the clip body (behind the
+   scrub surface + thumbnail), so Jordan can navigate the timeline visually. It's drawn
+   once in a 0..N x 0..1 viewBox with preserveAspectRatio=none, so it stretches for FREE
+   on zoom with no redraw. pointer-events:none keeps clicks going to the scrubber. */
+.clip .cwave {
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none; overflow: hidden;
+}
+.clip .cwave svg { width: 100%; height: 100%; display: block; }
+.clip .cwave path { fill: rgba(255,255,255,.5); }
+
+/* remove "x" - top-right corner, shown ON HOVER only */
+.clip .cx {
+  position: absolute; top: 3px; right: 3px;
+  width: 18px; height: 18px; line-height: 16px; text-align: center;
+  font-size: 14px; font-weight: 800; color: var(--dim);
+  background: rgba(0,0,0,.6); border: 1px solid var(--line); border-radius: 4px;
+  cursor: pointer; padding: 0; z-index: 2;
+  opacity: 0; pointer-events: none; transition: opacity .12s, color .12s, background .12s;
+}
+.clip:hover .cx { opacity: 1; pointer-events: auto; }
+.clip .cx:hover { color: #000; background: var(--crimson); border-color: var(--crimson); }
+
+/* resize handles = the subtle left/right edges; the only in-clip drag targets. The
+   handle is the clip's OWN source colour (--clip-col, set inline by app.js) so it
+   matches the clip + border instead of always being green; it brightens to white on
+   hover to read as "grab me" on any hue. */
+.clip .rh {
+  position: absolute; top: 0; bottom: 0; width: 8px; z-index: 2;
+  cursor: ew-resize; touch-action: none;
+  /* semi-transparent OVERLAYS on the edges (not flex items) so they add NO width — a cut
+     no longer shifts the following clips — and the waveform + zero crossings show THROUGH
+     them. They brighten on hover; a click (no drag) selects the clip (see endResize). */
+  background: var(--clip-col, var(--neon-dim)); opacity: 0.35;
+}
+.clip .rh-l { left: 0; }
+.clip .rh-r { right: 0; }
+.clip .rh:hover { opacity: 0.9; background: #fff; }
+
+/* playhead: a solid black line through the track, with a WHITE flag-shaped head
+   that covers the full gray RULER band above the track (not just the clip it's
+   drawn inside of — #playhead lives inside #track, which sits below the
+   separate #ruler element, so the head needs a negative top reaching up over
+   it: .ruler is 24px + a 1px border = 25px). Tapers to a point at the bottom
+   where it meets the line, like a map-pin flag. */
+#playhead {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #000;
+  pointer-events: none; z-index: 5;
+}
+#playhead::before {
+  content: ""; position: absolute; top: -25px; left: -8px;
+  width: 18px; height: 25px;
+  background: #fff;
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.45);
+}
+/* two vertical grip hashmarks inside the white flag head (item 7 / playhead.JPG),
+   2px thick and evenly spaced around the flag's centre (~ +1), in its straight upper
+   part above where it tapers to the point. */
+#playhead::after {
+  content: ""; position: absolute; top: -22px; left: -3px;
+  width: 8px; height: 12px;
+  background:
+    linear-gradient(#3a3a3a, #3a3a3a) 1px 0 / 2px 100% no-repeat,
+    linear-gradient(#3a3a3a, #3a3a3a) 5px 0 / 2px 100% no-repeat;
+  pointer-events: none;
+}
+
+/* the SECONDARY playhead stock (item 1): a 2nd, identical black bar at pauseReturnComp —
+   where Pause snaps back to, and where cut/split act during playback. It has NO white
+   flag head (only the moving #playhead does). z-index 4 sits it UNDER the moving playhead
+   (z 5), so when the two coincide (paused) you simply see the playhead. */
+#stock {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #000;
+  pointer-events: none; z-index: 4;
+}
+/* blink black<->white at ~standard-text-cursor speed when moved during playback (item 2).
+   The 50%->50.01% jump is an instant switch (a blink), not a fade. */
+#stock.flashing { animation: stockBlink 0.8s infinite; }
+@keyframes stockBlink {
+  0%, 50%      { background: #000; }
+  50.01%, 100% { background: #fff; }
+}
+
+/* playback threshold (item 16): the quiet stretches are dimmed (a dark overlay), and a
+   bright horizontal bar spans the track — drag it up/down to set how quiet counts as
+   skippable. Both only appear while the threshold is toggled on. */
+#quietLayer {
+  position: absolute; top: 8px; bottom: 8px; left: 0; right: 0;
+  pointer-events: none; z-index: 3;
+}
+#quietLayer .qdim {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.62);
+  box-shadow: inset 1px 0 0 rgba(0,0,0,.6), inset -1px 0 0 rgba(0,0,0,.6);
+}
+#threshold {
+  /* width is set inline by renderThreshold to span only the clips (not the empty
+     trailing scroll space), so the level line sits ON the waveforms. */
+  position: absolute; left: 0; height: 14px; margin-top: -7px;
+  cursor: ns-resize; z-index: 6; touch-action: none;
+}
+#threshold::before {   /* the visible line, centred in the 14px grab strip */
+  content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 2px;
+  background: var(--yellow); box-shadow: 0 0 5px rgba(0,0,0,.9), 0 0 3px var(--yellow);
+}
+#threshold::after {    /* a small grab knob so it's obvious the line is draggable */
+  content: ""; position: absolute; left: 10px; top: 3px; width: 10px; height: 8px;
+  background: var(--yellow); border-radius: 2px; box-shadow: 0 0 4px rgba(0,0,0,.8);
+}
+
+/* reorder drop indicator (CHANGE A): a bright insertion line marking where the
+   dragged clip will land. Blue keeps it distinct from the green playhead + the
+   yellow selection; z-index sits above both while a drag is in progress. */
+.dropmark {
+  position: absolute; top: 0; bottom: 0; width: 3px;
+  background: var(--blue); box-shadow: 0 0 8px var(--blue);
+  pointer-events: none; z-index: 6;
+}
+
+/* ============================ BUSY BAR ====================================== */
+/* Non-intrusive: a thin animated strip at the very top, shown only once an
+   in-flight engine call has taken over a second (see app.js busyStart/busyEnd) —
+   never appears for anything fast, never blocks input. */
+#busyBar {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, transparent, var(--neon), transparent);
+  background-size: 200% 100%;
+  animation: busySlide 1.1s linear infinite;
+  z-index: 1001; opacity: .85; pointer-events: none;
+}
+@keyframes busySlide { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ============================ TOAST ======================================== */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(10px);
+  background: #0c0c0c; color: var(--text);
+  border: 1px solid var(--neon); border-radius: 8px;
+  padding: 10px 18px; font-size: 14px; font-weight: 600;
+  box-shadow: 0 0 18px rgba(0,0,0,.7), 0 0 12px rgba(57,255,20,.2);
+  opacity: 0; transition: opacity .2s, transform .2s; z-index: 999;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================ CONTEXT MENU ================================= */
+/* right-click menu for timeline clips + left-panel rows (open in Explorer, copy
+   file name, open transcript). A small neon-bordered popup positioned at the
+   cursor; closes on the next click / scroll / Escape (see app.js). */
+.ctxmenu {
+  position: fixed; z-index: 1000; min-width: 210px;
+  background: #0c0c0c; border: 1px solid var(--neon); border-radius: 7px; padding: 5px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.7), 0 0 12px rgba(57,255,20,.2);
+}
+.ctxmenu button {
+  display: block; width: 100%; text-align: left;
+  background: transparent; color: var(--text); border: 0; border-radius: 5px;
+  font-size: 14px; padding: 8px 12px; cursor: pointer; white-space: nowrap;
+}
+.ctxmenu button:hover { background: var(--neon-soft); color: var(--neon); }

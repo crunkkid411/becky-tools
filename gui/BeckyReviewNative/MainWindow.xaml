@@ -1,0 +1,54 @@
+<Window x:Class="BeckyReviewNative.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:wf="clr-namespace:System.Windows.Forms.Integration;assembly=WindowsFormsIntegration"
+        Title="Becky Review (Native)" Height="900" Width="1600"
+        WindowState="Maximized" WindowStartupLocation="CenterScreen"
+        Background="#000000" Loaded="Window_Loaded">
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Margin" Value="6" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="Background" Value="#141414" />
+            <Setter Property="BorderBrush" Value="#39FF14" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- Top bar: pick a case folder (native dialog) + status. -->
+        <DockPanel DockPanel.Dock="Top" Background="#0A0A0A" LastChildFill="True">
+            <Button x:Name="PickFolderButton" Content="Pick folder..." DockPanel.Dock="Left"
+                    Click="PickFolderButton_Click" />
+            <TextBlock x:Name="StatusLabel" Text="Pick a case folder to begin." DockPanel.Dock="Right"
+                       Foreground="#FFD700" FontSize="14" VerticalAlignment="Center"
+                       Margin="14,0,12,0" TextTrimming="CharacterEllipsis" />
+            <TextBlock />
+        </DockPanel>
+
+        <!-- The WebView2 UI fills the whole content area (find | video-hole | chat + timeline).
+             The native mpv pane is OVERLAID on top of the page's #videoHole via VideoHost, whose
+             position+size are set from the page's {t:"videoRect"} message. A native HWND always
+             renders above the WebView2 in its rectangle, so it covers the (empty) center hole only. -->
+        <Grid x:Name="ContentGrid" ClipToBounds="True">
+            <wv2:WebView2 x:Name="WebView" />
+            <Border x:Name="VideoHost" Background="#000000"
+                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Width="0" Height="0" Visibility="Collapsed">
+                <wf:WindowsFormsHost x:Name="VideoHostElement" />
+            </Border>
+            <!-- The native timeline pane, overlaid on the page's #timelineHole exactly like the
+                 mpv pane on #videoHole. Hidden until native-timeline mode is toggled on. -->
+            <Border x:Name="TimelineHost" Background="#0A0A0A"
+                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Width="0" Height="0" Visibility="Collapsed">
+                <wf:WindowsFormsHost x:Name="TimelineHostElement" />
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

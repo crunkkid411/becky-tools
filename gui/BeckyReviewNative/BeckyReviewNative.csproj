@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Becky Review: one-window forensic video reviewer.
+       LEFT  = WebView2 (HTML UI, virtual-host, NO server) - AI-authorable + CDP-verifiable.
+       RIGHT = libmpv native pane - frame-exact, GPU-decoded scrub (no server).
+       Shells out to existing becky-*.exe (JSON in/out) - engine unchanged.
+       Build: `dotnet build`. Run: `dotnet run` from this folder. Needs .NET 8 SDK + WebView2 runtime. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>BeckyReviewNative</AssemblyName>
+    <RootNamespace>BeckyReviewNative</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2849.39" />
+  </ItemGroup>
+
+  <!-- Ship the HTML UI next to the exe so the virtual-host mapping can find it.
+       Exclude tooling artifacts (.claude session-tracking) so they never ship. -->
+  <ItemGroup>
+    <Content Include="ui\**\*.*" Exclude="ui\**\.claude\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Copy the mpv video runtime to output if present (git-ignored big binaries;
+       run fetch-mpv.ps1 to install them). mpv.exe = wid-embed; libmpv-2.dll = render API. -->
+  <ItemGroup>
+    <None Include="runtime\mpv\mpv.exe" Condition="Exists('runtime\mpv\mpv.exe')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="runtime\mpv\libmpv-2.dll" Condition="Exists('runtime\mpv\libmpv-2.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
