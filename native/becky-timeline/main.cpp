@@ -217,6 +217,8 @@ int main(int argc, char** argv) {
             if (GetAsyncKeyState(VK_SPACE) & 1) playing = !playing;
             if (GetAsyncKeyState('S') & 1) { splitA(curSec); lastComposed = -1; }
             if (GetAsyncKeyState(VK_DELETE) & 1) { deleteA(curSec); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; }
+            if (GetAsyncKeyState('O') & 1) { splitA(curSec); deleteA(curSec); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; }         // trim OUT to playhead
+            if (GetAsyncKeyState('I') & 1) { splitA(curSec); deleteA(curSec - 0.02); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; } // trim IN to playhead
         }
         if (playing) { curSec += dt; if (curSec >= g_compDur) curSec = 0; }
 
@@ -236,7 +238,7 @@ int main(int argc, char** argv) {
         ImGui::Begin("becky", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
         ImGui::Text("becky-timeline   %s   %.1fs / %.0fs   compose %.2f ms (%.0f fps)   [Space = play]   drag the timeline to scrub",
             playing ? "PLAYING" : "paused", curSec, g_compDur, g_composeMs, g_composeMs > 0 ? 1000.0 / g_composeMs : 0);
-        ImGui::SameLine(); ImGui::TextDisabled("  |  [S]plit  [Del]ete  |  drag = scrub");
+        ImGui::SameLine(); ImGui::TextDisabled("  |  [S]plit  trim [I]n/[O]ut  [Del]ete  |  drag = scrub");
 
         if (g_vw > 0) {
             float availW = ImGui::GetContentRegionAvail().x, availH = g_H * 0.60f;
