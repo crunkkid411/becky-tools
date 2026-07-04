@@ -10,6 +10,51 @@
 
 ---
 
+## native timeline goes LIVE — engine-driven edits + real waveforms (2026-07-04, local, `claude/native-timeline-live`)
+
+**The goal.** Execute HANDOFF-NATIVE-TIMELINE.md Phase A (make the embed a live two-way surface) after
+Jordan approved the plan + 4 amendments (edit-state sync-back, audio gap, preview handover decision,
+keyboard forwarding) — and replace the inaccurate SVG waveforms with REAL ones (Jordan's explicit ask).
+
+**The architecture that landed (simpler than planned):** the Go engine (`becky-review-engine`) was the
+timeline model all along — so the native timeline is a fast VIEW/CONTROLLER, not a second model. Its mouse
+gestures emit semantic NDJSON events (`{"ev":"edit","kind":"trim"...}`) that the page routes to the SAME
+engine verbs the DOM timeline used (`set_trim`/`reorder`/`reorder_many`), scrub events go through the same
+`seekTimeline` → mpv path, and Ctrl+Z hits the engine's existing undo — which therefore reverses native
+edits too. Embedded mode decodes NO video (mpv stays the bridge preview; no double-decode); the page keeps
+the keyboard (WM_MOUSEACTIVATE → MA_NOACTIVATE keeps clicks from stealing focus) and forwards wheel/zoom
+as ops.
+
+**What shipped.**
+1. `native/becky-timeline/main.cpp` (rewrite): stdin ops `loadreel` (live, empty-tolerant, gesture-guarded) /
+   `seek{quiet}` / `vis` (idle when hidden) / `zoom` / `wheel`; timeline-only embedded UI; gestures — click=
+   seek+select, Ctrl/Shift multi-select, trim handles with snap + Vegas ripple-trim ghost, body-drag reorder
+   with dropmark (engine `to`-index contract), Ctrl+wheel zoom around the cursor, adaptive ruler, scrollbar,
+   playhead auto-follow; **REAL waveforms** — per-source GStreamer audio decode → min/max int8 pyramid
+   (48 kHz, 64/1024/16384 samples per bin, ABSOLUTE scale so silence looks silent), progressive while
+   decoding, cached at `%LOCALAPPDATA%\becky\peaks\<fnv1a(path|size|mtime)>.bpk`; typed-guarded op parsing
+   (a string `t` from a forwarded page message crashed the process once — now every op is fenced).
+2. `gui/BeckyReviewNative/MainWindow.Timeline.cs` (rewrite): persistent process with stdio pipes (mpv
+   pattern — launch at startup, never relaunch per toggle), reel/playhead/op forwarding, stdout→page relay
+   (`{t:"tlEvent"}`), stderr drain, Exited → `{t:"tlDead"}` (page falls back to the DOM timeline — verified
+   live when the crash bug fired).
+3. `ui/app.js`: reel push gains id/label/sel/playhead (+`view` only on toggle-on so later pushes never stomp
+   the user's zoom), `onTlEvent` router (scrub/select/edit/view), wheel + ArrowUp/Down forwarding in native
+   mode, tlDead fallback. `MainWindow.xaml.cs`: `tlOp` + `timelinePlayhead` routing.
+
+**Proven on real footage (`E:\TakingBack2007`, 679 files indexed), driven by CDP + real Win32 input:**
+add 3 quotes → toggle native → waveforms visible (speech bursts/silence structure); ruler drag-scrub moved
+the app playhead 1011→1327.77 px (paused, exact math); right-handle trim `3 clips · 0:08 → 0:07` through
+engine `set_trim`; body-drag reorder `c1,c2,c3 → c2,c3,c1` through `reorder`; Ctrl+Z twice restored order
+then duration (engine undo across native edits — the losable-edits invariant is closed); zoom
+`192 → 288 (ArrowUp ×1.5) → 402.78 px/s (Ctrl+wheel ×1.15^2.4, exact)`; live add with native ON appeared
+instantly (4 clips · 0:10); toggle off/on kept the same PID; waveform cache hit on relaunch (296 KB .bpk).
+Builds: MSVC `_build.bat` clean; `dotnet build -c Release` 0 warnings 0 errors.
+
+**Still open (see HANDOFF-NATIVE-TIMELINE.md §10):** audio for the Phase-C preview handover (A5), scrub
+proxies for the compositor takeover (A6), Phase C integrations already work through the model (save/load/
+export/hits see native edits by construction), skip-the-hidden-DOM-build perf at scale.
+
 ## becky-hits — forensic agent's hit-list -> auto-loaded Becky Review timeline (2026-06-30, local, `claude/becky-hits-to-review`)
 
 **The goal.** The specialized forensic agent has a precious, jam-packed context. It should emit only the

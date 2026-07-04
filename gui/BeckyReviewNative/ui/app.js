@@ -249,6 +249,8 @@
         case 'externalDrop': onExternalDrop(m.paths); break;   // OS files dropped onto the window (item 21)
         case 'timelineScrub': seekTimeline(m.comp, false); break;   // native timeline drag -> seek (same path as a DOM click)
         case 'timelineView': if (m.pxPerSec > 0) { state.pxPerSec = m.pxPerSec; if (typeof updateZoomLabel === 'function') { updateZoomLabel(); } } break;
+        case 'tlEvent': onTlEvent(m.json); break;   // becky-timeline gesture events (scrub/select/edit/view)
+        case 'tlDead': onTlDead(); break;           // the native timeline process died -> DOM fallback
       }
     });
   }
@@ -308,20 +310,26 @@
     post({ t: 'timelineRect', x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
   }
 
-  function pushTimelineReel() {
+  function pushTimelineReel(withView) {
     if (!nativeTL) { return; }
     var clips = (state.timeline && state.timeline.clips) ? state.timeline.clips : [];
     var out = [];
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i];
-      out.push({ source: c.source, in: c.in || 0, out: c.out || 0 });   // becky-timeline decodes the real clip
+      out.push({ id: String(c.id), source: c.source, in: c.in || 0, out: c.out || 0,
+                 label: baseName(c.source || '') });
     }
-    post({ t: 'timelineReel', clips: out, pxPerSec: state.pxPerSec, scroll: tlScrollSec() });
+    var msg = { t: 'timelineReel', clips: out, pxPerSec: state.pxPerSec, scroll: tlScrollSec(),
+                sel: (state.selectedClipIds || []).map(String),
+                playhead: (typeof state.playheadComp === 'number') ? state.playheadComp : 0 };
+    if (withView) { msg.view = true; }   // only the toggle-on push adopts zoom/scroll/playhead
+    post(msg);
   }
 
   function pushTimelinePlayhead() {
     if (!nativeTL) { return; }
-    post({ t: 'timelinePlayhead', comp: (typeof state.playheadComp === 'number') ? state.playheadComp : 0 });
+    post({ t: 'timelinePlayhead', comp: (typeof state.playheadComp === 'number') ? state.playheadComp : 0,
+           playing: !!state.playing });
   }
 
   function setNativeTL(on) {
@@ -333,7 +341,61 @@
     if (tlin) { tlin.style.visibility = nativeTL ? 'hidden' : ''; }
     if (tlNativeBtn) { tlNativeBtn.classList.toggle('on', nativeTL); }
     post({ t: 'timelineMode', on: nativeTL });
-    if (nativeTL) { reportTimelineRect(); pushTimelineReel(); pushTimelinePlayhead(); }
+    if (nativeTL) { reportTimelineRect(); pushTimelineReel(true); pushTimelinePlayhead(); }
+  }
+
+  /* becky-timeline gesture events (relayed by the host as {t:"tlEvent", json:"..."}) route to
+     the SAME engine verbs + seek path the DOM timeline used — the Go engine stays the ONE
+     edit model; the native surface is a fast view/controller. Lines without an "ev" field are
+     the AI-facing state dumps — not for the page. */
+  function onTlEvent(raw) {
+    var o; try { o = JSON.parse(raw); } catch (_) { return; }
+    if (!o || !o.ev) { return; }
+    if (o.ev === 'scrub') { seekTimeline(o.t || 0, false); return; }   // navigate PAUSED, never auto-play
+    if (o.ev === 'view') {
+      if (o.pxPerSec > 0) {
+        state.pxPerSec = Math.round(o.pxPerSec * 10) / 10;   // readable zoom label; native keeps the exact value
+        if (typeof updateZoomLabel === 'function') { updateZoomLabel(); }
+      }
+      return;
+    }
+    if (o.ev === 'select') {
+      var ids = (o.ids || []).map(String);
+      state.selectedClipIds = ids;
+      state.selectedClipId = ids.length ? ids[ids.length - 1] : null;
+      markSelectedClip();
+      return;
+    }
+    if (o.ev === 'edit') { applyNativeEdit(o); }
+  }
+
+  async function applyNativeEdit(o) {
+    var rep = null;
+    if (o.kind === 'trim') { rep = await beckyCall('set_trim', { id: o.id, in: o.in, out: o.out }); }
+    else if (o.kind === 'reorder') { rep = await beckyCall('reorder', { id: o.id, to: o.to }); }
+    else if (o.kind === 'reorder_many') { rep = await beckyCall('reorder_many', { ids: o.ids, to: o.to }); }
+    else { return; }
+    if (rep.ok && rep.data) { applyTimeline(rep.data); }               // -> renderTimeline -> reel re-push reconciles native
+    else { toast('Edit failed' + (rep.error ? ': ' + rep.error : '')); pushTimelineReel(); }
+  }
+
+  function onTlDead() {
+    if (!nativeTL) { return; }
+    setNativeTL(false);
+    toast('Native timeline stopped — back to the classic timeline.');
+  }
+
+  // Wheel over the native pane: the pointer is over the native child HWND, but wheel events
+  // route to the FOCUSED window (the WebView), which hit-tests the page at the cursor — this
+  // element. Forward it so Ctrl+wheel zooms / wheel scrolls the NATIVE view; capture-phase +
+  // stopPropagation keeps the page's own DOM-zoom handler out of the loop while native is on.
+  if (tlBodyEl) {
+    tlBodyEl.addEventListener('wheel', function (e) {
+      if (!nativeTL) { return; }
+      e.preventDefault(); e.stopPropagation();
+      var r = tlBodyEl.getBoundingClientRect();
+      post({ t: 'tlOp', op: 'wheel', dy: -(e.deltaY || 0) / 100, ctrl: !!(e.ctrlKey || e.metaKey), x: e.clientX - r.left });
+    }, { capture: true, passive: false });
   }
 
   // becky-timeline.exe embeds INTO the timeline pane (child HWND via --wid, over #timelineHole,
@@ -3438,10 +3500,12 @@
     }
     // Up/Down elsewhere (the list isn't focused) = zoom the timeline in/out — a
     // clip or the timeline itself is the implied context once the list isn't
-    // claiming these keys.
+    // claiming these keys. In native mode the NATIVE view owns zoom.
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      zoomBy(e.key === 'ArrowUp' ? 1.5 : 1 / 1.5);
+      var zf = (e.key === 'ArrowUp') ? 1.5 : 1 / 1.5;
+      if (nativeTL) { post({ t: 'tlOp', op: 'zoom', f: zf }); return; }
+      zoomBy(zf);
       return;
     }
 

@@ -9,6 +9,29 @@
 > **Status as of 2026-07-03:** the native timeline **embeds in-window and renders over the
 > WebView2** (the hard part — solved + committed, `49f90e0`). It does NOT yet have Becky
 > Review's features ported into it. That port is the roadmap in §10.
+>
+> **Reviewed + AMENDED 2026-07-04 (Jordan approved):** four gaps were found and folded into §10 —
+> edit-state sync-back (edits were losable on save), audio (was absent from the plan entirely),
+> an explicit preview-ownership handover (mpv is the bridge, the native compositor takes over at
+> multi-track), and keyboard forwarding for the embedded pane. Also settled: waveforms must be
+> computed from REAL audio samples — Becky Review's SVG waveforms are inaccurately drawn and are
+> NOT to be ported (Jordan, 2026-07-04).
+>
+> **SHIPPED 2026-07-04 (Phase A complete + the native half of Phase B):** the embedded timeline is
+> LIVE and engine-driven. Persistent process (launched at startup, idles hidden, survives toggles),
+> live `loadreel` on every model change, gestures emit semantic events the page routes to the SAME
+> engine verbs the DOM used (`set_trim`/`reorder`/`reorder_many`; scrub → `seekTimeline` → mpv;
+> Ctrl+Z → engine `undo` reverses native edits — the sync-back invariant holds because the ENGINE
+> was the model all along). REAL waveforms: per-source min/max pyramid from the actual samples
+> (48 kHz, 750 bins/sec finest, absolute scale), cached at `%LOCALAPPDATA%\becky\peaks\*.bpk`.
+> Trim handles with snap + Vegas-style ripple-trim ghost, drag-reorder with dropmark, multi-select
+> (Ctrl/Shift), Ctrl+wheel + ArrowUp/Down zoom (view echoed back to the page label), adaptive
+> ruler, scrollbar, auto-follow. All verified on REAL footage (`E:\TakingBack2007`) via CDP +
+> Win32 input: trim `0:08→0:07`, reorder `c1,c2,c3→c2,c3,c1`, two undos restored both, zoom
+> `192→288→402.78 px/s` exact. Most Phase-B "controls" needed NO porting — the page keeps owning
+> transport/split/speed/threshold (they act on the model; the native view reflects it). Still open:
+> §10.A5 audio + the Phase-C preview handover, proxies (A6), and skipping the hidden DOM build at
+> scale (the old Phase-2 perf note in app.js).
 
 ---
 
@@ -31,7 +54,8 @@ Two hard constraints from Jordan, learned the painful way:
   failure here.
 - **"It has to replace the current timeline. Period."** A separate window is a **hard boundary — a
   non-starter.** ("first of all, it's a separate fucking window. hard boundary, fuck that.") The
-  native timeline must live *inside* the app, in the same rectangle the old timeline occupied.
+  native timeline must live *inside* the app, in the same rectangle the old timeline occupied, with the
+  same integrations and user-defined customizations established in Becky Review's timeline
 
 Interaction requirements: **A/B roll + PiP/crop**, split/delete/trim/scrub on a live composite.
 Transitions don't matter. Captions/filters/grade/audio-treatment stay CLI becky-tools (he pre-treats
@@ -262,28 +286,60 @@ of Becky Review's DOM timeline + its integrations. Ordered by dependency. Each i
 screenshot-verified working state, not "compiles."
 
 ### Phase A — make the embedded timeline a live, two-way surface (unblocks everything)
-1. **Live reel sync.** Today the reel is passed once (on toggle) — editing in the app afterward doesn't
-   update the native timeline. Add a becky-timeline **stdin `{"op":"loadreel","path":...}`** op (+
-   tolerate an empty reel), and have `MainWindow.Timeline.cs` **launch becky-timeline ONCE, early
-   (mpv pattern), keep it running, and push reel changes via stdin.** (Currently it launches on toggle
-   and relaunches — replace with the persistent-process pattern in `MpvPlayer.cs`.)
-2. **Scrub-back sync.** becky-timeline already emits state on stdout; route its scrub/playhead back to
-   the host so the **mpv preview seeks to the timeline playhead** (the app owns the reel→file→seek map;
-   drive mpv, don't double-decode). Conversely feed the app's playhead into the timeline.
-3. **Scrub proxies.** becky-timeline currently decodes BRN's **raw** source files → real footage scrubs
-   slow (long-GOP). Wire it to becky **ScrubProxy** (all-intra) — the reel the host writes should point
-   at the proxy per source, generating it on demand. This is the difference between "works" and "fast."
+1. **Persistent process + live reel sync.** Today the reel is passed once (on toggle) and the host
+   holds **no stdio pipes at all** to the embedded process (verified 2026-07-04: `EnsureEmbeddedTimeline`
+   redirects nothing and early-returns while running, so the page's continuous reel re-pushes are
+   dropped). Launch becky-timeline **ONCE, early (mpv pattern), redirect stdin+stdout, keep it
+   running**, and push reel changes via a new stdin **`{"op":"loadreel","reel":{...}}`** op (tolerate
+   an empty reel). The page already re-pushes on every render/scroll — only the host→stdin leg is
+   missing. When the native pane is toggled off, **idle** the process (skip render/decode; don't kill).
+2. **EDIT-STATE SYNC BACK — the missing invariant; do this before anything else builds on edits.**
+   While native mode is on, **becky-timeline's edit state is the MASTER reel.** It already emits state
+   on stdout after every edit; the host must consume it and mirror it into the page's clip model
+   (guarding against echo — a mirrored update must NOT re-push the reel). Save/Load/Export/EDL/hits
+   all read the page/host reel: without this leg, a split made natively is **silently lost on save.**
+3. **Playhead sync both ways; mpv is the preview — but only as a BRIDGE (decision 2026-07-04).**
+   becky-timeline emits the playhead as `{t, src, srcT}` (it owns the reel→source-time map); the host
+   drives the existing mpv pane from it (atomic `loadfile --start=<srcT>` — never load-then-seek, see
+   the seek-race memory). App-side seeks (search click) feed the playhead INTO the timeline. While
+   embedded under mpv, becky-timeline runs **timeline-UI-only (no video decode)** — no double-decode,
+   no second preview. The handover point is fixed: **when multi-track/PiP lands (Phase C), the native
+   compositor BECOMES the preview**, and the forensic overlay + audio move native with it. Don't build
+   deeper on mpv than this seek coupling.
+4. **Keyboard forwarding.** All hotkeys are deliberately dead when embedded (the `!g_parentWid` gate;
+   the host even re-focuses the WebView on MouseEnter). The fix is NOT focus games: the page — which
+   really has focus — captures keys in native mode and forwards them as the **same NDJSON ops the AI
+   uses** (`{"op":"split"}`…). Humans become another NDJSON client; dual-operability taken to its
+   conclusion.
+5. **Audio — was missing from this roadmap entirely.** becky-timeline decodes video only (verified:
+   zero audio code). The bridge state is fine — mpv plays the sound. But the end-state preview (native
+   compositor, PiP) has **no sound story**, and Jordan edits by ear: plan a GStreamer audio branch in
+   becky-timeline for play-through (it also becomes the master clock for A/V sync) as part of the
+   Phase-C preview handover. Until then mpv stays the only audible path — one more reason (3) keeps it.
+6. **Scrub proxies — deferred by the timeline-UI-only decision in (3).** While mpv is the preview the
+   embedded timeline decodes no video, so proxies now matter only for mpv's own scrub feel (unchanged
+   from today's app) and for the Phase-C/D compositor takeover, where all-intra ScrubProxy per source
+   (generated on demand) is still the difference between "works" and "fast."
 
 ### Phase B — port the timeline's own controls into the native surface
+**Sizing warning (2026-07-04): this phase is the BULK of the whole effort.** It reads as a tidy
+bullet list but drag-reorder, snap-trimming, multi-select and waveforms are each real custom-widget
+work; schedule them as separate verified increments, not one item.
+
 becky-timeline must own these (they exist as DOM buttons today — see `ui/index.html` toolbar):
 - **Clip model parity:** click-to-seek, **drag-reorder**, **resize/trim handles with edge-snap**,
   extend-selected-clip-by-one-frame (`[◄` / `►]`), split (✂), selection + multi-select.
 - **Transport:** play/pause, **frame-step (Left/Right)**, **2× speed toggle**, **playback threshold**
   (skip quiet parts during review — evidence NOT cut), **trim-silence** (a real edit).
 - **Zoom** (Ctrl+scroll, +/- ), ruler scrub, playhead.
-- **Undo/redo** (Ctrl+Z / Ctrl+Shift+Z) — the edit model already supports copy-on-write; expose it.
-- **Waveforms** on clips (Becky Review draws them; the fast-scrub value depends on the waveform being
-  visible — that's how Jordan finds zero-crossings by eye).
+- **Undo/redo** (Ctrl+Z / Ctrl+Shift+Z) — implement as a snapshot stack in becky-timeline's OWN state
+  (clips are tiny structs; snapshotting is cheap). Do NOT wire the Go editmodel into the hot path for
+  this — converge with it later at the verb-schema level, not in-process.
+- **ACCURATE waveforms** on clips, computed from the **real audio samples** (min/max peak pyramid,
+  zoom-adaptive, cached per source). **Do NOT port Becky Review's SVG waveforms — Jordan confirmed
+  2026-07-04 they are inaccurately drawn and not good enough.** He finds zero-crossing cut points by
+  eye, so the drawing must be sample-true at high zoom: becky-timeline decodes PCM itself (GStreamer
+  audio branch) rather than reusing the engine's coarse peaks.
 - **Screenshot** the preview (`Screenshot_0001.png`).
 
 ### Phase C — port the surrounding integrations (the "all functionality" part)

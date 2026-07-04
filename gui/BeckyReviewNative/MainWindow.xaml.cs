@@ -289,10 +289,13 @@ public partial class MainWindow : Window
                 HandleTimelineReel(root);
                 break;
             case "timelinePlayhead":
-                // ponytail: DOM playhead -> embedded editor sync is iteration 2 (stdin seek op).
+                HandleTimelinePlayhead(root);
                 break;
             case "timelineMode":
                 HandleTimelineMode(root);
+                break;
+            case "tlOp":
+                HandleTimelineOp(root);
                 break;
             case "openNativeTimeline":
                 HandleOpenNativeTimeline(root);
