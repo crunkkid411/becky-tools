@@ -68,7 +68,7 @@ static bool layerFrame(Layer& L, double srcSec, GstVideoFrame* f, GstSample** ou
 }
 
 // ---------------- clip model ----------------
-struct Clip { double in, out, compStart; const char* label; };  // in/out = source seconds
+struct Clip { double in, out, compStart; std::string label; };  // in/out = source seconds
 static std::vector<Clip> g_trackA;   // laid end-to-end on the comp timeline
 static Clip g_trackB;                // one PiP clip spanning the comp timeline
 static double g_compDur = 0;
@@ -78,6 +78,24 @@ static double mapTrackA(double t) {
     for (auto& c : g_trackA) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) return c.in + (t - c.compStart); }
     if (!g_trackA.empty()) { auto& c = g_trackA.back(); return (t < 0) ? c.in : c.out; }
     return 0;
+}
+
+static void relabelA() { for (size_t i = 0; i < g_trackA.size(); i++) g_trackA[i].label = "clip " + std::to_string(i + 1); }
+// Split the track-A clip under comp time t into two at that point.
+static void splitA(double t) {
+    for (size_t i = 0; i < g_trackA.size(); i++) { Clip& c = g_trackA[i]; double d = c.out - c.in;
+        if (t > c.compStart + 0.05 && t < c.compStart + d - 0.05) {
+            double srcT = c.in + (t - c.compStart);
+            Clip right{ srcT, c.out, t, "" }; c.out = srcT;
+            g_trackA.insert(g_trackA.begin() + i + 1, right); relabelA(); return; } }
+}
+// Delete the track-A clip under comp time t and ripple the rest left.
+static void deleteA(double t) {
+    for (size_t i = 0; i < g_trackA.size(); i++) { Clip& c = g_trackA[i]; double d = c.out - c.in;
+        if (t >= c.compStart && t < c.compStart + d) {
+            g_trackA.erase(g_trackA.begin() + i);
+            for (size_t j = i; j < g_trackA.size(); j++) g_trackA[j].compStart -= d;
+            g_compDur -= d; relabelA(); return; } }
 }
 
 // Composite track A (full) + track B (PiP top-right, alpha 0.5) at comp time t into g_rgba.
@@ -139,12 +157,12 @@ static double drawTimeline(double curSec, bool& scrubbed) {
         float x0 = tlX + c.compStart * pps, x1 = tlX + (c.compStart + (c.out - c.in)) * pps;
         dl->AddRectFilled({ x0 + 1, ay }, { x1 - 1, ay + trackH }, IM_COL32(58, 123, 255, 255), 3);
         dl->AddRect({ x0 + 1, ay }, { x1 - 1, ay + trackH }, IM_COL32(180, 200, 255, 200), 3);
-        dl->AddText({ x0 + 5, ay + 8 }, IM_COL32(255, 255, 255, 230), c.label);
+        dl->AddText({ x0 + 5, ay + 8 }, IM_COL32(255, 255, 255, 230), c.label.c_str());
     }
     float bx0 = tlX + (float)(g_trackB.compStart * pps);   // track B (PiP)
     float bx1 = tlX + (float)((g_trackB.compStart + (g_trackB.out - g_trackB.in)) * pps);
     dl->AddRectFilled({ bx0 + 1, by }, { bx1 - 1, by + trackH }, IM_COL32(0, 200, 120, 255), 3);
-    dl->AddText({ bx0 + 5, by + 8 }, IM_COL32(255, 255, 255, 230), g_trackB.label);
+    dl->AddText({ bx0 + 5, by + 8 }, IM_COL32(255, 255, 255, 230), g_trackB.label.c_str());
     float px = tlX + (float)curSec * pps;   // playhead
     dl->AddLine({ px, p.y }, { px, bot }, IM_COL32(255, 210, 0, 255), 2);
 
@@ -171,6 +189,7 @@ int main(int argc, char** argv) {
     double cs = 0;
     for (auto& s : segs) { g_trackA.push_back({ s.in, s.out, cs, s.label }); cs += s.out - s.in; }
     g_compDur = cs;
+    relabelA();
     g_trackB = { 0, g_compDur, 0, "PiP (source B)" };   // PiP overlay spans the whole comp timeline
 
     WNDCLASSEXW wc = { sizeof wc, CS_OWNDC, WndProc, 0, 0, GetModuleHandle(nullptr), nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"beckytl", nullptr };
@@ -194,7 +213,11 @@ int main(int argc, char** argv) {
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
         double dt = (double)(now.QuadPart - prev.QuadPart) / fq.QuadPart; prev = now;
 
-        if (GetForegroundWindow() == hwnd && (GetAsyncKeyState(VK_SPACE) & 1)) playing = !playing;
+        if (GetForegroundWindow() == hwnd) {
+            if (GetAsyncKeyState(VK_SPACE) & 1) playing = !playing;
+            if (GetAsyncKeyState('S') & 1) { splitA(curSec); lastComposed = -1; }
+            if (GetAsyncKeyState(VK_DELETE) & 1) { deleteA(curSec); if (curSec > g_compDur) curSec = g_compDur; lastComposed = -1; }
+        }
         if (playing) { curSec += dt; if (curSec >= g_compDur) curSec = 0; }
 
         if (curSec != lastComposed) {
@@ -213,6 +236,7 @@ int main(int argc, char** argv) {
         ImGui::Begin("becky", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
         ImGui::Text("becky-timeline   %s   %.1fs / %.0fs   compose %.2f ms (%.0f fps)   [Space = play]   drag the timeline to scrub",
             playing ? "PLAYING" : "paused", curSec, g_compDur, g_composeMs, g_composeMs > 0 ? 1000.0 / g_composeMs : 0);
+        ImGui::SameLine(); ImGui::TextDisabled("  |  [S]plit  [Del]ete  |  drag = scrub");
 
         if (g_vw > 0) {
             float availW = ImGui::GetContentRegionAvail().x, availH = g_H * 0.60f;
