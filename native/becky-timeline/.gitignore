@@ -1,0 +1,6 @@
+# only main.cpp + the launcher are tracked; build output + the local build script are not
+*.exe
+*.obj
+*.pdb
+*.ilk
+_build.bat
