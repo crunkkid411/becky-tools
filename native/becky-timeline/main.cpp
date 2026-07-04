@@ -35,7 +35,7 @@
 using json = nlohmann::json;
 
 // ---------------- GStreamer decoder (one per layer) ----------------
-struct Layer { GstElement* pipe = nullptr; GstBus* bus = nullptr; };
+struct Layer { GstElement* pipe = nullptr; GstBus* bus = nullptr; std::string loaded; };
 static Layer g_layer[2];
 static std::vector<uint8_t> g_rgba;
 static int g_vw = 0, g_vh = 0;
@@ -55,6 +55,15 @@ static bool layerInit(Layer& L, std::string file) {
     L.bus = gst_element_get_bus(L.pipe);
     gst_element_set_state(L.pipe, GST_STATE_PAUSED);
     return gst_element_get_state(L.pipe, nullptr, nullptr, 15 * GST_SECOND) == GST_STATE_CHANGE_SUCCESS;
+}
+
+// (re)load a layer's pipeline for `src`; rebuilds ONLY when the source actually changes, so
+// scrubbing within one source has no hitch. (Cross-source cuts reload; production pre-warms.)
+static bool layerLoad(Layer& L, const std::string& src) {
+    if (L.pipe && L.loaded == src) return true;
+    if (L.pipe) { gst_element_set_state(L.pipe, GST_STATE_NULL); gst_object_unref(L.bus); gst_object_unref(L.pipe); L.pipe = nullptr; }
+    if (!layerInit(L, src)) { L.loaded.clear(); return false; }
+    L.loaded = src; return true;
 }
 
 static void layerSeek(Layer& L, double srcSec) {   // fire the seek; DON'T wait (so layers decode in parallel)
@@ -78,7 +87,7 @@ static bool layerPull(Layer& L, GstVideoFrame* f, GstSample** out) {   // wait f
 }
 
 // ---------------- two clip tracks ----------------
-struct Clip { double in, out, compStart; std::string label; };
+struct Clip { double in, out, compStart; std::string label; std::string source; };
 static std::vector<Clip> g_track[2];   // 0 = A (main), 1 = B (PiP)
 static double g_compDur = 0;
 static bool g_group = true;            // grouped by default -> layers stay in sync
@@ -114,7 +123,16 @@ static void recomputeDur() {   // comp duration = longest track
 static void compose(double t) {
     LARGE_INTEGER fq, a, b; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&a);
     GstVideoFrame fa, fb; GstSample* sa = nullptr; GstSample* sb = nullptr;
-    layerSeek(g_layer[0], mapTrack(0, t)); layerSeek(g_layer[1], mapTrack(1, t));   // both seeks first -> decoders run in parallel
+    Clip* ca = nullptr; Clip* cb = nullptr;
+    for (auto& c : g_track[0]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) { ca = &c; break; } }
+    for (auto& c : g_track[1]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) { cb = &c; break; } }
+    if (!ca && !g_track[0].empty()) ca = &g_track[0].back();
+    if (!cb && !g_track[1].empty()) cb = &g_track[1].back();
+    if (!ca || !cb) return;
+    if (!layerLoad(g_layer[0], ca->source) || !layerLoad(g_layer[1], cb->source)) return;   // reload only on source change
+    double ta = ca->in + (t > ca->compStart ? t - ca->compStart : 0); if (ta > ca->out) ta = ca->out;
+    double tb = cb->in + (t > cb->compStart ? t - cb->compStart : 0); if (tb > cb->out) tb = cb->out;
+    layerSeek(g_layer[0], ta); layerSeek(g_layer[1], tb);   // both seeks first -> decoders run in parallel
     if (!layerPull(g_layer[0], &fa, &sa)) return;
     if (!layerPull(g_layer[1], &fb, &sb)) { gst_video_frame_unmap(&fa); gst_sample_unref(sa); return; }
     int wa = GST_VIDEO_FRAME_WIDTH(&fa), ha = GST_VIDEO_FRAME_HEIGHT(&fa);
@@ -223,23 +241,22 @@ int main(int argc, char** argv) {
     gst_init(&argc, &argv);
 
     if (std::string(argv[1]) == "--reel") {
-        // reel.json: { "sourceA":"a.mp4", "sourceB":"b.mp4", "trackA":[{"in":5,"out":25},...], "trackB":[...] }
-        // BRN writes this from the current review reel and launches us on it.
+        // reel.json: { "sourceA","sourceB", "trackA":[{"in","out","source"?}], "trackB":[...] }  ("source"
+        // per clip -> MULTI-SOURCE reels; omit -> sourceA/sourceB). BRN writes this + launches us on it.
         std::ifstream in(argv[2]); json r;
         if (!in) { fprintf(stderr, "cannot open reel %s\n", argv[2]); return 2; }
         try { in >> r; } catch (...) { fprintf(stderr, "bad reel json\n"); return 2; }
         std::string sa = r.value("sourceA", std::string()), sb = r.value("sourceB", std::string());
-        if (!layerInit(g_layer[0], sa) || !layerInit(g_layer[1], sb)) { fprintf(stderr, "layer init failed\n"); return 3; }
-        double cs = 0; for (auto& c : r["trackA"]) { double i = c.at("in"), o = c.at("out"); g_track[0].push_back({ i, o, cs, "" }); cs += o - i; }
-        if (r.contains("trackB") && !r["trackB"].empty()) { double bs = 0; for (auto& c : r["trackB"]) { double i = c.at("in"), o = c.at("out"); g_track[1].push_back({ i, o, bs, "" }); bs += o - i; } }
-        else g_track[1].push_back({ 0, cs, 0, "" });
+        double cs = 0; for (auto& c : r["trackA"]) { double i = c.at("in"), o = c.at("out"); g_track[0].push_back({ i, o, cs, "", c.value("source", sa) }); cs += o - i; }
+        if (r.contains("trackB") && !r["trackB"].empty()) { double bs = 0; for (auto& c : r["trackB"]) { double i = c.at("in"), o = c.at("out"); g_track[1].push_back({ i, o, bs, "", c.value("source", sb) }); bs += o - i; } }
+        else g_track[1].push_back({ 0, cs, 0, "", sb });
     } else {
-        if (!layerInit(g_layer[0], argv[1]) || !layerInit(g_layer[1], argv[2])) { fprintf(stderr, "layer init failed\n"); return 3; }
         // demo reel: 4 segments of source A; source B as a PiP overlay spanning it.
         struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
-        double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "" }); cs += s.out - s.in; }
-        g_track[1].push_back({ 0, cs, 0, "" });
+        double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "", argv[1] }); cs += s.out - s.in; }
+        g_track[1].push_back({ 0, cs, 0, "", argv[2] });
     }
+    if (g_track[0].empty()) { fprintf(stderr, "no clips in reel\n"); return 3; }
     recomputeDur(); relabel(0); relabel(1);
 
     std::thread(stdinReader).detach();   // AI-in-the-loop: NDJSON ops on stdin
