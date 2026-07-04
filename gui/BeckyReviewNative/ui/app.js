@@ -314,7 +314,7 @@
     var out = [];
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i];
-      out.push({ start: c.start_sec || 0, dur: c.dur_sec || 0, label: c.label || c.name || '' });
+      out.push({ source: c.source, in: c.in || 0, out: c.out || 0 });   // becky-timeline decodes the real clip
     }
     post({ t: 'timelineReel', clips: out, pxPerSec: state.pxPerSec, scroll: tlScrollSec() });
   }
@@ -336,15 +336,10 @@
     if (nativeTL) { reportTimelineRect(); pushTimelineReel(); pushTimelinePlayhead(); }
   }
 
-  // Repurposed: launch the real native editor (becky-timeline.exe) on the current reel as a
-  // separate GPU window, instead of the old in-window HWND (which drew behind the WebUI).
-  // ponytail: dormant setNativeTL/timelineMode plumbing left in place, just not driven here.
-  if (tlNativeBtn) {
-    tlNativeBtn.addEventListener('click', function () {
-      var clips = (state.timeline && state.timeline.clips) || [];
-      post({ t: 'openNativeTimeline', clips: clips.map(function (c) { return { source: c.source, in: c.in || 0, out: c.out || 0 }; }) });
-    });
-  }
+  // becky-timeline.exe embeds INTO the timeline pane (child HWND via --wid, over #timelineHole,
+  // like mpv over #videoHole) and REPLACES the DOM timeline while native is on: setNativeTL hides
+  // .tlinner + reports the rect + reel; the host launches the editor into that rectangle.
+  if (tlNativeBtn) { tlNativeBtn.addEventListener('click', function () { setNativeTL(!nativeTL); }); }
   window.addEventListener('resize', reportTimelineRect);
   if (window.ResizeObserver && tlBodyEl) { try { new ResizeObserver(reportTimelineRect).observe(tlBodyEl); } catch (_) {} }
   if (tlBodyEl) { tlBodyEl.addEventListener('scroll', function () { if (nativeTL) { pushTimelineReel(); } }); }

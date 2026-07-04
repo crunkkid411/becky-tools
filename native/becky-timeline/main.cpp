@@ -5,20 +5,19 @@
 // track timeline. HUMAN and AI drive the SAME edit path (applyOp): human via keys/mouse, AI via
 // NDJSON on stdin ({"op":"split","t":30}); every edit emits the timeline state as NDJSON on stdout.
 //
+// Displays via D3D11 (NOT OpenGL): an OpenGL/WGL child window does NOT composite over the WebView2
+// in WPF airspace, but a D3D11 one does (same as mpv) — so --wid can embed us INSIDE Becky Review
+// Native's timeline pane, replacing the DOM timeline.
+//
 // controls: drag = scrub | Space = play | S = split | Del = delete | I/O = trim in/out | G = group
-// group ON -> split/delete/trim apply to BOTH tracks at the same comp time, so the layers stay synced.
-//
-// v5: two-track clip model + group toggle + AI-in-the-loop NDJSON bridge.
-// Next: multi-SOURCE track, full-res GPU composite (drop CPU readback), Becky Review Native embed.
-//
-//   usage: becky-timeline.exe <proxyA.mp4> <proxyB.mp4>
+//   usage: becky-timeline.exe [--wid H] <proxyA.mp4> <proxyB.mp4> | becky-timeline.exe --reel reel.json
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <GL/gl.h>
+#include <d3d11.h>
 #include "imgui.h"
 #include "imgui_impl_win32.h"
-#include "imgui_impl_opengl3.h"
+#include "imgui_impl_dx11.h"
 #include "json.hpp"
 
 #include <gst/gst.h>
@@ -57,8 +56,7 @@ static bool layerInit(Layer& L, std::string file) {
     return gst_element_get_state(L.pipe, nullptr, nullptr, 15 * GST_SECOND) == GST_STATE_CHANGE_SUCCESS;
 }
 
-// (re)load a layer's pipeline for `src`; rebuilds ONLY when the source actually changes, so
-// scrubbing within one source has no hitch. (Cross-source cuts reload; production pre-warms.)
+// (re)load a layer's pipeline for `src`; rebuilds ONLY when the source actually changes.
 static bool layerLoad(Layer& L, const std::string& src) {
     if (L.pipe && L.loaded == src) return true;
     if (L.pipe) { gst_element_set_state(L.pipe, GST_STATE_NULL); gst_object_unref(L.bus); gst_object_unref(L.pipe); L.pipe = nullptr; }
@@ -92,11 +90,6 @@ static std::vector<Clip> g_track[2];   // 0 = A (main), 1 = B (PiP)
 static double g_compDur = 0;
 static bool g_group = true;            // grouped by default -> layers stay in sync
 
-static double mapTrack(int tr, double t) {
-    for (auto& c : g_track[tr]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) return c.in + (t - c.compStart); }
-    if (!g_track[tr].empty()) { auto& c = g_track[tr].back(); return (t < 0) ? c.in : c.out; }
-    return 0;
-}
 static void relabel(int tr) {
     const char* p = tr == 0 ? "clip " : "pip ";
     for (size_t i = 0; i < g_track[tr].size(); i++) g_track[tr][i].label = p + std::to_string(i + 1);
@@ -105,7 +98,7 @@ static void splitTrack(int tr, double t) {
     for (size_t i = 0; i < g_track[tr].size(); i++) { Clip& c = g_track[tr][i]; double d = c.out - c.in;
         if (t > c.compStart + 0.05 && t < c.compStart + d - 0.05) {
             double srcT = c.in + (t - c.compStart);
-            Clip right{ srcT, c.out, t, "" }; c.out = srcT;
+            Clip right{ srcT, c.out, t, "", c.source }; c.out = srcT;
             g_track[tr].insert(g_track[tr].begin() + i + 1, right); relabel(tr); return; } }
 }
 static void deleteTrack(int tr, double t) {
@@ -185,21 +178,61 @@ static bool applyOp(const std::string& op, double t, const json& j, double& curS
     return false;
 }
 
-// ---------------- WGL ----------------
-static HGLRC g_rc; static HDC g_dc; static int g_W = 1100, g_H = 900; static GLuint g_tex = 0;
-static bool CreateGL(HWND h) {
-    g_dc = GetDC(h);
-    PIXELFORMATDESCRIPTOR pfd = {}; pfd.nSize = sizeof pfd; pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA; pfd.cColorBits = 32;
-    int pf = ChoosePixelFormat(g_dc, &pfd); SetPixelFormat(g_dc, pf, &pfd);
-    g_rc = wglCreateContext(g_dc); wglMakeCurrent(g_dc, g_rc);
-    return g_rc != nullptr;
+// ---------------- D3D11 display (composites in WPF airspace; OpenGL child windows don't) ----------------
+static ID3D11Device* g_dev = nullptr; static ID3D11DeviceContext* g_ctx = nullptr; static IDXGISwapChain* g_swap = nullptr;
+static ID3D11RenderTargetView* g_rtv = nullptr;
+static ID3D11Texture2D* g_frameTex = nullptr; static ID3D11ShaderResourceView* g_frameSrv = nullptr; static int g_texW = 0, g_texH = 0;
+static int g_W = 1100, g_H = 900;
+static HWND g_parentWid = nullptr;   // --wid: embed as a child of this HWND (BRN's timeline pane)
+static bool g_resize = false;
+
+static void createRTV() {
+    ID3D11Texture2D* bb = nullptr;
+    g_swap->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+    if (bb) { g_dev->CreateRenderTargetView(bb, nullptr, &g_rtv); bb->Release(); }
 }
+static bool CreateD3D(HWND h) {
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 2; sd.BufferDesc.Width = g_W; sd.BufferDesc.Height = g_H;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = h;
+    sd.SampleDesc.Count = 1; sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;   // FLIP model = DWM-composited -> the child shows OVER the WebView2 (BitBlt didn't)
+    if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+        D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, nullptr, &g_ctx))) return false;
+    createRTV();
+    return true;
+}
+static void resizeD3D() {
+    if (!g_swap || !g_ctx) return;
+    if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
+    g_swap->ResizeBuffers(0, g_W, g_H, DXGI_FORMAT_UNKNOWN, 0);
+    createRTV();
+}
+static void uploadFrame() {   // g_rgba (CPU) -> a dynamic D3D11 texture ImGui draws as the video
+    if (g_rgba.empty() || g_vw <= 0 || g_vh <= 0) return;
+    if (!g_frameTex || g_texW != g_vw || g_texH != g_vh) {
+        if (g_frameSrv) { g_frameSrv->Release(); g_frameSrv = nullptr; }
+        if (g_frameTex) { g_frameTex->Release(); g_frameTex = nullptr; }
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = g_vw; td.Height = g_vh; td.MipLevels = 1; td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DYNAMIC; td.BindFlags = D3D11_BIND_SHADER_RESOURCE; td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(g_dev->CreateTexture2D(&td, nullptr, &g_frameTex))) return;
+        g_dev->CreateShaderResourceView(g_frameTex, nullptr, &g_frameSrv);
+        g_texW = g_vw; g_texH = g_vh;
+    }
+    D3D11_MAPPED_SUBRESOURCE ms;
+    if (SUCCEEDED(g_ctx->Map(g_frameTex, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+        for (int y = 0; y < g_vh; y++) memcpy((uint8_t*)ms.pData + (size_t)y * ms.RowPitch, &g_rgba[(size_t)y * g_vw * 4], (size_t)g_vw * 4);
+        g_ctx->Unmap(g_frameTex, 0);
+    }
+}
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 static LRESULT WINAPI WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (ImGui_ImplWin32_WndProcHandler(h, m, w, l)) return true;
-    if (m == WM_SIZE && w != SIZE_MINIMIZED) { g_W = LOWORD(l); g_H = HIWORD(l); }
+    if (m == WM_SIZE && w != SIZE_MINIMIZED) { g_W = LOWORD(l); g_H = HIWORD(l); g_resize = true; }
     if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(h, m, w, l);
 }
@@ -241,24 +274,31 @@ static double drawTimeline(double curSec, bool& scrubbed) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "usage: becky-timeline <proxyA> <proxyB>  |  becky-timeline --reel reel.json\n"); return 2; }
     gst_init(&argc, &argv);
+    // extract --wid <hwnd> (embed as a child window in BRN's timeline pane); keep the rest in `a`
+    std::vector<std::string> a;
+    for (int i = 1; i < argc; i++) {
+        std::string s = argv[i];
+        if (s == "--wid" && i + 1 < argc) g_parentWid = (HWND)(intptr_t)_strtoi64(argv[++i], nullptr, 10);
+        else a.push_back(s);
+    }
+    if (a.empty()) { fprintf(stderr, "usage: becky-timeline [--wid H] <proxyA> <proxyB> | --reel reel.json\n"); return 2; }
 
-    if (std::string(argv[1]) == "--reel") {
-        // reel.json: { "sourceA","sourceB", "trackA":[{"in","out","source"?}], "trackB":[...] }  ("source"
-        // per clip -> MULTI-SOURCE reels; omit -> sourceA/sourceB). BRN writes this + launches us on it.
-        std::ifstream in(argv[2]); json r;
-        if (!in) { fprintf(stderr, "cannot open reel %s\n", argv[2]); return 2; }
+    if (a[0] == "--reel") {
+        // reel.json: { "sourceA","sourceB", "trackA":[{"in","out","source"?}], "trackB":[...] }
+        if (a.size() < 2) { fprintf(stderr, "need a reel path\n"); return 2; }
+        std::ifstream in(a[1]); json r;
+        if (!in) { fprintf(stderr, "cannot open reel %s\n", a[1].c_str()); return 2; }
         try { in >> r; } catch (...) { fprintf(stderr, "bad reel json\n"); return 2; }
         std::string sa = r.value("sourceA", std::string()), sb = r.value("sourceB", std::string());
         double cs = 0; for (auto& c : r["trackA"]) { double i = c.at("in"), o = c.at("out"); g_track[0].push_back({ i, o, cs, "", c.value("source", sa) }); cs += o - i; }
         if (r.contains("trackB") && !r["trackB"].empty()) { double bs = 0; for (auto& c : r["trackB"]) { double i = c.at("in"), o = c.at("out"); g_track[1].push_back({ i, o, bs, "", c.value("source", sb) }); bs += o - i; } }
         else if (!sb.empty()) g_track[1].push_back({ 0, cs, 0, "", sb });   // no sourceB -> single-track reel (no PiP)
     } else {
-        // demo reel: 4 segments of source A; source B as a PiP overlay spanning it.
+        if (a.size() < 2) { fprintf(stderr, "need <proxyA> <proxyB>\n"); return 2; }
         struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
-        double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "", argv[1] }); cs += s.out - s.in; }
-        g_track[1].push_back({ 0, cs, 0, "", argv[2] });
+        double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "", a[0] }); cs += s.out - s.in; }
+        g_track[1].push_back({ 0, cs, 0, "", a[1] });
     }
     if (g_track[0].empty()) { fprintf(stderr, "no clips in reel\n"); return 3; }
     recomputeDur(); relabel(0); relabel(1);
@@ -269,14 +309,19 @@ int main(int argc, char** argv) {
 
     WNDCLASSEXW wc = { sizeof wc, CS_OWNDC, WndProc, 0, 0, GetModuleHandle(nullptr), nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"beckytl", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"becky-timeline", WS_OVERLAPPEDWINDOW, 80, 40, g_W, g_H, nullptr, nullptr, wc.hInstance, nullptr);
-    CreateGL(hwnd);
-    typedef BOOL(WINAPI* SI)(int); if (auto si = (SI)wglGetProcAddress("wglSwapIntervalEXT")) si(1);
+    HWND hwnd;
+    if (g_parentWid) {   // embed: a child window filling BRN's timeline pane (composites like mpv)
+        RECT rc = { 0,0,900,300 }; GetClientRect(g_parentWid, &rc);
+        g_W = (rc.right > 1) ? rc.right : 900; g_H = (rc.bottom > 1) ? rc.bottom : 300;
+        hwnd = CreateWindowW(wc.lpszClassName, L"becky-timeline", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, g_W, g_H, g_parentWid, nullptr, wc.hInstance, nullptr);
+    } else {
+        hwnd = CreateWindowW(wc.lpszClassName, L"becky-timeline", WS_OVERLAPPEDWINDOW, 80, 40, g_W, g_H, nullptr, nullptr, wc.hInstance, nullptr);
+    }
+    if (!CreateD3D(hwnd)) { fprintf(stderr, "D3D11 init failed\n"); return 4; }
     ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd);
 
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::StyleColorsDark();
-    ImGui_ImplWin32_InitForOpenGL(hwnd); ImGui_ImplOpenGL3_Init(nullptr);
-    glGenTextures(1, &g_tex);
+    ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     double curSec = 0, lastComposed = -1; bool playing = false;
     LARGE_INTEGER fq, prev; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&prev);
@@ -293,8 +338,13 @@ int main(int argc, char** argv) {
         for (auto& j : ops) { std::string op = j.value("op", std::string()); double t = j.value("t", curSec);
             if (applyOp(op, t, j, curSec, playing)) { lastComposed = -1; emitState(curSec, playing); } }
 
-        // human keys -> same applyOp path
-        if (GetForegroundWindow() == hwnd) {
+        // embedded: keep filling the host pane as BRN resizes it
+        if (g_parentWid) {
+            RECT rc; if (GetClientRect(g_parentWid, &rc) && rc.right > 0 && rc.bottom > 0 && (rc.right != g_W || rc.bottom != g_H)) MoveWindow(hwnd, 0, 0, rc.right, rc.bottom, TRUE);
+        }
+        // human keys -> same applyOp path. Top-level only: embedded uses mouse-scrub + stdin ops, so
+        // typing in BRN's search box can't leak into the timeline (GetAsyncKeyState is global).
+        if (!g_parentWid && GetForegroundWindow() == hwnd) {
             if (GetAsyncKeyState(VK_SPACE) & 1) { applyOp("play", curSec, json::object(), curSec, playing); }
             if (GetAsyncKeyState('S') & 1) { applyOp("split", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
             if (GetAsyncKeyState(VK_DELETE) & 1) { applyOp("delete", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
@@ -304,18 +354,10 @@ int main(int argc, char** argv) {
         }
         if (playing) { curSec += dt; if (curSec >= g_compDur) curSec = 0; }
 
-        if (curSec != lastComposed) {
-            compose(curSec);
-            if (!g_rgba.empty()) {
-                glBindTexture(GL_TEXTURE_2D, g_tex);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_vw, g_vh, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_rgba.data());
-            }
-            lastComposed = curSec;
-        }
+        if (curSec != lastComposed) { compose(curSec); uploadFrame(); lastComposed = curSec; }
+        if (g_resize) { resizeD3D(); g_resize = false; }
 
-        ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
+        ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
         ImGui::SetNextWindowPos({ 0, 0 }); ImGui::SetNextWindowSize({ (float)g_W, (float)g_H });
         ImGui::Begin("becky", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
         ImGui::Text("becky-timeline   %s   %.1fs / %.0fs   compose %.2f ms (%.0f fps)",
@@ -323,12 +365,12 @@ int main(int argc, char** argv) {
         ImGui::SameLine(); ImGui::TextColored(g_group ? ImVec4(1, 0.82f, 0, 1) : ImVec4(0.5f, 0.5f, 0.5f, 1), "  [G]roup %s", g_group ? "ON" : "off");
         ImGui::SameLine(); ImGui::TextDisabled("  [S]plit  trim [I]/[O]  [Del]  |  drag=scrub  Space=play");
 
-        if (g_vw > 0) {
+        if (g_vw > 0 && g_frameSrv) {
             float availW = ImGui::GetContentRegionAvail().x, availH = g_H * 0.58f;
             float sc = availH / g_vh; if (g_vw * sc > availW) sc = availW / g_vw;
             float iw = g_vw * sc, ih = g_vh * sc;
             ImGui::SetCursorPosX((availW - iw) * 0.5f + ImGui::GetCursorPosX());
-            ImGui::Image((ImTextureID)(intptr_t)g_tex, { iw, ih });
+            ImGui::Image((ImTextureID)g_frameSrv, { iw, ih });
             ImGui::Dummy({ 0, 6 });
         }
         bool scrubbed = false;
@@ -337,12 +379,16 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         ImGui::Render();
-        glViewport(0, 0, g_W, g_H); glClearColor(0.06f, 0.07f, 0.09f, 1); glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        SwapBuffers(g_dc);
+        float clr[4] = { 0.06f, 0.07f, 0.09f, 1.0f };
+        g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
+        g_ctx->ClearRenderTargetView(g_rtv, clr);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        g_swap->Present(1, 0);
     }
 
-    ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
+    ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
+    if (g_frameSrv) g_frameSrv->Release(); if (g_frameTex) g_frameTex->Release();
+    if (g_rtv) g_rtv->Release(); if (g_swap) g_swap->Release(); if (g_ctx) g_ctx->Release(); if (g_dev) g_dev->Release();
     for (auto& L : g_layer) { if (L.pipe) { gst_element_set_state(L.pipe, GST_STATE_NULL); gst_object_unref(L.bus); gst_object_unref(L.pipe); } }
     return 0;
 }

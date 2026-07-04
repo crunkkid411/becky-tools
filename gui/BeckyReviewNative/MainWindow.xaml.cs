@@ -289,7 +289,7 @@ public partial class MainWindow : Window
                 HandleTimelineReel(root);
                 break;
             case "timelinePlayhead":
-                if (_timeline != null) { var comp = Num(root, "comp"); Dispatcher.BeginInvoke(() => _timeline.SetPlayhead(comp)); }
+                // ponytail: DOM playhead -> embedded editor sync is iteration 2 (stdin seek op).
                 break;
             case "timelineMode":
                 HandleTimelineMode(root);
@@ -960,7 +960,7 @@ public partial class MainWindow : Window
     {
         _mpv?.Dispose();
         _engine?.Dispose();
-        _timeline?.Dispose();
+        KillTimeline();
         base.OnClosed(e);
     }
 }
