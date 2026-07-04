@@ -258,6 +258,8 @@ int main(int argc, char** argv) {
     }
     if (g_track[0].empty()) { fprintf(stderr, "no clips in reel\n"); return 3; }
     recomputeDur(); relabel(0); relabel(1);
+    layerLoad(g_layer[0], g_track[0][0].source);        // pre-warm first sources -> instant first frame
+    if (!g_track[1].empty()) layerLoad(g_layer[1], g_track[1][0].source);
 
     std::thread(stdinReader).detach();   // AI-in-the-loop: NDJSON ops on stdin
 
