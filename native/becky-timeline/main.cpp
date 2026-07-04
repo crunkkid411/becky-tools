@@ -56,10 +56,12 @@ static bool layerInit(Layer& L, std::string file) {
     return gst_element_get_state(L.pipe, nullptr, nullptr, 15 * GST_SECOND) == GST_STATE_CHANGE_SUCCESS;
 }
 
-static bool layerFrame(Layer& L, double srcSec, GstVideoFrame* f, GstSample** out) {
+static void layerSeek(Layer& L, double srcSec) {   // fire the seek; DON'T wait (so layers decode in parallel)
     GstClockTime pos = (GstClockTime)(srcSec * GST_SECOND);
     gst_element_seek_simple(L.pipe, GST_FORMAT_TIME,
         (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE), (gint64)pos);
+}
+static bool layerPull(Layer& L, GstVideoFrame* f, GstSample** out) {   // wait for + map the seeked frame
     GstMessage* m = gst_bus_timed_pop_filtered(L.bus, 5 * GST_SECOND,
         (GstMessageType)(GST_MESSAGE_ASYNC_DONE | GST_MESSAGE_ERROR));
     if (!m) return false;
@@ -111,8 +113,9 @@ static void recomputeDur() {   // comp duration = longest track
 static void compose(double t) {
     LARGE_INTEGER fq, a, b; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&a);
     GstVideoFrame fa, fb; GstSample* sa = nullptr; GstSample* sb = nullptr;
-    if (!layerFrame(g_layer[0], mapTrack(0, t), &fa, &sa)) return;
-    if (!layerFrame(g_layer[1], mapTrack(1, t), &fb, &sb)) { gst_video_frame_unmap(&fa); gst_sample_unref(sa); return; }
+    layerSeek(g_layer[0], mapTrack(0, t)); layerSeek(g_layer[1], mapTrack(1, t));   // both seeks first -> decoders run in parallel
+    if (!layerPull(g_layer[0], &fa, &sa)) return;
+    if (!layerPull(g_layer[1], &fb, &sb)) { gst_video_frame_unmap(&fa); gst_sample_unref(sa); return; }
     int wa = GST_VIDEO_FRAME_WIDTH(&fa), ha = GST_VIDEO_FRAME_HEIGHT(&fa);
     int wb = GST_VIDEO_FRAME_WIDTH(&fb), hb = GST_VIDEO_FRAME_HEIGHT(&fb);
     uint8_t* da = (uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&fa, 0); int sta = GST_VIDEO_FRAME_PLANE_STRIDE(&fa, 0);

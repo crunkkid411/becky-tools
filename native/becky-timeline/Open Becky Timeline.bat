@@ -11,5 +11,10 @@ if not exist becky-timeline.exe (
   pause
   exit /b 1
 )
-becky-timeline.exe "..\ges-bench\proxyA.mp4" "..\ges-bench\proxyB.mp4"
+REM full-res (1080x1920) all-intra proxies if present, else the fast 540p ones
+if exist "..\ges-bench\proxyA_hd.mp4" (
+  becky-timeline.exe "..\ges-bench\proxyA_hd.mp4" "..\ges-bench\proxyB_hd.mp4"
+) else (
+  becky-timeline.exe "..\ges-bench\proxyA.mp4" "..\ges-bench\proxyB.mp4"
+)
 pause
