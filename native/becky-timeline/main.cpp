@@ -31,6 +31,7 @@
 #include <thread>
 #include <mutex>
 #include <iostream>
+#include <fstream>
 using json = nlohmann::json;
 
 // ---------------- GStreamer decoder (one per layer) ----------------
@@ -218,14 +219,27 @@ static double drawTimeline(double curSec, bool& scrubbed) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "usage: becky-timeline <proxyA> <proxyB>\n"); return 2; }
+    if (argc < 3) { fprintf(stderr, "usage: becky-timeline <proxyA> <proxyB>  |  becky-timeline --reel reel.json\n"); return 2; }
     gst_init(&argc, &argv);
-    if (!layerInit(g_layer[0], argv[1]) || !layerInit(g_layer[1], argv[2])) { fprintf(stderr, "layer init failed\n"); return 3; }
 
-    // Track A = 4 segments of source A; Track B = the PiP overlay (one clip spanning the reel).
-    struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
-    double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "" }); cs += s.out - s.in; }
-    g_track[1].push_back({ 0, cs, 0, "" });
+    if (std::string(argv[1]) == "--reel") {
+        // reel.json: { "sourceA":"a.mp4", "sourceB":"b.mp4", "trackA":[{"in":5,"out":25},...], "trackB":[...] }
+        // BRN writes this from the current review reel and launches us on it.
+        std::ifstream in(argv[2]); json r;
+        if (!in) { fprintf(stderr, "cannot open reel %s\n", argv[2]); return 2; }
+        try { in >> r; } catch (...) { fprintf(stderr, "bad reel json\n"); return 2; }
+        std::string sa = r.value("sourceA", std::string()), sb = r.value("sourceB", std::string());
+        if (!layerInit(g_layer[0], sa) || !layerInit(g_layer[1], sb)) { fprintf(stderr, "layer init failed\n"); return 3; }
+        double cs = 0; for (auto& c : r["trackA"]) { double i = c.at("in"), o = c.at("out"); g_track[0].push_back({ i, o, cs, "" }); cs += o - i; }
+        if (r.contains("trackB") && !r["trackB"].empty()) { double bs = 0; for (auto& c : r["trackB"]) { double i = c.at("in"), o = c.at("out"); g_track[1].push_back({ i, o, bs, "" }); bs += o - i; } }
+        else g_track[1].push_back({ 0, cs, 0, "" });
+    } else {
+        if (!layerInit(g_layer[0], argv[1]) || !layerInit(g_layer[1], argv[2])) { fprintf(stderr, "layer init failed\n"); return 3; }
+        // demo reel: 4 segments of source A; source B as a PiP overlay spanning it.
+        struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
+        double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "" }); cs += s.out - s.in; }
+        g_track[1].push_back({ 0, cs, 0, "" });
+    }
     recomputeDur(); relabel(0); relabel(1);
 
     std::thread(stdinReader).detach();   // AI-in-the-loop: NDJSON ops on stdin
