@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- OrbPreview - dev harness for the WHORETANA orb (spec 2.8). Proves the orb is
+       its own component: OrbEngine (sim) + the SAME OrbControl.cs the shell uses,
+       compiled in via link. Sliders for every OrbInput field, EyeReveal button,
+       FPS counter, and the "script demo" flag plays a canned 20 s state sequence. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>OrbPreview</AssemblyName>
+    <RootNamespace>OrbPreview</RootNamespace>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>OrbPreview.Program</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="2.88.8" />
+    <ProjectReference Include="..\OrbEngine\OrbEngine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the SAME view class the shell ships - no copy drift -->
+    <Compile Include="..\Whoretana\Orb\OrbControl.cs" Link="Orb\OrbControl.cs" />
+  </ItemGroup>
+
+</Project>

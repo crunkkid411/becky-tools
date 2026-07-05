@@ -31,7 +31,10 @@ namespace Whoretana
         private bool _listening;
         private bool _menuOpen = true;
         private string? _pendingConfirm;
+        private bool _bridgePendingConfirm;   // sidecar-side pending (escalated tool / voice router)
         private string _envPath = "";
+        private BubbleWindow? _bubble;
+        private DateTime _wakeFlashUntil = DateTime.MinValue;
 
         public MainWindow()
         {
@@ -44,6 +47,9 @@ namespace Whoretana
             _bridge.Transcript += t => Dispatcher.Invoke(() => { if (!string.IsNullOrWhiteSpace(t)) AddChat("you", t); });
             _bridge.ReplyReceived += r => Dispatcher.Invoke(() => OnBridgeReply(r));
             _bridge.Errored += e => Dispatcher.Invoke(() => SetStatus(e));
+            _bridge.WakeDetected += () => _wakeFlashUntil = DateTime.UtcNow.AddSeconds(1.2);  // bubble flash
+            _bridge.SpecialEvent += (kind, dur) => Dispatcher.Invoke(() => OnSpecial(kind, dur));
+            _bridge.BrainChanged += _ => Dispatcher.Invoke(UpdateModelText);
 
             ChatInput.TextChanged += (_, __) => ChatHint.Visibility = string.IsNullOrEmpty(ChatInput.Text) ? Visibility.Visible : Visibility.Collapsed;
             KeyDown += (_, ev) => { if (ev.Key == Key.Escape) { if (SettingsOverlay.Visibility == Visibility.Visible) CloseSettings(); else Close(); } };
@@ -58,7 +64,7 @@ namespace Whoretana
                 await LoadCatalogAsync();
                 StartBridge();
             };
-            Closed += (_, __) => _bridge.Dispose();
+            Closed += (_, __) => { _bubble?.Close(); _bridge.Dispose(); };
         }
 
         private void StartBridge()
@@ -76,16 +82,62 @@ namespace Whoretana
         private void Poll(object? sender, EventArgs e)
         {
             float lvl = Math.Min(1f, _bridge.Level);
-            string st = _bridge.State;
-            if (st == "speaking") { Orb.Mode = OrbMode.Speaking; Orb.SpeechLevel = lvl; Orb.MicLevel = 0; }
-            else if (st == "listening") { Orb.Mode = OrbMode.Listening; Orb.MicLevel = lvl; Orb.SpeechLevel = 0; }
-            else { Orb.Mode = OrbMode.Idle; Orb.MicLevel = 0; Orb.SpeechLevel = 0; }
+            OrbMode mode = _bridge.State switch
+            {
+                "speaking" => OrbMode.Speaking,
+                "thinking" => OrbMode.Thinking,
+                "listening" => OrbMode.Listening,
+                _ => OrbMode.Idle,
+            };
+            ApplyOrb(Orb, mode, lvl);
+            if (_bubble is { IsVisible: true } b)
+            {
+                bool flash = DateTime.UtcNow < _wakeFlashUntil;   // wake word -> brief listening flash
+                ApplyOrb(b.Orb, flash ? OrbMode.Listening : mode, flash ? Math.Max(lvl, 0.6f) : lvl);
+            }
 
             DialRot.Angle = -120 + 240 * lvl;
             DialCore.Opacity = 0.4 + 0.6 * lvl;
 
             if (SettingsOverlay.Visibility == Visibility.Visible && MicMeter.Parent is FrameworkElement track)
                 MicMeter.Width = Math.Max(0, track.ActualWidth) * lvl;
+        }
+
+        private void ApplyOrb(OrbControl orb, OrbMode mode, float lvl)
+        {
+            orb.Mode = mode;
+            orb.SpeechLevel = mode == OrbMode.Speaking ? lvl : 0;
+            orb.MicLevel = mode == OrbMode.Listening ? lvl : 0;
+            orb.SetVisemes(_bridge.Jaw, _bridge.Funnel, _bridge.Pucker, _bridge.Smile);
+        }
+
+        private void OnSpecial(string kind, float dur)
+        {
+            // ponytail: EyeRevealEvents gates ALL reveals (empty list = never);
+            // per-category filtering when the sidecar ever emits a second kind.
+            if (kind != "eye_reveal" || _settings.EyeRevealEvents == null || _settings.EyeRevealEvents.Length == 0) return;
+            Orb.TriggerEyeReveal(dur);
+            if (_bubble is { IsVisible: true } b) b.Orb.TriggerEyeReveal(dur);
+        }
+
+        // ---- bubble mode (spec 6): hide HUD, standby on; click bubble to reverse ----
+        private void Bubble_Click(object sender, RoutedEventArgs e)
+        {
+            _bubble = new BubbleWindow(_settings);
+            _bubble.RestoreRequested += RestoreFromBubble;
+            _bubble.Closed += (_, __) => _bubble = null;
+            _bubble.Show();
+            Hide();
+            if (_bridge.Ready) _bridge.SetStandby(true);
+        }
+
+        private void RestoreFromBubble()
+        {
+            _bubble?.Close();   // close, not hide: unloads the bubble orb so it stops simming
+            Show();
+            WindowState = WindowState.Normal;
+            BringToFront();
+            if (_bridge.Ready) _bridge.SetStandby(false);  // sidecar keeps listening if the user had it on
         }
 
         private void OnBridgeState(string s)
@@ -98,7 +150,8 @@ namespace Whoretana
         private void OnBridgeReply(VoiceBridge.Reply r)
         {
             AddChat("whoretana", r.Text);
-            if (r.NeedConfirm || r.Action == "await_confirm") SetStatus("Say or type 'yes' to confirm.");
+            _bridgePendingConfirm = r.NeedConfirm || r.Action == "await_confirm";
+            if (_bridgePendingConfirm) SetStatus("Say or type 'yes' to confirm.");
             else SetStatus("READY  -  talk (mic), or type below");
         }
 
@@ -206,6 +259,7 @@ namespace Whoretana
             if (text.Length == 0) return;
             ChatInput.Clear();
             AddChat("you", text);
+            if (_bridgePendingConfirm && IsYes(text)) { _bridgePendingConfirm = false; _bridge.SendText(text, confirm: true); return; }
             if (_pendingConfirm != null && IsYes(text)) { var p = _pendingConfirm; _pendingConfirm = null; await RouteTyped(p, true); return; }
             _pendingConfirm = null;
             await RouteTyped(text);
@@ -375,7 +429,8 @@ namespace Whoretana
             string brain = _settings.Brain == "gemini" ? "Gemini 2.5 Flash (realtime)" : "Local - Gemma/Qwen (becky-voice)";
             string voice = (_settings.Voice == "default" || string.IsNullOrEmpty(_settings.Voice)) ? "NeuTTS default" : "cloned " + System.IO.Path.GetFileName(_settings.Voice);
             string rt = VoiceBridge.Installed() ? (_bridge.Ready ? "" : "  (voice runtime starting...)") : "  (voice runtime not installed)";
-            ModelText.Text = "brain: " + brain + "   |   voice: " + voice + rt;
+            string live = _bridge.Brain != "router" ? "   |   live: " + _bridge.Brain : "";
+            ModelText.Text = "brain: " + brain + "   |   voice: " + voice + rt + live;
         }
 
         private static void SelectByTag(ComboBox combo, string tag)

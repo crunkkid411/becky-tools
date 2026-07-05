@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- OrbEngine - renderer-agnostic orb simulation (spec WHORETANA v2 section 2).
+       Zero UI deps by design: the WPF/Skia view (OrbControl) and any future D3D11
+       host consume the same spans. ponytail: CPU sim, D3D11/Vortice host when
+       particle count > ~6k. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>OrbEngine</RootNamespace>
+    <AssemblyName>OrbEngine</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\canonical_face_model.obj" LogicalName="OrbEngine.Assets.canonical_face_model.obj" />
+    <None Include="Assets\LICENSE-mesh.txt" />
+    <InternalsVisibleTo Include="OrbEngine.Tests" />
+  </ItemGroup>
+
+</Project>
