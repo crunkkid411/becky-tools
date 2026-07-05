@@ -75,6 +75,7 @@
     // counts as "quiet"; the on-timeline bar drags it. OFF by default = zero impact.
     thresholdOn: false,
     thresholdLevel: 0.14,
+    nativeQuiet: null,     // quiet [start,end] ranges streamed from the native timeline's REAL peaks
     overlayShowName: true, // the overlay's filename line is optional (Date/TC/link always shown)
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
@@ -321,7 +322,8 @@
     }
     var msg = { t: 'timelineReel', clips: out, pxPerSec: state.pxPerSec, scroll: tlScrollSec(),
                 sel: (state.selectedClipIds || []).map(String),
-                playhead: (typeof state.playheadComp === 'number') ? state.playheadComp : 0 };
+                playhead: (typeof state.playheadComp === 'number') ? state.playheadComp : 0,
+                thresholdOn: !!state.thresholdOn, thresholdLevel: state.thresholdLevel };
     if (withView) { msg.view = true; }   // only the toggle-on push adopts zoom/scroll/playhead
     post(msg);
   }
@@ -342,6 +344,7 @@
     if (tlNativeBtn) { tlNativeBtn.classList.toggle('on', nativeTL); }
     post({ t: 'timelineMode', on: nativeTL });
     if (nativeTL) { reportTimelineRect(); pushTimelineReel(true); pushTimelinePlayhead(); }
+    else { state.nativeQuiet = null; invalidateQuiet(); }   // back to DOM: engine-peaks quiet again
   }
 
   /* becky-timeline gesture events (relayed by the host as {t:"tlEvent", json:"..."}) route to
@@ -366,6 +369,14 @@
       markSelectedClip();
       return;
     }
+    if (o.ev === 'threshold') {   // the native bar was dragged - adopt the level
+      if (o.level > 0) { state.thresholdLevel = o.level; invalidateQuiet(); }
+      return;
+    }
+    if (o.ev === 'quiet') {       // quiet stretches from the REAL peaks -> playback skip uses these
+      state.nativeQuiet = (o.ranges || []).map(function (r) { return { start: r[0], end: r[1] }; });
+      return;
+    }
     if (o.ev === 'edit') { applyNativeEdit(o); }
   }
 
@@ -385,16 +396,14 @@
     toast('Native timeline stopped — back to the classic timeline.');
   }
 
-  // Wheel over the native pane: the pointer is over the native child HWND, but wheel events
-  // route to the FOCUSED window (the WebView), which hit-tests the page at the cursor — this
-  // element. Forward it so Ctrl+wheel zooms / wheel scrolls the NATIVE view; capture-phase +
-  // stopPropagation keeps the page's own DOM-zoom handler out of the loop while native is on.
+  // Wheel over the native pane: becky-timeline catches it ITSELF via a low-level mouse hook
+  // (cursor-over-pane, focus-independent — plain wheel zooms to the playhead, Ctrl+wheel pans,
+  // matching this app's DOM handler). This capture listener only SWALLOWS the page-side event
+  // so the hidden DOM timeline can't also zoom/scroll underneath.
   if (tlBodyEl) {
     tlBodyEl.addEventListener('wheel', function (e) {
       if (!nativeTL) { return; }
-      e.preventDefault(); e.stopPropagation();
-      var r = tlBodyEl.getBoundingClientRect();
-      post({ t: 'tlOp', op: 'wheel', dy: -(e.deltaY || 0) / 100, ctrl: !!(e.ctrlKey || e.metaKey), x: e.clientX - r.left });
+      e.preventDefault(); e.stopImmediatePropagation();
     }, { capture: true, passive: false });
   }
 
@@ -1398,6 +1407,16 @@
   // setZoom changes the scale and keeps the point under anchorClientX (or the viewport
   // centre) fixed, so zoom grows/shrinks toward the cursor instead of the left edge.
   function setZoom(px, anchorClientX) {
+    // Native mode: the NATIVE view owns zoom. Forward the target (from the +/- buttons,
+    // Up/Down keys, or any other caller) and let its {ev:"view"} echo update the label.
+    if (nativeTL) {
+      var nmsg = { t: 'tlOp', op: 'zoom', pps: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, px)) };
+      if (typeof anchorClientX === 'number' && tlBodyEl) {
+        nmsg.x = anchorClientX - tlBodyEl.getBoundingClientRect().left;
+      }
+      post(nmsg);
+      return;
+    }
     var v = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(px)));
     if (v === state.pxPerSec) {
       // Rounding fixed point (the real "scroll-to-zoom stops working" bug): at a
@@ -1664,9 +1683,12 @@
     renderThreshold();           // reposition the threshold bar + dim rects at the new scale (item 16)
     updateRenderSelButton();     // keep the render-selection button in sync with the redraw
     prefetchSourceDurations();   // CHANGE C: warm each source's true duration so a resize is bounded immediately
-    applyThumbs();               // paint each clip's cached first-frame thumbnail (async, cheap)
-    applyWaves();                // paint each clip's cached audio waveform (async, windowed)
-    applyProxies();              // build each visible clip's windowed scrub proxy (async, cached)
+    // Native mode: the DOM timeline is hidden under the native pane, so its thumbnails +
+    // SVG waveforms are invisible ffmpeg work — worse, those engine calls queue AHEAD of
+    // the play path's proxy/EDL calls and delay playback start. The native pane draws its
+    // own (better) waveforms; skip the DOM media pumps entirely while it's on.
+    if (!nativeTL) { applyThumbs(); applyWaves(); }
+    applyProxies();              // ALWAYS: the windowed scrub proxies feed the playback EDL
   }
 
   // Scrolling the timeline horizontally reveals more clips: fetch their thumb/waveform/
@@ -1907,6 +1929,7 @@
      the EDL finds it. When proxies land, mark the loaded EDL stale so the next idle
      seek/play adopts them (never reloads mpv on its own — no scrub hitch, no blink). */
   var proxyRequested = {};   // window-key -> true (asked this session; the file is cached on disk)
+  var proxyReady = {};       // window-key -> true once the engine CONFIRMED the proxy file exists
   var proxyQueue = [];
   var proxyActive = 0;
   var PROXY_MAX = 1;         // one segment-transcode at a time — a background nicety, don't peg CPU
@@ -1925,7 +1948,7 @@
       var key = waveKey(clip.source, clip.in || 0, clip.out || 0);   // same window key as the waveform
       if (proxyRequested[key] || !clipVisible(clip.id)) { continue; }
       proxyRequested[key] = true;
-      proxyQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0 });
+      proxyQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0, key: key });
       pumpProxies();
     }
   }
@@ -1933,18 +1956,23 @@
     while (proxyActive < PROXY_MAX && proxyQueue.length) {
       var job = proxyQueue.shift();
       proxyActive++;
-      beckyCall('scrub_segment', { source: job.src, in: job.in, out: job.out }).then(function (rep) {
-        proxyActive--;
-        // Only invalidate the EDL once the WHOLE batch has drained, not after each
-        // individual clip — with several clips queued, invalidating per-clip meant
-        // the EDL kept getting yanked out from under playback for the entire
-        // stretch while more proxies were still building ("timeline doesn't play
-        // at all while a new segment is building a proxy").
-        if (rep && rep.ok && rep.data && rep.data.path && proxyActive === 0 && !proxyQueue.length) {
-          markEdlStaleWhenIdle();
-        }
-        pumpProxies();
-      });
+      (function (job) {
+        beckyCall('scrub_segment', { source: job.src, in: job.in, out: job.out }).then(function (rep) {
+          proxyActive--;
+          if (rep && rep.ok && rep.data && rep.data.path && job.key) {
+            proxyReady[job.key] = true;   // play's ensurePlaybackProxies can skip this window now
+          }
+          // Only invalidate the EDL once the WHOLE batch has drained, not after each
+          // individual clip — with several clips queued, invalidating per-clip meant
+          // the EDL kept getting yanked out from under playback for the entire
+          // stretch while more proxies were still building ("timeline doesn't play
+          // at all while a new segment is building a proxy").
+          if (rep && rep.ok && rep.data && rep.data.path && proxyActive === 0 && !proxyQueue.length) {
+            markEdlStaleWhenIdle();
+          }
+          pumpProxies();
+        });
+      })(job);
     }
   }
   var proxySettleTimer = null;
@@ -1971,6 +1999,10 @@
   // quietIntervals returns merged [start,end] compilation-time stretches below the
   // threshold and longer than MIN_SKIP_SEC. Memoized until threshold/clips/peaks change.
   function quietIntervals() {
+    // Native mode: the native timeline computes these from the REAL (absolute-scale)
+    // waveform peaks and streams them over as {ev:"quiet"} - always fresher + more
+    // accurate than the engine's 200-bucket per-clip-normalized peaks.
+    if (nativeTL && state.nativeQuiet) { return state.nativeQuiet; }
     if (quietCache) { return quietCache; }
     var clips = state.timeline.clips || [], raw = [];
     for (var i = 0; i < clips.length; i++) {
@@ -2079,6 +2111,7 @@
       if ($tTrimSilence) { $tTrimSilence.disabled = !state.thresholdOn; }   // trim-silence needs the level set
       invalidateQuiet();
       renderThreshold();
+      if (nativeTL) { pushTimelineReel(); }   // the native pane draws its own bar + quiet shading
       if (state.thresholdOn) { toast('Playback threshold on — quiet parts are skipped during playback (evidence is not cut)'); }
     });
   }
@@ -2093,23 +2126,26 @@
     var clips = state.timeline.clips || [];
     if (!clips.length) { toast('Timeline is empty.'); return; }
     var MIN_KEEP = 0.3;   // drop loud runs shorter than this (clicks / noise)
+    // Keep the LOUD parts = the complement of the SAME quiet intervals the threshold shading
+    // shows (native mode: computed from the REAL absolute-scale peaks) - what you see dimmed
+    // is exactly what gets dropped. No quiet data yet -> whole clips kept (never blind-cut).
+    var iv = quietIntervals();
     var specs = [];
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i];
-      var peaks = peaksForClip(c);
-      if (!peaks || !peaks.length) {   // no peak data -> keep the whole clip (never blind-cut)
-        specs.push({ source: c.source, in: c.in || 0, out: c.out || 0, label: c.label || '' });
-        continue;
+      var cs = c.start_sec || 0, ce = cs + clipDur(c), inS = c.in || 0;
+      var cuts = [];
+      for (var q = 0; q < iv.length; q++) {
+        var a = Math.max(cs, iv[q].start), b2 = Math.min(ce, iv[q].end);
+        if (b2 > a) { cuts.push([a, b2]); }
       }
-      var n = peaks.length, dur = clipDur(c), inS = c.in || 0, runStart = -1;
-      for (var b = 0; b <= n; b++) {
-        var loud = (b < n) && (peaks[b] >= state.thresholdLevel);
-        if (loud && runStart < 0) { runStart = b; }
-        else if (!loud && runStart >= 0) {
-          var s0 = inS + (runStart / n) * dur, s1 = inS + (b / n) * dur;
-          if (s1 - s0 >= MIN_KEEP) { specs.push({ source: c.source, in: s0, out: s1, label: c.label || '' }); }
-          runStart = -1;
+      var pos = cs;
+      for (var k = 0; k <= cuts.length; k++) {
+        var segEnd = (k < cuts.length) ? cuts[k][0] : ce;
+        if (segEnd - pos >= MIN_KEEP) {
+          specs.push({ source: c.source, in: inS + (pos - cs), out: inS + (segEnd - cs), label: c.label || '' });
         }
+        if (k < cuts.length) { pos = Math.max(pos, cuts[k][1]); }
       }
     }
     if (!specs.length) { toast('Nothing above the threshold to keep.'); return; }
@@ -2215,6 +2251,37 @@
   // when it is current (a fast seek); otherwise (re)loads the fresh EDL ONCE — a
   // drag that fires many seeks before the load finishes coalesces to the latest
   // target (edlLoading guard), so a ruler scrub never reloads mpv repeatedly.
+  // Windowed proxies for the NEXT stretch of playback, awaited by seekTimeline's play
+  // path. Cached windows resolve instantly (the engine checks its disk cache first);
+  // missing ones transcode a few seconds of source each — with the busy bar + a toast,
+  // instead of the old silent raw-source stall. Horizon-limited so a 50-clip reel
+  // never blocks on proxying everything; the background pump keeps filling the rest.
+  var PLAY_PROXY_HORIZON = 60;   // seconds of upcoming playback proxied before starting
+  async function ensurePlaybackProxies(fromComp) {
+    var clips = state.timeline.clips || [];
+    var jobs = [];
+    for (var i = 0; i < clips.length; i++) {
+      var c = clips[i];
+      if (!c.source) { continue; }
+      var cs = c.start_sec || 0, ce = cs + clipDur(c);
+      if (ce <= fromComp || cs >= fromComp + PLAY_PROXY_HORIZON) { continue; }
+      var key = waveKey(c.source, c.in || 0, c.out || 0);
+      if (proxyReady[key]) { continue; }               // built (or confirmed cached) this session
+      jobs.push((function (c2, key2) {
+        proxyRequested[key2] = true;                   // keep the background pump from duplicating
+        return beckyCall('scrub_segment', { source: c2.source, in: c2.in || 0, out: c2.out || 0 })
+          .then(function (rep) {
+            if (rep.ok && rep.data && rep.data.path) { proxyReady[key2] = true; }
+          });
+      })(c, key));
+    }
+    if (jobs.length) {
+      toast('Preparing smooth playback…');
+      await Promise.all(jobs);
+      state.edlVersion = -1;                           // the EDL we build next adopts the proxies
+    }
+  }
+
   var edlLoading = false, pendingSeek = null;
   // A paused seek (keyboard nav / click) races an in-flight {t:"time"} message that
   // was already queued from BEFORE mpvSeek was sent — it can arrive AFTER the fresh,
@@ -2237,6 +2304,11 @@
     pendingSeek = { comp: comp, play: play };         // remember the latest target
     if (edlLoading) { return; }                       // a load is already running; it'll use pendingSeek
     edlLoading = true;
+    // Starting PLAYBACK on a raw multi-GB long-GOP source stalls silently for 10-60s while
+    // mpv fights the file's seek index (the "won't play at first" complaint). Before building
+    // the EDL, make sure the upcoming stretch has its tiny windowed proxies — cached ones
+    // return instantly, missing ones build in a few seconds WITH the busy signal showing.
+    if (play) { await ensurePlaybackProxies(comp); }
     var path = await ensureEdl();
     edlLoading = false;
     if (!path) { return; }

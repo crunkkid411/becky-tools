@@ -12,17 +12,27 @@
 //   {"ev":"edit","kind":"reorder","id","to"}          body-drag drop      -> reorder
 //   {"ev":"edit","kind":"reorder_many","ids","to"}    multi-drag drop     -> reorder_many
 //   {"ev":"view","pxPerSec":n}              zoom changed (page zoom label)
+//   {"ev":"threshold","level":x}            threshold bar dragged (page skip logic)
+//   {"ev":"quiet","ranges":[[s,e],...]}     quiet stretches from the REAL peaks (page skips them)
 // State arrives as stdin ops (one JSON per line):
-//   {"op":"loadreel","reel":{clips:[{id,source,in,out,label}],sel,pxPerSec,scroll,playhead,view}}
+//   {"op":"loadreel","reel":{clips:[{id,source,in,out,label}],sel,pxPerSec,scroll,playhead,
+//                            thresholdOn,thresholdLevel,view}}
 //   {"op":"seek","t":s,"quiet":true,"playing":b}   follow the app playhead (no echo)
 //   {"op":"vis","on":b}                            idle when the pane is hidden
-//   {"op":"zoom","f":1.5} {"op":"wheel","dy":n,"ctrl":b,"x":px}
+//   {"op":"zoom","f":1.5}|{"op":"zoom","pps":n,"x":px}   (buttons/keys forwarded by the page)
+// WHEEL is captured natively via a WH_MOUSE_LL hook (cursor-over-pane, focus-independent):
+//   plain wheel = ZOOM anchored to the playhead (this app's convention - "Jordan's ask"),
+//   Ctrl+wheel  = horizontal pan.  (Matches the DOM timeline's handler exactly.)
 // NO video decode happens embedded - mpv is the preview; no double-decode.
+//
+// WAVEFORM DECODE IS WINDOWED: only the seconds actually ON the timeline are decoded,
+// by SEEKING the audio-only pipeline straight to each clip's window (instant), audio
+// streams only (expose-all-streams=false - never decodes the video), at BELOW_NORMAL
+// priority so mpv playback is never starved. Results merge into full-length sentinel
+// arrays + a per-second coverage map, cached as BPK2.
 //
 // STANDALONE (no --wid): the original self-contained editor - 2 GStreamer d3d11 (NVDEC)
 // decoder layers, A/B tracks + PiP composite, local keys (Space/S/Del/I/O/G), local clock.
-//
-// HUMAN and AI drive the SAME surface: ops in NDJSON on stdin, state/events on stdout.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -42,6 +52,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -90,7 +101,7 @@ static bool layerLoad(Layer& L, const std::string& src) {
     if (!layerInit(L, src)) { L.loaded.clear(); return false; }
     L.loaded = src; return true;
 }
-static void layerSeek(Layer& L, double srcSec) {   // fire the seek; DON'T wait (layers decode in parallel)
+static void layerSeek(Layer& L, double srcSec) {
     GstClockTime pos = (GstClockTime)(srcSec * GST_SECOND);
     gst_element_seek_simple(L.pipe, GST_FORMAT_TIME,
         (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE), (gint64)pos);
@@ -110,23 +121,29 @@ static bool layerPull(Layer& L, GstVideoFrame* f, GstSample** out) {
     *out = smp; return true;
 }
 
-// ---------------- ACCURATE WAVEFORMS: per-source min/max peak pyramid --------------------
-// The REAL audio samples, decoded once per source in a background thread:
-//   L0 = min+max int8 per 64 samples @ 48 kHz mono  (750 bins/sec - sample-true at any zoom
-//        the timeline can reach), L1 = per 1024, L2 = per 16384 (for zoomed-out draws).
-// ABSOLUTE scale (int16 full-scale = 1.0), never per-clip normalized - silence looks silent
-// and levels are comparable across clips (the engine's SVG peaks were neither).
-// Cached at %LOCALAPPDATA%\becky\peaks\<fnv1a64(path|size|mtime)>.bpk so a source decodes once ever.
-static const int    kSpb = 64;                 // samples per L0 bin
+// ---------------- ACCURATE WAVEFORMS: windowed, seek-first min/max peak pyramid ----------------
+// L0 = min+max int8 per 64 samples @ 48 kHz mono (750 bins/sec), L1 = per 1024, L2 = per 16384.
+// ABSOLUTE scale (int16 full-scale = 1.0). Arrays are sized for the FULL source duration and
+// initialized to the EMPTY sentinel (min=127 > max=-128); decode jobs fill only the windows the
+// timeline actually shows, so a clip from minute 47 of a 2-hour livestream is ready in <1s.
+static const int    kSpb = 64;
 static const int    kPeakRate = 48000;
 static const double kBinsPerSec = (double)kPeakRate / kSpb;   // 750
+static std::atomic<int> g_fillEpoch{ 0 };   // bumped when decode lands (redraw + quiet recompute)
 
 struct Peaks {
     std::mutex mx;
-    std::vector<int8_t> n0, x0, n1, x1, n2, x2;   // min/max at L0, L1(x16), L2(x256)
-    size_t count = 0;                             // published L0 bins
-    bool done = false, failed = false;
-    double duration = 0;                          // source duration (sec) once known
+    std::vector<int8_t> n0, x0, n1, x1, n2, x2;
+    std::vector<uint8_t> secFilled;           // 1 byte per SECOND of source decoded
+    size_t bins = 0;
+    double duration = 0;
+    bool ready = false;                       // arrays sized; drawable
+    bool failed = false;
+    bool dirty = false;                       // cache needs (re)saving after jobs drain
+    std::deque<std::pair<double, double>> jobs;   // [start,end) source-second windows, front = next
+    std::condition_variable cv;
+    double lastMissReq = 0;
+    std::string source, cachePath;
 };
 static std::map<std::string, std::shared_ptr<Peaks>> g_peaks;
 static std::mutex g_peaksMx;
@@ -161,164 +178,243 @@ static std::string peaksCachePath(const std::string& source) {
     char fn[64]; snprintf(fn, sizeof fn, "\\%016llx.bpk", (unsigned long long)h);
     return dir + fn;
 }
-// derive L1/L2 tails from L0 (idempotent; call with mx held after appending L0 bins)
-static void derivePyramid(Peaks& P) {
-    while (P.n1.size() < P.n0.size() / 16) {
-        size_t i = P.n1.size() * 16;
+
+// size + sentinel-init all arrays for `duration` seconds. mx held by caller.
+static void sizeArrays(Peaks& P, double duration) {
+    P.duration = duration;
+    P.bins = (size_t)(duration * kBinsPerSec) + 2;
+    P.n0.assign(P.bins, 127); P.x0.assign(P.bins, -128);
+    P.n1.assign(P.bins / 16 + 1, 127); P.x1.assign(P.bins / 16 + 1, -128);
+    P.n2.assign(P.bins / 256 + 1, 127); P.x2.assign(P.bins / 256 + 1, -128);
+    P.secFilled.assign((size_t)duration + 2, 0);
+    P.ready = true;
+}
+// rebuild the L1/L2 bins covering L0 range [a,b). Sentinel-aware (all-empty stays empty). mx held.
+static void pyramidRegion(Peaks& P, size_t a, size_t b) {
+    if (b > P.bins) b = P.bins;
+    if (b <= a) return;
+    for (size_t i = a >> 4; i <= ((b - 1) >> 4) && i < P.n1.size(); i++) {
         int8_t mn = 127, mx = -128;
-        for (size_t k = i; k < i + 16; k++) { mn = std::min(mn, P.n0[k]); mx = std::max(mx, P.x0[k]); }
-        P.n1.push_back(mn); P.x1.push_back(mx);
+        size_t s0 = i << 4, s1 = std::min(P.bins, s0 + 16);
+        for (size_t k = s0; k < s1; k++) { mn = std::min(mn, P.n0[k]); mx = std::max(mx, P.x0[k]); }
+        P.n1[i] = mn; P.x1[i] = mx;
     }
-    while (P.n2.size() < P.n1.size() / 16) {
-        size_t i = P.n2.size() * 16;
+    for (size_t i = a >> 8; i <= ((b - 1) >> 8) && i < P.n2.size(); i++) {
         int8_t mn = 127, mx = -128;
-        for (size_t k = i; k < i + 16; k++) { mn = std::min(mn, P.n1[k]); mx = std::max(mx, P.x1[k]); }
-        P.n2.push_back(mn); P.x2.push_back(mx);
+        size_t s0 = i << 4, s1 = std::min(P.n1.size(), s0 + 16);
+        for (size_t k = s0; k < s1; k++) { mn = std::min(mn, P.n1[k]); mx = std::max(mx, P.x1[k]); }
+        P.n2[i] = mn; P.x2[i] = mx;
     }
 }
-static bool loadPeaksCache(const std::string& path, Peaks& P) {
-    FILE* f = nullptr; fopen_s(&f, path.c_str(), "rb");
+static bool loadPeaksCache(Peaks& P) {
+    FILE* f = nullptr; fopen_s(&f, P.cachePath.c_str(), "rb");
     if (!f) return false;
     char magic[4]; uint32_t spb = 0, rate = 0; uint64_t count = 0; double dur = 0;
-    bool ok = fread(magic, 1, 4, f) == 4 && memcmp(magic, "BPK1", 4) == 0
+    bool ok = fread(magic, 1, 4, f) == 4
         && fread(&spb, 4, 1, f) == 1 && spb == (uint32_t)kSpb
         && fread(&rate, 4, 1, f) == 1 && rate == (uint32_t)kPeakRate
         && fread(&count, 8, 1, f) == 1 && count < (1ULL << 32)
-        && fread(&dur, 8, 1, f) == 1;
-    if (ok) {
-        std::vector<int8_t> buf(count * 2);
-        ok = count == 0 || fread(buf.data(), 1, buf.size(), f) == buf.size();
-        if (ok) {
-            std::lock_guard<std::mutex> lk(P.mx);
-            P.n0.resize(count); P.x0.resize(count);
-            for (size_t i = 0; i < count; i++) { P.n0[i] = buf[i * 2]; P.x0[i] = buf[i * 2 + 1]; }
-            derivePyramid(P);
-            P.count = count; P.duration = dur; P.done = true;
+        && fread(&dur, 8, 1, f) == 1 && dur > 0;
+    bool v2 = ok && memcmp(magic, "BPK2", 4) == 0;
+    bool v1 = ok && memcmp(magic, "BPK1", 4) == 0;
+    if (ok && (v1 || v2)) {
+        std::lock_guard<std::mutex> lk(P.mx);
+        sizeArrays(P, dur);
+        if (v2) {
+            uint32_t secN = 0;
+            ok = fread(&secN, 4, 1, f) == 1 && secN <= P.secFilled.size();
+            if (ok && secN) ok = fread(P.secFilled.data(), 1, secN, f) == secN;
+        } else {
+            std::fill(P.secFilled.begin(), P.secFilled.end(), 1);   // BPK1 = whole file decoded
         }
-    }
-    fclose(f);
-    return ok;
-}
-static void savePeaksCache(const std::string& path, Peaks& P) {
-    FILE* f = nullptr; fopen_s(&f, path.c_str(), "wb");
-    if (!f) return;
-    fwrite("BPK1", 1, 4, f);
-    uint32_t spb = kSpb, rate = kPeakRate; uint64_t count = P.count; double dur = P.duration;
-    fwrite(&spb, 4, 1, f); fwrite(&rate, 4, 1, f); fwrite(&count, 8, 1, f); fwrite(&dur, 8, 1, f);
-    std::vector<int8_t> buf(P.count * 2);
-    for (size_t i = 0; i < P.count; i++) { buf[i * 2] = P.n0[i]; buf[i * 2 + 1] = P.x0[i]; }
-    fwrite(buf.data(), 1, buf.size(), f);
-    fclose(f);
-}
-static void decodePeaksThread(std::string source, std::shared_ptr<Peaks> P) {
-    {   // ponytail: cap concurrent audio decodes at 2; a reel can reference many sources
-        std::unique_lock<std::mutex> lk(g_decMx);
-        g_decCv.wait(lk, [] { return g_decActive < 2; });
-        g_decActive++;
-    }
-    std::string cache = peaksCachePath(source);
-    if (!loadPeaksCache(cache, *P)) {
-        GError* err = nullptr;
-        char* uri = gst_filename_to_uri(source.c_str(), &err);
-        if (!uri) { if (err) g_error_free(err); P->failed = true; }
-        else {
-            char desc[2600];
-            snprintf(desc, sizeof desc,
-                "uridecodebin uri=\"%s\" ! audioconvert ! audioresample ! "
-                "audio/x-raw,format=S16LE,channels=1,rate=%d ! appsink name=as sync=false",
-                uri, kPeakRate);
-            g_free(uri);
-            GError* e = nullptr;
-            GstElement* pipe = gst_parse_launch(desc, &e);
-            if (!pipe || e) { if (e) g_error_free(e); P->failed = true; }
-            else {
-                GstElement* sink = gst_bin_get_by_name(GST_BIN(pipe), "as");
-                gst_element_set_state(pipe, GST_STATE_PLAYING);
-                int32_t mn = 127 * 256, mx = -128 * 256; int cnt = 0;
-                bool gotDur = false;
-                double lastPub = nowSec();
-                for (;;) {
-                    GstSample* smp = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), GST_SECOND);
-                    if (!smp) {
-                        if (gst_app_sink_is_eos(GST_APP_SINK(sink))) break;
-                        // a source with NO audio stream errors instead of EOS-ing; without this
-                        // check the thread would block forever and pin a decode slot
-                        GstBus* bus = gst_element_get_bus(pipe);
-                        GstMessage* m = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
-                        gst_object_unref(bus);
-                        if (m) { gst_message_unref(m); break; }
-                        continue;   // just slow (network drive) - keep waiting
-                    }
-                    if (!gotDur) {
-                        gint64 d = 0;
-                        if (gst_element_query_duration(pipe, GST_FORMAT_TIME, &d) && d > 0) {
-                            P->duration = (double)d / GST_SECOND;
-                            std::lock_guard<std::mutex> lk(P->mx);
-                            size_t want = (size_t)(P->duration * kBinsPerSec) + 1024;
-                            P->n0.reserve(want); P->x0.reserve(want);
-                            gotDur = true;
-                        }
-                    }
-                    GstBuffer* buf = gst_sample_get_buffer(smp);
-                    GstMapInfo mi;
-                    if (gst_buffer_map(buf, &mi, GST_MAP_READ)) {
-                        const int16_t* sm = (const int16_t*)mi.data;
-                        size_t ns = mi.size / 2;
-                        std::lock_guard<std::mutex> lk(P->mx);
-                        for (size_t i = 0; i < ns; i++) {
-                            int32_t v = sm[i];
-                            if (v < mn) mn = v;
-                            if (v > mx) mx = v;
-                            if (++cnt == kSpb) {
-                                P->n0.push_back((int8_t)(mn >> 8)); P->x0.push_back((int8_t)(mx >> 8));
-                                mn = 127 * 256; mx = -128 * 256; cnt = 0;
-                            }
-                        }
-                        derivePyramid(*P);
-                        gst_buffer_unmap(buf, &mi);
-                    }
-                    gst_sample_unref(smp);
-                    if (nowSec() - lastPub > 0.05) {   // progressive publish while decoding
-                        std::lock_guard<std::mutex> lk(P->mx);
-                        P->count = P->n0.size();
-                        lastPub = nowSec();
-                    }
-                }
-                {
-                    std::lock_guard<std::mutex> lk(P->mx);
-                    P->count = P->n0.size();
-                    if (P->duration <= 0) P->duration = P->count / kBinsPerSec;
-                    P->done = P->count > 0;
-                    P->failed = P->count == 0;
-                    if (P->done) savePeaksCache(cache, *P);
-                }
-                gst_element_set_state(pipe, GST_STATE_NULL);
-                gst_object_unref(sink); gst_object_unref(pipe);
+        if (ok) {
+            std::vector<int8_t> buf((size_t)count * 2);
+            ok = count == 0 || fread(buf.data(), 1, buf.size(), f) == buf.size();
+            if (ok) {
+                size_t n = std::min((size_t)count, P.bins);
+                for (size_t i = 0; i < n; i++) { P.n0[i] = buf[i * 2]; P.x0[i] = buf[i * 2 + 1]; }
+                pyramidRegion(P, 0, n);
             }
         }
-    }
-    {
-        std::lock_guard<std::mutex> lk(g_decMx);
-        g_decActive--;
-    }
-    g_decCv.notify_one();
+        if (!ok) { P.ready = false; P.bins = 0; }
+    } else ok = false;
+    fclose(f);
+    return ok && P.ready;
 }
-static std::shared_ptr<Peaks> peaksFor(const std::string& source) {
+static void savePeaksCache(Peaks& P) {   // mx held by caller
+    FILE* f = nullptr; fopen_s(&f, P.cachePath.c_str(), "wb");
+    if (!f) return;
+    fwrite("BPK2", 1, 4, f);
+    uint32_t spb = kSpb, rate = kPeakRate; uint64_t count = P.bins; double dur = P.duration;
+    uint32_t secN = (uint32_t)P.secFilled.size();
+    fwrite(&spb, 4, 1, f); fwrite(&rate, 4, 1, f); fwrite(&count, 8, 1, f); fwrite(&dur, 8, 1, f);
+    fwrite(&secN, 4, 1, f);
+    fwrite(P.secFilled.data(), 1, secN, f);
+    std::vector<int8_t> buf(P.bins * 2);
+    for (size_t i = 0; i < P.bins; i++) { buf[i * 2] = P.n0[i]; buf[i * 2 + 1] = P.x0[i]; }
+    fwrite(buf.data(), 1, buf.size(), f);
+    fclose(f);
+    P.dirty = false;
+}
+
+// decode ONE contiguous window [a,b) source-seconds through a persistent audio-only pipeline.
+// Seeks straight to `a` (audio seeks are near-instant; no GOP walk) and EOSes at `b`.
+static void decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a, double b) {
+    if (!gst_element_seek(pipe, 1.0, GST_FORMAT_TIME,
+        (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+        GST_SEEK_TYPE_SET, (gint64)(a * GST_SECOND),
+        GST_SEEK_TYPE_SET, (gint64)(b * GST_SECOND))) return;
+    for (;;) {
+        GstSample* smp = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), GST_SECOND);
+        if (!smp) {
+            if (gst_app_sink_is_eos(GST_APP_SINK(sink))) break;
+            GstBus* bus = gst_element_get_bus(pipe);
+            GstMessage* m = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
+            gst_object_unref(bus);
+            if (m) { gst_message_unref(m); break; }
+            continue;
+        }
+        GstBuffer* buf = gst_sample_get_buffer(smp);
+        GstClockTime pts = GST_BUFFER_PTS(buf);
+        GstMapInfo mi;
+        if (GST_CLOCK_TIME_IS_VALID(pts) && gst_buffer_map(buf, &mi, GST_MAP_READ)) {
+            const int16_t* sm = (const int16_t*)mi.data;
+            size_t ns = mi.size / 2;
+            uint64_t samplePos = (uint64_t)((double)pts / GST_SECOND * kPeakRate);
+            std::lock_guard<std::mutex> lk(P.mx);
+            size_t firstBin = (size_t)(samplePos / kSpb), lastBin = firstBin;
+            for (size_t i = 0; i < ns; i++) {
+                size_t bin = (size_t)((samplePos + i) / kSpb);
+                if (bin >= P.bins) break;
+                int8_t q = (int8_t)(sm[i] >> 8);
+                if (q < P.n0[bin]) P.n0[bin] = q;
+                if (q > P.x0[bin]) P.x0[bin] = q;
+                lastBin = bin;
+            }
+            pyramidRegion(P, firstBin, lastBin + 1);
+            gst_buffer_unmap(buf, &mi);
+        }
+        gst_sample_unref(smp);
+    }
+    {   // mark fully-covered whole seconds (partial edge seconds re-decode later; cheap)
+        std::lock_guard<std::mutex> lk(P.mx);
+        for (size_t s = (size_t)std::ceil(a); s + 1 <= (size_t)std::floor(b) && s < P.secFilled.size(); s++)
+            P.secFilled[s] = 1;
+        P.dirty = true;
+    }
+    g_fillEpoch.fetch_add(1);
+}
+
+static void peaksWorker(std::shared_ptr<Peaks> P) {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);   // never starve mpv
+    if (loadPeaksCache(*P)) g_fillEpoch.fetch_add(1);
+    // audio-only pipeline: caps + expose-all-streams=false means the VIDEO stream is never
+    // decoded (the old full-decode fought mpv for the GPU/disk - the "won't play" complaint)
+    GError* uerr = nullptr;
+    char* uri = gst_filename_to_uri(P->source.c_str(), &uerr);
+    if (!uri) { if (uerr) g_error_free(uerr); P->failed = true; return; }
+    char desc[2600];
+    snprintf(desc, sizeof desc,
+        "uridecodebin uri=\"%s\" caps=\"audio/x-raw\" expose-all-streams=false ! "
+        "audioconvert ! audioresample ! audio/x-raw,format=S16LE,channels=1,rate=%d ! "
+        "appsink name=as sync=false",
+        uri, kPeakRate);
+    g_free(uri);
+    GError* e = nullptr;
+    GstElement* pipe = gst_parse_launch(desc, &e);
+    if (!pipe || e) { if (e) g_error_free(e); P->failed = true; return; }
+    GstElement* sink = gst_bin_get_by_name(GST_BIN(pipe), "as");
+    // probe the duration once (PAUSED preroll reads headers + a first packet - fast)
+    if (!P->ready) {
+        gst_element_set_state(pipe, GST_STATE_PAUSED);
+        if (gst_element_get_state(pipe, nullptr, nullptr, 20 * GST_SECOND) == GST_STATE_CHANGE_FAILURE) {
+            P->failed = true;   // no audio stream / unreadable -> blank lane, never a hang
+            gst_element_set_state(pipe, GST_STATE_NULL);
+            gst_object_unref(sink); gst_object_unref(pipe);
+            return;
+        }
+        gint64 d = 0;
+        if (gst_element_query_duration(pipe, GST_FORMAT_TIME, &d) && d > 0) {
+            std::lock_guard<std::mutex> lk(P->mx);
+            sizeArrays(*P, (double)d / GST_SECOND);
+        } else {
+            P->failed = true;
+            gst_element_set_state(pipe, GST_STATE_NULL);
+            gst_object_unref(sink); gst_object_unref(pipe);
+            return;
+        }
+    }
+    gst_element_set_state(pipe, GST_STATE_PLAYING);
+    g_fillEpoch.fetch_add(1);   // ready -> redraw
+
+    std::unique_lock<std::mutex> lk(P->mx);
+    for (;;) {
+        if (P->jobs.empty()) {
+            if (P->dirty) { savePeaksCache(*P); }          // persist once the queue drains
+            P->cv.wait_for(lk, std::chrono::seconds(2));   // idle; stay warm for new jobs
+            if (P->jobs.empty()) continue;
+        }
+        auto job = P->jobs.front(); P->jobs.pop_front();
+        double a = std::max(0.0, job.first), b = std::min(P->duration, job.second);
+        // split into UNFILLED runs so already-decoded seconds are never re-read
+        std::vector<std::pair<double, double>> runs;
+        double runA = -1;
+        for (size_t s = (size_t)a; s <= (size_t)b && s < P->secFilled.size(); s++) {
+            bool filled = P->secFilled[s] != 0;
+            if (!filled && runA < 0) runA = std::max(a, (double)s);
+            if ((filled || s == (size_t)b) && runA >= 0) { runs.push_back({ runA, std::min(b, (double)s + 1) }); runA = -1; }
+        }
+        if (runA >= 0) runs.push_back({ runA, b });
+        lk.unlock();
+        for (auto& r : runs) {
+            if (r.second - r.first < 0.01) continue;
+            {   // global cap: at most 2 sources decoding at once
+                std::unique_lock<std::mutex> g(g_decMx);
+                g_decCv.wait(g, [] { return g_decActive < 2; });
+                g_decActive++;
+            }
+            decodeWindow(*P, pipe, sink, r.first, r.second);
+            {
+                std::lock_guard<std::mutex> g(g_decMx);
+                g_decActive--;
+            }
+            g_decCv.notify_one();
+        }
+        lk.lock();
+    }
+}
+
+static std::shared_ptr<Peaks> peaksGet(const std::string& source) {
+    std::lock_guard<std::mutex> lk(g_peaksMx);
+    auto it = g_peaks.find(source);
+    return it == g_peaks.end() ? nullptr : it->second;
+}
+static std::shared_ptr<Peaks> peaksEnsure(const std::string& source) {
     if (source.empty()) return nullptr;
     std::lock_guard<std::mutex> lk(g_peaksMx);
     auto it = g_peaks.find(source);
     if (it != g_peaks.end()) return it->second;
     auto P = std::make_shared<Peaks>();
+    P->source = source;
+    P->cachePath = peaksCachePath(source);
     g_peaks[source] = P;
-    std::thread(decodePeaksThread, source, P).detach();
+    std::thread(peaksWorker, P).detach();
     return P;
+}
+// queue a decode window (newest first - what just landed on the timeline draws first)
+static void peaksRequest(const std::string& source, double a, double b) {
+    auto P = peaksEnsure(source);
+    if (!P || P->failed) return;
+    std::lock_guard<std::mutex> lk(P->mx);
+    P->jobs.push_front({ std::max(0.0, a), b });
+    P->cv.notify_one();
 }
 
 // ---------------- the clip tracks ----------------
 struct Clip { double in, out, compStart; std::string label; std::string source; std::string id; };
 static std::vector<Clip> g_track[2];   // 0 = A (main), 1 = B (PiP; standalone only)
 static double g_compDur = 0;
-static bool g_group = true;            // grouped -> split/delete/trim hit BOTH tracks (standalone A/B)
+static bool g_group = true;
 
 static void relabel(int tr) {
     const char* p = tr == 0 ? "clip " : "pip ";
@@ -397,15 +493,17 @@ static void compose(double t) {
 
 // ---------------- NDJSON in/out ----------------
 static std::mutex g_mx; static std::vector<json> g_pending;
+static std::atomic<bool> g_stdinEof{ false };
 static void stdinReader() {
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) continue;
         try { json j = json::parse(line); std::lock_guard<std::mutex> lk(g_mx); g_pending.push_back(j); } catch (...) {}
     }
+    g_stdinEof = true;   // host closed the pipe (app quit or was killed) - embedded, that means exit
 }
 static void emitJson(const json& j) { std::cout << j.dump() << "\n"; std::cout.flush(); }
-static void emitState(double curSec, bool playing) {   // becky's AI reads this to see the result
+static void emitState(double curSec, bool playing) {
     json s; s["t"] = curSec; s["dur"] = g_compDur; s["playing"] = playing; s["group"] = g_group;
     for (int tr = 0; tr < 2; tr++) {
         json arr = json::array();
@@ -417,24 +515,32 @@ static void emitState(double curSec, bool playing) {   // becky's AI reads this 
 }
 
 // ---------------- view + gesture state ----------------
-static HWND g_parentWid = nullptr;     // --wid: embedded child of BRN's timeline pane
-static double g_pps = 60;              // px per second (zoom)
+static HWND g_parentWid = nullptr;
+static HWND g_hwnd = nullptr;
+static double g_pps = 60;
 static double g_scrollSec = 0;
-static bool g_viewInit = false;        // first loadreel with view:true adopts pxPerSec/scroll
-static bool g_visible = true;          // {"op":"vis"} - skip render/Present while hidden
-static bool g_playingExt = false;      // embedded: play state reported by the app
-static double g_lastUserScroll = 0;    // suppress auto-follow briefly after a manual scroll
+static bool g_viewInit = false;
+static bool g_visible = true;
+static bool g_playingExt = false;
+static double g_lastUserScroll = 0;
 static std::set<std::string> g_sel;
 static std::string g_selAnchor;
+// playback threshold (mirrors the app's: skip quiet parts during playback; never a cut)
+static bool g_thrOn = false;
+static double g_thrLevel = 0.14;
+static bool g_quietDirty = true;
+static int g_quietEpochSeen = -1;
+static std::vector<std::pair<double, double>> g_quietRanges;   // comp seconds
+static double g_lastQuietEmit = 0, g_lastThrEmit = 0;
 
 struct Gesture {
-    int kind = 0;              // 0 none, 1 scrub, 2 clip-pending, 3 reorder, 4 trimL, 5 trimR, 6 scrollbar
-    int idx = -1;              // clip index (track 0)
+    int kind = 0;              // 0 none, 1 scrub, 2 clip-pending, 3 reorder, 4 trimL, 5 trimR, 6 scrollbar, 7 threshold
+    int idx = -1;
     float pressX = 0;
     bool ctrl = false, shiftK = false;
-    double gIn = 0, gOut = 0;  // live trim ghost (source seconds)
-    std::vector<int> group;    // reorder: all dragged clip indices (multi-select drag)
-    double grabOff = 0;        // scrollbar: grab offset inside the thumb (px)
+    double gIn = 0, gOut = 0;
+    std::vector<int> group;
+    double grabOff = 0;
     bool dragged = false;
 };
 static Gesture g_gest;
@@ -455,11 +561,63 @@ static void emitView() {
 }
 static void emitSelect() {
     json ids = json::array();
-    for (auto& c : g_track[0]) if (g_sel.count(c.id)) ids.push_back(c.id);   // timeline order
+    for (auto& c : g_track[0]) if (g_sel.count(c.id)) ids.push_back(c.id);
     emitJson({ {"ev","select"}, {"ids", ids} });
 }
+static void emitThreshold(bool final_) {
+    double n = nowSec();
+    if (!final_ && n - g_lastThrEmit < 0.1) return;
+    g_lastThrEmit = n;
+    emitJson({ {"ev","threshold"}, {"level", g_thrLevel} });
+}
 
-// live reel from the host: {"clips":[{id,source,in,out,label}], sel, pxPerSec, scroll, playhead, view}
+// quiet stretches (comp seconds) from the REAL peaks: runs where max|amp| < level for >=0.35s.
+// Undecoded bins count as LOUD (never skip what we haven't heard - same rule as the app).
+static void recomputeQuiet() {
+    g_quietRanges.clear();
+    if (!g_thrOn) return;
+    std::vector<std::pair<double, double>> raw;
+    for (auto& c : g_track[0]) {
+        auto pk = peaksGet(c.source);
+        if (!pk) continue;
+        std::lock_guard<std::mutex> lk(pk->mx);
+        if (!pk->ready) continue;
+        long long b0 = std::max(0LL, (long long)(c.in * kBinsPerSec));
+        long long b1 = std::min((long long)pk->bins, (long long)(c.out * kBinsPerSec));
+        double runA = -1;
+        for (long long b = b0; b <= b1; b++) {
+            bool quiet = false;
+            if (b < b1) {
+                int8_t mn = pk->n0[b], mx = pk->x0[b];
+                if (mn <= mx) {
+                    double amp = std::max(std::abs((int)mn), std::abs((int)mx)) / 127.0;
+                    quiet = amp < g_thrLevel;
+                }
+            }
+            double compT = c.compStart + (b / kBinsPerSec - c.in);
+            if (quiet && runA < 0) runA = compT;
+            else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
+        }
+    }
+    std::sort(raw.begin(), raw.end());
+    for (auto& r : raw) {
+        if (!g_quietRanges.empty() && r.first <= g_quietRanges.back().second + 0.06)
+            g_quietRanges.back().second = std::max(g_quietRanges.back().second, r.second);
+        else g_quietRanges.push_back(r);
+    }
+    g_quietRanges.erase(std::remove_if(g_quietRanges.begin(), g_quietRanges.end(),
+        [](const std::pair<double, double>& r) { return r.second - r.first < 0.35; }), g_quietRanges.end());
+}
+static void emitQuiet() {
+    double n = nowSec();
+    if (n - g_lastQuietEmit < 0.3) return;
+    g_lastQuietEmit = n;
+    json ranges = json::array();
+    for (auto& r : g_quietRanges) ranges.push_back({ r.first, r.second });
+    emitJson({ {"ev","quiet"}, {"ranges", ranges} });
+}
+
+// live reel from the host
 static void loadReelLive(const json& reel, double& curSec) {
     g_track[0].clear(); g_track[1].clear();
     if (reel.contains("clips") && reel["clips"].is_array()) {
@@ -476,24 +634,31 @@ static void loadReelLive(const json& reel, double& curSec) {
     g_sel.clear();
     if (reel.contains("sel") && reel["sel"].is_array())
         for (auto& s : reel["sel"]) if (s.is_string()) g_sel.insert(s.get<std::string>());
-    // the FIRST push after toggle-on carries view:true -> adopt the DOM view so the toggle
-    // is seamless; later pushes must NOT stomp the user's local zoom/scroll
+    if (reel.contains("thresholdOn") && reel["thresholdOn"].is_boolean()) g_thrOn = reel["thresholdOn"].get<bool>();
+    if (reel.contains("thresholdLevel") && reel["thresholdLevel"].is_number()) g_thrLevel = reel["thresholdLevel"].get<double>();
     if (reel.value("view", false) || !g_viewInit) {
         double pps = reel.value("pxPerSec", 0.0);
         if (pps > 0.01) g_pps = std::min(2000.0, std::max(0.5, pps));
         g_scrollSec = std::max(0.0, reel.value("scroll", 0.0));
-        if (reel.contains("playhead")) curSec = std::max(0.0, reel.value("playhead", 0.0));
+        if (reel.contains("playhead") && reel["playhead"].is_number()) curSec = std::max(0.0, reel["playhead"].get<double>());
         g_viewInit = true;
     }
     if (curSec > g_compDur) curSec = g_compDur;
-    for (auto& c : g_track[0]) peaksFor(c.source);   // kick waveform decode for every source
+    // WINDOWED waveform decode: only what's on the timeline, newest first, small margins
+    // for trim headroom. This is what makes waveforms appear near-instantly.
+    for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+    g_quietDirty = true;
 }
+
+// pending zoom ops (need pane geometry; applied inside drawTimeline)
+struct ZoomOp { double f = 0, pps = 0; float x = -1; };
+static std::vector<ZoomOp> g_extZoom;
 
 // one edit path for BOTH human and AI. returns true if the model changed / needs a redraw.
 static bool applyOp(const std::string& op, double t, const json& j, double& curSec, bool& playing) {
     auto clampT = [&](double x) { return x < 0 ? 0 : (x > g_compDur ? g_compDur : x); };
     if (op == "loadreel") {
-        if (g_gest.kind != 0) { g_pendingReel = j; g_havePendingReel = true; return false; }  // never stomp a live gesture
+        if (g_gest.kind != 0) { g_pendingReel = j; g_havePendingReel = true; return false; }
         if (j.contains("reel")) loadReelLive(j["reel"], curSec);
         return true;
     }
@@ -504,11 +669,14 @@ static bool applyOp(const std::string& op, double t, const json& j, double& curS
     }
     if (op == "vis") { g_visible = j.value("on", true); return false; }
     if (op == "zoom") {
-        double f = j.value("f", 1.0);
-        if (f > 0) { g_pps = std::min(2000.0, std::max(0.5, g_pps * f)); emitView(); }
+        ZoomOp z;
+        if (j.contains("pps") && j["pps"].is_number()) z.pps = j["pps"].get<double>();
+        if (j.contains("f") && j["f"].is_number()) z.f = j["f"].get<double>();
+        if (j.contains("x") && j["x"].is_number()) z.x = (float)j["x"].get<double>();
+        if (z.pps > 0 || z.f > 0) g_extZoom.push_back(z);
         return true;
     }
-    if (op == "wheel") { return true; }   // queued into g_extWheel by the main loop (needs pane geometry)
+    if (op == "wheel") { return true; }   // legacy page-forwarded wheel (queued by the main loop)
     if (op == "play") { playing = j.value("on", !playing); return true; }
     if (op == "group") { g_group = j.value("on", !g_group); return true; }
     if (op == "split") { splitTrack(0, t); if (g_group) splitTrack(1, t); return true; }
@@ -518,7 +686,7 @@ static bool applyOp(const std::string& op, double t, const json& j, double& curS
     return false;
 }
 
-// ---------------- D3D11 display (FLIP swapchain -> DWM composites the child over the WebView2) ----------------
+// ---------------- D3D11 display ----------------
 static ID3D11Device* g_dev = nullptr; static ID3D11DeviceContext* g_ctx = nullptr; static IDXGISwapChain* g_swap = nullptr;
 static ID3D11RenderTargetView* g_rtv = nullptr;
 static ID3D11Texture2D* g_frameTex = nullptr; static ID3D11ShaderResourceView* g_frameSrv = nullptr; static int g_texW = 0, g_texH = 0;
@@ -536,7 +704,7 @@ static bool CreateD3D(HWND h) {
     sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = h;
     sd.SampleDesc.Count = 1; sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;   // FLIP model = DWM-composited over the WebView2 (BitBlt wasn't)
+    sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;   // FLIP model = DWM-composited over the WebView2
     if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
         D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, nullptr, &g_ctx))) return false;
     createRTV();
@@ -571,13 +739,33 @@ static void uploadFrame() {
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 static LRESULT WINAPI WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (ImGui_ImplWin32_WndProcHandler(h, m, w, l)) return true;
-    // Embedded: take mouse clicks WITHOUT taking activation/keyboard focus — the page keeps the
-    // keyboard (its shortcuts + search box), we keep the mouse. Without this, one click on the
-    // timeline silently killed every page hotkey until the user clicked the page again.
+    // Embedded: take mouse clicks WITHOUT taking activation/keyboard focus - the page keeps the
+    // keyboard (its shortcuts + search box), we keep the mouse.
     if (m == WM_MOUSEACTIVATE && g_parentWid) return MA_NOACTIVATE;
     if (m == WM_SIZE && w != SIZE_MINIMIZED) { g_W = LOWORD(l); g_H = HIWORD(l); g_resize = true; }
     if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(h, m, w, l);
+}
+
+// ---------------- wheel via WH_MOUSE_LL --------------------------------------------------
+// Wheel messages route to the FOCUSED window, and focus deliberately stays with the page
+// (MA_NOACTIVATE) - so a low-level hook catches the wheel whenever the cursor is over OUR
+// pane, no matter who has focus. The hook dispatches on this thread's message pump, so no
+// locking is needed around g_extWheel.
+struct WheelEvent { float notches; bool ctrl; float x; };
+static std::vector<WheelEvent> g_extWheel;
+static HHOOK g_mouseHook = nullptr;
+static LRESULT CALLBACK MouseLLProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && wParam == WM_MOUSEWHEEL && g_hwnd && g_visible) {
+        auto* d = (MSLLHOOKSTRUCT*)lParam;
+        if (WindowFromPoint(d->pt) == g_hwnd) {
+            RECT wr; GetWindowRect(g_hwnd, &wr);
+            short delta = (short)HIWORD(d->mouseData);
+            g_extWheel.push_back({ delta / 120.0f, (GetKeyState(VK_CONTROL) & 0x8000) != 0,
+                                   (float)(d->pt.x - wr.left) });
+        }
+    }
+    return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
 }
 
 // ---------------- the timeline surface ----------------
@@ -596,6 +784,8 @@ static const ImU32 COL_PLAYHEAD = IM_COL32(255, 210, 0, 255);
 static const ImU32 COL_DROPMARK = IM_COL32(255, 210, 0, 255);
 static const ImU32 COL_LABEL    = IM_COL32(235, 238, 245, 235);
 static const ImU32 COL_PIP      = IM_COL32(0, 160, 96, 255);
+static const ImU32 COL_THRBAR   = IM_COL32(255, 120, 70, 235);
+static const ImU32 COL_QUIETDIM = IM_COL32(0, 0, 0, 110);
 
 static void fmtTime(double s, char* out, size_t n, bool subSec) {
     if (s < 0) s = 0;
@@ -610,45 +800,49 @@ static double rulerStep(double pps) {
     return 7200;
 }
 
-// draw the REAL waveform for source window [cin,cout) inside rect [wx0,wx1]x[wy0,wy1];
-// clipX0 = the pixel of source-time `cin` (the clip's drawn left edge).
+// draw the REAL waveform for source window [cin,cout); requests decode for any missing span.
 static void drawWave(ImDrawList* dl, const std::string& source, double cin, double cout,
                      float clipX0, float wx0, float wx1, float wy0, float wy1, double pps, ImU32 col) {
-    auto pk = peaksFor(source);
+    auto pk = peaksGet(source);
     if (!pk || pk->failed) return;
-    std::lock_guard<std::mutex> lk(pk->mx);
-    if (pk->count == 0) return;
-    float mid = (wy0 + wy1) * 0.5f, half = (wy1 - wy0) * 0.5f - 1.0f;
-    if (half < 2) return;
-    int x0 = (int)std::floor(wx0), x1 = (int)std::ceil(wx1);
-    for (int x = x0; x < x1; x++) {
-        double s0 = cin + (x - clipX0) / pps, s1 = s0 + 1.0 / pps;
-        if (s1 <= cin) continue;
-        if (s0 >= cout) break;
-        s0 = std::max(s0, cin); s1 = std::min(s1, cout);
-        long long b0 = (long long)(s0 * kBinsPerSec), b1 = (long long)(s1 * kBinsPerSec) + 1;
-        b0 = std::max(0LL, b0); b1 = std::min((long long)pk->count, b1);
-        if (b1 <= b0) continue;
-        long long span = b1 - b0;
-        int mn = 127, mx = -128;
-        if (span >= 4096 && !pk->n2.empty()) {
-            long long c0 = b0 >> 8, c1 = std::min((long long)pk->n2.size(), (b1 >> 8) + 1);
-            for (long long i = c0; i < c1; i++) { mn = std::min(mn, (int)pk->n2[i]); mx = std::max(mx, (int)pk->x2[i]); }
-        } else if (span >= 256 && !pk->n1.empty()) {
-            long long c0 = b0 >> 4, c1 = std::min((long long)pk->n1.size(), (b1 >> 4) + 1);
-            for (long long i = c0; i < c1; i++) { mn = std::min(mn, (int)pk->n1[i]); mx = std::max(mx, (int)pk->x1[i]); }
-        } else {
-            for (long long i = b0; i < b1; i++) { mn = std::min(mn, (int)pk->n0[i]); mx = std::max(mx, (int)pk->x0[i]); }
+    bool missed = false;
+    {
+        std::lock_guard<std::mutex> lk(pk->mx);
+        if (!pk->ready) return;
+        float mid = (wy0 + wy1) * 0.5f, half = (wy1 - wy0) * 0.5f - 1.0f;
+        if (half < 2) return;
+        int x0 = (int)std::floor(wx0), x1 = (int)std::ceil(wx1);
+        for (int x = x0; x < x1; x++) {
+            double s0 = cin + (x - clipX0) / pps, s1 = s0 + 1.0 / pps;
+            if (s1 <= cin) continue;
+            if (s0 >= cout) break;
+            s0 = std::max(s0, cin); s1 = std::min(s1, cout);
+            long long b0 = (long long)(s0 * kBinsPerSec), b1 = (long long)(s1 * kBinsPerSec) + 1;
+            b0 = std::max(0LL, b0); b1 = std::min((long long)pk->bins, b1);
+            if (b1 <= b0) continue;
+            long long span = b1 - b0;
+            int mn = 127, mx = -128;
+            if (span >= 4096 && !pk->n2.empty()) {
+                long long c0 = b0 >> 8, c1 = std::min((long long)pk->n2.size(), (b1 >> 8) + 1);
+                for (long long i = c0; i < c1; i++) { mn = std::min(mn, (int)pk->n2[i]); mx = std::max(mx, (int)pk->x2[i]); }
+            } else if (span >= 256 && !pk->n1.empty()) {
+                long long c0 = b0 >> 4, c1 = std::min((long long)pk->n1.size(), (b1 >> 4) + 1);
+                for (long long i = c0; i < c1; i++) { mn = std::min(mn, (int)pk->n1[i]); mx = std::max(mx, (int)pk->x1[i]); }
+            } else {
+                for (long long i = b0; i < b1; i++) { mn = std::min(mn, (int)pk->n0[i]); mx = std::max(mx, (int)pk->x0[i]); }
+            }
+            if (mn > mx) { missed = true; continue; }   // undecoded span (sentinel)
+            float yTop = mid - (mx / 127.0f) * half;
+            float yBot = mid - (mn / 127.0f) * half;
+            if (yBot - yTop < 1.0f) { yTop = mid - 0.5f; yBot = mid + 0.5f; }
+            dl->AddLine(ImVec2((float)x, yTop), ImVec2((float)x, yBot), col);
         }
-        if (mn > mx) continue;
-        float yTop = mid - (mx / 127.0f) * half;
-        float yBot = mid - (mn / 127.0f) * half;
-        if (yBot - yTop < 1.0f) { yTop = mid - 0.5f; yBot = mid + 0.5f; }
-        dl->AddLine(ImVec2((float)x, yTop), ImVec2((float)x, yBot), col);
+        if (missed && nowSec() - pk->lastMissReq < 1.0) missed = false;
+        if (missed) pk->lastMissReq = nowSec();
     }
+    if (missed) peaksRequest(source, cin - 1.0, cout + 5.0);   // e.g. a trim revealed new material
 }
 
-// snap a candidate comp-time to clip edges / the playhead within `px` pixels; excl = clip to skip
 static double snapComp(double t, double pps, double curSec, int exclIdx, float px = 8.0f) {
     double best = t, bestD = px / pps;
     auto try_ = [&](double e) { double d = std::abs(e - t); if (d < bestD) { bestD = d; best = e; } };
@@ -661,18 +855,14 @@ static double snapComp(double t, double pps, double curSec, int exclIdx, float p
     return best;
 }
 
-struct WheelEvent { float dy; bool ctrl; float x; };
-static std::vector<WheelEvent> g_extWheel;   // wheel forwarded from the page (embedded)
-
-// The full timeline surface: ruler + lane(s) + waveforms + gestures + scrollbar.
-// Mutates curSec/playing; emits NDJSON events for the host when gestures commit.
+// The full timeline surface: ruler + lane(s) + waveforms + threshold + gestures + scrollbar.
 static void drawTimeline(double& curSec, bool& playing) {
     bool embedded = g_parentWid != nullptr;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float availW = ImGui::GetContentRegionAvail().x;
     float availH = ImGui::GetContentRegionAvail().y;
-    if (availW < 16 || availH < 44) return;   // pane too small to interact with (mid-resize)
+    if (availW < 16 || availH < 44) return;
     float tlX = p.x, tlW = availW;
     float rulerH = 22, sbH = 12, gap = 4;
     int lanes = embedded ? 1 : (g_track[1].empty() ? 1 : 2);
@@ -686,7 +876,6 @@ static void drawTimeline(double& curSec, bool& playing) {
 
     dl->AddRectFilled(p, ImVec2(p.x + tlW, sbY + sbH), COL_BG);
 
-    // ---- interaction region (everything but the scrollbar row) ----
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("tl", ImVec2(tlW, bot - p.y));
     bool hovered = ImGui::IsItemHovered();
@@ -699,24 +888,42 @@ static void drawTimeline(double& curSec, bool& playing) {
     auto xToSec = [&](float x) { return std::max(0.0, g_scrollSec + (x - tlX) / g_pps); };
     auto secToX = [&](double s) { return tlX + (float)((s - g_scrollSec) * g_pps); };
 
-    // wheel: local (standalone hover) + forwarded from the page (embedded)
+    // waveform geometry (the threshold bar + zoom anchor need it up front)
+    float labelH = laneH > 46 ? 17.0f : 0.0f;
+    float wy0 = aY + 2 + labelH, wy1 = aY + laneH - 2;
+    float waveMid = (wy0 + wy1) * 0.5f, waveHalf = (wy1 - wy0) * 0.5f - 1.0f;
+
+    // ZOOM: THIS APP'S convention (matches the DOM timeline exactly): plain wheel = zoom
+    // anchored to the PLAYHEAD (fallback: cursor); Ctrl+wheel = horizontal pan.
+    auto zoomTo = [&](double newPps, float anchorX) {
+        double anchor = xToSec(anchorX);
+        g_pps = std::min(2000.0, std::max(0.5, newPps));
+        g_scrollSec = std::max(0.0, anchor - (anchorX - tlX) / g_pps);
+        emitView();
+    };
+    auto zoomAnchorX = [&]() -> float {
+        float phx = secToX(curSec);
+        if (phx >= tlX && phx <= tlX + tlW) return phx;
+        return hovered ? mx : tlX + tlW / 2;
+    };
     auto applyWheel = [&](float notches, bool ctrl, float atX) {
-        if (ctrl) {
-            double f = std::pow(1.15, (double)notches);
-            double anchor = xToSec(atX);
-            g_pps = std::min(2000.0, std::max(0.5, g_pps * f));
-            g_scrollSec = std::max(0.0, anchor - (atX - tlX) / g_pps);
-            emitView();
-        } else {
-            g_scrollSec = std::max(0.0, g_scrollSec - notches * 80.0 / g_pps);
+        (void)atX;
+        if (ctrl) {   // Ctrl+wheel = horizontal pan (DOM: scrollLeft += delta)
+            g_scrollSec = std::max(0.0, g_scrollSec + (-notches * 100.0) / g_pps);
             g_lastUserScroll = nowSec();
+        } else {      // plain wheel = zoom to the playhead
+            zoomTo(g_pps * std::pow(1.15, (double)notches), zoomAnchorX());
         }
     };
     if (hovered && io.MouseWheel != 0) applyWheel(io.MouseWheel, io.KeyCtrl, mx);
-    for (auto& w : g_extWheel) applyWheel(w.dy, w.ctrl, tlX + w.x);
+    for (auto& w : g_extWheel) applyWheel(w.notches, w.ctrl, tlX + w.x);
     g_extWheel.clear();
+    for (auto& z : g_extZoom) {   // page-forwarded zoom (+/- buttons, ArrowUp/Down, setZoom)
+        double target = z.pps > 0 ? z.pps : g_pps * z.f;
+        zoomTo(target, z.x >= 0 ? tlX + z.x : zoomAnchorX());
+    }
+    g_extZoom.clear();
 
-    // auto-follow the playhead while the app is playing (unless the user just scrolled)
     bool playingNow = embedded ? g_playingExt : playing;
     double viewDur = tlW / g_pps;
     if (playingNow && g_gest.kind == 0 && nowSec() - g_lastUserScroll > 1.5) {
@@ -726,8 +933,15 @@ static void drawTimeline(double& curSec, bool& playing) {
     double maxScroll = std::max(0.0, g_compDur - viewDur * 0.5);
     g_scrollSec = std::min(g_scrollSec, maxScroll);
 
-    // ---- hit-testing (track 0 only; the PiP lane is view-only) ----
-    auto clipHit = [&](float x, float y, int& idx, int& zone) {   // zone: 0 body, 4 L handle, 5 R handle
+    // threshold bar geometry (two mirrored lines around the waveform midline)
+    float thrTopY = waveMid - (float)(g_thrLevel * waveHalf);
+    float thrBotY = waveMid + (float)(g_thrLevel * waveHalf);
+    auto onThresholdBar = [&](float x, float y) {
+        return g_thrOn && x >= tlX && x <= tlX + tlW &&
+            (std::abs(y - thrTopY) < 5 || std::abs(y - thrBotY) < 5);
+    };
+
+    auto clipHit = [&](float x, float y, int& idx, int& zone) {
         idx = -1; zone = 0;
         if (y < aY || y > aY + laneH) return false;
         for (size_t i = 0; i < g_track[0].size(); i++) {
@@ -744,11 +958,10 @@ static void drawTimeline(double& curSec, bool& playing) {
         return false;
     };
 
-    // hover cursor for trim handles
     if (hovered && g_gest.kind == 0) {
         int hi, hz;
-        if (clipHit(mx, my, hi, hz) && (hz == 4 || hz == 5))
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        if (onThresholdBar(mx, my)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        else if (clipHit(mx, my, hi, hz) && (hz == 4 || hz == 5)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     }
 
     // ---- gesture begin ----
@@ -756,22 +969,24 @@ static void drawTimeline(double& curSec, bool& playing) {
         int idx, zone;
         g_gest = Gesture{};
         g_gest.pressX = mx; g_gest.ctrl = io.KeyCtrl; g_gest.shiftK = io.KeyShift;
-        if (clipHit(mx, my, idx, zone)) {
+        if (onThresholdBar(mx, my)) {
+            g_gest.kind = 7;   // drag the threshold level
+        } else if (clipHit(mx, my, idx, zone)) {
             g_gest.idx = idx;
             Clip& c = g_track[0][idx];
             if (zone == 4) { g_gest.kind = 4; g_gest.gIn = c.in; g_gest.gOut = c.out; }
             else if (zone == 5) { g_gest.kind = 5; g_gest.gIn = c.in; g_gest.gOut = c.out; }
             else {
-                g_gest.kind = 2;   // pending: click = seek+select, drag = reorder
+                g_gest.kind = 2;
                 if (g_sel.count(c.id) && g_sel.size() > 1)
                     for (size_t i = 0; i < g_track[0].size(); i++)
                         if (g_sel.count(g_track[0][i].id)) g_gest.group.push_back((int)i);
             }
         } else {
-            g_gest.kind = 1;   // ruler / empty lane = scrub
+            g_gest.kind = 1;
             curSec = std::min(xToSec(mx), g_compDur);
             playing = false;
-            g_gest.gIn = curSec;   // last emitted scrub value (emit only on change)
+            g_gest.gIn = curSec;
             emitScrub(curSec, false);
         }
     }
@@ -781,21 +996,26 @@ static void drawTimeline(double& curSec, bool& playing) {
         if (g_gest.kind == 1) {
             curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
             if (std::abs(curSec - g_gest.gIn) > 1e-9) { g_gest.gIn = curSec; emitScrub(curSec, false); }
+        } else if (g_gest.kind == 7) {
+            double lvl = std::abs(waveMid - my) / std::max(1.0f, waveHalf);
+            g_thrLevel = std::max(0.01, std::min(1.0, lvl));
+            g_quietDirty = true;
+            emitThreshold(false);
         } else if (g_gest.kind == 2 && std::abs(mx - g_gest.pressX) > 4) {
             g_gest.kind = 3; g_gest.dragged = true;
             if (g_gest.group.empty()) g_gest.group.push_back(g_gest.idx);
         } else if (g_gest.kind == 4 && g_gest.idx >= 0 && g_gest.idx < (int)g_track[0].size()) {
             Clip& c = g_track[0][g_gest.idx];
             double edgeComp = snapComp(xToSec(mx), g_pps, curSec, g_gest.idx);
-            double nIn = c.in + (edgeComp - c.compStart);           // dragged LEFT edge follows the hand
+            double nIn = c.in + (edgeComp - c.compStart);
             nIn = std::max(0.0, std::min(nIn, c.out - 0.05));
             g_gest.gIn = nIn; g_gest.gOut = c.out;
         } else if (g_gest.kind == 5 && g_gest.idx >= 0 && g_gest.idx < (int)g_track[0].size()) {
             Clip& c = g_track[0][g_gest.idx];
             double edgeComp = snapComp(xToSec(mx), g_pps, curSec, g_gest.idx);
             double nOut = c.in + (edgeComp - c.compStart);
-            auto pk = peaksFor(c.source);
-            double srcDur = (pk && pk->done) ? pk->duration : 0;    // known source length bounds the extend
+            auto pk = peaksGet(c.source);
+            double srcDur = (pk && pk->ready) ? pk->duration : 0;
             if (srcDur > 0.1) nOut = std::min(nOut, srcDur);
             nOut = std::max(nOut, c.in + 0.05);
             g_gest.gIn = c.in; g_gest.gOut = nOut;
@@ -807,12 +1027,15 @@ static void drawTimeline(double& curSec, bool& playing) {
         Gesture g = g_gest; g_gest = Gesture{};
         if (g.kind == 1) {
             emitScrub(curSec, true);
+        } else if (g.kind == 7) {
+            emitThreshold(true);
+            g_quietDirty = true;
         } else if (g.kind == 2 && g.idx >= 0 && g.idx < (int)g_track[0].size()) {
             Clip& c = g_track[0][g.idx];
-            if (g.ctrl) {                       // toggle in multi-selection; playhead stays
+            if (g.ctrl) {
                 if (g_sel.count(c.id)) g_sel.erase(c.id); else { g_sel.insert(c.id); g_selAnchor = c.id; }
                 emitSelect();
-            } else if (g.shiftK && !g_selAnchor.empty()) {   // range from the anchor
+            } else if (g.shiftK && !g_selAnchor.empty()) {
                 int ai = -1, bi = g.idx;
                 for (size_t i = 0; i < g_track[0].size(); i++)
                     if (g_track[0][i].id == g_selAnchor) { ai = (int)i; break; }
@@ -821,7 +1044,7 @@ static void drawTimeline(double& curSec, bool& playing) {
                     for (int i = std::min(ai, bi); i <= std::max(ai, bi); i++) g_sel.insert(g_track[0][i].id);
                 } else { g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id; }
                 emitSelect();
-            } else {                            // plain click: select + seek (paused navigation)
+            } else {
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
                 curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
@@ -829,7 +1052,6 @@ static void drawTimeline(double& curSec, bool& playing) {
                 emitScrub(curSec, true);
             }
         } else if (g.kind == 3 && !g.group.empty()) {
-            // drop: `to` = how many NON-dragged clips sit left of the cursor (engine App.Reorder contract)
             double cur = xToSec(mx);
             std::set<int> dragged(g.group.begin(), g.group.end());
             int to = 0;
@@ -838,13 +1060,13 @@ static void drawTimeline(double& curSec, bool& playing) {
                 Clip& c = g_track[0][i];
                 if (c.compStart + (c.out - c.in) / 2 < cur) to++;
             }
-            // optimistic local move (the engine reply reconciles via loadreel)
             std::vector<Clip> moved, rest;
             for (size_t i = 0; i < g_track[0].size(); i++)
                 (dragged.count((int)i) ? moved : rest).push_back(g_track[0][i]);
             int ins = std::min(to, (int)rest.size());
             rest.insert(rest.begin() + ins, moved.begin(), moved.end());
             g_track[0] = rest; packTrack(0); recomputeDur();
+            g_quietDirty = true;
             if (g.group.size() > 1) {
                 json ids = json::array();
                 for (auto& c : moved) ids.push_back(c.id);
@@ -855,19 +1077,28 @@ static void drawTimeline(double& curSec, bool& playing) {
         } else if ((g.kind == 4 || g.kind == 5) && g.idx >= 0 && g.idx < (int)g_track[0].size()) {
             Clip& c = g_track[0][g.idx];
             if (std::abs(g.gIn - c.in) > 0.001 || std::abs(g.gOut - c.out) > 0.001) {
-                c.in = g.gIn; c.out = g.gOut;                    // optimistic; engine reconciles
+                c.in = g.gIn; c.out = g.gOut;
                 packTrack(0); recomputeDur();
                 if (curSec > g_compDur) curSec = g_compDur;
+                g_quietDirty = true;
                 emitJson({ {"ev","edit"}, {"kind","trim"}, {"id", c.id}, {"in", c.in}, {"out", c.out} });
-            } else {                                             // a click on a handle selects
+            } else {
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
             }
         }
-        if (g_havePendingReel) {   // a reel arrived mid-gesture: apply it now
+        if (g_havePendingReel) {
             g_havePendingReel = false;
             if (g_pendingReel.contains("reel")) loadReelLive(g_pendingReel["reel"], curSec);
         }
+    }
+
+    // quiet stretches recompute (level change / edits / decode progress)
+    int epoch = g_fillEpoch.load();
+    if (g_thrOn && (g_quietDirty || epoch != g_quietEpochSeen)) {
+        g_quietDirty = false; g_quietEpochSeen = epoch;
+        recomputeQuiet();
+        emitQuiet();
     }
 
     ImGui::PushClipRect(p, ImVec2(p.x + tlW, sbY + sbH), true);
@@ -881,7 +1112,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         dl->AddLine(ImVec2(x, p.y + 6), ImVec2(x, p.y + rulerH), COL_TICK);
         char b[24]; fmtTime(s, b, sizeof b, step < 1.0);
         dl->AddText(ImVec2(x + 3, p.y + 3), COL_RULERTX, b);
-        for (int m = 1; m < 5; m++) {   // minor ticks
+        for (int m = 1; m < 5; m++) {
             float xm = secToX(s + step * m / 5.0);
             dl->AddLine(ImVec2(xm, p.y + rulerH - 5), ImVec2(xm, p.y + rulerH), COL_TICKMIN);
         }
@@ -898,25 +1129,20 @@ static void drawTimeline(double& curSec, bool& playing) {
     }
 
     // track A clips (with the real waveforms)
-    float labelH = laneH > 46 ? 17.0f : 0.0f;
     for (size_t i = 0; i < g_track[0].size(); i++) {
         Clip& c = g_track[0][i];
         double cin = c.in, cout = c.out, compStart = c.compStart;
         bool ghost = (g_gest.kind == 4 || g_gest.kind == 5) && (int)i == g_gest.idx;
         if (ghost) { cin = g_gest.gIn; cout = g_gest.gOut; }
-        // ghost geometry: an L-trim moves the LEFT edge with the hand (the right edge + later
-        // clips hold still; the ripple closes the gap on release - Vegas ripple-trim feel).
         double drawStart = compStart, drawDur = cout - cin;
         if (ghost && g_gest.kind == 4) drawStart = compStart + (cin - c.in);
         float x0 = secToX(drawStart), x1 = secToX(drawStart + drawDur);
-        if (x1 < tlX - 4 || x0 > tlX + tlW + 4) continue;   // viewport gate
+        if (x1 < tlX - 4 || x0 > tlX + tlW + 4) continue;
         bool selected = g_sel.count(c.id) != 0;
         bool inDrag = g_gest.kind == 3 && std::find(g_gest.group.begin(), g_gest.group.end(), (int)i) != g_gest.group.end();
         ImU32 fill = selected ? COL_CLIPSEL : COL_CLIP;
         if (inDrag) fill = (fill & 0x00FFFFFF) | 0x60000000;
         dl->AddRectFilled(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), fill, 3);
-        // the REAL waveform (fills the clip below the label strip)
-        float wy0 = aY + 2 + labelH, wy1 = aY + laneH - 2;
         float vx0 = std::max(x0 + 1, tlX), vx1 = std::min(x1 - 1, tlX + tlW);
         if (vx1 > vx0 && wy1 - wy0 > 6)
             drawWave(dl, c.source, cin, cout, x0, vx0, vx1, wy0, wy1, g_pps, inDrag ? COL_WAVEDIM : COL_WAVE);
@@ -928,11 +1154,23 @@ static void drawTimeline(double& curSec, bool& playing) {
             dl->AddText(ImVec2(x0 + 5, aY + 3), COL_LABEL, lab);
             dl->PopClipRect();
         }
-        // trim handle affordances (visible when the clip is wide enough)
         if (x1 - x0 > 20) {
             dl->AddRectFilled(ImVec2(x0 + 1, aY + 1), ImVec2(x0 + 4, aY + laneH - 1), IM_COL32(255, 255, 255, selected ? 90 : 45));
             dl->AddRectFilled(ImVec2(x1 - 4, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), IM_COL32(255, 255, 255, selected ? 90 : 45));
         }
+    }
+
+    // ---- playback threshold: dim the quiet stretches + the draggable level bar ----
+    if (g_thrOn) {
+        for (auto& r : g_quietRanges) {
+            float qx0 = secToX(r.first), qx1 = secToX(r.second);
+            if (qx1 < tlX || qx0 > tlX + tlW) continue;
+            dl->AddRectFilled(ImVec2(std::max(qx0, tlX), aY + 1), ImVec2(std::min(qx1, tlX + tlW), aY + laneH - 1), COL_QUIETDIM);
+        }
+        dl->AddLine(ImVec2(tlX, thrTopY), ImVec2(tlX + tlW, thrTopY), COL_THRBAR, 2.0f);
+        dl->AddLine(ImVec2(tlX, thrBotY), ImVec2(tlX + tlW, thrBotY), COL_THRBAR, 2.0f);
+        char tb[48]; snprintf(tb, sizeof tb, "threshold %.0f%%  (drag)", g_thrLevel * 100);
+        dl->AddText(ImVec2(tlX + 6, thrTopY - 18), COL_THRBAR, tb);
     }
 
     // track B (standalone PiP lane, view-only)
@@ -968,7 +1206,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         dl->AddLine(ImVec2(markX, aY - 2), ImVec2(markX, aY + laneH + 2), COL_DROPMARK, 2.5f);
     }
 
-    // ---- playhead (gold, with a flag head) ----
+    // ---- playhead ----
     float px = secToX(curSec);
     if (px >= tlX - 2 && px <= tlX + tlW + 2) {
         dl->AddLine(ImVec2(px, p.y + 4), ImVec2(px, bot), COL_PLAYHEAD, 2.0f);
@@ -997,7 +1235,7 @@ static void drawTimeline(double& curSec, bool& playing) {
     }
     if (ImGui::IsItemDeactivated() && g_gest.kind == 6) {
         g_gest = Gesture{};
-        if (g_havePendingReel) {   // a reel deferred during the scrollbar drag: apply it now
+        if (g_havePendingReel) {
             g_havePendingReel = false;
             double cs = curSec;
             if (g_pendingReel.contains("reel")) loadReelLive(g_pendingReel["reel"], cs);
@@ -1022,7 +1260,6 @@ int main(int argc, char** argv) {
 
     double curSec = 0;
     if (!a.empty() && a[0] == "--reel") {
-        // reel.json: { "sourceA","sourceB", "trackA":[{"in","out","source"?}], "trackB":[...] }
         if (a.size() < 2) { fprintf(stderr, "need a reel path\n"); return 2; }
         std::ifstream in(a[1]); json r;
         if (!in) { fprintf(stderr, "cannot open reel %s\n", a[1].c_str()); return 2; }
@@ -1038,31 +1275,33 @@ int main(int argc, char** argv) {
         double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "", a[0], "" }); cs += s.out - s.in; }
         g_track[1].push_back({ 0, cs, 0, "", a[1], "" });
     }
-    // embedded with no reel arg: start EMPTY and wait for {"op":"loadreel"} pushes
     recomputeDur(); relabel(0); relabel(1);
     if (!embedded && !g_track[0].empty()) {
-        layerLoad(g_layer[0], g_track[0][0].source);        // pre-warm -> instant first frame
+        layerLoad(g_layer[0], g_track[0][0].source);
         if (!g_track[1].empty()) layerLoad(g_layer[1], g_track[1][0].source);
     }
-    for (auto& c : g_track[0]) peaksFor(c.source);          // waveforms for every source
+    for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
 
-    std::thread(stdinReader).detach();   // AI + host ops on stdin
+    std::thread(stdinReader).detach();
 
     WNDCLASSEXW wc = { sizeof wc, CS_OWNDC, WndProc, 0, 0, GetModuleHandle(nullptr), nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"beckytl", nullptr };
     RegisterClassExW(&wc);
     HWND hwnd;
-    if (embedded) {   // a child window filling BRN's timeline pane (composites like mpv)
+    if (embedded) {
         RECT rc = { 0,0,900,300 }; GetClientRect(g_parentWid, &rc);
         g_W = (rc.right > 1) ? rc.right : 900; g_H = (rc.bottom > 1) ? rc.bottom : 300;
         hwnd = CreateWindowW(wc.lpszClassName, L"becky-timeline", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, g_W, g_H, g_parentWid, nullptr, wc.hInstance, nullptr);
     } else {
         hwnd = CreateWindowW(wc.lpszClassName, L"becky-timeline", WS_OVERLAPPEDWINDOW, 80, 40, g_W, g_H, nullptr, nullptr, wc.hInstance, nullptr);
     }
+    g_hwnd = hwnd;
     if (!CreateD3D(hwnd)) { fprintf(stderr, "D3D11 init failed\n"); return 4; }
     ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd);
+    // focus-independent wheel (embedded): plain wheel zooms, Ctrl+wheel pans - see MouseLLProc
+    if (embedded) g_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseLLProc, GetModuleHandleW(nullptr), 0);
 
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::StyleColorsDark();
-    ImGui::GetIO().FontGlobalScale = 1.2f;   // Jordan reads the screen himself - keep text big
+    ImGui::GetIO().FontGlobalScale = 1.2f;
     ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     double lastComposed = -1; bool playing = false;
@@ -1087,19 +1326,21 @@ int main(int argc, char** argv) {
                     || op == "loadreel" || op == "vis" || op == "zoom";
                 if (applyOp(op, t, j, curSec, playing)) {
                     lastComposed = -1;
-                    if (!quiet) emitState(curSec, playing);   // AI contract: state after every (non-follow) op
+                    if (!quiet) emitState(curSec, playing);
                 }
             } catch (...) { /* malformed op - ignore */ }
         }
 
-        if (!g_visible) { Sleep(30); continue; }   // hidden pane: stay alive, burn nothing
+        // Embedded orphan guard: if the host app died (force-killed - no clean shutdown),
+        // our stdin hits EOF and/or the parent HWND vanishes. Exit instead of leaking a
+        // GPU process forever.
+        if (embedded && (g_stdinEof || !IsWindow(g_parentWid))) break;
 
-        // embedded: keep filling the host pane as BRN resizes it
+        if (!g_visible) { Sleep(30); continue; }
+
         if (embedded) {
             RECT rc; if (GetClientRect(g_parentWid, &rc) && rc.right > 0 && rc.bottom > 0 && (rc.right != g_W || rc.bottom != g_H)) MoveWindow(hwnd, 0, 0, rc.right, rc.bottom, TRUE);
         }
-        // human keys -> same applyOp path. STANDALONE only: embedded, the app's page owns the
-        // keyboard (it forwards semantic ops), so global-key sniffing can't eat BRN's typing.
         if (!embedded && GetForegroundWindow() == hwnd) {
             if (GetAsyncKeyState(VK_SPACE) & 1) { applyOp("play", curSec, json::object(), curSec, playing); }
             if (GetAsyncKeyState('S') & 1) { applyOp("split", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
@@ -1108,10 +1349,8 @@ int main(int argc, char** argv) {
             if (GetAsyncKeyState('I') & 1) { applyOp("trim_in", curSec, json(), curSec, playing); lastComposed = -1; emitState(curSec, playing); }
             if (GetAsyncKeyState('G') & 1) { applyOp("group", curSec, json::object(), curSec, playing); }
         }
-        // embedded: NO local clock - the app's playhead reports drive curSec (quiet seeks)
         if (playing && !embedded) { curSec += dt; if (curSec >= g_compDur) curSec = 0; }
 
-        // STANDALONE preview: decode + composite the frame under the playhead
         if (!embedded && !g_track[0].empty() && curSec != lastComposed) { compose(curSec); uploadFrame(); lastComposed = curSec; }
         if (g_resize) { resizeD3D(); g_resize = false; }
 
@@ -1123,7 +1362,7 @@ int main(int argc, char** argv) {
             ImGui::Text("becky-timeline   %s   %.1fs / %.0fs   compose %.2f ms (%.0f fps)",
                 playing ? "PLAYING" : "paused", curSec, g_compDur, g_composeMs, g_composeMs > 0 ? 1000.0 / g_composeMs : 0);
             ImGui::SameLine(); ImGui::TextColored(g_group ? ImVec4(1, 0.82f, 0, 1) : ImVec4(0.5f, 0.5f, 0.5f, 1), "  [G]roup %s", g_group ? "ON" : "off");
-            ImGui::SameLine(); ImGui::TextDisabled("  [S]plit  trim [I]/[O]  [Del]  |  drag=scrub  Ctrl+wheel=zoom  Space=play");
+            ImGui::SameLine(); ImGui::TextDisabled("  [S]plit  trim [I]/[O]  [Del]  |  drag=scrub  wheel=zoom  Ctrl+wheel=pan  Space=play");
             if (g_vw > 0 && g_frameSrv) {
                 float availW = ImGui::GetContentRegionAvail().x, availH = g_H * 0.52f;
                 float sc = availH / g_vh; if (g_vw * sc > availW) sc = availW / g_vw;
@@ -1144,6 +1383,7 @@ int main(int argc, char** argv) {
         g_swap->Present(1, 0);
     }
 
+    if (g_mouseHook) UnhookWindowsHookEx(g_mouseHook);
     ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
     if (g_frameSrv) g_frameSrv->Release(); if (g_frameTex) g_frameTex->Release();
     if (g_rtv) g_rtv->Release(); if (g_swap) g_swap->Release(); if (g_ctx) g_ctx->Release(); if (g_dev) g_dev->Release();

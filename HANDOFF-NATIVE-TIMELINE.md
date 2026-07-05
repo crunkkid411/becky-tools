@@ -32,6 +32,33 @@
 > transport/split/speed/threshold (they act on the model; the native view reflects it). Still open:
 > §10.A5 audio + the Phase-C preview handover, proxies (A6), and skipping the hidden DOM build at
 > scale (the old Phase-2 perf note in app.js).
+>
+> **SHIPPED 2026-07-04 (round 2 — Jordan's field feedback fixed + verified):**
+> - **Waveforms are now WINDOWED + instant.** Decode SEEKS straight to each clip's window
+>   (audio-only: `uridecodebin caps="audio/x-raw" expose-all-streams=false` — the old code decoded
+>   the whole file's VIDEO too, fighting mpv for the GPU/disk = the "won't play" complaint),
+>   BELOW_NORMAL priority, sentinel-filled full-length arrays + per-second coverage, BPK2 cache
+>   (BPK1 reads as fully-covered). Verified: clips from minute ~40 of an UNCACHED 632MB livestream
+>   render in ~2s; the timeline stays interactive throughout.
+> - **Playback never silently stalls.** `ensurePlaybackProxies` (app.js): the play path awaits the
+>   next 60s of windowed scrub proxies (cached = instant; missing = a few seconds WITH the busy
+>   toast) before building the EDL — the old raw-source EDL stalled 10-60s with no feedback on
+>   Jordan's multi-GB livestreams. Warm ground truth (in-page tracing): add_clip 1-7ms,
+>   scrub_segment 90ms cached, timeline_edl 14ms, first frame ~40ms after play.
+> - **Zoom fixed — including the CONVENTION.** This app zooms on PLAIN wheel anchored to the
+>   playhead, Ctrl+wheel pans (the DOM handler, "Jordan's ask") — the first native build had it
+>   backwards. Wheel is now caught by a WH_MOUSE_LL hook (cursor-over-pane, focus-independent —
+>   verified with zero focus preparation), and the +/- buttons + Up/Down + any `setZoom` caller
+>   forward to the native view (`{"op":"zoom","pps":n}`), whose `{ev:"view"}` echo updates the label.
+> - **Playback threshold is native.** The reel push carries `thresholdOn/thresholdLevel`; the native
+>   pane draws mirrored draggable level lines + dims quiet stretches computed from the REAL
+>   absolute-scale peaks, and streams `{ev:"quiet",ranges}` to the page — `quietIntervals()` prefers
+>   those, so the skip logic AND trim-silence (rewritten to cut the complement of the SAME intervals)
+>   match what the shading shows, in both modes.
+> - **Orphan guard:** embedded becky-timeline exits when its stdin closes or the parent HWND dies
+>   (a force-killed app used to leak a GPU process forever). Also: the native-mode page skips the
+>   hidden DOM's thumb/wave pumps (invisible ffmpeg work), closing part of the old Phase-2 note;
+>   the engine bridge was confirmed already-concurrent (goroutine per verb).
 
 ---
 

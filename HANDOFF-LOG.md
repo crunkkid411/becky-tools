@@ -10,6 +10,40 @@
 
 ---
 
+## native timeline round 2 — instant windowed waveforms, no-stall playback, zoom + threshold (2026-07-04, local, `claude/native-timeline-fixes`)
+
+**Jordan's field feedback on round 1:** waveforms took "a REALLY long time", playback wouldn't start
+("had to sit there and wait... that's not practical"), zoom didn't work, the playback-threshold button
+didn't work. All four fixed + verified on the real 632MB `02-03` livestream.
+
+**Root causes found (don't relearn):**
+1. The waveform decoder read the ENTIRE multi-GB file from second 0 — and via bare `uridecodebin`
+   it decoded the VIDEO stream too (GPU+disk contention with mpv = "won't play"). Fix: windowed
+   seek-first decode (`caps="audio/x-raw" expose-all-streams=false`, seek straight to each clip's
+   window, BELOW_NORMAL priority, sentinel arrays + per-second coverage, BPK2 cache). A clip from
+   minute 40 of an uncached 632MB file now renders in ~2s.
+2. Play built the mpv EDL over the RAW long-GOP sources when windowed proxies didn't exist yet —
+   10-60s silent stall on his livestreams (their seek indexes are messy). Fix: the play path AWAITS
+   `scrub_segment` proxies for the next 60s of playback (busy toast) before building the EDL. Warm
+   numbers (in-page tracing): timeline_edl 14ms, first frame ~40ms after play.
+3. Zoom: the app's convention is PLAIN wheel = zoom TO THE PLAYHEAD, Ctrl+wheel = pan (round 1 had
+   it backwards) — and wheel delivery depends on focus, so becky-timeline now catches it with a
+   WH_MOUSE_LL hook (cursor-over-pane, focus-independent; verified with zero focus prep). The +/-
+   buttons/keys forward through `setZoom` as `{"op":"zoom","pps":n}`; `{ev:"view"}` echoes the label.
+4. Threshold lived in the hidden DOM. Now native: reel carries `thresholdOn/thresholdLevel`, the
+   pane draws draggable mirrored level lines + quiet dimming from the REAL absolute-scale peaks and
+   streams `{ev:"quiet",ranges}`; `quietIntervals()` prefers those and trim-silence was rewritten to
+   cut the complement of the SAME intervals — shading, skipping, and cutting always agree.
+
+**Also:** embedded orphan guard (stdin EOF / dead parent HWND -> exit; force-killed hosts used to leak
+a GPU process — reproduced + verified fixed); native mode skips the hidden DOM thumb/wave ffmpeg
+pumps; engine bridge confirmed already-concurrent (goroutine per verb, ordered by reply id).
+
+**Measurement trap for the next agent:** timing playback via repeated CDP polls lies (~8.5s constant
+artifact — fresh websocket per poll + the file-click preview leaves `state.playing` true so a "play"
+click PAUSES). Ground-truth with the in-page `postMessage`/reply monkey-patch tracer (session log has
+the snippet) before believing any latency number.
+
 ## native timeline goes LIVE — engine-driven edits + real waveforms (2026-07-04, local, `claude/native-timeline-live`)
 
 **The goal.** Execute HANDOFF-NATIVE-TIMELINE.md Phase A (make the embed a live two-way surface) after
