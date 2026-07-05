@@ -10,6 +10,41 @@
 
 ---
 
+## native timeline round 3 — §12 field issues dead, ledger ported, native-only (2026-07-04, local, `claude/native-timeline-round3`)
+
+**Jordan's §12 field issues, all fixed + verified with real Win32 input + CDP on E:\TakingBack2007:**
+1. **Threshold (12.1):** ONE horizontal bar on a dB scale — lane bottom = -50 dB (skips nothing,
+   level 0), top = 0 dB; dB label + grab knob; the wire level stays 0..1 amplitude so the page's
+   fallback + trim-silence are untouched. Verified -45.2 dB read-back + 8 real quiet ranges.
+2. **Click-then-Spacebar (12.3):** native emits `{"ev":"pointer"}` on ANY mousedown → the host calls
+   `WebView.Focus()` → the page blurs the focused field. Verified: search box focused → one native
+   click → hasFocus true, field blurred → Space started EDL playback at the clicked comp instantly.
+3. **Lag (12.2):** hidden-DOM clip building SKIPPED entirely in native mode (0 DOM nodes with 4
+   model clips — the 571ms/5k per-edit tax is gone); reel pushes dedupe by signature; decode workers
+   2→1 while playing/gesturing; scrub drags use mpv keyframe seeks (exact on release); mid-playback
+   edits DEFER the EDL reload — a split NEVER reloads (verified: 's' during playback = clips 3→4,
+   playing stayed true, position continuous, mpv source untouched), ahead-of-playhead edits reload
+   only as playback approaches (`pendingReloadFrom`); per-clip "preparing…" stripes+label while
+   proxy/peaks build (caught live, self-cleared) with background proxy warmup gated by the native
+   view (`{ev:"view"}` now carries scroll).
+
+**Ledger items landed natively:** source-tinted clips (page palette rides the reel as per-clip
+`color`; opaque-when-selected + white edge, no gold; handles in source colour), BLACK playhead with
+white flag head + hashmarks, the secondary STOCK bar (blinks; `stock`/`flash` on the playhead op;
+click-in-clip while playing moves the STOCK via the new `clipclick` event — playback never
+interrupted, pause snaps back exactly), overscroll past the end (maxScroll = dur − 0.15·view,
+scrollbar consistent — verified numerically), middle-drag pan, no-op reorders no longer emitted
+(they pushed junk undo entries), trim zones 7→10px. **Ctrl+Z split bug does NOT reproduce** (atomic
+engine split verified: one undo = exact restore). **The native/classic toggle is GONE** per Jordan's
+note — boot goes straight native; DOM is only the tlDead degrade (one auto-restart, then fallback);
+the old separate-window launcher was deleted.
+
+**Traps (don't relearn):** ImGui window padding shifts the timeline origin ~8px (`tlX = p.x`);
+Windows' "scroll inactive windows" delivers wheel to the unfocused pane so the WH_MOUSE_LL hook
+DOUBLE-applied — embedded now ignores `io.MouseWheel` (hook is the ONE wheel source); WebView.Focus
+on pointer events is load-bearing for click-then-Space. Pre-existing, unrelated: `cmd/tts`
+`TestRun_DegradesWhenNoModel` fails at HEAD (becky-voice workstream).
+
 ## native timeline round 2 — instant windowed waveforms, no-stall playback, zoom + threshold (2026-07-04, local, `claude/native-timeline-fixes`)
 
 **Jordan's field feedback on round 1:** waveforms took "a REALLY long time", playback wouldn't start

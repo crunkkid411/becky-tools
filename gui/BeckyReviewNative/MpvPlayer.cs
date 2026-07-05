@@ -301,6 +301,14 @@ public sealed class MpvPlayer : IDisposable
     public Task SeekAbsAsync(double seconds, CancellationToken ct = default)
         => SendAsync(ct, "seek", seconds, "absolute", "exact");
 
+    /// <summary>Keyframe-fast seek for live SCRUBBING: an exact seek on a raw long-GOP
+    /// source decodes a whole GOP per step (a 60 Hz drag = a decode storm seconds behind
+    /// the hand); keyframe seeks land instantly. On the all-intra scrub proxies every
+    /// frame IS a keyframe, so this is exact there anyway. The drag's release still sends
+    /// one exact seek to land frame-accurately.</summary>
+    public Task SeekFastAsync(double seconds, CancellationToken ct = default)
+        => SendAsync(ct, "seek", seconds, "absolute+keyframes");
+
     public Task SetPauseAsync(bool paused, CancellationToken ct = default)
         => SendAsync(ct, "set_property", "pause", paused);
 

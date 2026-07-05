@@ -297,71 +297,12 @@ public partial class MainWindow : Window
             case "tlOp":
                 HandleTimelineOp(root);
                 break;
-            case "openNativeTimeline":
-                HandleOpenNativeTimeline(root);
-                break;
         }
     }
 
-    // --- open the native GStreamer timeline (becky-timeline.exe) on the current reel ----
-    // The WebView2 timeline is fine for review; for heavy multi-clip projects the native
-    // d3d11 editor scrubs a live composite far faster. Write the current clips to a reel
-    // JSON and launch becky-timeline --reel as a separate window (its own bridge).
-    // ponytail: passes BRN's raw clip sources; wire becky ScrubProxy if raw scrub is too slow.
-    private void HandleOpenNativeTimeline(JsonElement root)
-    {
-        try
-        {
-            if (!root.TryGetProperty("clips", out var clipsEl) || clipsEl.ValueKind != JsonValueKind.Array)
-            {
-                SetStatus("Native timeline: timeline is empty.");
-                return;
-            }
-            var trackA = new List<object>();
-            var sourceA = "";
-            foreach (var c in clipsEl.EnumerateArray())
-            {
-                var src = c.TryGetProperty("source", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() ?? "" : "";
-                var inS = c.TryGetProperty("in", out var i) && i.ValueKind == JsonValueKind.Number ? i.GetDouble() : 0;
-                var outS = c.TryGetProperty("out", out var o) && o.ValueKind == JsonValueKind.Number ? o.GetDouble() : 0;
-                if (string.IsNullOrEmpty(src) || outS <= inS) { continue; }
-                if (sourceA.Length == 0) { sourceA = src; }
-                trackA.Add(new { source = src, @in = inS, @out = outS });
-            }
-            if (trackA.Count == 0) { SetStatus("Native timeline: no usable clips."); return; }
-
-            var reel = new { sourceA, trackA, trackB = Array.Empty<object>() };   // single-track review reel (no PiP)
-            var reelPath = Path.Combine(Path.GetTempPath(), "becky_native_reel.json");
-            File.WriteAllText(reelPath, JsonSerializer.Serialize(reel));
-            LaunchNativeTimeline(reelPath);
-        }
-        catch (Exception ex) { SetStatus("Native timeline: " + ex.Message); }
-    }
-
-    private void LaunchNativeTimeline(string reelPath)
-    {
-        var exe = ResolveNativeTimelineExe();
-        if (exe == null) { SetStatus("becky-timeline.exe not found — build native/becky-timeline (_build.bat)."); return; }
-        const string gst = @"C:\Program Files\gstreamer\1.0\msvc_x86_64";
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = exe,
-                UseShellExecute = false,
-                CreateNoWindow = true,   // hide the console; the GUI window still shows
-                WorkingDirectory = Path.GetDirectoryName(exe)!,
-            };
-            psi.ArgumentList.Add("--reel");
-            psi.ArgumentList.Add(reelPath);
-            psi.Environment["PATH"] = Path.Combine(gst, "bin") + ";" + Environment.GetEnvironmentVariable("PATH");
-            psi.Environment["GST_PLUGIN_SYSTEM_PATH_1_0"] = Path.Combine(gst, "lib", "gstreamer-1.0");
-            psi.Environment["GST_PLUGIN_FEATURE_RANK"] = "d3d11h264dec:512,d3d11h265dec:512";
-            Process.Start(psi);
-            SetStatus("Opening native timeline...");
-        }
-        catch (Exception ex) { SetStatus("Native timeline launch failed: " + ex.Message); }
-    }
+    // (The old "openNativeTimeline" separate-window launcher is GONE — a separate window
+    // was a hard boundary for Jordan; the embedded pane in MainWindow.Timeline.cs is the
+    // only native timeline now.)
 
     // becky-timeline.exe lives at <repo>/native/becky-timeline/ — walk up from the app dir.
     private static string? ResolveNativeTimelineExe()
@@ -611,8 +552,13 @@ public partial class MainWindow : Window
                 break;
             }
             case "seek":
-                _ = _mpv.SeekAbsAsync(Num(root, "at"));
+            {
+                // fast=true (mid-scrub) = keyframe seek: instant on long-GOP sources; the
+                // gesture's release sends a final exact seek to land frame-accurately.
+                var fast = root.TryGetProperty("fast", out var fEl) && fEl.ValueKind == JsonValueKind.True;
+                _ = fast ? _mpv.SeekFastAsync(Num(root, "at")) : _mpv.SeekAbsAsync(Num(root, "at"));
                 break;
+            }
             case "pause":
                 _paused = true;
                 _ = _mpv.SetPauseAsync(true);

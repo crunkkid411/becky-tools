@@ -96,7 +96,8 @@
         <button id="tOverlayName" class="tbtn2 on" title="include the filename line in the overlay (off = Date / TC / link only)" aria-label="toggle overlay filename line">name</button>
       </div>
       <div class="tlactions">
-        <button id="tlNative" class="tbtn2" title="Open this reel in the native GPU editor (faster scrub)" aria-label="open native timeline">native</button>
+        <!-- no native/classic toggle (Jordan 2026-07-04): the native GPU timeline IS the
+             timeline; the DOM one below is only the automatic fallback if it ever dies -->
         <button id="tUndo"   class="tbtn2"        title="undo (Ctrl+Z)"        aria-label="undo">&#8634;</button>
         <button id="tRedo"   class="tbtn2"        title="redo (Ctrl+Shift+Z)"  aria-label="redo">&#8635;</button>
         <button id="tSave"   class="btn"          title="save reel to a file">save</button>

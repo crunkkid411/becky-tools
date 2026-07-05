@@ -76,6 +76,7 @@
     thresholdOn: false,
     thresholdLevel: 0.14,
     nativeQuiet: null,     // quiet [start,end] ranges streamed from the native timeline's REAL peaks
+    nativeView: null,      // the native pane's {pps,scroll} ({ev:"view"} echoes) — gates proxy warmup
     overlayShowName: true, // the overlay's filename line is optional (Date/TC/link always shown)
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
@@ -230,7 +231,9 @@
   }
   function mpvPlay(file, at) { post({ t: 'mpv', op: 'play', file: file || '', at: at || 0 }); }
   function mpvLoadAt(file, at) { post({ t: 'mpv', op: 'loadAt', file: file || '', at: at || 0 }); } // load + seek, stay PAUSED (navigate, no autoplay)
-  function mpvSeek(at)       { post({ t: 'mpv', op: 'seek', at: at || 0 }); }
+  // fast=true (mid-scrub only) = mpv keyframe seek: instant on long-GOP sources; the
+  // gesture's release sends a final exact seek so the landing stays frame-accurate.
+  function mpvSeek(at, fast) { post({ t: 'mpv', op: 'seek', at: at || 0, fast: !!fast }); }
 
   // Receive host -> page messages.
   if (hasBridge) {
@@ -248,8 +251,6 @@
         case 'folder': onFolder(m.reply);    break;
         case 'screenshot': onScreenshot(m.path); break;
         case 'externalDrop': onExternalDrop(m.paths); break;   // OS files dropped onto the window (item 21)
-        case 'timelineScrub': seekTimeline(m.comp, false); break;   // native timeline drag -> seek (same path as a DOM click)
-        case 'timelineView': if (m.pxPerSec > 0) { state.pxPerSec = m.pxPerSec; if (typeof updateZoomLabel === 'function') { updateZoomLabel(); } } break;
         case 'tlEvent': onTlEvent(m.json); break;   // becky-timeline gesture events (scrub/select/edit/view)
         case 'tlDead': onTlDead(); break;           // the native timeline process died -> DOM fallback
       }
@@ -311,6 +312,7 @@
     post({ t: 'timelineRect', x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
   }
 
+  var lastReelSig = '';   // dedupe: identical re-pushes are dropped (12.2a — the page pushes per render)
   function pushTimelineReel(withView) {
     if (!nativeTL) { return; }
     var clips = (state.timeline && state.timeline.clips) ? state.timeline.clips : [];
@@ -318,10 +320,18 @@
     for (var i = 0; i < clips.length; i++) {
       var c = clips[i];
       out.push({ id: String(c.id), source: c.source, in: c.in || 0, out: c.out || 0,
-                 label: baseName(c.source || '') });
+                 label: baseName(c.source || ''),
+                 color: PALETTE[sourceColorIndex(c.source)],   // fb7 source tint (native draws it)
+                 ready: !!proxyReady[waveKey(c.source, c.in || 0, c.out || 0)] });   // false -> "preparing" stripes
     }
+    var sel = (state.selectedClipIds || []).map(String);
+    // Only fields the native side actually ADOPTS go in the signature (scroll/playhead are
+    // view-flag-only); a no-change push would just make it re-parse + rebuild for nothing.
+    var sig = JSON.stringify([out, sel, !!state.thresholdOn, state.thresholdLevel]);
+    if (!withView && sig === lastReelSig) { return; }
+    lastReelSig = sig;
     var msg = { t: 'timelineReel', clips: out, pxPerSec: state.pxPerSec, scroll: tlScrollSec(),
-                sel: (state.selectedClipIds || []).map(String),
+                sel: sel,
                 playhead: (typeof state.playheadComp === 'number') ? state.playheadComp : 0,
                 thresholdOn: !!state.thresholdOn, thresholdLevel: state.thresholdLevel };
     if (withView) { msg.view = true; }   // only the toggle-on push adopts zoom/scroll/playhead
@@ -331,7 +341,10 @@
   function pushTimelinePlayhead() {
     if (!nativeTL) { return; }
     post({ t: 'timelinePlayhead', comp: (typeof state.playheadComp === 'number') ? state.playheadComp : 0,
-           playing: !!state.playing });
+           playing: !!state.playing,
+           // the secondary STOCK bar (pause-return bookmark); blinks while auditioning ahead
+           stock: (typeof state.pauseReturnComp === 'number') ? state.pauseReturnComp : -1,
+           flash: !!(state.playing && state.autoScrollSuspended) });
   }
 
   function setNativeTL(on) {
@@ -344,7 +357,10 @@
     if (tlNativeBtn) { tlNativeBtn.classList.toggle('on', nativeTL); }
     post({ t: 'timelineMode', on: nativeTL });
     if (nativeTL) { reportTimelineRect(); pushTimelineReel(true); pushTimelinePlayhead(); }
-    else { state.nativeQuiet = null; invalidateQuiet(); }   // back to DOM: engine-peaks quiet again
+    else {
+      state.nativeQuiet = null; invalidateQuiet();   // back to DOM: engine-peaks quiet again
+      renderTimeline();   // the DOM was NOT being built while native was on — rebuild it now
+    }
   }
 
   /* becky-timeline gesture events (relayed by the host as {t:"tlEvent", json:"..."}) route to
@@ -354,12 +370,21 @@
   function onTlEvent(raw) {
     var o; try { o = JSON.parse(raw); } catch (_) { return; }
     if (!o || !o.ev) { return; }
-    if (o.ev === 'scrub') { seekTimeline(o.t || 0, false); return; }   // navigate PAUSED, never auto-play
+    if (o.ev === 'pointer') { blurChatField(); return; }   // ANY native click owns the keyboard (12.3)
+    if (o.ev === 'scrub') { nativeScrub(o.t || 0, !!o.final); return; }
+    if (o.ev === 'clipclick') { nativeClipClick(o); return; }
     if (o.ev === 'view') {
       if (o.pxPerSec > 0) {
         state.pxPerSec = Math.round(o.pxPerSec * 10) / 10;   // readable zoom label; native keeps the exact value
         if (typeof updateZoomLabel === 'function') { updateZoomLabel(); }
       }
+      // Remember the native view (zoom + scroll) and, once it settles, warm proxies for
+      // the clips it actually shows — the native pane owns scrolling, not the DOM.
+      var pv = state.nativeView || {};
+      state.nativeView = { pps: o.pxPerSec > 0 ? o.pxPerSec : (pv.pps || 0),
+                           scroll: (typeof o.scroll === 'number') ? o.scroll : (pv.scroll || 0) };
+      clearTimeout(nativeViewTimer);
+      nativeViewTimer = setTimeout(function () { applyProxies(); }, 250);
       return;
     }
     if (o.ev === 'select') {
@@ -369,8 +394,8 @@
       markSelectedClip();
       return;
     }
-    if (o.ev === 'threshold') {   // the native bar was dragged - adopt the level
-      if (o.level > 0) { state.thresholdLevel = o.level; invalidateQuiet(); }
+    if (o.ev === 'threshold') {   // the native bar was dragged - adopt the level (0 = skip nothing)
+      if (typeof o.level === 'number' && o.level >= 0) { state.thresholdLevel = o.level; invalidateQuiet(); }
       return;
     }
     if (o.ev === 'quiet') {       // quiet stretches from the REAL peaks -> playback skip uses these
@@ -378,6 +403,45 @@
       return;
     }
     if (o.ev === 'edit') { applyNativeEdit(o); }
+  }
+  var nativeViewTimer = null;
+
+  // A native ruler/empty-lane scrub mirrors the DOM ruler exactly (fb7): move the playhead
+  // (+ the coincident stock), never touch the selection, KEEP the play state — scrubbing a
+  // LIVE composite is the workflow. Mid-drag seeks ride the fast keyframe path; the release
+  // lands one exact seek.
+  function nativeScrub(comp, final_) {
+    if (!(state.timeline.clips || []).length) { return; }
+    var c = clipAtComp(comp);
+    if (c) { state.activeClipId = c.id; }
+    state.playheadComp = comp;
+    state.pauseReturnComp = comp;
+    state.autoScrollSuspended = false;
+    seekTimeline(comp, state.playing, !final_);
+    updatePlayhead();
+  }
+
+  // A native clip-body click (fb7 canon): PAUSED = select + seek there; PLAYING = move the
+  // secondary STOCK there (pause-return + where cut/split act), select the clip, and never
+  // interrupt playback. The native pane already selected locally; we mirror + decide.
+  function nativeClipClick(o) {
+    var comp = o.t || 0;
+    var clip = clipById(o.id) || clipAtComp(comp);
+    if (!clip) { return; }
+    if (state.playing) {
+      state.pauseReturnComp = comp;
+      state.autoScrollSuspended = true;
+      selectOnly(clip.id);
+      updatePlayhead();   // pushes playhead + the (now diverged, blinking) stock to the native pane
+      return;
+    }
+    selectOnly(clip.id);
+    state.activeClipId = clip.id;
+    state.playheadComp = comp;
+    state.pauseReturnComp = comp;
+    state.autoScrollSuspended = false;
+    seekTimeline(comp, false);
+    updatePlayhead();
   }
 
   async function applyNativeEdit(o) {
@@ -387,13 +451,25 @@
     else if (o.kind === 'reorder_many') { rep = await beckyCall('reorder_many', { ids: o.ids, to: o.to }); }
     else { return; }
     if (rep.ok && rep.data) { applyTimeline(rep.data); }               // -> renderTimeline -> reel re-push reconciles native
-    else { toast('Edit failed' + (rep.error ? ': ' + rep.error : '')); pushTimelineReel(); }
+    else {
+      toast('Edit failed' + (rep.error ? ': ' + rep.error : ''));
+      lastReelSig = '';        // force the push through the dedupe: the NATIVE side changed, not the model
+      pushTimelineReel();      // snap the native pane back to the engine's truth
+    }
   }
 
+  var tlDeadRetries = 0;
   function onTlDead() {
     if (!nativeTL) { return; }
     setNativeTL(false);
-    toast('Native timeline stopped — back to the classic timeline.');
+    if (tlDeadRetries++ < 1) {
+      // One automatic restart (the host relaunches the exe on timelineMode on) before
+      // settling into the DOM fallback — degrade, never dead-end.
+      toast('Native timeline hiccuped — restarting it…');
+      setTimeout(function () { setNativeTL(true); }, 1200);
+    } else {
+      toast('Native timeline stopped — back to the classic timeline.');
+    }
   }
 
   // Wheel over the native pane: becky-timeline catches it ITSELF via a low-level mouse hook
@@ -1354,9 +1430,32 @@
   // actually made at — resuming there can land in the NEXT clip entirely (the
   // "split skips playback to the next clip" bug). Callers that captured their
   // own frozen position pass it; everyone else keeps today's behavior.
-  function applyTimeline(tl, resumeAt) {
+  // pendingReloadFrom: an edit landed WHILE PLAYING that only changes content AHEAD of the
+  // playhead — the loaded EDL is byte-identical up to that point, so instead of reloading
+  // mpv immediately (a visible hitch per micro-edit, the "cannot keep up" feel), the reload
+  // is DEFERRED until playback approaches the changed region (see onTime).
+  var pendingReloadFrom = null;
+  // firstDiffComp: the earliest compilation second where two clip lists diverge (Infinity =
+  // same content). Drives the defer-or-reload decision above.
+  function firstDiffComp(a, b) {
+    var n = Math.max(a.length, b.length);
+    for (var i = 0; i < n; i++) {
+      var x = a[i], y = b[i];
+      if (!x || !y) {
+        return Math.min(x ? (x.start_sec || 0) : Infinity, y ? (y.start_sec || 0) : Infinity);
+      }
+      if (String(x.id) !== String(y.id) || x.source !== y.source ||
+          Math.abs((x.in || 0) - (y.in || 0)) > 1e-6 || Math.abs((x.out || 0) - (y.out || 0)) > 1e-6) {
+        return Math.min(x.start_sec || 0, y.start_sec || 0);
+      }
+    }
+    return Infinity;
+  }
+
+  function applyTimeline(tl, resumeAt, opts) {
     if (!tl || typeof tl !== 'object') { return; }
-    var wasEmpty = !((state.timeline.clips) || []).length;   // to auto-fit the view on the FIRST clip
+    var prevClips = (state.timeline.clips || []);
+    var wasEmpty = !prevClips.length;   // to auto-fit the view on the FIRST clip
     state.timeline = {
       clips: Array.isArray(tl.clips) ? tl.clips : [],
       overlay: tl.overlay || {},
@@ -1381,15 +1480,27 @@
       state.playheadComp = state.timeline.clips[0].start_sec || 0;
       updatePlayhead();
     } else if (state.playing && isTimelineLoaded()) {
-      // A cut/trim/reorder/delete just landed WHILE the seamless timeline was
-      // playing: tlVersion was bumped above, so the loaded EDL is now stale. Reload
-      // it right away at the same compilation position so playback keeps going on
-      // the EDITED timeline instead of silently drifting on the old one — that
-      // drift is what "makes a cut while playing break the timeline". Prefer the
-      // caller's frozen resumeAt over the live (possibly drifted) playheadComp.
+      // A cut/trim/reorder/delete just landed WHILE the seamless timeline was playing:
+      // tlVersion was bumped above, so the loaded EDL is stale. But reloading mpv is a
+      // visible hitch — and Jordan makes hundreds of micro-edits DURING playback — so
+      // reload only when the audible/visible stream actually changed at/near the playhead:
+      //  - a SPLIT (opts.contentSame) renders the IDENTICAL stream -> no reload at all;
+      //  - an edit strictly AHEAD of the playhead -> DEFER the reload until playback
+      //    approaches the changed region (onTime), the frames being watched are identical;
+      //  - anything else (at/behind the playhead) -> reload now, as before.
       var at = (typeof resumeAt === 'number') ? resumeAt : (state.playheadComp || 0);
-      state.playheadComp = at;
-      seekTimeline(at, true);
+      if (opts && opts.contentSame) {
+        // stale EDL keeps playing bit-identically; the next rebuild adopts the new cut list
+      } else {
+        var from = firstDiffComp(prevClips, state.timeline.clips);
+        if (from > at + 3) {
+          pendingReloadFrom = (pendingReloadFrom == null) ? from : Math.min(pendingReloadFrom, from);
+        } else {
+          pendingReloadFrom = null;
+          state.playheadComp = at;
+          seekTimeline(at, true);
+        }
+      }
     }
   }
 
@@ -1654,6 +1765,16 @@
     $tlCount.textContent = clips.length + ' clip' + (clips.length === 1 ? '' : 's') + ' · ' + mmss(dur);
     updateOverlayBtn();
     updateZoomLabel();
+    if (nativeTL) {
+      // NATIVE MODE (the norm): the GPU pane draws the timeline. Building thousands of
+      // hidden DOM clip nodes here anyway was the per-edit lag at scale (12.2d — the old
+      // 571ms/5k-clip cost, paid invisibly on EVERY micro-edit). Keep only the header +
+      // model work; the reel push (wrapper below) is what the native pane consumes.
+      updateRenderSelButton();
+      prefetchSourceDurations();
+      applyProxies();              // model-driven + native-view-gated (see clipVisibleNative)
+      return;
+    }
     applyTimelineScale();
     updateTrailingSpace();   // room to scroll past the last clip (item 19)
     renderRulerTicks();   // timecode marks in the gray ruler
@@ -1940,13 +2061,26 @@
   // builds that kept yanking the EDL out from under playback the whole time
   // ("timeline doesn't play at all while a new segment is building a proxy").
   // Back to viewport-gated: only build for what's actually on screen.
+  // Native-mode visibility: comp-time vs the native pane's own view ({ev:"view"} carries
+  // pxPerSec + scroll — the DOM's scrollLeft is meaningless while it isn't being built).
+  // No view info yet -> warm only the opening stretch, never the whole reel (the storm).
+  function clipVisibleNative(clip) {
+    var v = state.nativeView;
+    var start = clip.start_sec || 0, end = start + clipDur(clip);
+    if (!v || !(v.pps > 0)) { return start < 240; }
+    var w = tlBodyEl ? (tlBodyEl.clientWidth || 1200) : 1200;
+    var lo = (v.scroll || 0) - 300 / v.pps, hi = (v.scroll || 0) + (w + 300) / v.pps;
+    return end >= lo && start <= hi;
+  }
   function applyProxies() {
-    var blocks = trackEl.querySelectorAll('.clip');
-    for (var i = 0; i < blocks.length; i++) {
-      var clip = clipById(blocks[i].dataset.id);
+    // Iterate the MODEL, not DOM blocks — in native mode there are no blocks at all.
+    var clips = state.timeline.clips || [];
+    for (var i = 0; i < clips.length; i++) {
+      var clip = clips[i];
       if (!clip || !clip.source) { continue; }
       var key = waveKey(clip.source, clip.in || 0, clip.out || 0);   // same window key as the waveform
-      if (proxyRequested[key] || !clipVisible(clip.id)) { continue; }
+      if (proxyRequested[key]) { continue; }
+      if (nativeTL ? !clipVisibleNative(clip) : !clipVisible(clip.id)) { continue; }
       proxyRequested[key] = true;
       proxyQueue.push({ src: clip.source, in: clip.in || 0, out: clip.out || 0, key: key });
       pumpProxies();
@@ -1961,6 +2095,7 @@
           proxyActive--;
           if (rep && rep.ok && rep.data && rep.data.path && job.key) {
             proxyReady[job.key] = true;   // play's ensurePlaybackProxies can skip this window now
+            pushTimelineReel();           // flips the clip's ready flag -> its "preparing" stripes clear
           }
           // Only invalidate the EDL once the WHOLE batch has drained, not after each
           // individual clip — with several clips queued, invalidating per-clip meant
@@ -2069,6 +2204,7 @@
   // renderThreshold positions the bar + paints the dim rectangles over the quiet
   // stretches. Called on render, zoom, threshold change, and as peaks arrive.
   function renderThreshold() {
+    if (nativeTL) { quietLayerEl.style.display = 'none'; thresholdBarEl.style.display = 'none'; return; }   // the pane draws its own dB bar
     if (!state.thresholdOn) { quietLayerEl.style.display = 'none'; thresholdBarEl.style.display = 'none'; return; }
     // Span the bar over the CLIPS only (not the empty trailing scroll space), so it reads
     // as a level ON the waveforms rather than a line across the whole timeline.
@@ -2279,6 +2415,18 @@
       toast('Preparing smooth playback…');
       await Promise.all(jobs);
       state.edlVersion = -1;                           // the EDL we build next adopts the proxies
+      pushTimelineReel();                              // ready flags flipped -> clear the stripes
+    }
+  }
+
+  // Deferred mid-playback reload (see applyTimeline): once playback nears the first
+  // changed second, rebuild + reload the EDL — content BEFORE it is identical, so the
+  // position maps 1:1 and the hitch lands where a cut was made, not where he's watching.
+  function checkPendingReload() {
+    if (pendingReloadFrom == null || !state.playing || !isTimelineLoaded()) { return; }
+    if (state.pos >= pendingReloadFrom - 3) {
+      pendingReloadFrom = null;
+      seekTimeline(state.pos, true);
     }
   }
 
@@ -2292,11 +2440,11 @@
   // stuck re-finding the same boundary instead of walking further.
   var lastSeekTarget = null, lastSeekAt = 0;
   var SEEK_SETTLE_MS = 500, SEEK_TOL_SEC = 0.25;
-  async function seekTimeline(comp, play) {
+  async function seekTimeline(comp, play, fast) {
     if (!(state.timeline.clips || []).length) { return; }
     if (isTimelineLoaded() && state.edlVersion === state.tlVersion) {
       if (!play) { lastSeekTarget = comp; lastSeekAt = performance.now(); }
-      mpvSeek(comp);                                  // already the current EDL -> just seek
+      mpvSeek(comp, !!fast);                          // already the current EDL -> just seek
       if (play && !state.playing) { mpvSend('resume'); }
       else if (!play && state.playing) { mpvSend('pause'); }
       return;
@@ -2314,6 +2462,7 @@
     if (!path) { return; }
     var tgt = pendingSeek || { comp: comp, play: play };
     pendingSeek = null;
+    pendingReloadFrom = null;   // a fresh EDL load adopts every deferred edit
     state.activeSource = path;
     if (tgt.play) { mpvPlay(path, tgt.comp); } else { mpvLoadAt(path, tgt.comp); }
   }
@@ -2346,6 +2495,7 @@
           return;
         }
       }
+      checkPendingReload();   // adopt a deferred ahead-of-playhead edit before crossing into it
       var c = clipAtComp(state.pos);
       state.activeClipId = c ? c.id : null;
       // as the seamless compilation crosses a cut, refresh the overlay to the new clip's name + TC
@@ -2500,6 +2650,7 @@
       }
     }
     updateRenderSelButton();
+    if (nativeTL) { pushTimelineReel(); }   // page-side selection changes (split, Q&A cards) reach the pane
   }
 
   // The "render selection" button is ALWAYS present (item 12): grayed/disabled with no
@@ -2671,7 +2822,10 @@
         toast(rep.error ? ('Split: ' + rep.error) : 'Too close to a clip edge to split.');
         return;
       }
-      applyTimeline(rep.data.timeline, resumeAt);
+      // contentSame: a split's EDL renders the IDENTICAL stream (one entry -> two
+      // contiguous windows of the same file), so applyTimeline skips the mpv reload —
+      // rapid live cuts stay hitch-free (12.2).
+      applyTimeline(rep.data.timeline, resumeAt, { contentSame: true });
       // The new right half (the clip AFTER the cut) becomes the selection — what a
       // producer expects next. No success toast: the two clips are the confirmation.
       if (rep.data.new_id) { selectOnly(rep.data.new_id); }
@@ -3641,6 +3795,10 @@
     // Empty project → default the view to ~10s (a restored timeline with clips was
     // already fitted by applyTimeline). Deferred so the track has laid out.
     setTimeout(function () { if (!(state.timeline.clips || []).length) { fitTimelineZoom(10); } }, 250);
+    // The native GPU timeline IS the timeline (Jordan, 2026-07-04: no toggle button in the
+    // final app). Enter it once layout has settled; a dead pane degrades back to the DOM
+    // timeline automatically (onTlDead).
+    setTimeout(function () { setNativeTL(true); }, 350);
     // Push the (default-on) overlay state to mpv so the lower-third is armed; it draws
     // once a clip is loaded/played.
     updateOverlayBtn();

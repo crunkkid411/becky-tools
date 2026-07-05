@@ -87,6 +87,14 @@ public partial class MainWindow
             while ((line = proc.StandardOutput.ReadLine()) != null)
             {
                 if (line.Length == 0 || line[0] != '{') { continue; }
+                // ANY native mousedown: hand keyboard focus straight back to the WebView so
+                // "click the timeline, then Spacebar" always works (12.3). The native pane
+                // deliberately never takes focus (MA_NOACTIVATE), so without this a click
+                // leaves the keyboard wherever it was — a search box, a WPF element, nowhere.
+                if (line.Contains("\"ev\":\"pointer\""))
+                {
+                    Dispatcher.BeginInvoke(() => { try { WebView.Focus(); } catch { } });
+                }
                 PostToPage(new { t = "tlEvent", json = line });
             }
         }
@@ -137,7 +145,9 @@ public partial class MainWindow
     // live loadreel — becky-timeline tolerates an empty reel and never stomps a mid-drag gesture.
     private void HandleTimelineReel(JsonElement root) => TlSend(new { op = "loadreel", reel = root });
 
-    // The app's playhead (mpv time reports) -> the native playhead. quiet = no echo back.
+    // The app's playhead (mpv time reports) -> the native playhead, plus the secondary
+    // STOCK bar (pause-return bookmark; flash = blinking while auditioning ahead).
+    // quiet = no echo back.
     private void HandleTimelinePlayhead(JsonElement root)
         => TlSend(new
         {
@@ -145,6 +155,8 @@ public partial class MainWindow
             t = Num(root, "comp"),
             quiet = true,
             playing = root.TryGetProperty("playing", out var p) && p.ValueKind == JsonValueKind.True,
+            stock = root.TryGetProperty("stock", out var st) && st.ValueKind == JsonValueKind.Number ? st.GetDouble() : -1,
+            flash = root.TryGetProperty("flash", out var fl) && fl.ValueKind == JsonValueKind.True,
         });
 
     // Page-forwarded ops (wheel/zoom — the page really has keyboard+wheel focus). Passed verbatim.

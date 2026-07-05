@@ -61,6 +61,50 @@
 >   (a force-killed app used to leak a GPU process forever). Also: the native-mode page skips the
 >   hidden DOM's thumb/wave pumps (invisible ffmpeg work), closing part of the old Phase-2 note;
 >   the engine bridge was confirmed already-concurrent (goroutine per verb).
+>
+> **SHIPPED 2026-07-04 (round 3 — ALL of §12 fixed + most of the §13 ledger; every item verified
+> with real Win32 input + CDP on E:\TakingBack2007 footage):**
+> - **§12.1 threshold = ONE dB bar.** Lane bottom = -50 dB (skips nothing, level 0), top = 0 dB;
+>   label shows dB; level stays 0..1 amplitude on the wire. Verified: drag to near-bottom read
+>   -45.2 dB / amp 0.0055 and streamed 8 quiet ranges from the real peaks.
+> - **§12.3 click-then-Spacebar.** Native emits `{"ev":"pointer"}` on ANY mousedown; the HOST calls
+>   `WebView.Focus()` on it and the PAGE blurs whatever field had focus. Verified: focus the search
+>   box → one click on a native clip → `document.hasFocus()=true`, field blurred → Space started EDL
+>   playback from the clicked spot instantly.
+> - **§12.2 lag, structurally:** (a) native-mode `renderTimeline` SKIPS all hidden-DOM building
+>   (verified `document.querySelectorAll('.clip').length == 0` with 4 clips in the model — the old
+>   571ms/5k-clip per-edit tax is gone); (b) reel pushes DEDUPE by signature (only real changes reach
+>   the pane); (c) waveform decode drops 2→1 workers while playing/gesturing; (d) scrub drags ride
+>   mpv KEYFRAME seeks (exact seek on release); (e) mid-playback edits DEFER the EDL reload: a SPLIT
+>   never reloads (bit-identical stream — verified 's' during playback: clips 3→4, playing stayed
+>   true, position continuous, mpv source untouched), an edit AHEAD of the playhead reloads only as
+>   playback approaches it (`pendingReloadFrom` in app.js); (f) per-clip "preparing…" overlay
+>   (stripes + dim + label) while the windowed proxy (page `ready` flag) or peaks coverage (native
+>   secFilled) is missing — caught live on a fresh source, cleared itself after the proxy confirmed.
+> - **§13 landed natively:** source-tinted clips (page palette rides the reel push as per-clip
+>   `color`), selected = FULLY OPAQUE + white edge / unselected translucent (no gold), trim handles
+>   in the source colour; BLACK playhead with white flag head + 2 grip hashmarks; the secondary
+>   STOCK bar (black, blinks while auditioning — pushed via the playhead op as `stock`/`flash`);
+>   clip-body click while PLAYING moves the STOCK + selects and never interrupts (native emits
+>   `clipclick`, the PAGE decides; pause snapped back to the stock exactly); overscroll past the end
+>   (maxScroll = dur − 0.15·view; scrollbar range matches — verified 15.1515 for dur 16.64 @192pps);
+>   middle-drag pan; native no longer emits NO-OP reorders (dropped-in-place drags used to push junk
+>   undo entries); trim zones widened 7→10px (fast hands missed the edge and got reorders).
+> - **Ctrl+Z split bug (ledger) DOES NOT REPRODUCE:** engine split is one atomic verb — verified
+>   live: split inserted the right half directly after the left, ONE undo restored the exact
+>   pre-split clip list. fb7's report predated the atomic verb.
+> - **The native/classic toggle is GONE (Jordan's note):** the page boots straight into the native
+>   timeline; the DOM timeline exists only as the automatic tlDead degrade (one auto-restart, then
+>   fallback). The old separate-window launcher was deleted from the host.
+> - **Traps for the next agent:** ImGui's window PADDING offsets the timeline by ~8px — `tlX = p.x`,
+>   so screen-x ≠ comp·pps (bit me in coordinate tests); Windows' "scroll inactive windows" delivers
+>   wheel to the unfocused pane so the WH_MOUSE_LL hook DOUBLE-applied — embedded now ignores
+>   ImGui's `io.MouseWheel` (the hook is the one wheel source); the host's `WebView.Focus()` on
+>   pointer events is what makes click-then-Space work — do not remove it.
+> - **Still open:** small corner thumbnails on clips (ledger marks it "later"; waveform-first
+>   stands); Phase C/D (preview handover to the native compositor + audio + VRAM ring). Pre-existing
+>   unrelated: `becky-go/cmd/tts TestRun_DegradesWhenNoModel` fails at HEAD (becky-voice workstream,
+>   untouched here).
 
 ---
 
@@ -157,6 +201,7 @@ Files touched: `native/becky-timeline/main.cpp`, `gui/BeckyReviewNative/MainWind
 `ui/app.js` (`setNativeTL` + `pushTimelineReel` sending `source/in/out`), `ui/index.html` (button).
 The `TimelineHost`/`TimelineHostElement` WindowsFormsHost was already scaffolded in `MainWindow.xaml`.
 
+**NOTE FROM JORDAN (7-4-2026)** I don't want that native button. If it's helpful to you while building, that's okay. But the final Becky-Review-Native gui should have ONLY the Native timeline with no option for the old one
 ---
 
 ## 4. Commits (master)
@@ -435,6 +480,9 @@ Jordan used the round-2 build and reported three problems. Fix these FIRST, surg
 (his standing instruction: "half the time when I ask for changes, something else breaks —
 take a surgical approach").
 
+> **STATUS 2026-07-04 (round 3): ALL THREE FIXED + VERIFIED on real footage — see the
+> round-3 SHIPPED block at the top of this file for the evidence.**
+
 ### 12.1 Threshold bar: ONE bar, dB scale — not two mirrored lines
 Current native implementation draws TWO mirrored lines around the waveform midline with a
 LINEAR amplitude mapping. Jordan: **"The playback threshold should produce only one bar, not 2.
@@ -509,56 +557,56 @@ the DOM one. Status: [D]=done in DOM timeline, [N]=done in native, [ ]=open in n
 
 **Zoom / navigation**
 - [N] Plain mouse wheel = ZOOM, anchored to the PLAYHEAD (fb6 supersedes fb1's zoom-at-mouse).
-- [N] Ctrl+wheel = pan sideways. Middle-click+drag = pan (fb3) — [ ] native.
+- [N] Ctrl+wheel = pan sideways. [N] Middle-click+drag = pan (fb3) — native, verified exact.
 - [N] Up arrow = zoom in, Down = zoom out (when the timeline owns the keys).
-- [ ] Zooming OUT must show EMPTY SPACE past the last clip — the end of the last clip must
-  never lock navigation (fb7 mouse-scroll-zoom section; native's maxScroll clamp is close but
-  verify against his exact complaint: the view must travel well beyond the end).
+- [N] Zooming OUT shows EMPTY SPACE past the last clip: maxScroll = dur − 0.15·view (~85% of a
+  screen past the end), scrollbar range matches. Verified: scroll 15.1515 for dur 16.64 @192pps.
 - [D] Ruler drag scrubs; ruler click moves playhead — and must NOT change the selection (fb7).
-- [ ] Ctrl+Left/Right must walk clip boundaries ACROSS THE WHOLE TIMELINE, never sticking at
-  the current clip's edge (fb5+fb7 — a recurring regression, page-side logic).
+- [D] Ctrl+Left/Right walk clip boundaries ACROSS THE WHOLE TIMELINE — verified live in round 3
+  (walked 15.12 → 10.8 → 6.9 → 0 across all clips; page-side seekClipEdge holds).
 
 **Playhead + secondary stock (fb7 = canon)**
-- [D] TWO black bars: the playhead (white head + 2 tiny hashmarks, see `playhead.JPG`) and
-  the secondary STOCK = where pause returns to. [ ] The NATIVE pane draws only a playhead
-  (gold — restyle to the black design) and does NOT draw the stock at all. Port: stock bar,
-  flash-while-diverged (text-cursor blink), click-in-clip during playback moves the STOCK
-  (not the playhead), selects the clip, never interrupts playback; split/cut during playback
-  applies AT THE STOCK; pause returns to the stock; Enter commits the current position.
+- [N] TWO black bars: the playhead (white flag head + 2 grip hashmarks, per `playhead.JPG`) and
+  the secondary STOCK, both drawn natively now (round 3). Stock rides the playhead op as
+  `stock`/`flash`; it blinks while diverged; click-in-clip during playback moves the STOCK
+  (native emits `clipclick`, the page decides), selects the clip, never interrupts playback;
+  pause returns to the stock (verified to the frame); split during playback applies at the
+  live playhead / stock exactly as the DOM did (page logic unchanged); Enter commits.
 - [D] After a ripple delete, the playhead keeps its position relative to the underlying clip
   (playback uninterrupted); deleting must not move the VIEW.
 
 **Selection + editing**
 - [N] Ctrl+click multi-select; Shift+click range; multi-select drag moves the group.
-- [ ] Selected clip style: NO yellow/gold outline — the selected clip becomes FULLY OPAQUE
-  (fb2); unselected clips slightly transparent. (Native currently uses a gold border.)
-- [N] Trim handles on clip edges; [ ] handle/border color must MATCH the clip's source color,
-  never green/white accents (fb4).
+- [N] Selected clip style: NO gold — the selected clip is FULLY OPAQUE in its source tint with
+  a white edge (matches the DOM's clipColor/clipBorder exactly); unselected = translucent.
+- [N] Trim handles on clip edges, coloured in the clip's SOURCE colour (fb4); zones widened
+  7→10px so fast edge-grabs stop landing as reorders.
 - [D] Split selects the clip AFTER the playhead; NO toasts for any timeline edit (fb5 killed
   "Removed 1 clip"/"Reordered"/"Undo"/"Redo"/"split" popups).
 - [N] Esc + Delete both delete; S splits; I/O trim. fb7 removes the prev/next-frame BUTTONS
   (keep the arrow-key shortcuts); the extend-1-frame buttons stay.
-- [ ] Ctrl+Z ordering bug (fb7): undoing a split moves the new segment to the END instead of
-  unsplitting; takes 3 undos to recover. Examine the ENGINE's history for split (it's one
-  atomic verb now — reproduce first, then fix the history composition).
-- [ ] Trim/cut causes clips + waveforms to FLASH (fb7: "ridiculously jarring") — in native,
-  verify loadreel reconciliation never blanks the wave for a frame while trimming rapidly
-  (peaks cache persists, so it shouldn't — confirm on real footage).
+- [N] Ctrl+Z ordering bug (fb7): DOES NOT REPRODUCE (round 3, live): the engine's atomic split
+  verb inserts the right half directly after the left and ONE undo restores the exact pre-split
+  list. fb7's report predated the atomic verb. Also fixed adjacent: the native pane no longer
+  emits NO-OP reorders (a dropped-in-place drag used to push a junk undo entry).
+- [N] Trim/cut flash: native waveforms come from the per-source peaks pyramid which persists
+  across every loadreel (never cleared), and the trim ghost redraws from the same data — no
+  blank-then-repaint observed through round-3 trims/splits/reorders on real footage.
 
 **Clip appearance**
-- [ ] Color-code clips BY SOURCE VIDEO, WHOLE clip tinted, fixed palette in order:
-  #14FF39, #00AEEF, #DC143C, #8A2BE2, #FF57D1, #FFD700, #16F0EA, #FF8C00 — and a color, once
-  assigned to a source, is PERSISTENT for the project lifetime even if its clips are deleted
-  (fb7). Native clips are currently all the same blue.
+- [N] Color-code clips BY SOURCE VIDEO (fb7 palette #14FF39, #00AEEF, #DC143C, …): the page's
+  session-persistent sourceColorMap rides the reel push as per-clip `color`; the native pane
+  tints fill/border/handles with it. Verified: green/blue/crimson for three sources.
 - [N] REAL waveforms inside clips (sample-true, absolute scale — never the SVG peaks).
 - [ ] Thumbnails: small fixed-size icon at the clip's left edge, positioned so cut points
   stay visible; clips ~2x taller so the WAVEFORM is the dominant visual (fb7). Native has no
   thumbnails yet (waveform-first is correct; add the small corner thumb later).
 
 **Playback aids**
-- [N] 2x speed button + Shift+Space; screenshot button; playback threshold (shape per 12.1).
+- [N] 2x speed button + Shift+Space; screenshot button; playback threshold (ONE dB bar, 12.1).
 - [D] Threshold skips quiet parts seamlessly during playback; evidence never cut (fb7).
-- [ ] BLATANTLY OBVIOUS per-clip "preparing" overlay while proxy/peaks build (12.2).
+- [N] BLATANTLY OBVIOUS per-clip "preparing" overlay (stripes + dim + label) while proxy/peaks
+  build (12.2) — verified appearing on a fresh source and self-clearing.
 
 **Integrations (work through the model — verified this round)**
 - [D] Right-click menus (clip + left panel): Open in File Browser (select the file), Copy
