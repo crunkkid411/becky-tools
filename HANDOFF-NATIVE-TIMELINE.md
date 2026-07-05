@@ -1,6 +1,8 @@
 # HANDOFF — The Native Timeline (replacing Becky Review's timeline entirely)
 
 > **Read this before touching `native/becky-timeline/` or `gui/BeckyReviewNative/`.**
+> **START AT §12** — Jordan's open field issues (threshold shape, lag + not-ready overlay,
+> click-then-Spacebar focus) and §13, the precedence-resolved ledger of ALL timeline feedback.
 > It is the single source of truth for what was built, what was ruled out and **why**, the
 > mistakes we already made (do not repeat them), and the complete roadmap. The engine bake-off
 > is also recorded in the memory `native-nle-engine-bakeoff.md`; this doc is the fuller
@@ -424,3 +426,149 @@ on stdout after each edit. (Add `loadreel` in Phase A.)
 (toggle). `setNativeTL(true)` in `app.js` hides `.tlinner` and sends these; the `native` button calls it.
 
 **CLAUDE.md doc map:** add a pointer to this file in §5 so the root stays the index of truth.
+
+---
+
+## 12. OPEN FIELD ISSUES (2026-07-04 evening) — THE NEXT AGENT STARTS HERE
+
+Jordan used the round-2 build and reported three problems. Fix these FIRST, surgically
+(his standing instruction: "half the time when I ask for changes, something else breaks —
+take a surgical approach").
+
+### 12.1 Threshold bar: ONE bar, dB scale — not two mirrored lines
+Current native implementation draws TWO mirrored lines around the waveform midline with a
+LINEAR amplitude mapping. Jordan: **"The playback threshold should produce only one bar, not 2.
+At its lowest it should be silencing nothing (approximately -50 dB), at max it should be
+silencing everything (0+ dB)."**
+- ONE horizontal bar across the lane (matches `playback-threshold.JPG` + every DAW).
+- Bar at the BOTTOM of the lane = threshold -50 dB (skips nothing); bar at the TOP = 0 dB
+  (skips everything). Map bar height -> dB: `dB = -50 + 50 * (laneBottom - barY) / laneH`,
+  quiet when `20*log10(max|amp|) < dB` (amp = int8 peaks /127; -50 dB is amp ~0.0032).
+- Keep: dimmed quiet stretches, drag to adjust, `{ev:"threshold"}` / `{ev:"quiet"}` events.
+  The LEVEL sent to the page should stay a 0..1 amplitude (`10^(dB/20)`) so the page's
+  engine-peaks fallback + trim-silence keep working unchanged.
+
+### 12.2 "It simply cannot keep up with me" — native timeline lag + INVISIBLE not-ready state
+Jordan: extreme lag under his real editing pace; **"If new clips on the timeline need a moment
+before I can work with them, we need some type of blatantly obvious overlay because currently
+it silently lags like hell."**
+- REQUIRED UX: a clip whose windowed proxy and/or peaks are NOT ready yet must be visibly
+  marked on the native timeline (e.g. diagonal-striped dim + "preparing..." text on the clip),
+  clearing the moment it's ready. The busy toast is not enough. becky-timeline already knows
+  peaks-readiness per window (secFilled); the host/page knows proxyReady — feed that into the
+  reel push (per-clip `ready:false`) or emit it natively.
+- LAG HYPOTHESES to profile IN HIS HANDS (per-verb tracer, 12.5): (a) every edit round-trips
+  page->engine->page->full `loadreel` rebuild — loadReelLive clears + rebuilds all tracks and
+  re-posts peak jobs each push (job de-dup exists via secFilled, but the push itself is
+  per-render); (b) scrub emits at 60/s each triggering `seekTimeline`->mpv seek on raw
+  long-GOP; (c) waveform decode jobs contending with mpv on the E:\ HDD during interaction
+  (cap is 2; consider 1 while playing); (d) the hidden DOM still re-renders per edit
+  (the old Phase-2 note — skip building clip NODES entirely when native is on).
+- MEASUREMENT: use the in-page tracer (12.5) — do NOT trust repeated-CDP-poll timings.
+
+### 12.3 Click-then-Spacebar (focus) — most-used command, currently broken sometimes
+Jordan: **"if a user clicks the clip or the timeline ruler, then it should be selected, which
+means all the keyboard shortcuts for the timeline should affect the timeline instantly.
+'click, then spacebar' is one of my most used commands"** — today he must press the toolbar
+play button before Space works.
+- Root cause: the native pane deliberately refuses focus (WM_MOUSEACTIVATE -> MA_NOACTIVATE)
+  so clicks leave keyboard focus WHEREVER IT WAS — a search box, an answer box, or a WPF
+  element that isn't the WebView. The page's global keydown then never fires (or
+  `typingInField()` eats it).
+- Fix direction (small): every native gesture already reaches the page as a `tlEvent`
+  (scrub/select). On receiving one, the page should `document.activeElement.blur()`; AND the
+  HOST should call `WebView.Focus()` whenever it relays a tlEvent (or on a new
+  `{"ev":"pointer"}` emitted on any native mousedown). That makes ANY click on the native
+  timeline restore the page's keyboard instantly — same class as the fb6 "clicking the
+  timeline must return focus from the search box" fix.
+
+### 12.4 What is ALREADY fixed + verified this round (do not redo)
+Windowed instant waveforms; play awaits windowed proxies (no more silent raw stall); wheel
+zoom convention (plain wheel = zoom AT PLAYHEAD, Ctrl+wheel = pan) via WH_MOUSE_LL hook;
++/-/Up/Down zoom forwarding; native threshold shading/skip/trim-silence unified on real peaks
+(shape needs 12.1); orphan-process guard; typed-guarded NDJSON ops.
+
+### 12.5 Verification harness (reuse, don't reinvent)
+- Launch with `BECKY_REVIEW_CDP_PORT=9333`; drive via a WebSocket `Runtime.evaluate` helper
+  (the session scratchpad had `cdp.ps1`); screenshot via CopyFromScreen; real input via
+  SetCursorPos/mouse_event/keybd_event.
+- In-page per-verb tracer (paste via CDP): monkey-patch `window.chrome.webview.postMessage`
+  to record `{verb,id,t0}` for `t:'call'` and log reply latency + first `t:'time'` — the ONLY
+  trustworthy latency numbers. CDP-poll wall-clock lies (~8.5s constant artifact), and a
+  file-row click auto-plays the preview so a later play click may PAUSE (state.playing true).
+
+---
+
+## 13. THE TIMELINE REQUIREMENTS LEDGER (feedback 1->7, precedence-resolved)
+
+Jordan's standing order: consolidate every `## Timeline` requirement from
+`becky-review-user-feedback{,2,3,4}.md`, `becky-review-user-lag.md`,
+`becky-review-gui-user-feedback{5,6,7}.md` — **later files override earlier ones** (fb7 is
+the settled truth after iteration). The NATIVE timeline must satisfy this ledger to replace
+the DOM one. Status: [D]=done in DOM timeline, [N]=done in native, [ ]=open in native.
+
+**Zoom / navigation**
+- [N] Plain mouse wheel = ZOOM, anchored to the PLAYHEAD (fb6 supersedes fb1's zoom-at-mouse).
+- [N] Ctrl+wheel = pan sideways. Middle-click+drag = pan (fb3) — [ ] native.
+- [N] Up arrow = zoom in, Down = zoom out (when the timeline owns the keys).
+- [ ] Zooming OUT must show EMPTY SPACE past the last clip — the end of the last clip must
+  never lock navigation (fb7 mouse-scroll-zoom section; native's maxScroll clamp is close but
+  verify against his exact complaint: the view must travel well beyond the end).
+- [D] Ruler drag scrubs; ruler click moves playhead — and must NOT change the selection (fb7).
+- [ ] Ctrl+Left/Right must walk clip boundaries ACROSS THE WHOLE TIMELINE, never sticking at
+  the current clip's edge (fb5+fb7 — a recurring regression, page-side logic).
+
+**Playhead + secondary stock (fb7 = canon)**
+- [D] TWO black bars: the playhead (white head + 2 tiny hashmarks, see `playhead.JPG`) and
+  the secondary STOCK = where pause returns to. [ ] The NATIVE pane draws only a playhead
+  (gold — restyle to the black design) and does NOT draw the stock at all. Port: stock bar,
+  flash-while-diverged (text-cursor blink), click-in-clip during playback moves the STOCK
+  (not the playhead), selects the clip, never interrupts playback; split/cut during playback
+  applies AT THE STOCK; pause returns to the stock; Enter commits the current position.
+- [D] After a ripple delete, the playhead keeps its position relative to the underlying clip
+  (playback uninterrupted); deleting must not move the VIEW.
+
+**Selection + editing**
+- [N] Ctrl+click multi-select; Shift+click range; multi-select drag moves the group.
+- [ ] Selected clip style: NO yellow/gold outline — the selected clip becomes FULLY OPAQUE
+  (fb2); unselected clips slightly transparent. (Native currently uses a gold border.)
+- [N] Trim handles on clip edges; [ ] handle/border color must MATCH the clip's source color,
+  never green/white accents (fb4).
+- [D] Split selects the clip AFTER the playhead; NO toasts for any timeline edit (fb5 killed
+  "Removed 1 clip"/"Reordered"/"Undo"/"Redo"/"split" popups).
+- [N] Esc + Delete both delete; S splits; I/O trim. fb7 removes the prev/next-frame BUTTONS
+  (keep the arrow-key shortcuts); the extend-1-frame buttons stay.
+- [ ] Ctrl+Z ordering bug (fb7): undoing a split moves the new segment to the END instead of
+  unsplitting; takes 3 undos to recover. Examine the ENGINE's history for split (it's one
+  atomic verb now — reproduce first, then fix the history composition).
+- [ ] Trim/cut causes clips + waveforms to FLASH (fb7: "ridiculously jarring") — in native,
+  verify loadreel reconciliation never blanks the wave for a frame while trimming rapidly
+  (peaks cache persists, so it shouldn't — confirm on real footage).
+
+**Clip appearance**
+- [ ] Color-code clips BY SOURCE VIDEO, WHOLE clip tinted, fixed palette in order:
+  #14FF39, #00AEEF, #DC143C, #8A2BE2, #FF57D1, #FFD700, #16F0EA, #FF8C00 — and a color, once
+  assigned to a source, is PERSISTENT for the project lifetime even if its clips are deleted
+  (fb7). Native clips are currently all the same blue.
+- [N] REAL waveforms inside clips (sample-true, absolute scale — never the SVG peaks).
+- [ ] Thumbnails: small fixed-size icon at the clip's left edge, positioned so cut points
+  stay visible; clips ~2x taller so the WAVEFORM is the dominant visual (fb7). Native has no
+  thumbnails yet (waveform-first is correct; add the small corner thumb later).
+
+**Playback aids**
+- [N] 2x speed button + Shift+Space; screenshot button; playback threshold (shape per 12.1).
+- [D] Threshold skips quiet parts seamlessly during playback; evidence never cut (fb7).
+- [ ] BLATANTLY OBVIOUS per-clip "preparing" overlay while proxy/peaks build (12.2).
+
+**Integrations (work through the model — verified this round)**
+- [D] Right-click menus (clip + left panel): Open in File Browser (select the file), Copy
+  File Name (the VIDEO's full name), open transcript at the clip's timecode (fb4).
+- [D] Drag footage onto the timeline from ANY folder (fb6+fb7 BOTH ask — RE-VERIFY it works);
+  in-app drag from the left panel.
+- [D] Export naming schema; EDL with audio (AA/V) for Vegas; thumbnails cached under
+  render/timeline_thumbnails (fb7); render-selection button greyed (never removed) when
+  nothing is selected.
+
+**The bar (fb7 header, verbatim):** "hundreds of micro-edits will be made during playback each
+day. This needs to be efficient and instant. Lag on the timeline can turn a 2 hour human
+review session into 4 hours." Interaction latency IS the product (see §1).
