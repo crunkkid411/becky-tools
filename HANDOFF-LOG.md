@@ -12,6 +12,13 @@
 
 ## whoretana v2 — mesh-driven orb (OrbEngine), gemma4 escalation ladder, trace dataset, wake word + bubble (2026-07-04, local, `whoretana-v2`)
 
+> **SUPERSEDED same day — this branch is an ARCHIVE.** Jordan corrected the premise: WHORETANA must be
+> a from-scratch app in `X:\AI-2\WHORETANA` (its own repo), NOT an evolution of `gui\Whoretana` ("that's
+> something different and it did not work well"). The standalone pieces below (OrbEngine, OrbPreview,
+> voice sidecar, traces) were ported to `X:\AI-2\WHORETANA` and live on there; the `gui\Whoretana`
+> HUD-integration changes on this branch are abandoned. Do NOT merge this branch to master. becky-tools
+> integration continues only via `becky-go\bin` subprocess calls from the new repo.
+
 **Spec:** `X:\AI-2\WHORETANA\BUILD-SPEC.md` (reconciles all the concept docs; decisions D1–D18 are final there).
 Built by parallel subagents, adversarially verified, one fix round. All gates green at handoff:
 `dotnet test gui\OrbEngine.Tests` 6/6 · `dotnet build` Whoretana + OrbPreview 0 warnings ·
