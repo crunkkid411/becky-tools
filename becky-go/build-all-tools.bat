@@ -23,6 +23,10 @@ for /d %%D in (cmd\*) do (
   set OUT=becky-!NAME!.exe
   if /i "!NAME!"=="becky" set OUT=becky.exe
   if /i "!NAME:~0,6!"=="becky-" set OUT=!NAME!.exe
+  REM search_library is called directly (no becky- prefix) per
+  REM hj-mission-control\docs\library-contract.md - Whoretana calls it by
+  REM that literal name.
+  if /i "!NAME!"=="search_library" set OUT=search_library.exe
   echo Building !OUT! ^(cmd\!NAME!^)...
   go build -o bin\!OUT! .\cmd\!NAME!
   if errorlevel 1 (
