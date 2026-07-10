@@ -1,6 +1,7 @@
 package vision
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -184,6 +185,57 @@ func TestDescribeWith_successShapesResult(t *testing.T) {
 	if fr.gotBin != bin {
 		t.Errorf("runner bin: got %q want %q", fr.gotBin, bin)
 	}
+}
+
+// TestResult_MarshalJSON_okField is the regression test for
+// becky-AI-Agent-review-1.md acceptance criterion 8's RESOLUTION "Left open"
+// gap #2: Result never carried a top-level "ok" field, so a caller could not
+// tell success from failure without also checking "degraded" (inverted
+// polarity, easy to get backwards). ok must be the exact inverse of Degraded,
+// on every Result this package produces, regardless of which code path
+// constructed it (additive: json.Marshal, not json.Unmarshal).
+func TestResult_MarshalJSON_okField(t *testing.T) {
+	t.Run("success: ok true, degraded false, other fields survive", func(t *testing.T) {
+		r := Result{Tool: ToolName, Image: "frame.jpg", Description: "a cat"}
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("unmarshal back to map: %v", err)
+		}
+		if ok, _ := m["ok"].(bool); !ok {
+			t.Errorf("ok should be true on a non-degraded Result, got %s", b)
+		}
+		if degraded, _ := m["degraded"].(bool); degraded {
+			t.Errorf("degraded should be false, got %s", b)
+		}
+		if m["description"] != "a cat" {
+			t.Errorf("existing fields must survive unchanged, got %s", b)
+		}
+	})
+
+	t.Run("degrade: ok false alongside degraded true", func(t *testing.T) {
+		r := degrade(Result{Tool: ToolName, Image: "missing.jpg"}, errors.New("image not found"))
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("unmarshal back to map: %v", err)
+		}
+		if ok, has := m["ok"].(bool); !has || ok {
+			t.Errorf("ok should be present and false on a degraded Result, got %s", b)
+		}
+		if degraded, _ := m["degraded"].(bool); !degraded {
+			t.Errorf("degraded should stay true, got %s", b)
+		}
+		if m["error"] != "image not found" {
+			t.Errorf("error field must survive unchanged, got %s", b)
+		}
+	})
 }
 
 func TestResult_Provenance(t *testing.T) {

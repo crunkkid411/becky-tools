@@ -51,7 +51,23 @@ func main() {
 	flag.Parse()
 
 	if *image == "" {
-		fmt.Fprintln(os.Stderr, "usage: becky-vision --image <path> [--prompt \"...\"] [--gemma|--qwen] [--json] [options]")
+		usage := "usage: becky-vision --image <path> [--prompt \"...\"] [--gemma|--qwen] [--json] [options]"
+		// Closes becky-AI-Agent-review-1.md acceptance criterion 8's first
+		// RESOLUTION gap ("Left open": --json was silently ignored here, so a
+		// caller asking for JSON got plain stderr text and nothing on stdout).
+		// Additive fix: --json now gets the same {"ok":false,"error":"..."}
+		// shape as becky-ocr/becky-perceive/search_library, on stdout. The
+		// exit code stays 2 (this file's own header already documents
+		// "2 = usage" as a stable contract; already nonzero, no reason to
+		// change it). The PLAIN (non-json) default is intentionally UNCHANGED
+		// byte-for-byte — becky-vision is the one tool in the suite whose
+		// default output is plain language, not JSON (Jordan-facing; he is
+		// this tool's actual target user for the no-flags case).
+		if *asJSON {
+			beckyio.PrintJSON(map[string]any{"ok": false, "error": usage})
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 

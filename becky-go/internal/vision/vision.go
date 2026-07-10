@@ -17,6 +17,7 @@
 package vision
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -90,6 +91,27 @@ type Result struct {
 	Sources     []Source `json:"sources,omitempty"`     // every rung/corroboration source actually invoked, in order
 	Degraded    bool     `json:"degraded"`
 	Error       string   `json:"error,omitempty"`
+}
+
+// MarshalJSON adds a top-level "ok" boolean (ok = !Degraded) to every Result
+// this package ever produces, without touching Degraded/Error or any other
+// field/tag. This closes becky-AI-Agent-review-1.md acceptance criterion 8's
+// second RESOLUTION gap ("Left open": a real processing failure, e.g. a
+// missing --image file, returned {"degraded":true,...} with no "ok" field at
+// all). Computing it here — once, at serialization — means every existing and
+// future construction site (describeWith's degrade(), cmd/vision/ladder.go's
+// runEscalationPolicy, --gemma/--qwen) gets it automatically; no call site can
+// forget to set it. Deliberately additive: Degraded/Error/exit codes are
+// unchanged (the suite-wide "degrade, never crash, exit 0" contract —
+// README.md/CLAUDE.md invariants — stays intentional; flipping THAT needs a
+// caller audit across becky-tools/Whoretana/MissionControl first, out of
+// scope here per the review doc's own "Left open" note).
+func (r Result) MarshalJSON() ([]byte, error) {
+	type alias Result // avoids infinite recursion into this method
+	return json.Marshal(struct {
+		OK bool `json:"ok"`
+		alias
+	}{OK: !r.Degraded, alias: alias(r)})
 }
 
 // Source records one rung of the escalation ladder, or a corroboration pass

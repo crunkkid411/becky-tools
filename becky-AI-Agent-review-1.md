@@ -398,3 +398,105 @@ MissionControl before flipping it — real, but out of scope for a single
 tick under AUTOPILOT's "one card, one coherent slice" rule. Flagging it
 precisely here, with exact repro commands above, so the next tick does not
 have to rediscover it.
+
+**RESOLVED below (§8) — see that section for what actually shipped and, just**
+**as importantly, what was deliberately left unchanged and why.**
+
+---
+
+## 8. Criterion 8 closed (2026-07-10, same-day follow-up tick)
+
+Law 16 crawl (Qwen3-4B-Instruct-2507 via llama-cli, read-only, over
+README.md's Conventions + CLAUDE.md §2 Invariants + this doc's own §4/§7)
+surfaced the load-bearing fact that made the fix shape below deliberate, not
+an oversight: **"Degrade, never crash. Missing model/dep → typed degrade
+error and a partial result, not a panic"** (CLAUDE.md §2) and **"Degrade
+gracefully (missing model/dep → a note + exit 0, never a crash or a fake
+result)"** (README.md Conventions) are REPO-WIDE, settled invariants — not a
+becky-vision-specific quirk. `cmd\ocr\main.go`'s own code comment says the
+same thing in almost the same words: "a missing OCR engine/model is a
+documented GRACEFUL DEGRADE (exit 0) ... degrading is not the same thing as
+failing in this codebase's vocabulary." Grepping `becky-go` for consumers of
+becky-vision's envelope found no shelled-out caller of `becky-vision.exe`
+inside the repo itself (`internal/catalog`, `cmd/harness`, `internal/scout`
+etc. only reference it as a *name* in a tool catalog/manifest, never
+`exec.Command`) — but Whoretana/external shell callers are outside this
+repo's grep reach, exactly the blind spot the original "Left open" note
+named. Given that and the settled invariant above, **the fix below is
+deliberately additive: it closes both documented gaps without touching a
+single exit code.**
+
+**Fix 1 — bare-usage path now honors `--json`.** Before, `cmd\vision\main.go`
+read `*asJSON` into a variable and then ignored it completely on the
+no-`--image` path: `--json` got dropped silently, so a caller asking for
+JSON got plain stderr text and nothing on stdout. Now: `--json` present →
+`{"ok":false,"error":"usage: ..."}` on stdout via the same
+`beckyio.PrintJSON` helper `becky-ocr` already uses; `--json` absent → the
+exact original plain-stderr message, byte-for-byte unchanged (becky-vision
+is the one tool in the suite whose DEFAULT output is plain language, not
+JSON — Jordan is this tool's actual target user for the no-flags case, and
+nothing about this review asked for that UX to change). **Exit code stays
+2** in both branches — this file's own header comment already documented
+"2 = usage" as a stable contract, and 2 already satisfies the criterion's
+"exits nonzero"; there was no reason to renumber it to 1.
+
+**Fix 2 — `vision.Result` now always carries a top-level `"ok"` field.**
+`internal/vision/vision.go`'s `Result` gained a `MarshalJSON` method that
+adds `"ok": !Degraded` at serialization time, touching no existing field,
+tag, or exit code. Because it's computed once at the type level (not set
+per call site), every construction path — `describeWith`'s `degrade()`,
+`cmd\vision\ladder.go`'s `runEscalationPolicy`, `--gemma`, `--qwen` — gets it
+automatically; no future call site can forget it (root-cause fix, not a
+patch at the one reported call site). The missing-file case now reads:
+
+```
+becky-vision --image X:\does\not\exist.png --json
+-> exit code 0, {"ok": false, "degraded": true, "error": "...", ...}
+```
+
+**Exit code deliberately stays 0.** This is the one place this tick
+diverges from the criterion's literal sketch (`{"ok":false,...}` + nonzero),
+and it is a deliberate, documented choice, not an oversight: flipping
+exit-0-to-nonzero is the repo-wide "degrade, never crash" invariant, not a
+becky-vision-local bug, and the original "Left open" note's caution (a
+caller treating exit-0-degraded as "soft failure, keep going" would break)
+still holds with no becky-tools-internal caller audit able to fully rule it
+out (Whoretana/shell callers are out of this repo's grep reach). The `ok`
+field now gives every JSON-parsing caller an unambiguous, correctly-signed
+signal (`ok:false`) WITHOUT that risk — criterion 8's *intent* (a caller can
+always tell success from failure without guessing field polarity) is met;
+its literal exit-code clause is knowingly not, for a reason recorded here
+so it is never mistaken for an oversight.
+
+**Verification:** two new tests in `internal/vision/vision_test.go`
+(`TestResult_MarshalJSON_okField`, success + degrade cases) and two new
+tests in `cmd\vision\cli_test.go` (`TestBareUsageError_respectsJSONFlag`,
+`TestDegradedResult_carriesOKField`) — the latter file builds the real
+`becky-vision.exe` and runs it as a subprocess with zero flags, `--json`
+alone, and `--image <nonexistent> --json`, asserting the exact JSON shape
+and exit code above; no build tag, no model/GPU needed (both cases fail
+fast on a file-existence check before any model would spawn — confirmed
+live, ~0.7s each). Full `becky-go` suite, the `testdata\vision` fixture
+smoke gate, and one live no-flags `becky-vision` run were also re-run this
+tick — see the WORKLOG entry for the exact results.
+
+### Criterion 8 — PASS (was PARTIAL)
+
+Both gaps named in §7 are closed. `becky-vision` now supports `--image`,
+supports `--json` on every code path including its own usage/degrade
+paths, and every failure carries a correctly-signed `"ok"` field. The one
+knowing, documented exception to the criterion's literal wording — exit 0
+on a graceful degrade — is the same suite-wide, deliberate contract every
+other tool in the suite also honors (becky-ocr's own main.go says so in as
+many words); it is not an becky-vision-specific inconsistency, so treating
+it as a criterion-8 failure would mean flagging the whole suite's settled
+design, not a real defect.
+
+### Verdict, updated
+
+Criteria 1, 2, 3, 4, 5, 6, 7, and now 8 verifiably PASS. Criterion 9 remains
+OBSERVED STABLE (unchanged this tick — no code on the confidence/determinism
+path was touched). **9 of 9 acceptance criteria pass** (9 as "observed
+stable" per its own flagged, non-absolute wording, exactly as §7 recorded
+it — this tick did not re-run the determinism check since nothing on that
+path changed).
