@@ -141,6 +141,10 @@ var ToolCatalog = []Capability{
 	{Verb: "becky-vision", Summary: "Describe an image or read on-screen text with a local vision model (escalates automatically on hard reads, corroborates with OCR).", Example: `becky-vision --image "<path>" --prompt "What does this show?"`, Keywords: []string{"vision", "image", "describe image", "screenshot", "photo", "what is this", "look at", "see", "picture of"}, Tier: TierGreen, Pack: "default"},
 	{Verb: "becky-perceive", Summary: "Point at a phrase and get pixel bounding boxes for every match in an image (open-vocabulary detection, CPU/0 VRAM).", Example: `becky-perceive "<image>" "the red button"`, Keywords: []string{"perceive", "where is", "locate", "find in image", "bounding box", "point at", "detect"}, Tier: TierGreen, Pack: "default"},
 	{Verb: "search_library", Summary: "Search Jordan's bookmarks, GitHub stars, research, and AI chat history in one call.", Example: `search_library "hostinger setup"`, Keywords: []string{"search library", "bookmarks", "stars", "research", "ai chats", "find in library"}, Tier: TierGreen, Pack: "default"},
+	// Added 2026-07-10 (AUTOPILOT.md Law 16 / P5 card): the deterministic form of
+	// the manual "local due-diligence crawl" every autopilot tick was already
+	// doing ad hoc.
+	{Verb: "becky-crawl", Summary: "Read-only local-model doc crawler: extracts every constraint/tool/decision/repeated-request from a repo's CLAUDE.md/AGENTS.md/README/docs, cached by doc-content hash.", Example: `becky-crawl --repo "<dir>" --card "<what you're about to build>"`, Keywords: []string{"crawl", "due diligence", "constraints", "read docs", "law 16", "digest"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
