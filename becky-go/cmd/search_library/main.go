@@ -5,7 +5,7 @@
 //	search_library "<plain english query>" [--limit N] [--pretty]
 //
 // Backed by qmd (https://github.com — installed globally as `qmd` on PATH):
-// two qmd collections, "library" (X:\AI-2\library, the library-contract.md
+// two qmd collections, "library" (X:\AI-2\hj-mission-control\library, the library-contract.md
 // folder tree) and "transcripts" (Jordan's AI chats, pre-existing), searched
 // with `qmd search` (BM25, no LLM rerank — qmd's hybrid `query` reranker took
 // ~60s per call in testing, too slow for a live voice assistant call).
