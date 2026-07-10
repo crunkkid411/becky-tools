@@ -145,6 +145,9 @@ var ToolCatalog = []Capability{
 	// the manual "local due-diligence crawl" every autopilot tick was already
 	// doing ad hoc.
 	{Verb: "becky-crawl", Summary: "Read-only local-model doc crawler: extracts every constraint/tool/decision/repeated-request from a repo's CLAUDE.md/AGENTS.md/README/docs, cached by doc-content hash.", Example: `becky-crawl --repo "<dir>" --card "<what you're about to build>"`, Keywords: []string{"crawl", "due diligence", "constraints", "read docs", "law 16", "digest"}, Tier: TierGreen, Pack: "default"},
+	// Added 2026-07-10 (Manus-gap fix #1, AUTOPILOT.md): the first world-action
+	// channel - pure Telegram Bot API, zero browser, zero OAuth consent flow.
+	{Verb: "becky-notify", Summary: "Send Jordan a Telegram message via the Bot API - the pure-API world-action channel (no browser, no OAuth).", Example: `becky-notify "message text" [--json]`, Keywords: []string{"notify", "telegram", "message", "alert", "reach jordan", "tell jordan", "send message", "world action"}, Tier: TierRed, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
