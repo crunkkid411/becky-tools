@@ -148,6 +148,10 @@ var ToolCatalog = []Capability{
 	// Added 2026-07-10 (Manus-gap fix #1, AUTOPILOT.md): the first world-action
 	// channel - pure Telegram Bot API, zero browser, zero OAuth consent flow.
 	{Verb: "becky-notify", Summary: "Send Jordan a Telegram message via the Bot API - the pure-API world-action channel (no browser, no OAuth).", Example: `becky-notify "message text" [--json]`, Keywords: []string{"notify", "telegram", "message", "alert", "reach jordan", "tell jordan", "send message", "world action"}, Tier: TierRed, Pack: "default"},
+	// Added 2026-07-10 (AUTOPILOT.md P5): gives any dumb local model a visual
+	// language - draw ascii boxes/arrows, get back a rendered diagram + a
+	// Show Me page, no design skill required.
+	{Verb: "becky-diagram", Summary: "Render an ascii-art diagram to SVG+PNG and a high-contrast Show Me HTML page, one dumb call.", Example: `becky-diagram --in diagram.txt --title "Downtime Engine" --out data\showme\downtime-engine`, Keywords: []string{"diagram", "ascii art", "svgbob", "visualize", "draw diagram", "flowchart", "show me diagram"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
