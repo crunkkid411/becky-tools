@@ -170,6 +170,15 @@ var ToolCatalog = []Capability{
 	// status, note appends progress; a corrupt store is refused, never clobbered
 	// (Law 8b). TierYellow: it records intent, reversible, never destroys.
 	{Verb: "becky-goal", Summary: "Durable goal store that outlives a session: add an outcome, list goals, update-status (todo/active/blocked/done), append progress notes - no delete.", Example: `becky-goal add "restore the childcare email" --due 2026-07-15  |  becky-goal list --status blocked`, Keywords: []string{"goal", "goals", "objective", "outcome", "remember", "todo", "track", "what am i waiting on", "mark done", "progress", "intent"}, Tier: TierYellow, Pack: "default"},
+	// Added 2026-07-10 (mouse-control breakthrough -> the ACTUATION PRIMITIVE for
+	// the world-action program; docs/research/mouse-control-findings.md): click a
+	// control BY NAME - UIA InvokePattern for modern/WPF/UWP/Chromium, pywinauto
+	// win32 fallback for classic Win32/Notepad-class. No pixel coords, no synthetic
+	// mouse, foreground-independent; optional becky-ocr --verify render check.
+	// TierRed: a real world action (it clicks; a click can be destructive) - always
+	// explicit, never proactive. SCOPE (AUTOPILOT Law 2): safe/scratch targets and
+	// Jordan's own authorized apps ONLY, NEVER a browser.
+	{Verb: "becky-click", Summary: "Click a UI control by NAME (UIA InvokePattern, pywinauto win32 fallback) - no pixel coords, foreground-independent, optional becky-ocr verify. Safe/scratch + authorized apps only, never a browser.", Example: `becky-click --window "Notepad" --name "Save" --control-type Button --verify --expect "Saved"`, Keywords: []string{"click", "press button", "push button", "invoke", "actuate", "ui control", "click by name", "automation", "gui action"}, Tier: TierRed, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
