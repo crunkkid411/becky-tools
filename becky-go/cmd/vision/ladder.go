@@ -8,10 +8,8 @@
 // decides FOR ITSELF whether to climb the ladder — never the caller picking a
 // model via a flag.
 //
-// This file is that policy. It is deliberately NOT the full fix: OCR
-// corroboration (a mandatory rung whenever on-screen text is detected, plus a
-// real cross-source "agrees" signal) is slice B. What this slice adds are the
-// three signals that ARE available without OCR:
+// This file is that policy. Slice A (2026-07-09) shipped three signals
+// available WITHOUT OCR:
 //  1. promptImpliesTextOrUI  — the prompt itself smells like a text/UI read
 //     (the review's exact failure mode: a tiny model confidently misreads a
 //     screen because nobody told the ladder text-reading was even at stake).
@@ -22,12 +20,27 @@
 //     stuck-vs-ready axis is real evidence of ambiguity even when neither
 //     answer hedges.
 //
-// Most calls ("describe this photo") never leave rung 0 — escalation only
-// costs time on the prompts/answers that actually look shaky.
+// Slice B (2026-07-10) adds MANDATORY becky-ocr corroboration: whenever
+// promptImpliesTextOrUI is true (the same cheap, cost-free heuristic — a real
+// "is there text in this frame" image detector would cost the model time a
+// plain describe call can't afford; see gatherOCRSignal), becky-ocr's engine
+// (internal/vision.RunOCR, the SAME engine becky-ocr.exe uses) runs ONCE
+// up front. Its high-confidence lines feed three things: (a) the final
+// Description (verbatim on-screen text, not just the VLM's paraphrase), (b)
+// the per-rung needMore decision (an on-screen prompt while the model says
+// "ready" forces another climb — ocrDisagreesWithReady), and (c) the
+// Confidence/Validated/Sources envelope (a "kind":"ocr" Source with its own
+// Agrees + KeyLines).
+//
+// Most calls ("describe this photo") never leave rung 0 and never run OCR —
+// both escalation and OCR corroboration only cost time on the prompts/answers
+// that actually look shaky or text-implying.
 package main
 
 import (
 	"context"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -105,7 +118,8 @@ func runLadder(image, prompt string, verbose bool) vision.Result {
 		},
 	}
 
-	return runEscalationPolicy(image, prompt, rungs, verbose)
+	ocr := gatherOCRSignal(cfg, image, prompt, verbose)
+	return runEscalationPolicy(image, prompt, rungs, ocr, verbose)
 }
 
 // runGemmaRung is the Gemma-4 tier's rungCall body (E4B and 12B share it —
@@ -135,11 +149,18 @@ func runGemmaRung(cfg config.Config, model, mmproj, image, prompt string, verbos
 // while budget remains AND the current best answer still looks shaky per
 // needsMore(). Degraded is true ONLY when every rung failed to produce text —
 // otherwise the policy completed, even if the final Confidence is still low.
-func runEscalationPolicy(image, prompt string, rungs []rungCall, verbose bool) vision.Result {
+//
+// ocr is pre-computed by the CALLER (gatherOCRSignal), not fetched here — the
+// same seam fakeRungs uses for models, so ladder_test.go can inject canned OCR
+// outcomes without spawning PaddleOCR. A zero-value ocrSignal{} (ran=false)
+// means OCR was never attempted (the common "plain describe" case) and every
+// OCR-aware check below is a no-op.
+func runEscalationPolicy(image, prompt string, rungs []rungCall, ocr ocrSignal, verbose bool) vision.Result {
 	res := vision.Result{Tool: vision.ToolName, Image: image, Prompt: prompt}
 	textLikely := promptImpliesTextOrUI(prompt)
 
 	var sources []vision.Source
+	var texts []string // parallel to sources, for the post-loop per-source Agrees pass
 	var bestText, bestModel, bestEngine string
 	finalRung := -1
 	needMore := true // rung 0 always runs regardless
@@ -156,6 +177,7 @@ func runEscalationPolicy(image, prompt string, rungs []rungCall, verbose bool) v
 		logRung(verbose, i, rc.label)
 		r := rc.run()
 		sources = append(sources, vision.Source{Kind: "vlm", Model: rc.label, OK: r.ok})
+		texts = append(texts, r.text)
 
 		if !r.ok {
 			needMore = true // nothing usable from this rung; keep climbing if budget allows
@@ -163,6 +185,7 @@ func runEscalationPolicy(image, prompt string, rungs []rungCall, verbose bool) v
 		}
 
 		disagreed := finalRung >= 0 && disagree(bestText, r.text)
+		ocrDisagreed := ocr.disagreesWithReady(r.text)
 		bestText, bestModel, bestEngine, finalRung = r.text, rc.label, rc.engine, i
 
 		switch {
@@ -174,34 +197,70 @@ func runEscalationPolicy(image, prompt string, rungs []rungCall, verbose bool) v
 			// Gemma-4 E4B (rung 2) read the on-screen "Do you want to
 			// proceed?" prompt correctly on the first try. Two small LFM
 			// tiers agreeing with each other is not evidence they're RIGHT;
-			// slice B's real OCR-disagreement check is the proper signal
-			// here — until then, a text/UI-implying prompt is never trusted
-			// to the small tiers alone, so it always reaches Gemma-4 E4B.
-			needMore = textLikely || looksUncertain(r.text)
+			// slice B's OCR-disagreement check (ocrDisagreed) now covers
+			// exactly this — until then, a text/UI-implying prompt is never
+			// trusted to the small tiers alone, so it always reaches E4B.
+			needMore = textLikely || looksUncertain(r.text) || ocrDisagreed
 		default:
 			// Gemma-4 E4B (rung 2) is the verified-trustworthy tier for this
-			// domain; only its OWN hedging or disagreeing with rung 1 earns
+			// domain; only its OWN hedging, disagreeing with rung 1, or
+			// contradicting a live on-screen prompt OCR actually read earns
 			// the expensive climb to Gemma-4 12B.
-			needMore = looksUncertain(r.text) || disagreed
+			needMore = looksUncertain(r.text) || disagreed || ocrDisagreed
 		}
 	}
 
-	res.Sources = sources
+	// vlmEscalations counts only the model rungs run beyond the first — the
+	// OCR corroboration source appended below is not a rung and must never
+	// inflate this count.
+	vlmEscalations := 0
 	if n := len(sources) - 1; n > 0 {
-		res.Escalations = n
+		vlmEscalations = n
 	}
 
 	if finalRung < 0 {
+		res.Sources = sources
+		res.Escalations = vlmEscalations
 		res.Degraded = true
 		res.Error = "every escalation rung failed to produce a description (see sources)"
 		return res
 	}
 
+	// Retroactively mark each VLM source's Agrees against the FINAL answer
+	// (not the answer it saw at the time — the review's own envelope example
+	// shows an early, since-overturned rung marked agrees:false).
+	for i := range sources {
+		sources[i].Agrees = !disagree(texts[i], bestText)
+	}
+
+	// Validated: stopped because agreement was actually found, not because the
+	// ladder simply ran out of budget while still unsure (a single unconfirmed
+	// rung — vlmEscalations==0 — is never "validated": that IS the review's F3
+	// incident, an unvalidated guess with no cross-check).
+	validated := vlmEscalations > 0 && !needMore
+	confText := bestText // the model's own words, BEFORE any OCR text is appended (confidence reads this)
+
+	if ocr.ran {
+		sources = append(sources, vision.Source{
+			Kind: "ocr", Model: "ppocr-v5",
+			OK: ocr.ok, Agrees: ocr.agrees(bestText), KeyLines: ocr.keyLines,
+		})
+		if ocr.ok {
+			validated = ocr.agrees(bestText)
+			if len(ocr.keyLines) > 0 {
+				bestText = appendOCRText(bestText, ocr.keyLines)
+			}
+		}
+	}
+
+	res.Sources = sources
+	res.Escalations = vlmEscalations
 	res.Model = bestModel
 	res.Engine = bestEngine
-	res.Description = bestText
-	res.Confidence = computeConfidence(finalRung, bestText, needMore)
+	res.Confidence = applyOCRAdjustment(computeConfidence(finalRung, confText, needMore), ocr, confText)
+	res.Validated = validated
 	res.Degraded = false
+	res.Description = bestText
 	return res
 }
 
@@ -242,9 +301,18 @@ func promptImpliesTextOrUI(prompt string) bool {
 // self-reported-certainty proxy available without logprobs/OCR. This
 // deliberately does NOT catch a model being confidently wrong; that failure
 // mode is what promptImpliesTextOrUI and disagree cover instead.
+//
+// FIXED 2026-07-10 (slice B, spotted while re-verifying against the review's
+// regression image): "appears to"/"appear to" used to be in this list and
+// false-positived on ordinary scene-setting VLM prose ("The image appears to
+// show a laptop screen...") that carries zero uncertainty about the actual
+// answer — it cost one wasted escalation to Gemma-4 12B on IMG_7725.JPEG even
+// though E4B (rung 2) had already answered correctly and confidently. Real
+// hedges about the CONCLUSION ("it's hard to tell if...", "not sure whether
+// it's stuck") still trip plenty of the phrases below.
 var hedgePhrases = []string{
 	"i think", "i'm not sure", "not sure", "unclear", "hard to tell",
-	"can't tell", "cannot tell", "appears to", "appear to", "possibly",
+	"can't tell", "cannot tell", "possibly",
 	"perhaps", "may be", "might be", "it is unclear", "ambiguous",
 	"no visible", "does not appear", "doesn't appear", "seems to",
 	"hard to say", "difficult to determine",
@@ -308,8 +376,8 @@ func disagree(a, b string) bool {
 
 // rungBaseConfidence is the heuristic starting point per rung: a bigger,
 // stronger model earns a higher base confidence for the SAME kind of answer.
-// This is rule-based on the signals actually available this slice (no
-// logprobs, no OCR agreement yet) — honest, not fabricated.
+// This is rule-based on the signals actually available (no real logprobs) —
+// honest, not fabricated; applyOCRAdjustment layers real OCR agreement on top.
 var rungBaseConfidence = []float64{0.50, 0.65, 0.80, 0.92}
 
 // computeConfidence turns (which rung answered, does the final text hedge,
@@ -325,11 +393,176 @@ func computeConfidence(rung int, text string, exhaustedStillUncertain bool) floa
 	if exhaustedStillUncertain {
 		conf -= 0.10
 	}
+	return clampConfidence(conf)
+}
+
+func clampConfidence(conf float64) float64 {
 	if conf < 0.05 {
-		conf = 0.05
+		return 0.05
 	}
 	if conf > 0.99 {
-		conf = 0.99
+		return 0.99
 	}
-	return conf
+	return math.Round(conf*100) / 100 // 2 decimals: keeps 0.80+0.05 from JSON-encoding as 0.8500000000000001
+}
+
+// --- OCR corroboration (slice B, becky-AI-Agent-review-1.md §4 #5) ----------
+
+// ocrMinConfidence matches becky-ocr's own defaultMinConfidence: below this,
+// a line is too shaky to assert as ground truth into another tool's answer.
+const ocrMinConfidence = 0.5
+
+// ocrMaxKeyLines caps how many OCR lines get fed into the description/sources
+// envelope — enough to carry a short dialog's worth of buttons/prompts
+// without ballooning the JSON on a dense screenshot.
+const ocrMaxKeyLines = 8
+
+// ocrSignal is the (optional) OCR corroboration for one runEscalationPolicy
+// call, pre-computed by gatherOCRSignal OUTSIDE the pure decision function —
+// the same test seam fakeRungs uses for models. The zero value (ran=false)
+// means OCR was never attempted and every method below is a safe no-op.
+type ocrSignal struct {
+	ran      bool     // true when OCR was actually attempted (promptImpliesTextOrUI was true)
+	ok       bool     // true when OCR produced at least one high-confidence line
+	keyLines []string // high-confidence lines, highest-confidence first
+}
+
+// ocrPromptWords are OCR'd UI strings that signal an ACTIVE interactive
+// prompt is on screen (a confirmation dialog, a Y/N prompt, a "press any key"
+// banner) — the review's exact incident. None of these literally say "stuck"
+// or "waiting" the way descriptive VLM prose does (polarity()'s stuckWords
+// would miss "Do you want to proceed?" entirely), so this is a DELIBERATELY
+// separate keyword list tuned to raw on-screen text rather than description.
+var ocrPromptWords = []string{
+	"do you want", "are you sure", "proceed", "confirm", "cancel",
+	"esc to", "press any key", "press enter", "y/n", "yes/no",
+	"continue?", "waiting for", "please wait",
+}
+
+// ocrLooksLikePrompt reports whether any OCR key line reads like an active,
+// awaiting-response interactive prompt.
+func ocrLooksLikePrompt(lines []string) bool {
+	joined := strings.ToLower(strings.Join(lines, " \n "))
+	for _, w := range ocrPromptWords {
+		if strings.Contains(joined, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// disagreesWithReady reports whether OCR found a live on-screen prompt while
+// text's own polarity claims "ready/idle/done" — the review's exact incident
+// shape: a VLM confidently says nothing is stuck while the pixels are
+// literally a live Y/N dialog. Only fires when OCR actually ran and found
+// usable lines; a photo with no OCR text (or OCR that degraded) never
+// overrides the VLM signal.
+func (o ocrSignal) disagreesWithReady(text string) bool {
+	if !o.ok || !ocrLooksLikePrompt(o.keyLines) {
+		return false
+	}
+	stuck, ready := polarity(text)
+	return ready && !stuck
+}
+
+// agrees is the heuristic OCR "Agrees" signal for the envelope: true unless
+// OCR positively contradicts text (see disagreesWithReady). Like disagree()
+// elsewhere in this file, "not disagreeing" is treated as agreement — a
+// documented simplification (no ground truth is available), not a claim of
+// certainty. OCR that never ran or found nothing usable defaults to true
+// (no evidence against the answer).
+func (o ocrSignal) agrees(text string) bool {
+	return !o.disagreesWithReady(text)
+}
+
+// gatherOCRSignal runs becky-ocr's engine (internal/vision.RunOCR — the SAME
+// engine becky-ocr.exe uses) on image ONCE, up front, but ONLY when
+// promptImpliesTextOrUI(prompt) — the cheap, cost-free "does this call even
+// care about on-screen text" gate that keeps a plain "describe this photo"
+// call at rung-0 speed (becky-AI-Agent-review-1.md's own regression gate,
+// acceptance criterion 9). A true image-content screenshot detector (the
+// review's "or unconditional for screenshots" alternative) would need to
+// spend model/CV time on EVERY call to decide, which defeats that gate; the
+// prompt heuristic is the honest cheap signal available today. Every failure
+// (missing OCR deps, engine crash, no frames) degrades to ocrSignal{ran:true,
+// ok:false} — never a panic, never a failed becky-vision call.
+func gatherOCRSignal(cfg config.Config, image, prompt string, verbose bool) ocrSignal {
+	if !promptImpliesTextOrUI(prompt) {
+		return ocrSignal{}
+	}
+	beckyio.Logf(verbose, "becky-vision ladder: prompt implies on-screen text - running becky-ocr corroboration")
+	hr, err := vision.RunOCR(cfg, []string{image}, "ppocr", false, verbose)
+	if err != nil || len(hr.Results) == 0 {
+		return ocrSignal{ran: true, ok: false}
+	}
+	lines := highConfidenceLines(hr.Results[0].Lines, ocrMinConfidence, ocrMaxKeyLines)
+	return ocrSignal{ran: true, ok: len(lines) > 0, keyLines: lines}
+}
+
+// highConfidenceLines returns the trimmed, non-empty line texts at or above
+// minConf, capped to max entries. PROMPT-SHAPED lines sort first (then by
+// confidence): verified on the review's own regression image 2026-07-10 —
+// pure confidence ordering buried the 0.97 "Do you want to proceed?" line
+// under eight 1.00-confidence UI-chrome words ("expand", "popout",
+// "CONSOLE"...), which would starve ocrLooksLikePrompt/disagreesWithReady of
+// the exact evidence the corroboration exists to carry.
+func highConfidenceLines(lines []vision.OCRLine, minConf float64, max int) []string {
+	type scored struct {
+		text   string
+		conf   float64
+		prompt bool
+	}
+	var kept []scored
+	for _, l := range lines {
+		text := strings.TrimSpace(l.Text)
+		if text == "" || l.Confidence < minConf {
+			continue
+		}
+		kept = append(kept, scored{text, l.Confidence, ocrLooksLikePrompt([]string{text})})
+	}
+	sort.SliceStable(kept, func(i, j int) bool {
+		if kept[i].prompt != kept[j].prompt {
+			return kept[i].prompt
+		}
+		return kept[i].conf > kept[j].conf
+	})
+	if len(kept) > max {
+		kept = kept[:max]
+	}
+	out := make([]string, len(kept))
+	for i, k := range kept {
+		out[i] = k.text
+	}
+	return out
+}
+
+// appendOCRText feeds the OCR key lines into the final answer verbatim — the
+// review's core complaint was that the correct, literal on-screen text was
+// available "one corroboration call away" and never surfaced to the caller.
+// This makes it part of the answer instead of only living in res.Sources.
+func appendOCRText(desc string, lines []string) string {
+	quoted := make([]string, len(lines))
+	for i, l := range lines {
+		quoted[i] = `"` + l + `"`
+	}
+	desc = strings.TrimRight(strings.TrimSpace(desc), ". ")
+	return desc + ". On-screen text (OCR): " + strings.Join(quoted, "; ") + "."
+}
+
+// applyOCRAdjustment nudges confidence when OCR corroboration ran: agreement
+// with an independent, deterministic OCR reading is real evidence (+0.05);
+// a live on-screen prompt contradicting a "ready" answer is the review's
+// exact incident and should make the caller trust the answer LESS even
+// though a model did answer (-0.15).
+func applyOCRAdjustment(conf float64, ocr ocrSignal, text string) float64 {
+	if !ocr.ok {
+		return conf
+	}
+	switch {
+	case ocr.disagreesWithReady(text):
+		conf -= 0.15
+	case ocrLooksLikePrompt(ocr.keyLines):
+		conf += 0.05
+	}
+	return clampConfidence(conf)
 }

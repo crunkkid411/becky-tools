@@ -113,6 +113,9 @@ func printReport(res vision.Result) {
 		if res.Escalations > 0 {
 			line += fmt.Sprintf(" (escalated %d rung(s) past the fast model)", res.Escalations)
 		}
+		if res.Validated {
+			line += " [validated: a second source corroborated this]"
+		}
 		fmt.Println(line)
 	}
 }

@@ -1,37 +1,31 @@
-// ocr.go — the OCR runner and I/O types for becky-ocr.
+// ocr.go — the frame-gathering and I/O types for becky-ocr.
 //
 // It owns: (1) gathering frames-to-OCR from a becky-osint manifest or a frames
-// dir, with provenance; (2) running the embedded Python OCR helper (PP-OCRv5 via
-// ONNX Runtime / RapidOCR) over a batch of frames in one warm-model invocation,
-// under the SAME interpreter + PYTHONPATH that internal/faceembed uses; (3) the
-// stdout JSON output contract; (4) turning each helper result into a FrameResult,
-// splitting asserted (high-confidence) lines from flagged low-confidence ones and
-// attaching the cheap candidate_* category.
+// dir, with provenance; (2) turning each internal/vision.RunOCR result into a
+// FrameResult, splitting asserted (high-confidence) lines from flagged
+// low-confidence ones and attaching the cheap candidate_* category; (3) the
+// stdout JSON output contract.
 //
-// The Python helper is EMBEDDED here (not in the shared internal/pyhelpers
-// package) and materialized to a temp dir at runtime, mirroring the
-// pyhelpers.Materialize pattern, so becky-ocr.exe stays self-contained without
-// editing a shared file. Heavy compute stays in ONNX; Go is glue + parsing.
+// The actual OCR engine call (materializing the embedded PaddleOCR/RapidOCR
+// Python helper, running it, parsing its JSON) lives in internal/vision
+// (RunOCR) as of 2026-07-10 (P1 slice B, becky-AI-Agent-review-1.md) — moved
+// out of this package so cmd/vision's escalation ladder can call the SAME
+// engine for its mandatory OCR corroboration step instead of duplicating it.
 package main
 
 import (
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"becky-go/internal/beckyio"
-	"becky-go/internal/config"
+	"becky-go/internal/vision"
 )
-
-//go:embed ocr_paddle.py
-var ocrPaddlePy []byte
 
 // FrameToOCR is one frame queued for OCR, with the provenance carried from the
 // becky-osint manifest/sidecar (or synthesized for a bare frames-dir input).
@@ -41,30 +35,6 @@ type FrameToOCR struct {
 	SourceSHA256 string
 	Timestamp    float64
 	FrameIndex   int
-}
-
-// HelperFrame mirrors one entry in ocr_paddle.py's "results" array.
-type HelperFrame struct {
-	Path            string       `json:"path"`
-	Found           bool         `json:"found"`
-	RotationApplied int          `json:"rotation_applied"`
-	Lines           []HelperLine `json:"lines"`
-	Error           string       `json:"error,omitempty"`
-}
-
-// HelperLine mirrors one recognized line from the helper.
-type HelperLine struct {
-	Text       string  `json:"text"`
-	Confidence float64 `json:"confidence"`
-	BBox       []int   `json:"bbox"`
-}
-
-// HelperResult mirrors ocr_paddle.py's stdout JSON contract.
-type HelperResult struct {
-	Skipped bool          `json:"skipped"`
-	Reason  string        `json:"reason"`
-	Engine  string        `json:"engine"`
-	Results []HelperFrame `json:"results"`
 }
 
 // Line is one recognized line in the becky-ocr output: text, confidence, where on
@@ -108,55 +78,11 @@ type Output struct {
 	Notes          map[string]string `json:"notes"`
 }
 
-// RunOCR materializes the embedded helper, runs it over the batch of frame paths
-// under the face interpreter + PYTHONPATH (the OCR deps live in the same --target
-// site-packages dir as the face deps), and parses its JSON. A helper "skipped"
-// result (missing deps/models) is surfaced as an error so main() can degrade
-// gracefully with a clear note.
-func RunOCR(cfg config.Config, paths []string, engine string, tryRotations, verbose bool) (HelperResult, error) {
-	if len(paths) == 0 {
-		return HelperResult{}, nil
-	}
-	script, err := materialize("ocr_paddle.py", ocrPaddlePy)
-	if err != nil {
-		return HelperResult{}, fmt.Errorf("materialize ocr helper: %w", err)
-	}
-
-	args := append([]string{script}, paths...)
-	args = append(args, "--engine", engine)
-	if tryRotations {
-		args = append(args, "--try-rotations")
-	}
-
-	cmd := exec.Command(ocrPython(cfg), args...)
-	cmd.Env = childEnv(cfg)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	if verbose {
-		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = &stderr
-	}
-	if err := cmd.Run(); err != nil {
-		return HelperResult{}, fmt.Errorf("ocr helper failed: %v\n%s", err, tail(stderr.String()))
-	}
-
-	res, ok := parseHelperJSON(stdout.String())
-	if !ok {
-		return HelperResult{}, fmt.Errorf("could not parse ocr helper output:\n%s", tail(stdout.String()))
-	}
-	if res.Skipped {
-		return HelperResult{}, fmt.Errorf("ocr helper skipped: %s", res.Reason)
-	}
-	beckyio.Logf(verbose, "ocr: engine=%s, %d frame result(s)", res.Engine, len(res.Results))
-	return res, nil
-}
-
 // buildFrameResult turns one helper frame result into a FrameResult: it attaches
 // provenance, splits asserted vs low-confidence lines at minConf, assigns each line
 // a candidate_* category, and builds the asserted-only full_text (so the index gets
 // the text we stand behind, not the shaky reads).
-func buildFrameResult(f FrameToOCR, hr HelperFrame, minConf float64) FrameResult {
+func buildFrameResult(f FrameToOCR, hr vision.OCRFrame, minConf float64) FrameResult {
 	res := FrameResult{
 		FramePath:          f.FramePath,
 		SourceFile:         f.SourceFile,
@@ -312,70 +238,6 @@ func sha12(s string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// parseHelperJSON tolerates leading library banner noise (RapidOCR logs to stderr,
-// but be defensive) by scanning bottom-up for the first line that unmarshals into
-// the expected shape — the same approach internal/faceembed uses.
-func parseHelperJSON(s string) (HelperResult, bool) {
-	if r, ok := tryUnmarshal(strings.TrimSpace(s)); ok {
-		return r, true
-	}
-	lines := strings.Split(s, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		if r, ok := tryUnmarshal(line); ok {
-			return r, true
-		}
-	}
-	return HelperResult{}, false
-}
-
-func tryUnmarshal(s string) (HelperResult, bool) {
-	var r HelperResult
-	if json.Unmarshal([]byte(s), &r) == nil && (r.Skipped || r.Results != nil || r.Engine != "") {
-		return r, true
-	}
-	return HelperResult{}, false
-}
-
-// materialize writes an embedded script to a stable temp path and returns it,
-// mirroring internal/pyhelpers.Materialize (kept local so becky-ocr is
-// self-contained without editing the shared pyhelpers package).
-func materialize(name string, content []byte) (string, error) {
-	dir := filepath.Join(os.TempDir(), "becky-ocr-pyhelpers")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-// ocrPython returns the interpreter to run the helper. The OCR deps (rapidocr,
-// onnxruntime, cv2) live in the SAME --target site-packages dir as the face deps,
-// reached via the face interpreter, so reuse cfg.FacePython (anaconda base) and
-// fall back to cfg.Python.
-func ocrPython(cfg config.Config) string {
-	if cfg.FacePython != "" {
-		return cfg.FacePython
-	}
-	return cfg.Python
-}
-
-// childEnv prepends the dependency site-packages dir (cfg.FacePyLib) to PYTHONPATH,
-// where rapidocr/onnxruntime/cv2 are installed — the same dir face_embed.py uses.
-func childEnv(cfg config.Config) []string {
-	env := os.Environ()
-	if cfg.FacePyLib != "" {
-		env = append(env, "PYTHONPATH="+cfg.FacePyLib+string(os.PathListSeparator)+os.Getenv("PYTHONPATH"))
-	}
-	return env
-}
-
 // isImage reports whether name has a frame image extension becky-osint produces.
 func isImage(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
@@ -393,11 +255,3 @@ func marshalIndent(o Output) ([]byte, error) {
 }
 
 func round2(f float64) float64 { return float64(int(f*100+0.5)) / 100 }
-
-func tail(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) > 800 {
-		return s[len(s)-800:]
-	}
-	return s
-}

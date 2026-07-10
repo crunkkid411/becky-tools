@@ -9,10 +9,11 @@ BUNDLES PP-OCRv4 (det+rec+cls) ONNX models, so the default path is fully offline
 with no download. PP-OCRv5 (newer, +accuracy) is requested when available and
 falls back to the bundled v4 if the v5 weights can't be fetched offline.
 
-For each image (a becky-osint frame), it returns the recognized text lines with
-per-line recognition confidence and bounding box. To survive sideways phone
-footage (TEST-FEEDBACK F1: exported frames can be 90deg-rotated), it can try the
-frame at 0/90/180/270 and keep the orientation with the best mean confidence.
+For each image (a becky-osint frame, or a single becky-vision corroboration
+still), it returns the recognized text lines with per-line recognition
+confidence and bounding box. To survive sideways phone footage (TEST-FEEDBACK
+F1: exported frames can be 90deg-rotated), it can try the frame at 0/90/180/270
+and keep the orientation with the best mean confidence.
 
 Output (stdout, one JSON line; non-ASCII is \\uXXXX-escaped so stdout stays clean
 on a cp1252 console):

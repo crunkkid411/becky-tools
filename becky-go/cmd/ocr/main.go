@@ -24,7 +24,8 @@
 // Per FORENSIC-OUTPUT-PHILOSOPHY (top principle): high-confidence reads are
 // ASSERTED plainly (text + score + frame provenance); only genuinely low-confidence
 // reads are flagged. The OCR engine, heavy compute, runs in an embedded Python
-// helper (ocr_paddle.py) exec'd under PYTHONPATH exactly like internal/faceembed —
+// helper (internal/vision's ocr_paddle.py, shared with becky-vision's OCR
+// corroboration step) exec'd under PYTHONPATH exactly like internal/faceembed —
 // the same anaconda interpreter + site-packages dir that already serves face OCR.
 //
 // Graceful degrade: missing OCR deps/models → a clear top-level note + per-frame
@@ -40,6 +41,7 @@ import (
 	"becky-go/internal/beckydb"
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
+	"becky-go/internal/vision"
 )
 
 const toolVersion = "becky-ocr v1.0.0"
@@ -103,7 +105,7 @@ func main() {
 	for i, f := range frames {
 		paths[i] = f.FramePath
 	}
-	helperOut, herr := RunOCR(cfg, paths, *engine, *tryRotations, *verbose)
+	helperOut, herr := vision.RunOCR(cfg, paths, *engine, *tryRotations, *verbose)
 	if herr != nil {
 		// Graceful degrade: surface a clean note + per-frame skip, exit 0.
 		out.Notes["ocr"] = "OCR engine unavailable: " + herr.Error()
@@ -133,7 +135,7 @@ func main() {
 
 	// Index helper records by path so we can re-attach each result to its frame's
 	// provenance (the helper only knows the path it was handed).
-	byPath := make(map[string]HelperFrame, len(helperOut.Results))
+	byPath := make(map[string]vision.OCRFrame, len(helperOut.Results))
 	for _, r := range helperOut.Results {
 		byPath[r.Path] = r
 	}

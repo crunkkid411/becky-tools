@@ -70,14 +70,13 @@ type Options struct {
 // failure Degraded is true and Error carries a plain-language reason; the tool
 // still exits 0 so a pipeline never breaks on a missing model.
 //
-// Confidence/Escalations/Sources are the becky-AI-Agent-review-1.md escalation
-// envelope (§4 acceptance criteria 3-4): populated by the escalation ladder in
-// cmd/vision/ladder.go, the DEFAULT (no-flags) path. A caller that forces a
-// single model via --gemma/--qwen still gets these fields (one Source, zero
-// Escalations, a baseline Confidence) so the envelope shape never has surprise
-// gaps. OCR corroboration (a "kind":"ocr" Source + a real cross-model "agrees"
-// signal + the "validated" field) is deliberately NOT here yet — that is
-// slice B of the review's fix, layered on top of this without breaking callers.
+// Confidence/Escalations/Sources/Validated are the becky-AI-Agent-review-1.md
+// escalation envelope (§4 acceptance criteria 3-5): populated by the
+// escalation ladder in cmd/vision/ladder.go, the DEFAULT (no-flags) path. A
+// caller that forces a single model via --gemma/--qwen still gets these
+// fields (one Source, zero Escalations, a baseline Confidence, Validated
+// false — a single unconfirmed opinion) so the envelope shape never has
+// surprise gaps.
 type Result struct {
 	Tool        string   `json:"tool"`
 	Image       string   `json:"image"`
@@ -87,18 +86,26 @@ type Result struct {
 	Description string   `json:"description"`
 	Confidence  float64  `json:"confidence,omitempty"`  // 0.05-0.99 heuristic; higher rung + no hedging text = higher
 	Escalations int      `json:"escalations,omitempty"` // rungs run BEYOND the first (450M); 0 = 450M answered confidently alone
-	Sources     []Source `json:"sources,omitempty"`     // every rung actually invoked, in order
+	Validated   bool     `json:"validated"`             // true only when an INDEPENDENT source (OCR, or a second rung) cross-checked the answer and didn't disagree — never true for a single unconfirmed opinion (the review's F3 incident: "degraded:false" asserted over an unvalidated guess)
+	Sources     []Source `json:"sources,omitempty"`     // every rung/corroboration source actually invoked, in order
 	Degraded    bool     `json:"degraded"`
 	Error       string   `json:"error,omitempty"`
 }
 
-// Source records one rung of the escalation ladder that was actually invoked.
-// Kind is "vlm" for every rung today; slice B adds "ocr" entries alongside a
-// real Agrees signal once OCR corroboration is wired in.
+// Source records one rung of the escalation ladder, or a corroboration pass
+// (OCR), that was actually invoked. Kind is "vlm" for a model rung or "ocr"
+// for the becky-ocr corroboration step (slice B, becky-AI-Agent-review-1.md
+// §4 acceptance criterion 5). Agrees is a heuristic best-effort signal
+// (polarity-based text comparison, not ground truth) — see ladder.go's
+// disagree()/ocrDisagreesWithReady() for exactly what it checks. KeyLines is
+// populated for "ocr" sources only: the high-confidence lines that were fed
+// into the final answer and the agreement check.
 type Source struct {
-	Kind  string `json:"kind"`
-	Model string `json:"model"`
-	OK    bool   `json:"ok"` // true when this rung produced a usable (non-degraded) answer
+	Kind     string   `json:"kind"`
+	Model    string   `json:"model"`
+	OK       bool     `json:"ok"`     // true when this source produced usable output (non-degraded)
+	Agrees   bool     `json:"agrees"` // heuristic: does this source's read match the FINAL answer's polarity
+	KeyLines []string `json:"key_lines,omitempty"`
 }
 
 // runner abstracts the one external command so tests never spawn the model.
