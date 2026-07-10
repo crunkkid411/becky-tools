@@ -152,6 +152,11 @@ var ToolCatalog = []Capability{
 	// language - draw ascii boxes/arrows, get back a rendered diagram + a
 	// Show Me page, no design skill required.
 	{Verb: "becky-diagram", Summary: "Render an ascii-art diagram to SVG+PNG and a high-contrast Show Me HTML page, one dumb call.", Example: `becky-diagram --in diagram.txt --title "Downtime Engine" --out data\showme\downtime-engine`, Keywords: []string{"diagram", "ascii art", "svgbob", "visualize", "draw diagram", "flowchart", "show me diagram"}, Tier: TierGreen, Pack: "default"},
+	// Added 2026-07-10 (WHORETANA ask #2 / buildplan Phase 3): ported from
+	// Mark-XXXIX's actions/web_search.py, real live web results, no browser,
+	// no cookies. Read-only/reversible, so TierGreen despite being outward-
+	// facing (it queries, it never acts on Jordan's behalf).
+	{Verb: "becky-web-search", Summary: "Search the live web via Google Custom Search JSON API - real results, no browser, no cookies, one dumb call.", Example: `becky-web-search "query text" [--max 8] [--json]`, Keywords: []string{"search", "web search", "google", "look up", "find online", "research", "world knowledge"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
