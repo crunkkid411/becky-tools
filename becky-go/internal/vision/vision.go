@@ -36,6 +36,10 @@ const (
 	DefaultBin = `C:/llama.cpp/build/bin/llama-mtmd-cli.exe`
 	// DefaultModelDir is where the 450M LFM2.5-VL GGUF + mmproj live by default.
 	DefaultModelDir = `X:/AI-2/becky-tools/models/lfm2.5-vl-450m/`
+	// Dir16B is the escalation ladder's second rung: a stronger, still-fast
+	// LFM2.5-VL-1.6B model tried when the 450M's answer looks uncertain or the
+	// prompt implies reading on-screen text/UI state (see cmd/vision/ladder.go).
+	Dir16B = `X:/AI-2/becky-tools/models/lfm2.5-vl-1.6b/`
 	// DefaultPrompt is a concise, deterministic "describe this image" instruction.
 	DefaultPrompt = "Describe this image concisely and factually."
 	// DefaultNGL offloads all layers to the GPU (the tiny VLM fits with headroom).
@@ -65,15 +69,36 @@ type Options struct {
 // Result is the JSON-shaped outcome of one Describe call. On any recoverable
 // failure Degraded is true and Error carries a plain-language reason; the tool
 // still exits 0 so a pipeline never breaks on a missing model.
+//
+// Confidence/Escalations/Sources are the becky-AI-Agent-review-1.md escalation
+// envelope (§4 acceptance criteria 3-4): populated by the escalation ladder in
+// cmd/vision/ladder.go, the DEFAULT (no-flags) path. A caller that forces a
+// single model via --gemma/--qwen still gets these fields (one Source, zero
+// Escalations, a baseline Confidence) so the envelope shape never has surprise
+// gaps. OCR corroboration (a "kind":"ocr" Source + a real cross-model "agrees"
+// signal + the "validated" field) is deliberately NOT here yet — that is
+// slice B of the review's fix, layered on top of this without breaking callers.
 type Result struct {
-	Tool        string `json:"tool"`
-	Image       string `json:"image"`
-	Model       string `json:"model"`
-	Engine      string `json:"engine,omitempty"` // model family that produced this (default LFM2.5-VL; "Gemma-4" via --gemma)
-	Prompt      string `json:"prompt"`
-	Description string `json:"description"`
-	Degraded    bool   `json:"degraded"`
-	Error       string `json:"error,omitempty"`
+	Tool        string   `json:"tool"`
+	Image       string   `json:"image"`
+	Model       string   `json:"model"`
+	Engine      string   `json:"engine,omitempty"` // model family that produced this (default LFM2.5-VL; "Gemma-4" via --gemma)
+	Prompt      string   `json:"prompt"`
+	Description string   `json:"description"`
+	Confidence  float64  `json:"confidence,omitempty"`  // 0.05-0.99 heuristic; higher rung + no hedging text = higher
+	Escalations int      `json:"escalations,omitempty"` // rungs run BEYOND the first (450M); 0 = 450M answered confidently alone
+	Sources     []Source `json:"sources,omitempty"`     // every rung actually invoked, in order
+	Degraded    bool     `json:"degraded"`
+	Error       string   `json:"error,omitempty"`
+}
+
+// Source records one rung of the escalation ladder that was actually invoked.
+// Kind is "vlm" for every rung today; slice B adds "ocr" entries alongside a
+// real Agrees signal once OCR corroboration is wired in.
+type Source struct {
+	Kind  string `json:"kind"`
+	Model string `json:"model"`
+	OK    bool   `json:"ok"` // true when this rung produced a usable (non-degraded) answer
 }
 
 // runner abstracts the one external command so tests never spawn the model.

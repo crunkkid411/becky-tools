@@ -249,15 +249,21 @@ func defaults() Config {
 			`X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`,
 			`X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-Q4_K_M.gguf`,
 		),
+		// The E4B projector on disk is mmproj-F16.gguf (verified 2026-07-09 per
+		// becky-AI-Agent-review-1.md's own inventory of models\gemma4\). The old
+		// default here, mmproj-BF16.gguf, has never existed on this machine —
+		// GemmaAVLM() silently degraded ("mmproj not found") for every E4B caller
+		// (becky-validate, becky-edit, becky-vision --gemma) because firstExisting()
+		// falls back to returning a non-existent candidate when nothing matches.
 		GemmaMMProj: firstExisting(
-			`X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf`,
+			`X:\AI-2\becky-tools\models\gemma4\mmproj-F16.gguf`,
 		),
 		GemmaModel12B: firstExisting(
 			`X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf`,
 		),
 		GemmaMMProj12B: firstExisting(
 			`X:\AI-2\becky-tools\models\gemma4\mmproj-12B-BF16.gguf`,
-			`X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf`,
+			`X:\AI-2\becky-tools\models\gemma4\mmproj-F16.gguf`,
 		),
 		// Qwen3.5-4B orchestrator/router + SINGLE-IMAGE corroborator. The Unsloth
 		// UD-Q4_K_XL is THE model (Jordan pinned this exact GGUF — the Dynamic-2.0

@@ -55,18 +55,22 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Three routes, same vision.Result shape, ALL single-image: the fast LFM2.5-VL
-	// still describer (default); the stronger Gemma-4 via llama-server (--gemma) for
-	// fine-detail reads the tiny model gets wrong; or Qwen3.5-4B (--qwen), a DIFFERENT
-	// family for single-image corroboration. None of these watch video — for WATCHING
-	// a video segment with audio, use becky-validate (Gemma-4 E4B->12B).
+	// Four routes, same vision.Result shape, ALL single-image: --qwen / --gemma
+	// remain manual single-model escape hatches (debugging, back-compat); an
+	// explicit --model/--mmproj/--dir/--bin also forces the old single-Describe
+	// call exactly as before. The plain NO-FLAGS call — becky-vision --image
+	// <p> --prompt "<q>", nothing else — is THE compiled-in escalation core
+	// (becky-AI-Agent-review-1.md): becky decides for itself how far to climb
+	// 450M -> 1.6B -> Gemma-4 E4B -> Gemma-4 12B; the caller never picks a model.
+	// None of these watch video — for WATCHING a video segment with audio, use
+	// becky-validate (Gemma-4 E4B->12B).
 	var res vision.Result
 	switch {
 	case *qwen:
 		res = describeWithQwen(*image, *prompt, *serverURL, *timeoutSec, *verbose)
 	case *gemma:
 		res = describeWithGemma(*image, *prompt, *serverURL, *timeoutSec, *verbose)
-	default:
+	case *model != "" || *mmproj != "" || *dir != "" || *bin != "":
 		res = vision.Describe(vision.Options{
 			Image:    *image,
 			Model:    *model,
@@ -76,6 +80,8 @@ func main() {
 			ModelDir: *dir,
 			NGL:      *ngl,
 		})
+	default:
+		res = runLadder(*image, *prompt, *verbose)
 	}
 
 	if *asJSON {
@@ -102,6 +108,13 @@ func printReport(res vision.Result) {
 	fmt.Println(res.Description)
 	fmt.Println()
 	fmt.Println(res.Provenance())
+	if res.Confidence > 0 {
+		line := fmt.Sprintf("  confidence: %.0f%%", res.Confidence*100)
+		if res.Escalations > 0 {
+			line += fmt.Sprintf(" (escalated %d rung(s) past the fast model)", res.Escalations)
+		}
+		fmt.Println(line)
+	}
 }
 
 // describeWithGemma runs ONE still through the stronger Gemma-4 model via
