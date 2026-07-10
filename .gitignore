@@ -85,6 +85,10 @@ test-runs/
 *.png
 *.gif
 *.JPG
+# EXCEPTION: becky-vision's synthetic regression fixtures (becky-AI-Agent-review-1.md
+# Section 5) are programmatically-generated mockups, never a personal photo - safe
+# and meant to be committed so the smoke gate has fixtures on a fresh checkout.
+!becky-go/testdata/vision/*.png
 
 # Debug / test output files
 *.err.txt

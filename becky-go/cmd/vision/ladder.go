@@ -40,7 +40,9 @@ package main
 import (
 	"context"
 	"math"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,11 +52,36 @@ import (
 	"becky-go/internal/vision"
 )
 
-// MaxEscalations bounds the ladder at 4 total rungs (450M, 1.6B, Gemma-4 E4B,
-// Gemma-4 12B) — the exact ladder named in becky-AI-Agent-review-1.md. Extra
-// rungs added later stay capped at this many escalations beyond rung 0 unless
-// this constant changes with them.
-const MaxEscalations = 3
+// EnvMaxEscalations overrides MaxEscalations for one process — the "fast
+// mode" knob for the testdata\vision smoke gate (becky-AI-Agent-review-1.md
+// §5): the gate sets this to 0 for every-build runs (450M + mandatory OCR
+// only, no llama-server rungs spun up) and leaves it unset for the weekly
+// full-ladder run. This is still a genuine no-flags call — same convention
+// as BECKY_AVLM_VARIANT/BECKY_QWEN_MODEL elsewhere in this codebase: an env
+// knob, never a CLI flag, so "becky-vision --image x --prompt y" stays THE
+// one-dumb-call contract the review demands.
+const EnvMaxEscalations = "BECKY_VISION_MAX_ESCALATIONS"
+
+// MaxEscalations bounds the ladder at, by default, 4 total rungs (450M,
+// 1.6B, Gemma-4 E4B, Gemma-4 12B) — the exact ladder named in
+// becky-AI-Agent-review-1.md. Extra rungs added later stay capped at this
+// many escalations beyond rung 0 unless this constant changes with them.
+// Resolved once per process from EnvMaxEscalations so a subprocess (the
+// smoke gate spawning becky-vision.exe) can cap it without a flag; an
+// unset/invalid/negative env value keeps the built-in default of 3.
+var MaxEscalations = resolveMaxEscalations(3)
+
+func resolveMaxEscalations(def int) int {
+	v := strings.TrimSpace(os.Getenv(EnvMaxEscalations))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
+}
 
 // gemmaRungTimeoutSec bounds one Gemma-4 tier's llama-server spin-up + single
 // inference. Matches becky-vision's existing --timeout default for --gemma/--qwen.

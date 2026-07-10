@@ -125,3 +125,15 @@ if not exist "%BECKY_PATH_BIN%" mkdir "%BECKY_PATH_BIN%"
 copy /Y bin\*.exe "%BECKY_PATH_BIN%\" >nul
 echo Installed. Fresh-shell smoke test: becky-vision, becky-ocr, becky-perceive,
 echo search_library, becky should all resolve on PATH now.
+
+REM --- becky-vision regression gate: testdata\vision fixtures (FAST mode) ----
+REM becky-AI-Agent-review-1.md Section 5. Best-effort like the GUI/audio
+REM variants above: WARN, never blocks a build (a wording-sensitive VLM
+REM assertion must not fail a routine tool build; the vision models/GPU may
+REM also just not be present on whatever box runs this). FAST mode only
+REM (rung 0 + mandatory OCR, ~20s) - run scripts\vision-smoke-gate.ps1 -Full
+REM by hand or from a weekly task for the real, uncapped escalation gate.
+echo.
+echo Running becky-vision regression gate (fast mode, testdata\vision)...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\vision-smoke-gate.ps1"
+if errorlevel 1 echo WARN: becky-vision smoke gate failed or models unavailable - see output above.
