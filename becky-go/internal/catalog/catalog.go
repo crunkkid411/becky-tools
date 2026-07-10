@@ -135,6 +135,12 @@ var ToolCatalog = []Capability{
 	{Verb: "becky-export", Summary: "Export findings / clips into a shareable package.", Example: `becky-export "<results>"`, Keywords: []string{"export", "package", "report out", "share"}, Tier: TierRed, Pack: "default"},
 	{Verb: "reaper-bridge", Summary: "Drive the open REAPER session: author/edit takes, params, and the arrangement.", Example: `becky-reaper --apply "<edit.json>"`, Keywords: []string{"reaper", "daw", "take", "mixer", "arrangement", "track"}, Tier: TierYellow, Pack: "reaper"},
 	{Verb: "becky-imagegen", Summary: "Generate an image from a text prompt, fully local (Krea-2 via stable-diffusion.cpp).", Example: `becky-imagegen --prompt "a lovely cat" --out cat.png`, Keywords: []string{"imagegen", "image", "generate image", "text to image", "picture", "art", "draw", "krea", "stable diffusion", "flux"}, Tier: TierYellow, Pack: "default"},
+	// Added 2026-07-10 (P1 slice C, becky-AI-Agent-review-1.md F7): these three
+	// existed on disk since 2026-07-09 but were missing from the catalog, which
+	// is exactly the "tribal knowledge, not a tool call" bug the review named.
+	{Verb: "becky-vision", Summary: "Describe an image or read on-screen text with a local vision model (escalates automatically on hard reads, corroborates with OCR).", Example: `becky-vision --image "<path>" --prompt "What does this show?"`, Keywords: []string{"vision", "image", "describe image", "screenshot", "photo", "what is this", "look at", "see", "picture of"}, Tier: TierGreen, Pack: "default"},
+	{Verb: "becky-perceive", Summary: "Point at a phrase and get pixel bounding boxes for every match in an image (open-vocabulary detection, CPU/0 VRAM).", Example: `becky-perceive "<image>" "the red button"`, Keywords: []string{"perceive", "where is", "locate", "find in image", "bounding box", "point at", "detect"}, Tier: TierGreen, Pack: "default"},
+	{Verb: "search_library", Summary: "Search Jordan's bookmarks, GitHub stars, research, and AI chat history in one call.", Example: `search_library "hostinger setup"`, Keywords: []string{"search library", "bookmarks", "stars", "research", "ai chats", "find in library"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.

@@ -1,18 +1,22 @@
 // becky-ocr — offline OCR of the frames becky-osint exports (signage, plates,
 // storefronts, mail, screens, livestream chat, burned-in timestamps). It reads a
-// becky-osint manifest (or any folder of frame images), runs PaddleOCR PP-OCRv5
-// via ONNX Runtime (RapidOCR), and emits per-frame recognized text with
-// confidence + bbox + frame provenance as JSON to stdout (or --output). With
-// --db it also writes one row per line into the forensic DB's ocr_text table (+
-// FTS5 mirror) so `becky find "2601 Chatham"` returns the frame.
+// becky-osint manifest, a directory of frame images, or ONE image directly, runs
+// PaddleOCR PP-OCRv5 via ONNX Runtime (RapidOCR), and emits per-frame recognized
+// text with confidence + bbox + frame provenance as JSON to stdout (or --output).
+// With --db it also writes one row per line into the forensic DB's ocr_text
+// table (+ FTS5 mirror) so `becky find "2601 Chatham"` returns the frame.
 //
 //	becky-ocr --manifest <osint-manifest.json> [options]
 //	becky-ocr --frames-dir <dir> [options]
+//	becky-ocr --image <file> [options]
 //
 // Options:
 //
-//	--manifest <file>    becky-osint manifest JSON (preferred; carries provenance)
+//	--manifest <file>    becky-osint manifest JSON (carries provenance)
 //	--frames-dir <dir>   OR a directory of frame images (jpg/png) to OCR directly
+//	--image <file>       OR a single image file to OCR directly (the --image
+//	                     convention every image-taking becky tool shares, e.g.
+//	                     becky-vision --image; becky-AI-Agent-review-1.md F6)
 //	--engine ppocr|ppocr-v4   ppocr = PP-OCRv5 via ONNX, falling back to bundled v4
 //	--min-confidence 0.5 lines below this rec-confidence go to low_confidence_lines
 //	--try-rotations      try 0/90/180/270 per frame, keep the best (sideways fallback)
@@ -21,6 +25,8 @@
 //	--output <file>      write the manifest JSON here instead of stdout
 //	--verbose            progress on stderr
 //
+// Exactly one of --manifest / --frames-dir / --image is required.
+//
 // Per FORENSIC-OUTPUT-PHILOSOPHY (top principle): high-confidence reads are
 // ASSERTED plainly (text + score + frame provenance); only genuinely low-confidence
 // reads are flagged. The OCR engine, heavy compute, runs in an embedded Python
@@ -28,8 +34,12 @@
 // corroboration step) exec'd under PYTHONPATH exactly like internal/faceembed —
 // the same anaconda interpreter + site-packages dir that already serves face OCR.
 //
-// Graceful degrade: missing OCR deps/models → a clear top-level note + per-frame
-// skip and exit 0 (never a crash, never half-JSON), mirroring the face path.
+// Graceful degrade (missing OCR deps/models): a clear top-level note + per-frame
+// skip, exit 0 (never a crash, never half-JSON) — this is a documented, DELIBERATE
+// outcome, not a "failure". A real usage/fatal error (bad args, nothing to OCR)
+// instead prints {"ok":false,"error":"..."} to stdout and exits nonzero — the CLI
+// convention becky-perceive/search_library already follow (becky-AI-Agent-review-1.md
+// acceptance criterion 8).
 package main
 
 import (
@@ -52,8 +62,9 @@ const toolVersion = "becky-ocr v1.0.0"
 const defaultMinConfidence = 0.5
 
 func main() {
-	manifestPath := flag.String("manifest", "", "becky-osint manifest JSON (preferred)")
+	manifestPath := flag.String("manifest", "", "becky-osint manifest JSON")
 	framesDir := flag.String("frames-dir", "", "OR a directory of frame images to OCR directly")
+	imagePath := flag.String("image", "", "OR a single image file to OCR directly")
 	engine := flag.String("engine", "ppocr", "ppocr (PP-OCRv5->v4 ONNX) | ppocr-v4 (bundled offline)")
 	minConf := flag.Float64("min-confidence", defaultMinConfidence, "lines below this confidence are flagged low-confidence")
 	tryRotations := flag.Bool("try-rotations", false, "try 0/90/180/270 per frame, keep the best (sideways-frame fallback)")
@@ -61,21 +72,28 @@ func main() {
 	dbPath := flag.String("db", "", "also write ocr_text rows into this forensic DB")
 	output := flag.String("output", "", "write the manifest JSON here instead of stdout")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
+	flag.Bool("json", false, "no-op: becky-ocr's default output is already JSON (see --output to redirect it to a file)")
 	flag.Parse()
 
-	if *manifestPath == "" && *framesDir == "" {
-		beckyio.Fatalf("usage: becky-ocr --manifest <osint-manifest.json> | becky-ocr --frames-dir <dir> [options]")
+	given := 0
+	for _, v := range []string{*manifestPath, *framesDir, *imagePath} {
+		if v != "" {
+			given++
+		}
 	}
-	if *manifestPath != "" && *framesDir != "" {
-		beckyio.Fatalf("pass --manifest OR --frames-dir, not both")
+	if given == 0 {
+		failJSON("usage: becky-ocr --manifest <osint-manifest.json> | --frames-dir <dir> | --image <file> [options]")
+	}
+	if given > 1 {
+		failJSON("pass exactly one of --manifest, --frames-dir, --image (not more than one)")
 	}
 
 	cfg := config.Load()
 
 	// Gather the frames to OCR (with provenance) from whichever input was given.
-	frames, sourceLabel, err := gatherFrames(*manifestPath, *framesDir, *verbose)
+	frames, sourceLabel, err := gatherFrames(*manifestPath, *framesDir, *imagePath, *verbose)
 	if err != nil {
-		beckyio.Fatalf("%v", err)
+		failJSON("%v", err)
 	}
 	if *maxFrames > 0 && len(frames) > *maxFrames {
 		beckyio.Logf(*verbose, "capping %d frames to --max-frames=%d", len(frames), *maxFrames)
@@ -84,6 +102,7 @@ func main() {
 	beckyio.Logf(*verbose, "OCR'ing %d frame(s) from %s", len(frames), sourceLabel)
 
 	out := Output{
+		OK:             true,
 		Tool:           toolVersion,
 		SourceManifest: sourceLabel,
 		Results:        []FrameResult{},
@@ -245,4 +264,16 @@ func engineLabel(engine string) string {
 		return "ppocr-v4-onnx"
 	}
 	return "ppocr-v5-onnx"
+}
+
+// failJSON prints {"ok":false,"error":"..."} to stdout and exits 1 — the CLI
+// convention becky-perceive/search_library already follow
+// (becky-AI-Agent-review-1.md acceptance criterion 8). Used only for hard
+// usage/fatal errors (bad args, nothing to OCR); a missing OCR engine/model is
+// a documented GRACEFUL DEGRADE (exit 0, see the Notes["ocr"] path above) and
+// keeps its existing Output{OK:true, Notes:...} shape unchanged — degrading is
+// not the same thing as failing in this codebase's vocabulary.
+func failJSON(format string, a ...any) {
+	beckyio.PrintJSON(map[string]any{"ok": false, "error": fmt.Sprintf(format, a...)})
+	os.Exit(1)
 }

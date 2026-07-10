@@ -111,6 +111,12 @@ func parseArgs(args []string) (query string, limit int, pretty bool, err error) 
 		switch {
 		case a == "--pretty":
 			pretty = true
+		case a == "--json":
+			// No-op: search_library's default output (no --pretty) is already
+			// the {"ok":...} JSON envelope. Recognized explicitly so the CLI
+			// convention every becky tool shares (--json is always a safe,
+			// harmless flag to pass) doesn't get swallowed into the query text
+			// (becky-AI-Agent-review-1.md acceptance criterion 8).
 		case a == "--limit":
 			i++
 			if i >= len(args) {
@@ -128,7 +134,7 @@ func parseArgs(args []string) (query string, limit int, pretty bool, err error) 
 			}
 			limit = n
 		case a == "-h", a == "--help":
-			return "", 0, pretty, fmt.Errorf("usage: search_library \"<plain english query>\" [--limit N] [--pretty]")
+			return "", 0, pretty, fmt.Errorf("usage: search_library \"<plain english query>\" [--limit N] [--json] [--pretty]")
 		default:
 			queryParts = append(queryParts, a)
 		}

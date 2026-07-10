@@ -66,8 +66,13 @@ type SkipRecord struct {
 	Reason    string `json:"reason"`
 }
 
-// Output is the becky-ocr stdout/--output JSON document.
+// Output is the becky-ocr stdout/--output JSON document. OK is always true
+// here — a hard usage/fatal error never reaches this struct; it short-circuits
+// through failJSON's separate {"ok":false,"error":"..."} envelope instead (see
+// main.go). Kept on this struct too (not just the error path) so a caller can
+// check one field name across both outcomes.
 type Output struct {
+	OK             bool              `json:"ok"`
 	Tool           string            `json:"tool"`
 	Engine         string            `json:"engine"`
 	SourceManifest string            `json:"source_manifest"`
@@ -116,16 +121,42 @@ func buildFrameResult(f FrameToOCR, hr vision.OCRFrame, minConf float64) FrameRe
 	return res
 }
 
-// gatherFrames collects the frames to OCR + their provenance, from a becky-osint
-// manifest (preferred) or a frames dir. Returns the frames, a label for the
+// gatherFrames collects the frames to OCR + their provenance, from a
+// becky-osint manifest, a frames dir, or a single image. Exactly one of
+// manifestPath/framesDir/imagePath is non-empty (enforced by main.go's usage
+// check before this is called). Returns the frames, a label for the
 // source_manifest field, and any fatal error.
-func gatherFrames(manifestPath, framesDir string, verbose bool) ([]FrameToOCR, string, error) {
+func gatherFrames(manifestPath, framesDir, imagePath string, verbose bool) ([]FrameToOCR, string, error) {
 	if manifestPath != "" {
 		frames, err := framesFromManifest(manifestPath, verbose)
 		return frames, filepath.ToSlash(manifestPath), err
 	}
+	if imagePath != "" {
+		frames, err := framesFromImage(imagePath)
+		return frames, filepath.ToSlash(imagePath), err
+	}
 	frames, err := framesFromDir(framesDir, verbose)
 	return frames, filepath.ToSlash(framesDir), err
+}
+
+// framesFromImage returns a single-frame slice for one image file — the
+// --image convention every image-taking becky tool shares (becky-vision
+// --image; becky-AI-Agent-review-1.md F6: "becky-vision takes --image;
+// becky-ocr takes -frames-dir/-manifest and rejects --image"). Provenance is
+// synthesized exactly like framesFromDir's single-file case: source_file is
+// the image path itself, frame_index 0.
+func framesFromImage(path string) ([]FrameToOCR, error) {
+	if !isImage(path) {
+		return nil, fmt.Errorf("--image must be a .jpg/.jpeg/.png file, got %s", path)
+	}
+	if st, err := os.Stat(path); err != nil || st.IsDir() {
+		return nil, fmt.Errorf("image not found: %s", path)
+	}
+	return []FrameToOCR{{
+		FramePath:  path,
+		SourceFile: filepath.ToSlash(path),
+		FrameIndex: 0,
+	}}, nil
 }
 
 // framesFromManifest reads a becky-osint manifest and returns one FrameToOCR per

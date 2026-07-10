@@ -10,6 +10,7 @@
 //	becky find "<query>" [--db <path>]                   hybrid search the corpus
 //	becky corroborate "<claim>" [--db] [--corpus] [--kb] cross-reference a claim
 //	becky ingest <folder> [--kb <dir>] [--no-pipeline]   run the pipeline + write DIGEST.md
+//	becky list [--json]                                  machine-readable tool inventory
 //
 // Each op prints a plain-English summary to stderr (the headline) AND a structured
 // JSON result to stdout (the underlying data + paths to the actual clips/frames).
@@ -39,6 +40,7 @@ Usage:
   becky find "<query>" [--db <path>]                    natural-language search of the corpus
   becky corroborate "<claim>" [--db] [--corpus] [--kb]  cross-reference a claim for review
   becky ingest <folder> [--kb <dir>] [--no-pipeline]    run the forensic pipeline over a folder + write one DIGEST.md
+  becky list [--json]                                   machine-readable inventory: installed tools + one-line contracts
 
 Common flags: --bin <dir> (becky-*.exe location), --verbose, --json (JSON only, no headline)
 
@@ -83,6 +85,8 @@ func main() {
 		err = runCorroborate(rest)
 	case "ingest":
 		err = runIngest(rest)
+	case "list":
+		err = runList(rest)
 	case "help", "-h", "--help":
 		fmt.Fprintln(os.Stderr, usage)
 		return

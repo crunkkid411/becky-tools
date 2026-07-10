@@ -3,6 +3,7 @@
 // image + a plain phrase, get back bounding boxes for every match.
 //
 //	becky-perceive <image-path> "<phrase>" [--limit N] [--pretty]
+//	becky-perceive --image <image-path> "<phrase>" [--limit N] [--pretty]
 //
 // Backed by the verified driver at X:\AI-2\becky-tools\models\falcon-perception\ (an
 // isolated CPU-only onnxruntime venv + falcon_perception_onnx.py). This Go
@@ -141,14 +142,33 @@ func run(args []string) int {
 // parseArgs does simple manual parsing (not the flag package) because the
 // contract puts the two positional args (image path, phrase) BEFORE the
 // flags, which flag.Parse stops scanning at. Mirrors search_library's style.
+//
+// --image <path> is an explicit alternative to the positional image path —
+// the --image convention every image-taking becky tool shares
+// (becky-AI-Agent-review-1.md acceptance criterion 8). When given, ALL
+// positionals become the phrase instead of the first one being consumed as
+// the image; the original two-positional form keeps working unchanged.
 func parseArgs(args []string) (imagePath, phrase string, limit int, pretty bool, err error) {
-	usage := `usage: becky-perceive <image-path> "<phrase>" [--limit N] [--pretty]`
+	usage := `usage: becky-perceive <image-path> "<phrase>" [--limit N] [--pretty]
+   or: becky-perceive --image <image-path> "<phrase>" [--limit N] [--pretty]`
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--pretty":
 			pretty = true
+		case a == "--json":
+			// No-op: becky-perceive's default output (no --pretty) is already
+			// the {"ok":...} JSON envelope. Recognized explicitly so --json is
+			// always a safe flag to pass, same fix as search_library.
+		case a == "--image":
+			i++
+			if i >= len(args) {
+				return "", "", 0, pretty, fmt.Errorf("--image needs a path")
+			}
+			imagePath = args[i]
+		case strings.HasPrefix(a, "--image="):
+			imagePath = strings.TrimPrefix(a, "--image=")
 		case a == "--limit":
 			i++
 			if i >= len(args) {
@@ -170,6 +190,12 @@ func parseArgs(args []string) (imagePath, phrase string, limit int, pretty bool,
 		default:
 			positional = append(positional, a)
 		}
+	}
+	if imagePath != "" {
+		if len(positional) < 1 {
+			return "", "", 0, pretty, fmt.Errorf("%s", usage)
+		}
+		return imagePath, strings.Join(positional, " "), limit, pretty, nil
 	}
 	if len(positional) < 2 {
 		return "", "", 0, pretty, fmt.Errorf("%s", usage)

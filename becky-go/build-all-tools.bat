@@ -110,3 +110,18 @@ if errorlevel 1 echo WARN: in-process becky-edit build failed - warm-server bin\
 echo.
 echo Done. Built !COUNT! tools ^(+ GUI/audio variants^). Binaries in %~dp0bin
 dir /b bin
+
+REM --- Install: copy EVERY built tool onto Jordan's PATH bin -----------------
+REM becky-AI-Agent-review-1.md acceptance criterion 6 (F5 "deployment gaps"):
+REM becky-vision/becky-ocr sat in becky-go\bin\ where no agent's fresh shell
+REM could find them until someone manually copied them. Copy-only (never
+REM delete/mirror) so unrelated tools already in that folder (auto-editor,
+REM yt-dlp, exiftool, ...) are untouched; a locked file (a tool currently
+REM running) is skipped by `copy` with a warning, never aborts the rest.
+set "BECKY_PATH_BIN=C:\Users\only1\bin"
+echo.
+echo Installing tools to PATH bin (%BECKY_PATH_BIN%)...
+if not exist "%BECKY_PATH_BIN%" mkdir "%BECKY_PATH_BIN%"
+copy /Y bin\*.exe "%BECKY_PATH_BIN%\" >nul
+echo Installed. Fresh-shell smoke test: becky-vision, becky-ocr, becky-perceive,
+echo search_library, becky should all resolve on PATH now.
