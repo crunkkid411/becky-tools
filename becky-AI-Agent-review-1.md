@@ -238,3 +238,163 @@ The cloud agent reviewing this should hold becky-vision to ALL of these:
   the inversion of the design goal.
 - Related working docs in hj-mission-control: `docs/RECOVERY.md` (tonight's
   incident + watchdog spec), `docs/HANDOFF.md` (system map + laws).
+
+---
+
+## 7. RESOLUTION (2026-07-10, P1 slice D — verified by Claude/Fable 5)
+
+Slices A (`1b35bc1`), B (`b6a6ae9`), and C (`e600c65`) implemented the fix
+this review demanded; slice D (`f819d98`, this section) built the regression
+fixtures + automated smoke gate Section 5 asked for and audited every
+acceptance criterion below by RUNNING the code today, not by reading the
+diff. Every command in this section was actually executed on 2026-07-10;
+none of this is inferred from the commit messages.
+
+### Criterion-by-criterion
+
+**1. One dumb call — PASS.** Every verification in this section used exactly
+`becky-vision --image <path> --prompt "<q>" --json`, never a model-selecting
+flag, and the ladder ran internally every time (`cmd\vision\main.go`'s
+`default: res = runLadder(...)` branch).
+
+**2. THE canonical regression case — PASS, verified twice on two different
+images.** (a) Slice B's own WORKLOG entry already ran the REAL
+`IMG_7725.JPEG` photo no-flags and got "the terminal is waiting for user
+input... 'Do you want to proceed?'" at 0.85 confidence. (b) This slice built
+a synthetic recreation (`testdata\vision\terminal_prompt_waiting.png`) and
+ran it no-flags, full ladder, today — output captured verbatim:
+
+```json
+"description": "Yes, the screen is **waiting for input**.\n\nIt is presenting a prompt asking you to make a decision:\n\n**\"Use skill 'claude-in-chrome'?\"**\n**\"Do you want to proceed?\"** ...",
+"confidence": 0.85, "escalations": 2, "validated": true,
+"model": "gemma-4-E4B", "degraded": false
+```
+
+22s wall clock. Reran the identical call a second time: byte-identical
+output (see criterion 9). THE GATE passes on both the original photo and a
+clean, committable synthetic stand-in.
+
+**3. Envelope — PASS (in substance; this review's own §4 example was marked
+"(proposed)").** Every live run this slice produced correctly-populated
+confidence/validated/sources/escalations/degraded; `sources` carries `kind`,
+a short `model` label (never a raw path — unit-tested,
+`TestEscalationPolicy_sourcesUseShortLabelsNotPaths`, still green), `ok`,
+`agrees`, and `key_lines` for OCR sources. Two cosmetic naming differences
+from the proposed sketch: the text field is `description`, not `answer`;
+there is no separate literal `"ok"` boolean (`degraded` carries that signal,
+inverted). The substance is present; the letter of the illustrative sketch
+was not followed exactly.
+
+**4. Escalation policy compiled in — PASS.** `cmd\vision\ladder.go` is the
+one file holding every threshold (`MaxEscalations`, `rungBaseConfidence`,
+`ocrMinConfidence`, `ocrMaxKeyLines`, every keyword list) — centralized, not
+scattered, though it is Go source rather than a runtime config file.
+Verified live: the canonical fixture's `escalations` reads 2 (a real
+450M → 1.6B → Gemma-4 E4B climb, confirmed by the `sources` array listing
+all three). `TestEscalationPolicy_budgetCapNeverExceedsMaxEscalations`
+(pre-existing) still passes, confirming the 4-rung cap holds under a
+pathologically-uncertain fake ladder.
+
+**5. OCR corroboration mandatory when text is in-frame — PASS, with a
+documented scope note.** Every fixture in this slice (all 4 prompts were
+deliberately worded to imply text/UI/screen state) produced a real
+`"kind":"ocr"` source with genuine `key_lines` — becky-ocr's actual
+PaddleOCR engine reading my synthetic PNGs, not a stub; e.g. fixture 1's OCR
+read `"proceed?"` at 1.00 confidence and folded it into the final answer
+verbatim. The gate is PROMPT-triggered (`promptImpliesTextOrUI`), not
+content-triggered — a pre-existing, deliberate simplification from slice B
+(a real "is there text in this frame" detector would cost model time on
+every call, defeating the point). A prompt that never mentions text/UI/
+screen state, aimed at an image dense with readable text, would still skip
+OCR. Not a new finding, but worth restating plainly: "mandatory" here means
+"mandatory for prompts that ask about on-screen text or state," not
+"mandatory for every image that happens to contain text."
+
+**6. Deployment — PASS, reverified fresh today** (not trusted from slice
+C's WORKLOG alone):
+
+```
+Get-Command becky-vision, becky-ocr, becky-perceive, search_library, becky
+-> all 5 resolve to C:\Users\only1\bin\*.exe
+```
+
+**7. Discovery — PASS, reverified fresh today.** `becky list --json` parses
+and returns a real inventory (becky-vision/becky-ocr/becky-perceive/
+search_library present, `"installed":true`).
+
+**8. CLI convention — PARTIAL.** becky-ocr, becky-perceive, and
+search_library all reverified fresh today: `--image`/`--json` recognized,
+`{"ok":false,"error":"..."}` + exit 1 on every failure case tried (missing
+required args, conflicting inputs, a nonexistent image path). **But
+becky-vision itself — the tool this entire review is about — has two real,
+live-reproduced exceptions to "no exceptions across the suite":**
+
+- Called with zero flags at all: plain stderr usage text + exit 2, no JSON
+  envelope, no `ok` field (`cmd\vision\main.go`'s early `flag.Parse()`
+  check, unchanged since before slice A).
+- Called with a valid `--image` pointing at a file that does not exist (a
+  real processing failure, not a usage error):
+  ```
+  becky-vision --image X:\does\not\exist.png --json
+  -> exit code 0, {"degraded": true, "error": "...", ...}  (no "ok" field)
+  ```
+  Exit 0, not nonzero. This is `internal/vision`'s pre-existing,
+  deliberately-documented "DEGRADE-NEVER-CRASH ... exit 0 with
+  degraded:true — never a panic" contract (predates slice A), not a
+  regression introduced by any slice of this fix. It IS an honest signal
+  (a caller parsing `--json` sees `degraded:true` unambiguously) — it just
+  isn't the criterion's literal `{"ok":false,...}` + nonzero-exit shape.
+
+Both gaps were reproduced live today; neither is new, and neither was
+introduced by slices A-D. See "Left open" below for why slice D did not fix
+them.
+
+**9. Determinism — OBSERVED STABLE, flagged rather than force-declared** (as
+instructed). Ran the canonical fixture through the SAME image + SAME prompt
+twice, back to back, at both speeds:
+
+- Fast mode (450M + OCR, `--temp 0` hardcoded in `vision.BuildArgs`):
+  byte-identical JSON both runs.
+- Full-ladder mode (climbs to Gemma-4 E4B via llama-server): byte-identical
+  JSON both runs (22s and 23s wall clock; `diff` confirmed zero bytes
+  different).
+
+Caveat worth flagging plainly: `internal/avlm/image.go`'s `imageDefaults()`
+sets the Gemma tier's temperature to **0.2**, not literal 0 — its own
+comment says "low temperature, fixed seed" (`Seed: 42`, fixed) — a
+deliberate design choice, but a theoretically weaker determinism guarantee
+than the LFM tier's hard `--temp 0`. Two identical runs on one fixture is a
+small sample size; I am reporting what I observed (stable, both times, both
+speeds) rather than asserting it is mathematically guaranteed across every
+image/prompt/GPU thermal state. A larger sample across more fixtures would
+be needed to close this criterion with high confidence.
+
+### Verdict
+
+Criteria 1, 2, 3, 4, 5, 6, and 7 verifiably PASS. Criterion 8 is PARTIAL —
+two real, live-reproduced exceptions, both in becky-vision's OWN CLI
+surface, both pre-existing (not introduced by slices A-D). Criterion 9 is
+OBSERVED STABLE, correctly flagged rather than force-passed per the work
+order.
+
+**Per the AUTOPILOT work order, the P1 Board card stays open (not moved to
+Done col 2).** The instruction was explicit: move it only if criteria 1-8
+verifiably pass, and criterion 8 does not, cleanly. This is not a slice D
+failure — slice D's own four deliverables (synthetic fixtures, automated
+smoke gate, this audit, the Board/WORKLOG update) are complete and verified
+— it is an honest read of where the OVERALL P1 effort actually stands.
+
+### Left open (a well-scoped next tick, not attempted here)
+
+Closing criterion 8 means changing `cmd\vision\main.go`'s bare-usage path to
+emit the JSON envelope, and `internal/vision`'s degrade contract to exit
+nonzero instead of 0. The second change is a real behavior change other
+callers may already depend on — anything that currently treats a
+degraded-but-exit-0 becky-vision call as "soft failure, keep going" (a
+shell script checking `errorlevel`, a becky orchestrator step, a Whoretana
+call site) would suddenly see a hard nonzero exit instead. That needs an
+audit of becky-vision's actual callers across becky-tools/Whoretana/
+MissionControl before flipping it — real, but out of scope for a single
+tick under AUTOPILOT's "one card, one coherent slice" rule. Flagging it
+precisely here, with exact repro commands above, so the next tick does not
+have to rediscover it.
