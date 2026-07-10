@@ -157,6 +157,12 @@ var ToolCatalog = []Capability{
 	// no cookies. Read-only/reversible, so TierGreen despite being outward-
 	// facing (it queries, it never acts on Jordan's behalf).
 	{Verb: "becky-web-search", Summary: "Search the live web via Google Custom Search JSON API - real results, no browser, no cookies, one dumb call.", Example: `becky-web-search "query text" [--max 8] [--json]`, Keywords: []string{"search", "web search", "google", "look up", "find online", "research", "world knowledge"}, Tier: TierGreen, Pack: "default"},
+	// Added 2026-07-10 (WHORETANA ask #2 / buildplan Phase 3, slice 2): ported
+	// from Mark-XLVII's actions/file_controller.py. Safe local file ops confined
+	// to allowed roots (default: home). NO delete, NO bulk auto-organize, NO
+	// clobber (Law 8b - DELETE NOTHING OF JORDAN'S). TierYellow: it can create/
+	// move/copy inside the sandbox (reversible, confirm-once), never destroys.
+	{Verb: "becky-file", Summary: "Safe local file ops confined to allowed roots: list, read, write, mkdir, move, copy, find, info - no delete, never clobbers.", Example: `becky-file list --path desktop  |  becky-file read --path documents --name notes.txt`, Keywords: []string{"file", "files", "list files", "read file", "write file", "save file", "move file", "copy file", "find file", "folder", "desktop", "downloads", "documents"}, Tier: TierYellow, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
