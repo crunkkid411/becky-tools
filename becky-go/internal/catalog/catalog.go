@@ -163,6 +163,13 @@ var ToolCatalog = []Capability{
 	// clobber (Law 8b - DELETE NOTHING OF JORDAN'S). TierYellow: it can create/
 	// move/copy inside the sandbox (reversible, confirm-once), never destroys.
 	{Verb: "becky-file", Summary: "Safe local file ops confined to allowed roots: list, read, write, mkdir, move, copy, find, info - no delete, never clobbers.", Example: `becky-file list --path desktop  |  becky-file read --path documents --name notes.txt`, Keywords: []string{"file", "files", "list files", "read file", "write file", "save file", "move file", "copy file", "find file", "folder", "desktop", "downloads", "documents"}, Tier: TierYellow, Pack: "default"},
+	// Added 2026-07-10 (MANUS-GAP FIX #3, docs/research/manus-gap-analysis.md):
+	// durable goal MEMORY that outlives a Claude Code session - the seed of the
+	// "durable heartbeat". Backed by data\goals.json (bare array, same shape MC
+	// reads kanban.json). Additive only: no delete, update-status changes a
+	// status, note appends progress; a corrupt store is refused, never clobbered
+	// (Law 8b). TierYellow: it records intent, reversible, never destroys.
+	{Verb: "becky-goal", Summary: "Durable goal store that outlives a session: add an outcome, list goals, update-status (todo/active/blocked/done), append progress notes - no delete.", Example: `becky-goal add "restore the childcare email" --due 2026-07-15  |  becky-goal list --status blocked`, Keywords: []string{"goal", "goals", "objective", "outcome", "remember", "todo", "track", "what am i waiting on", "mark done", "progress", "intent"}, Tier: TierYellow, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
