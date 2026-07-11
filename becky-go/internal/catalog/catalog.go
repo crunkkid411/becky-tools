@@ -189,6 +189,14 @@ var ToolCatalog = []Capability{
 	// explicit, never proactive. SCOPE (AUTOPILOT Law 2): safe/scratch targets and
 	// Jordan's own authorized apps ONLY, NEVER a browser.
 	{Verb: "becky-click", Summary: "Click a UI control by NAME (UIA InvokePattern, pywinauto win32 fallback) - no pixel coords, foreground-independent, optional becky-ocr verify. Safe/scratch + authorized apps only, never a browser.", Example: `becky-click --window "Notepad" --name "Save" --control-type Button --verify --expect "Saved"`, Keywords: []string{"click", "press button", "push button", "invoke", "actuate", "ui control", "click by name", "automation", "gui action"}, Tier: TierRed, Pack: "default"},
+	// Added 2026-07-11 (AUTOPILOT P3 / RECOVERY.md JOB 5 item 5): the VISUAL
+	// stall watchdog for the GUI/browser-dialog surfaces terminal.cpp's TEXT
+	// watchdog is blind to. Thin wrapper over the winning becky-vision config
+	// (RECOVERY.md "becky-vision gate results" Test 5: the 1.6B LFM2.5-VL model
+	// called directly with a pointed prompt - one fast call, no escalation) +
+	// deterministic classification into a {stalled,state,confidence} verdict.
+	// TierGreen: read-only (it looks at a screenshot; it never clicks or acts).
+	{Verb: "becky-screenwatch", Summary: "Look at a screenshot and decide if the screen is STALLED on a dialog/prompt a text watchdog can't see (permission/consent dialog, modal waiting for input, error/crash box) vs active/idle. One dumb call: image in -> {stalled,state,reason,confidence} JSON out.", Example: `becky-screenwatch --image screen.png --json  |  becky-screenwatch --capture --json`, Keywords: []string{"screenwatch", "stall", "stalled", "stuck", "watchdog", "permission prompt", "dialog", "waiting for input", "frozen", "is it stuck", "screen state", "modal", "consent"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
