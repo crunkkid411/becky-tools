@@ -170,6 +170,16 @@ var ToolCatalog = []Capability{
 	// status, note appends progress; a corrupt store is refused, never clobbered
 	// (Law 8b). TierYellow: it records intent, reversible, never destroys.
 	{Verb: "becky-goal", Summary: "Durable goal store that outlives a session: add an outcome, list goals, update-status (todo/active/blocked/done), append progress notes - no delete.", Example: `becky-goal add "restore the childcare email" --due 2026-07-15  |  becky-goal list --status blocked`, Keywords: []string{"goal", "goals", "objective", "outcome", "remember", "todo", "track", "what am i waiting on", "mark done", "progress", "intent"}, Tier: TierYellow, Pack: "default"},
+	// Added 2026-07-11 (WHORETANA/docs/DEBRIEF-MODE.md phase 1): the board-edit
+	// tool debrief mode calls so Jordan can add/modify his task board by voice,
+	// and a clean board API so agents stop hand-editing JSON. Backed by
+	// data\kanban.json (the plain array of {agent,col,text} MissionControl reads
+	// and hot-reloads live). Additive only: no delete action, move only changes a
+	// card's column, note only appends to a card's text, unknown fields preserved;
+	// a corrupt store is refused, never clobbered; atomic writes (Law 8b). Editing
+	// his OWN board is an internal action (Law 19 SAFE), never an external send.
+	// TierYellow: it edits the board in place, reversible, never destroys.
+	{Verb: "becky-kanban", Summary: "Edit MissionControl's task Board (data\\kanban.json): add a card, move a card to a column, append a note to a card's text, list cards - no delete, atomic, additive.", Example: `becky-kanban add "fix the orb throttling" --col 0  |  becky-kanban move "orb throttling" 2  |  becky-kanban list --col 2`, Keywords: []string{"kanban", "board", "task", "tasks", "card", "add task", "move task", "column", "todo", "mission control board", "note card", "debrief"}, Tier: TierYellow, Pack: "default"},
 	// Added 2026-07-10 (mouse-control breakthrough -> the ACTUATION PRIMITIVE for
 	// the world-action program; docs/research/mouse-control-findings.md): click a
 	// control BY NAME - UIA InvokePattern for modern/WPF/UWP/Chromium, pywinauto
