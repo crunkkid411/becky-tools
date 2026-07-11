@@ -209,6 +209,18 @@ var ToolCatalog = []Capability{
 	// from today's email" without opening a browser. TierGreen: read-only /
 	// analytical - it surfaces mail, it never acts on Jordan's behalf.
 	{Verb: "becky-gmail", Summary: "READ-ONLY Gmail search/read over the Gmail REST API (gmail.readonly scope only, never send/modify/delete) - triage brand deals, customer requests, and revenue emails headless, with links extracted and tracking-redirects unwrapped.", Example: `becky-gmail search "brand deal OR sponsorship OR invoice" --newer-than 7d --json  |  becky-gmail get <id> --links-only`, Keywords: []string{"gmail", "email", "inbox", "mail", "brand deal", "sponsorship", "invoice", "customer request", "revenue", "read email", "search email", "triage"}, Tier: TierGreen, Pack: "default"},
+	// Added 2026-07-11 (WHORETANA ask #2 / buildplan Phase 3, slice 3): the
+	// dev-agent auto-fix loop, ported from Mark-XXXIX's actions/dev_agent.py.
+	// Plans a minimal file layout, writes each file, installs its pip deps,
+	// runs it, and on a real error parses the traceback and rewrites the
+	// broken file - up to --max-attempts tries. Backend differs from the
+	// source on purpose: LOCAL Qwen3.5-4B (becky's generative orchestrator,
+	// internal/llmlocal) instead of cloud Gemini - offline, deterministic
+	// (fixed temp/seed), Law 18(a). Every project lives in its OWN fresh
+	// sandbox directory (default ~\BeckyDevBuilds\<name>) - nothing outside it
+	// is ever touched. TierYellow: it creates + runs code, confined to its own
+	// sandbox, confirm-once, never destroys anything of Jordan's.
+	{Verb: "becky-devbuild", Summary: "Dev-agent auto-fix loop: describe a small project, it plans a file layout, writes each file, installs deps, runs it, and auto-fixes real errors (parses the traceback) for up to N attempts - python this slice.", Example: `becky-devbuild --desc "a CLI that converts CSV to JSON" [--lang python] [--name my_tool] [--max-attempts 5] [--json]`, Keywords: []string{"build", "build me", "write a script", "write a program", "make a tool", "create a project", "code this", "dev agent", "auto fix", "scratch project"}, Tier: TierYellow, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
