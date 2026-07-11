@@ -197,6 +197,18 @@ var ToolCatalog = []Capability{
 	// deterministic classification into a {stalled,state,confidence} verdict.
 	// TierGreen: read-only (it looks at a screenshot; it never clicks or acts).
 	{Verb: "becky-screenwatch", Summary: "Look at a screenshot and decide if the screen is STALLED on a dialog/prompt a text watchdog can't see (permission/consent dialog, modal waiting for input, error/crash box) vs active/idle. One dumb call: image in -> {stalled,state,reason,confidence} JSON out.", Example: `becky-screenwatch --image screen.png --json  |  becky-screenwatch --capture --json`, Keywords: []string{"screenwatch", "stall", "stalled", "stuck", "watchdog", "permission prompt", "dialog", "waiting for input", "frozen", "is it stuck", "screen state", "modal", "consent"}, Tier: TierGreen, Pack: "default"},
+	// Added 2026-07-11 (Jordan direct ask): read-only Gmail triage so brand-deal
+	// offers, customer requests, and revenue emails can be searched/read headless
+	// instead of hand-scrolling the inbox. Loopback/installed-app OAuth against
+	// the pre-provisioned Google client (Law 18d manifest chain); the ONE human
+	// step is Jordan clicking Allow in his own browser - `auth` never automates
+	// that click or types creds. SCOPE IS READONLY, HARD (Law 19): requests only
+	// gmail.readonly, asserted in tests + selftest - no send/modify/delete path
+	// exists anywhere in the tool. Extracts links from a message (unwrapping
+	// trivial newsletter click-trackers) so a caller can pull "the order link
+	// from today's email" without opening a browser. TierGreen: read-only /
+	// analytical - it surfaces mail, it never acts on Jordan's behalf.
+	{Verb: "becky-gmail", Summary: "READ-ONLY Gmail search/read over the Gmail REST API (gmail.readonly scope only, never send/modify/delete) - triage brand deals, customer requests, and revenue emails headless, with links extracted and tracking-redirects unwrapped.", Example: `becky-gmail search "brand deal OR sponsorship OR invoice" --newer-than 7d --json  |  becky-gmail get <id> --links-only`, Keywords: []string{"gmail", "email", "inbox", "mail", "brand deal", "sponsorship", "invoice", "customer request", "revenue", "read email", "search email", "triage"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.
