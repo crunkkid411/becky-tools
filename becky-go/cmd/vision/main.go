@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"becky-go/internal/avlm"
@@ -155,10 +156,12 @@ func describeWithGemma(image, prompt, serverURL string, timeoutSec int, verbose 
 		Prompt: prompt,
 	}
 	logf := func(format string, a ...any) { beckyio.Logf(verbose, format, a...) }
-	runner := avlm.New(model, mmproj, cfg.LlamaServer, serverURL, cfg.FFmpeg, cfg.FFprobe, logf)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+
+	serverURL = residentServerURL(ctx, cfg, serverURL, model, logf)
+	runner := avlm.New(model, mmproj, cfg.LlamaServer, serverURL, cfg.FFmpeg, cfg.FFprobe, logf)
 
 	out, err := runner.AnalyzeImage(ctx, image, avlm.ImageOptions{Prompt: prompt, Verbose: verbose})
 	if err != nil {
@@ -168,6 +171,23 @@ func describeWithGemma(image, prompt, serverURL string, timeoutSec int, verbose 
 	}
 	res.Description = out.Text
 	return res
+}
+
+// residentServerURL decides which llama-server the single-still Gemma/Qwen path
+// should use. An explicit --server-url (explicit) always wins. Otherwise it probes
+// the resident multimodal brain (cfg.BrainServerURL, WHORETANA's :8033) and reuses
+// it when that server already holds the SAME model — avoiding a duplicate multi-GB
+// spawn onto the shared 8GB GPU (docs/research/resource-forensics.md #1). An empty
+// result means "spawn a fresh transient server", the safe fallback for a model
+// mismatch or an unreachable brain.
+func residentServerURL(ctx context.Context, cfg config.Config, explicit, model string, logf func(string, ...any)) string {
+	if strings.TrimSpace(explicit) != "" {
+		return explicit
+	}
+	if u, ok := avlm.ResidentServerURL(ctx, cfg.BrainServerURL, model, logf); ok {
+		return u
+	}
+	return ""
 }
 
 // describeWithQwen runs ONE still through Qwen3.5-4B via llama-server
@@ -192,10 +212,12 @@ func describeWithQwen(image, prompt, serverURL string, timeoutSec int, verbose b
 		Prompt: prompt,
 	}
 	logf := func(format string, a ...any) { beckyio.Logf(verbose, format, a...) }
-	runner := avlm.New(model, mmproj, cfg.LlamaServer, serverURL, cfg.FFmpeg, cfg.FFprobe, logf)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+
+	serverURL = residentServerURL(ctx, cfg, serverURL, model, logf)
+	runner := avlm.New(model, mmproj, cfg.LlamaServer, serverURL, cfg.FFmpeg, cfg.FFprobe, logf)
 
 	out, err := runner.AnalyzeImage(ctx, image, avlm.ImageOptions{Prompt: prompt, Verbose: verbose})
 	if err != nil {

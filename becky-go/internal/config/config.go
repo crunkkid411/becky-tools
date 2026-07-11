@@ -27,6 +27,7 @@ type Config struct {
 	SqliteVecExt        string `json:"sqlite_vec_ext"`     // sqlite-vec vec0 loadable extension (vec0.dll)
 	EmbedModelCache     string `json:"embed_model_cache"`  // sentence-transformers cache dir (Qwen3 weights)
 	EmbedServerURL      string `json:"embed_server_url"`   // resident llama-server embedding endpoint (Qwen3-4B)
+	BrainServerURL      string `json:"brain_server_url"`   // resident multimodal Gemma-4 brain (WHORETANA :8033); becky-vision reuses it instead of spawning a duplicate server
 	EmbedServerModel    string `json:"embed_server_model"` // Qwen3-Embedding-4B GGUF path (served by start-embed-server.bat)
 	EmbedModel          string `json:"embed_model"`        // default embedding model name: qwen3-4b (server) | qwen3-0.6b (in-process)
 	// Gemma-4 E4B-it audio-visual model (becky-validate / internal/avlm). The
@@ -234,6 +235,11 @@ func defaults() Config {
 		// itself is launched by start-embed-server.bat (NOT by the Go tools); these
 		// just point the tools at the endpoint + record the served GGUF for clarity.
 		EmbedServerURL: "http://127.0.0.1:8088",
+		// WHORETANA's resident brain llama-server (voice/brain_local.py binds :8033).
+		// becky-vision --gemma/--qwen reuses it when it already serves the same model,
+		// instead of loading a second multi-GB copy onto the shared 8GB GPU
+		// (docs/research/resource-forensics.md #1).
+		BrainServerURL: "http://127.0.0.1:8033",
 		EmbedServerModel: firstExisting(
 			`X:\AI-2\becky-tools\models\embeddings\gguf\Qwen3-Embedding-4B-Q5_K_M.gguf`,
 		),
@@ -443,6 +449,9 @@ func merge(base, over Config) Config {
 	}
 	if over.EmbedServerURL != "" {
 		base.EmbedServerURL = over.EmbedServerURL
+	}
+	if over.BrainServerURL != "" {
+		base.BrainServerURL = over.BrainServerURL
 	}
 	if over.EmbedServerModel != "" {
 		base.EmbedServerModel = over.EmbedServerModel
