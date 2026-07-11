@@ -15,9 +15,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"becky-go/internal/pathx"
 )
 
 // residentProbeTimeout caps the resident-server check so a missing/slow server
@@ -47,7 +48,9 @@ type residentProps struct {
 //
 // ponytail: match is by basename, not a content hash — two builds of a
 // same-named GGUF are treated as interchangeable. If that ever bites, compare
-// meta.size from /v1/models here instead.
+// meta.size from /v1/models here instead. Basenames use pathx.Base (not
+// filepath.Base): the model paths are Windows paths but the tests/CI run on
+// Linux, where filepath.Base would return the whole `X:\...` string.
 func ResidentServerURL(ctx context.Context, baseURL, wantModel string, logf func(string, ...any)) (string, bool) {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -79,12 +82,12 @@ func ResidentServerURL(ctx context.Context, baseURL, wantModel string, logf func
 	if !p.Modalities.Vision || p.ModelPath == "" {
 		return "", false // not a vision server we can reuse for a still
 	}
-	if !strings.EqualFold(filepath.Base(p.ModelPath), filepath.Base(wantModel)) {
+	if !strings.EqualFold(pathx.Base(p.ModelPath), pathx.Base(wantModel)) {
 		logf("avlm: resident server at %s serves %s, need %s — spawning fresh",
-			baseURL, filepath.Base(p.ModelPath), filepath.Base(wantModel))
+			baseURL, pathx.Base(p.ModelPath), pathx.Base(wantModel))
 		return "", false
 	}
 	logf("avlm: reusing resident llama-server at %s (%s) — no duplicate model load",
-		baseURL, filepath.Base(p.ModelPath))
+		baseURL, pathx.Base(p.ModelPath))
 	return baseURL, true
 }
