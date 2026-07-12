@@ -99,8 +99,16 @@ function GrabOne([string]$url, [string]$file) {
 
     # Deterministic path missed -> Gemma-4 recovery, then re-verify (regrab scores
     # its own output). This is the "gemma is part of the workflow every time" step.
+    # VRAM leak fix: kill any existing llama-server.exe before spawning a new one,
+    # and wrap the call in try/finally to guarantee cleanup on exit (normal or error).
     $rg = $null
-    try { $rg = (& $regrab $url --vault $Target --output $file --json 2>$null) | ConvertFrom-Json } catch { $rg = $null }
+    try {
+        Get-Process -Name llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        try { $rg = (& $regrab $url --vault $Target --output $file --json 2>$null) | ConvertFrom-Json } catch { $rg = $null }
+    }
+    finally {
+        Get-Process -Name llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
     if ($rg) {
         return [pscustomobject]@{ verdict = $rg.verdict; method = $rg.method; recall = $rg.recall }
     }
