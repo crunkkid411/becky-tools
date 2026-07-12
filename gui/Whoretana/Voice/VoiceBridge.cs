@@ -10,9 +10,10 @@ namespace Whoretana.Voice
 {
     // Owns ALL audio by talking to the Python FastRTC sidecar (voice/whoretana_voice.py).
     // No managed audio. The GUI spawns the sidecar as a child process and exchanges NDJSON:
-    //   control  (stdin):  {cmd:"config"|"listen"|"say"|"text"|"devices"|"quit", ...}
-    //   events  (stdout):  {type:"ready"|"state"|"level"|"transcript"|"reply"|"devices"|"error"|"log", ...}
-    // Level/state are polled as fields (smooth orb); transcript/reply/devices/error raise events.
+    //   control  (stdin):  {cmd:"config"|"listen"|"standby"|"say"|"text"|"devices"|"quit", ...}
+    //   events  (stdout):  {type:"ready"|"state"|"level"|"transcript"|"reply"|"viseme"|"wake"|
+    //                            "special"|"brain"|"devices"|"error"|"log", ...}
+    // Level/state/visemes/brain are polled as fields (smooth orb); the rest raise events.
     public sealed class VoiceBridge : IDisposable
     {
         public sealed record Device(int Index, string Name);
@@ -23,11 +24,19 @@ namespace Whoretana.Voice
         public bool Ready { get; private set; }
         public string State { get; private set; } = "idle";   // idle|listening|thinking|speaking
         public float Level { get; private set; }              // 0..1 current amplitude
+        public float Jaw { get; private set; }                // viseme weights 0..1, ~20 Hz stream
+        public float Funnel { get; private set; }
+        public float Pucker { get; private set; }
+        public float Smile { get; private set; }
+        public string Brain { get; private set; } = "router"; // router|gemma4|gemini (last brain event)
         public string? LastError { get; private set; }
 
         public event Action<string>? StateChanged;
         public event Action<string>? Transcript;              // what it heard
         public event Action<Reply>? ReplyReceived;            // spoken reply + routing
+        public event Action? WakeDetected;                    // wake word matched in standby
+        public event Action<string, float>? SpecialEvent;     // kind ("eye_reveal"), duration seconds
+        public event Action<string>? BrainChanged;
         public event Action<string>? Errored;
         public event Action<string>? Log;
 
@@ -76,10 +85,15 @@ namespace Whoretana.Voice
             catch (Exception ex) { LastError = ex.Message; return false; }
         }
 
-        public void Configure(Settings s) => Send(new { cmd = "config", brain = s.Brain, mic = s.MicDevice, voice = s.Voice });
+        public void Configure(Settings s) => Send(new
+        {
+            cmd = "config", brain = s.Brain, mic = s.MicDevice, voice = s.Voice,
+            hands_free = s.HandsFree, local_escalation = s.LocalEscalation, warm_local = s.WarmLocal,
+        });
         public void SetListening(bool on) => Send(new { cmd = "listen", on });
+        public void SetStandby(bool on) => Send(new { cmd = "standby", on });
         public void Say(string text) => Send(new { cmd = "say", text });
-        public void SendText(string text) => Send(new { cmd = "text", text });
+        public void SendText(string text, bool confirm = false) => Send(new { cmd = "text", text, confirm });
 
         private void Send(object o)
         {
@@ -133,6 +147,13 @@ namespace Whoretana.Voice
                             NeedConfirm = r.TryGetProperty("need_confirm", out var nc) && nc.ValueKind == JsonValueKind.True,
                         });
                         break;
+                    case "viseme":
+                        Jaw = (float)D(r, "jaw"); Funnel = (float)D(r, "funnel");
+                        Pucker = (float)D(r, "pucker"); Smile = (float)D(r, "smile");
+                        break;
+                    case "wake": WakeDetected?.Invoke(); break;
+                    case "special": SpecialEvent?.Invoke(S(r, "kind"), (float)D(r, "dur")); break;
+                    case "brain": Brain = S(r, "name", "router"); BrainChanged?.Invoke(Brain); break;
                     case "error": LastError = S(r, "text"); Errored?.Invoke(LastError ?? ""); break;
                     case "log": Log?.Invoke(S(r, "text")); break;
                 }

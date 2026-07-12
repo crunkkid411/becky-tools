@@ -14,6 +14,12 @@ namespace Whoretana
         public int MicDevice { get; set; } = -1;          // sounddevice index, -1 = system default
         public string Voice { get; set; } = "default";    // becky-tts preset name or a reference .wav path
         public string GemmaVariant { get; set; } = "e4b"; // "e4b" | "12b" (BECKY_AVLM_VARIANT)
+        public bool LocalEscalation { get; set; } = true; // router no-match -> local Gemma (layer 2)
+        public bool WarmLocal { get; set; } = false;      // spawn llama-server eagerly at sidecar start
+        public bool HandsFree { get; set; } = false;      // desktop_click/type/press without confirm
+        public string[] EyeRevealEvents { get; set; } = new[] { "greeting", "special" }; // empty = never
+        public double? BubbleX { get; set; }              // bubble position (null = default corner; NaN breaks STJ)
+        public double? BubbleY { get; set; }
 
         private static string Dir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Whoretana");

@@ -1,0 +1,13 @@
+<Window x:Class="Whoretana.BubbleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:orb="clr-namespace:Whoretana.Orb"
+        Title="WHORETANA" Width="150" Height="150"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize" ShowActivated="False">
+  <!-- #01000000: near-invisible fill so the whole square is hit-testable (pure
+       transparent pixels are click-through in a layered window). -->
+  <Grid Background="#01000000" MouseLeftButtonDown="Root_MouseLeftButtonDown" Cursor="Hand">
+    <orb:OrbControl x:Name="Orb" Width="150" Height="150" IsHitTestVisible="False" />
+  </Grid>
+</Window>

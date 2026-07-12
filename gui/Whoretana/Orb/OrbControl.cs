@@ -8,65 +8,60 @@ using SkiaSharp.Views.WPF;
 
 namespace Whoretana.Orb
 {
-    public enum OrbMode { Idle, Listening, Speaking }
+    // Mirrors OrbEngine.OrbMode value-for-value (cast by int). Kept here so
+    // MainWindow's `using Whoretana.Orb; Orb.Mode = OrbMode.Speaking;` compiles untouched.
+    public enum OrbMode { Idle, Listening, Thinking, Speaking }
 
-    // The hero. A cloud of additive glowing particles inside rotating reticle/gear
-    // rings, with a datamosh glitch pass. Three states:
-    //   Idle      - ambient slow drift, gentle breathing, slow rings.
-    //   Listening - particles pulse OUTWARD with the mic level ("it hears me").
-    //   Speaking  - particles re-arrange into an emergent FACE; the mouth opens with
-    //               the speech level (lip-sync). Glitch is heaviest here, which is
-    //               exactly what hides the rough artwork (per Jordan's brief / head3.gif).
-    // Self-ticks via CompositionTarget.Rendering; software-rendered by SKElement (no GL
-    // context, no server). Tunables are consts so the feel can be dialed without hunting.
+    // v2: thin SkiaSharp VIEW over OrbEngine.OrbSim (spec 2.8). The engine owns ALL
+    // motion - particle attraction, face emergence choreography, visemes, eye reveal,
+    // idle sway, listening push, thinking swirl. This class owns only colors, glow
+    // sprites, rings, scanlines, mesh hint, trails and the ripple ring. The v1
+    // datamosh composite is DELETED (D9: emergence, not corruption).
     public sealed class OrbControl : SKElement
     {
-        // ---- tunables -------------------------------------------------------
-        private const int ParticleCount = 900;
-        private const int BranchCount = 26;          // dendrite filaments
-        private const float LerpIdle = 0.06f;        // how fast particles chase their target
-        private const float LerpFace = 0.14f;        // snappier when forming the face
-        private const float ListenPush = 0.55f;      // outward expansion at full mic level
-        private const float MouthMaxOpen = 0.20f;    // fraction of radius the lower lip drops
-
-        // feature tags for the speaking face
-        private enum Feature { Halo, EyeL, EyeR, LipUpper, LipLower, Brow }
-
-        private struct Particle
+        // palette (spec 2.8 - no purple). Danger kept public for future error states.
+        private static readonly SKColor[] ModeColor =
         {
-            public float HomeR, HomeA;       // ambient polar home (0..1 radius, radians)
-            public float Phase;              // drift phase
-            public float Bright;             // base brightness 0..1
-            public float Size;               // base sprite scale
-            public float Cx, Cy;            // current position in unit space (-1..1)
-            public float FaceX, FaceY;      // target when forming the face (unit space)
-            public Feature Feat;
-            public int Branch;
-        }
+            new SKColor(0x22, 0xE8, 0xFF),   // Idle
+            new SKColor(0x3C, 0xFF, 0xC8),   // Listening
+            new SKColor(0x2A, 0x9D, 0xFF),   // Thinking
+            new SKColor(0x8C, 0xF6, 0xFF),   // Speaking (hot core)
+        };
+        public static readonly SKColor Danger = new SKColor(0xFF, 0x33, 0x66);
 
-        private readonly Particle[] _p = new Particle[ParticleCount];
-        private readonly Random _rnd = new Random(0xBECCA);
-        private SKImage? _glow;             // soft dot sprite, drawn additively
-        private SKSurface? _scene;          // offscreen the orb draws into, then glitched onto screen
-        private int _sceneW, _sceneH;
-
+        private readonly OrbEngine.OrbSim _sim = new OrbEngine.OrbSim();
         private readonly Stopwatch _clock = new Stopwatch();
-        private double _t;                  // seconds
         private double _last;
-        private float _faceAmount;          // 0 ambient .. 1 full face
-        private float _ring0, _ring1, _ring2; // ring rotations
+        private double _t;                    // view-local time (breathing; engine owns twinkle)
+        private float _ring0, _ring1, _ring2; // ring rotations (rings stay view-side)
 
-        // glitch envelope
-        private float _glitch;             // 0..1 current intensity
-        private double _nextBurst;
+        private float _jaw, _funnel, _pucker, _smile;
+        private bool _eyePulse;
+        private float _eyeDur;
+
+        private float _cr, _cg, _cb;          // eased palette - nothing snaps
+        private SKImage? _glow;
 
         public OrbMode Mode { get; set; } = OrbMode.Idle;
         public float MicLevel { get; set; }     // 0..1, set by the audio engine
         public float SpeechLevel { get; set; }  // 0..1, set while speaking (lip-sync)
 
+        public void SetVisemes(float jaw, float funnel, float pucker, float smile)
+        {
+            _jaw = Clamp01(jaw); _funnel = Clamp01(funnel);
+            _pucker = Clamp01(pucker); _smile = Clamp01(smile);
+        }
+
+        public void TriggerEyeReveal(float seconds)
+        {
+            _eyePulse = true;
+            _eyeDur = seconds;
+        }
+
         public OrbControl()
         {
-            BuildParticles();
+            var c = ModeColor[0];
+            _cr = c.Red; _cg = c.Green; _cb = c.Blue;
             Loaded += (_, __) => { _clock.Restart(); _last = 0; CompositionTarget.Rendering += OnFrame; };
             Unloaded += (_, __) => { CompositionTarget.Rendering -= OnFrame; };
         }
@@ -76,139 +71,35 @@ namespace Whoretana.Orb
             double now = _clock.Elapsed.TotalSeconds;
             double dt = now - _last;
             if (dt <= 0) return;
-            if (dt > 0.1) dt = 0.1;     // clamp after a stall
             _last = now;
-            Advance(dt);
+            float d = (float)Math.Min(dt, 0.1);
+            _t += d;
+
+            var input = new OrbEngine.OrbInput
+            {
+                Mode = (OrbEngine.OrbMode)(int)Mode,
+                MicLevel = Clamp01(MicLevel),
+                SpeechLevel = Clamp01(SpeechLevel),
+                Jaw = _jaw, Funnel = _funnel, Pucker = _pucker, Smile = _smile,
+                EyeRevealPulse = _eyePulse,
+                EyeRevealDuration = _eyeDur,
+            };
+            _eyePulse = false;
+            _sim.Update(in input, (float)dt);   // engine clamps dt > 0.1 itself
+
+            // rings stay view-side; Thinking = +30% ring speed (spec 2.4)
+            float spd = Mode == OrbMode.Thinking ? 1.3f : 1f;
+            _ring0 += d * 0.16f * spd;
+            _ring1 -= d * 0.10f * spd;
+            _ring2 += d * 0.26f * spd;
+
+            var target = ModeColor[(int)Mode];
+            float k = Math.Min(1f, d * 4f);
+            _cr += (target.Red - _cr) * k;
+            _cg += (target.Green - _cg) * k;
+            _cb += (target.Blue - _cb) * k;
+
             InvalidateVisual();
-        }
-
-        // ---- particle layout ------------------------------------------------
-        private void BuildParticles()
-        {
-            for (int i = 0; i < ParticleCount; i++)
-            {
-                ref Particle p = ref _p[i];
-                // ~60% live on dendrite filaments, the rest are core/halo scatter.
-                if (i % 5 < 3)
-                {
-                    int b = i % BranchCount;
-                    float along = (float)Math.Pow(_rnd.NextDouble(), 0.6); // denser near core
-                    float spread = 0.10f * (float)(_rnd.NextDouble() - 0.5);
-                    p.HomeA = (float)(b * Math.PI * 2 / BranchCount) + spread + along * 0.5f;
-                    p.HomeR = 0.12f + along * 0.82f;
-                    p.Branch = b;
-                    p.Bright = 0.45f + 0.55f * (1f - along);
-                }
-                else
-                {
-                    p.HomeA = (float)(_rnd.NextDouble() * Math.PI * 2);
-                    p.HomeR = (float)Math.Pow(_rnd.NextDouble(), 0.5) * 0.95f;
-                    p.Branch = -1;
-                    p.Bright = 0.30f + 0.50f * (float)_rnd.NextDouble();
-                }
-                p.Phase = (float)(_rnd.NextDouble() * Math.PI * 2);
-                p.Size = 0.6f + 0.9f * (float)_rnd.NextDouble();
-
-                // start where home is
-                p.Cx = p.HomeR * (float)Math.Cos(p.HomeA);
-                p.Cy = p.HomeR * (float)Math.Sin(p.HomeA);
-
-                AssignFace(ref p, i);
-            }
-        }
-
-        // Decide which particles build which facial feature, and where they land.
-        private void AssignFace(ref Particle p, int i)
-        {
-            double r = _rnd.NextDouble();
-            float jx = (float)(_rnd.NextDouble() - 0.5);
-            float jy = (float)(_rnd.NextDouble() - 0.5);
-            if (r < 0.12)
-            {
-                p.Feat = Feature.EyeL;
-                p.FaceX = -0.34f + 0.13f * jx;
-                p.FaceY = -0.26f + 0.10f * jy;
-            }
-            else if (r < 0.24)
-            {
-                p.Feat = Feature.EyeR;
-                p.FaceX = 0.34f + 0.13f * jx;
-                p.FaceY = -0.26f + 0.10f * jy;
-            }
-            else if (r < 0.30)
-            {
-                p.Feat = Feature.Brow;
-                p.FaceX = (i % 2 == 0 ? -0.34f : 0.34f) + 0.20f * jx;
-                p.FaceY = -0.44f + 0.05f * jy;
-            }
-            else if (r < 0.50)
-            {
-                // mouth: split into upper and lower lip rows (lip-sync target)
-                bool upper = (i % 2 == 0);
-                p.Feat = upper ? Feature.LipUpper : Feature.LipLower;
-                p.FaceX = 0.0f + 0.40f * (float)(_rnd.NextDouble() - 0.5) * 2f;
-                p.FaceY = 0.34f + 0.04f * jy;   // baseline; opening applied per-frame
-            }
-            else
-            {
-                p.Feat = Feature.Halo;
-                float a = (float)(_rnd.NextDouble() * Math.PI * 2);
-                float rr = 0.55f + 0.45f * (float)_rnd.NextDouble();
-                p.FaceX = rr * (float)Math.Cos(a);
-                p.FaceY = rr * (float)Math.Sin(a);
-            }
-        }
-
-        // ---- per-frame animation -------------------------------------------
-        private void Advance(double dt)
-        {
-            _t += dt;
-            _ring0 += (float)(dt * 0.16);
-            _ring1 -= (float)(dt * 0.10);
-            _ring2 += (float)(dt * 0.26);
-
-            // ease faceAmount toward 1 when speaking, 0 otherwise
-            float faceTarget = (Mode == OrbMode.Speaking) ? 1f : 0f;
-            _faceAmount += (faceTarget - _faceAmount) * (float)Math.Min(1.0, dt * 3.5);
-
-            // glitch envelope: a low ambient shimmer + bursts; much hotter while speaking.
-            float baseGlitch = Mode == OrbMode.Speaking ? 0.35f : (Mode == OrbMode.Listening ? 0.12f : 0.05f);
-            if (_t >= _nextBurst)
-            {
-                _glitch = Math.Max(_glitch, Mode == OrbMode.Speaking ? 0.9f : 0.5f);
-                _nextBurst = _t + 0.25 + _rnd.NextDouble() * (Mode == OrbMode.Speaking ? 0.9 : 2.6);
-            }
-            _glitch += (baseGlitch - _glitch) * (float)Math.Min(1.0, dt * 4.0);
-
-            float mic = Clamp01(MicLevel);
-            float listen = Mode == OrbMode.Listening ? mic : 0f;
-            float open = MouthMaxOpen * (0.25f + 0.75f * Clamp01(SpeechLevel)) * _faceAmount;
-            float lerp = _faceAmount > 0.2f ? LerpFace : LerpIdle;
-
-            for (int i = 0; i < ParticleCount; i++)
-            {
-                ref Particle p = ref _p[i];
-
-                // ambient target = home + slow organic drift
-                float drift = 0.018f * (float)Math.Sin(_t * 0.8 + p.Phase);
-                float a = p.HomeA + 0.05f * (float)Math.Sin(_t * 0.3 + p.Phase);
-                float rad = p.HomeR + drift;
-                // listening pushes everything outward and adds a shell pulse
-                rad *= 1f + ListenPush * listen * (0.6f + 0.4f * (float)Math.Sin(_t * 9 + p.Phase));
-                float ax = rad * (float)Math.Cos(a);
-                float ay = rad * (float)Math.Sin(a);
-
-                // face target (with live mouth opening on the lower lip)
-                float fx = p.FaceX, fy = p.FaceY;
-                if (p.Feat == Feature.LipLower) fy += open;
-                else if (p.Feat == Feature.LipUpper) fy -= open * 0.25f;
-
-                float tx = Lerp(ax, fx, _faceAmount);
-                float ty = Lerp(ay, fy, _faceAmount);
-
-                p.Cx += (tx - p.Cx) * lerp;
-                p.Cy += (ty - p.Cy) * lerp;
-            }
         }
 
         // ---- rendering ------------------------------------------------------
@@ -219,71 +110,140 @@ namespace Whoretana.Orb
 
             int w = e.Info.Width, h = e.Info.Height;
             if (w <= 0 || h <= 0) return;
-            EnsureScene(w, h);
             EnsureGlow();
 
             float cx = w * 0.5f, cy = h * 0.5f;
             float R = Math.Min(w, h) * 0.42f;
 
-            // draw the orb into the offscreen scene
-            var s = _scene!.Canvas;
-            s.Clear(SKColors.Transparent);
-            DrawRings(s, cx, cy, R);
-            DrawParticles(s, cx, cy, R);
-            _scene.Canvas.Flush();
-
-            using var img = _scene.Snapshot();
-            CompositeWithGlitch(canvas, img, w, h);
+            DrawRings(canvas, cx, cy, R);
+            DrawMeshHint(canvas, cx, cy, R);
+            DrawParticles(canvas, cx, cy, R);
+            DrawEyes(canvas, cx, cy, R);
+            DrawRipple(canvas, cx, cy, R);
             DrawScanlines(canvas, w, h);
         }
+
+        private SKColor BaseColor(byte alpha = 255) => new SKColor((byte)_cr, (byte)_cg, (byte)_cb, alpha);
+
+        private SKColor Toward(float t, byte alpha) => new SKColor(
+            (byte)(_cr + (255 - _cr) * t),
+            (byte)(_cg + (255 - _cg) * t),
+            (byte)(_cb + (255 - _cb) * t),
+            alpha);
 
         private void DrawParticles(SKCanvas s, float cx, float cy, float R)
         {
             if (_glow == null) return;
             using var paint = new SKPaint { BlendMode = SKBlendMode.Plus, FilterQuality = SKFilterQuality.Low };
             float mic = Clamp01(MicLevel);
+            // view owns the mic/speech brightness boost (engine Brightness has twinkle + shimmer)
             float boost = 1f + (Mode == OrbMode.Listening ? mic * 0.8f : 0f) + (Mode == OrbMode.Speaking ? 0.2f : 0f);
 
-            // central bloom: a soft cyan core that breathes (and swells with audio) so the
-            // cloud reads as a bright neural mass, not scattered dots (matches the brief).
+            // central bloom: soft breathing core so the cloud reads as a neural mass
             float breathe = 0.85f + 0.15f * (float)Math.Sin(_t * 1.1);
             float swell = 1f + 0.5f * (Mode == OrbMode.Listening ? mic : (Mode == OrbMode.Speaking ? Clamp01(SpeechLevel) : 0f));
             float bloomR = R * 0.62f * breathe * swell;
             using (var bp = new SKPaint { BlendMode = SKBlendMode.Plus })
             {
-                bp.ColorFilter = SKColorFilter.CreateBlendMode(new SKColor(0x2A, 0xC8, 0xFF, 70), SKBlendMode.Modulate);
+                bp.ColorFilter = SKColorFilter.CreateBlendMode(BaseColor(70), SKBlendMode.Modulate);
                 s.DrawImage(_glow, new SKRect(cx - bloomR, cy - bloomR, cx + bloomR, cy + bloomR), bp);
                 float coreR = R * 0.26f * breathe;
-                bp.ColorFilter = SKColorFilter.CreateBlendMode(new SKColor(0x9A, 0xF2, 0xFF, 90), SKBlendMode.Modulate);
+                bp.ColorFilter = SKColorFilter.CreateBlendMode(Toward(0.6f, 90), SKBlendMode.Modulate);
                 s.DrawImage(_glow, new SKRect(cx - coreR, cy - coreR, cx + coreR, cy + coreR), bp);
             }
 
-            for (int i = 0; i < ParticleCount; i++)
+            var parts = _sim.Particles;
+            for (int i = 0; i < parts.Length; i++)
             {
-                ref Particle p = ref _p[i];
-                float x = cx + p.Cx * R;
-                float y = cy + p.Cy * R;
-                float tw = (0.8f - Math.Min(0.75f, (float)Math.Sqrt(p.Cx * p.Cx + p.Cy * p.Cy)) * 0.5f);
-                float b = Clamp01(p.Bright * boost * (0.78f + 0.28f * (float)Math.Sin(_t * 4 + p.Phase)));
+                ref readonly var p = ref parts[i];
+                float x = cx + p.X * R;
+                float y = cy + p.Y * R;
+                float dist = (float)Math.Sqrt(p.X * p.X + p.Y * p.Y);
+                float tw = 0.8f - Math.Min(0.75f, dist) * 0.5f;
+                float b = Clamp01(p.Brightness * boost);
                 float sz = (2.8f + p.Size * 4.0f) * (0.85f + 0.45f * b);
 
-                // cyan core; brighter particles trend toward near-white
-                byte g = (byte)(185 + 70 * b);
-                var col = new SKColor(
-                    (byte)(55 + 165 * b),   // a little R so hot points whiten
-                    g,
-                    255,
-                    (byte)(70 + 185 * b * tw));
-                paint.ColorFilter = SKColorFilter.CreateBlendMode(col, SKBlendMode.Modulate);
-                float half = sz;
-                s.DrawImage(_glow, new SKRect(x - half, y - half, x + half, y + half), paint);
+                var col = Toward(0.8f * b, (byte)(70 + 185 * b * tw));
+                var f = SKColorFilter.CreateBlendMode(col, SKBlendMode.Modulate);
+
+                // trail: fading ghost at the previous position (spec 2.4)
+                float px = cx + p.PrevX * R;
+                float py = cy + p.PrevY * R;
+                float dx = x - px, dy = y - py;
+                if (dx * dx + dy * dy > 2f)
+                {
+                    using var gf = SKColorFilter.CreateBlendMode(col.WithAlpha((byte)(col.Alpha * 0.35f)), SKBlendMode.Modulate);
+                    paint.ColorFilter = gf;
+                    float gh = sz * 0.8f;
+                    s.DrawImage(_glow, new SKRect(px - gh, py - gh, px + gh, py + gh), paint);
+                }
+
+                paint.ColorFilter = f;
+                s.DrawImage(_glow, new SKRect(x - sz, y - sz, x + sz, y + sz), paint);
+                paint.ColorFilter = null;
+                f.Dispose();
+            }
+        }
+
+        // Mesh hint: additive rim-lit triangles from the engine, alpha already
+        // premultiplied engine-side (gate * fresnel * FaceVisibility * 0.18).
+        private void DrawMeshHint(SKCanvas s, float cx, float cy, float R)
+        {
+            var verts = _sim.MeshVertices;
+            if (verts.Length == 0) return;
+            var pts = new SKPoint[verts.Length];
+            var cols = new SKColor[verts.Length];
+            for (int i = 0; i < verts.Length; i++)
+            {
+                pts[i] = new SKPoint(cx + verts[i].X * R, cy + verts[i].Y * R);
+                cols[i] = Toward(0.35f, (byte)(Clamp01(verts[i].Alpha) * 255));
+            }
+            using var v = SKVertices.CreateCopy(SKVertexMode.Triangles, pts, cols);
+            using var paint = new SKPaint { Color = SKColors.White, BlendMode = SKBlendMode.Plus, IsAntialias = true };
+            s.DrawVertices(v, SKBlendMode.Modulate, paint);
+        }
+
+        private void DrawEyes(SKCanvas s, float cx, float cy, float R)
+        {
+            if (_glow == null) return;
+            var eyes = _sim.Eyes;
+            if (eyes.Length == 0) return;
+            using var paint = new SKPaint { BlendMode = SKBlendMode.Plus };
+            for (int i = 0; i < eyes.Length; i++)
+            {
+                ref readonly var eye = ref eyes[i];
+                float x = cx + eye.X * R;
+                float y = cy + eye.Y * R;
+                float r = eye.Radius * R;
+                float inten = Clamp01(eye.Intensity);
+                paint.ColorFilter = SKColorFilter.CreateBlendMode(Toward(0.3f, (byte)(150 * inten)), SKBlendMode.Modulate);
+                s.DrawImage(_glow, new SKRect(x - r * 2f, y - r * 2f, x + r * 2f, y + r * 2f), paint);
+                paint.ColorFilter = SKColorFilter.CreateBlendMode(Toward(0.85f, (byte)(230 * inten)), SKBlendMode.Modulate);
+                s.DrawImage(_glow, new SKRect(x - r, y - r, x + r, y + r), paint);
             }
             paint.ColorFilter = null;
         }
 
+        // Expanding ring on any mode change; engine drives RippleT 1 -> 0 over 0.8 s.
+        private void DrawRipple(SKCanvas s, float cx, float cy, float R)
+        {
+            float rt = _sim.RippleT;
+            if (rt <= 0.02f) return;
+            float rr = R * (0.55f + 0.65f * (1f - rt));
+            using var p = new SKPaint
+            {
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 2.5f + 4f * (1f - rt),
+                Color = Toward(0.4f, (byte)(150 * rt)),
+                IsAntialias = true,
+                BlendMode = SKBlendMode.Plus,
+                MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 4),
+            };
+            s.DrawCircle(cx, cy, rr, p);
+        }
+
         private void DrawRings(SKCanvas s, float cx, float cy, float R)
         {
-            // three reticle rings: a wide soft glow stroke + a crisp dashed stroke + ticks.
             DrawRing(s, cx, cy, R * 1.06f, _ring0, 56, 0.55f);
             DrawRing(s, cx, cy, R * 0.86f, _ring1, 40, 0.40f);
             DrawRing(s, cx, cy, R * 0.66f, _ring2, 28, 0.30f);
@@ -292,8 +252,8 @@ namespace Whoretana.Orb
         private void DrawRing(SKCanvas s, float cx, float cy, float r, float rot, int ticks, float alpha)
         {
             byte a = (byte)(alpha * 255);
-            var glow = new SKColor(0x22, 0xE8, 0xFF, (byte)(a * 0.5f));
-            var line = new SKColor(0x8C, 0xF6, 0xFF, a);
+            var glow = BaseColor((byte)(a * 0.5f));
+            var line = Toward(0.55f, a);
 
             using (var gp = new SKPaint { Style = SKPaintStyle.Stroke, StrokeWidth = 6, Color = glow,
                        IsAntialias = true, BlendMode = SKBlendMode.Plus,
@@ -316,50 +276,10 @@ namespace Whoretana.Orb
             }
         }
 
-        // Composite the rendered orb onto the screen. When glitching, shift horizontal
-        // bands and split the cyan/red channels - the datamosh look that hides the face's
-        // rough edges while the lips stay readable.
-        private void CompositeWithGlitch(SKCanvas dst, SKImage img, int w, int h)
-        {
-            if (_glitch < 0.04f)
-            {
-                dst.DrawImage(img, 0, 0);
-                return;
-            }
-            int bands = 14 + (int)(_glitch * 18);
-            float bh = (float)h / bands;
-            using var p = new SKPaint { FilterQuality = SKFilterQuality.None };
-            using var rp = new SKPaint { BlendMode = SKBlendMode.Plus,
-                ColorFilter = SKColorFilter.CreateBlendMode(new SKColor(0xFF, 0x33, 0x66, 200), SKBlendMode.Modulate) };
-            for (int i = 0; i < bands; i++)
-            {
-                float y0 = i * bh;
-                var src = new SKRect(0, y0, w, y0 + bh + 1);
-                float shift = 0;
-                if (_rnd.NextDouble() < 0.35 * _glitch)
-                    shift = (float)((_rnd.NextDouble() - 0.5) * 2 * (8 + 40 * _glitch));
-                var dstr = new SKRect(shift, y0, w + shift, y0 + bh + 1);
-                dst.DrawImage(img, src, dstr, p);
-                if (shift != 0 && _rnd.NextDouble() < 0.6)
-                {
-                    var dr2 = new SKRect(shift + 6 * _glitch, y0, w + shift + 6 * _glitch, y0 + bh + 1);
-                    dst.DrawImage(img, src, dr2, rp);   // accent-channel tear
-                }
-            }
-        }
-
         private void DrawScanlines(SKCanvas c, int w, int h)
         {
             using var p = new SKPaint { Color = new SKColor(0, 0, 0, 60), StrokeWidth = 1 };
             for (int y = 0; y < h; y += 3) c.DrawLine(0, y, w, y, p);
-            // faint moving grain
-            if (_glitch > 0.1f)
-            {
-                using var gp = new SKPaint { Color = new SKColor(0x22, 0xE8, 0xFF, (byte)(40 * _glitch)) };
-                int dots = (int)(_glitch * 220);
-                for (int i = 0; i < dots; i++)
-                    c.DrawRect((float)(_rnd.NextDouble() * w), (float)(_rnd.NextDouble() * h), 2, 2, gp);
-            }
         }
 
         // ---- resources ------------------------------------------------------
@@ -380,15 +300,6 @@ namespace Whoretana.Orb
             _glow = surf.Snapshot();
         }
 
-        private void EnsureScene(int w, int h)
-        {
-            if (_scene != null && _sceneW == w && _sceneH == h) return;
-            _scene?.Dispose();
-            _scene = SKSurface.Create(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
-            _sceneW = w; _sceneH = h;
-        }
-
         private static float Clamp01(float v) => v < 0 ? 0 : (v > 1 ? 1 : v);
-        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
     }
 }

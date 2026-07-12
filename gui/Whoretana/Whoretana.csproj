@@ -29,4 +29,9 @@
     <Resource Include="Assets\DeaconFlock.ttf" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- v2: OrbControl is a thin view over the renderer-agnostic OrbEngine sim. -->
+    <ProjectReference Include="..\OrbEngine\OrbEngine.csproj" />
+  </ItemGroup>
+
 </Project>

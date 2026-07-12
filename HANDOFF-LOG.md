@@ -10,6 +10,53 @@
 
 ---
 
+## whoretana v2 — mesh-driven orb (OrbEngine), gemma4 escalation ladder, trace dataset, wake word + bubble (2026-07-04, local, `whoretana-v2`)
+
+> **SUPERSEDED same day — this branch is an ARCHIVE.** Jordan corrected the premise: WHORETANA must be
+> a from-scratch app in `X:\AI-2\WHORETANA` (its own repo), NOT an evolution of `gui\Whoretana` ("that's
+> something different and it did not work well"). The standalone pieces below (OrbEngine, OrbPreview,
+> voice sidecar, traces) were ported to `X:\AI-2\WHORETANA` and live on there; the `gui\Whoretana`
+> HUD-integration changes on this branch are abandoned. Do NOT merge this branch to master. becky-tools
+> integration continues only via `becky-go\bin` subprocess calls from the new repo.
+
+**Spec:** `X:\AI-2\WHORETANA\BUILD-SPEC.md` (reconciles all the concept docs; decisions D1–D18 are final there).
+Built by parallel subagents, adversarially verified, one fix round. All gates green at handoff:
+`dotnet test gui\OrbEngine.Tests` 6/6 · `dotnet build` Whoretana + OrbPreview 0 warnings ·
+sidecar `--selftest` 37/37 · `generate_trace_audio.py --check` 104 entries 0 errors · 42 RIFF-valid WAVs (≥40 gate).
+
+1. **`gui\OrbEngine\`** (new, reusable, zero UI deps): particles attracted to surface samples on the
+   MediaPipe canonical face mesh (embedded, Apache-2.0), procedural blendshapes (jaw/funnel/pucker/smile),
+   mouth-first emergence choreography, eyes only on `EyeReveal` events, deterministic seeded sim.
+   `gui\OrbPreview\` is the slider/demo harness (45–49 fps at 2600 particles, software Skia —
+   ponytail ceiling: per-particle SKColorFilter churn; quantize filter cache or D3D11 host if it matters).
+2. **`gui\Whoretana\Orb\OrbControl.cs`** rewritten as a thin view over OrbEngine — datamosh DELETED
+   (replaced by trails/shimmer/ripple), rings + scanlines kept, MainWindow back-compat surface preserved.
+3. **Sidecar v2** (`Voice\whoretana_voice.py` + `brain_local.py` + `traces.py` + `selftest.py`):
+   routing ladder = becky-voice router → local Gemma 4 E4B via llama-server :8033 (on-demand faucet,
+   mmproj vision, tool loop over the catalog pack + desktop_click/type/press/move + screenshot;
+   non-green and desktop tools confirm-gated unless `hands_free`) → existing Gemini toggle.
+   Wake word "whoretana" = transcribe+fuzzy gate in standby mode. Viseme stream (rms/centroid) at ~20 Hz.
+4. **`gui\Whoretana\traces\`**: `trace-dataset.json` — 104 entries, every catalog tool × ok/partial/error
+   in Whoretana's voice; `generate_trace_audio.py` (idempotent, `--check`); round-robin playback with
+   persisted state wired into the sidecar speech path. Long-tail WAV render left running overnight
+   (~300 lines at ~29 s/line NeuTTS). **Do not run two generators at once** — they race on the same files.
+5. **Shell**: `BubbleWindow` (topmost, no Alt-Tab, drag, click-restores), minimize-to-bubble sends
+   `{"cmd":"standby"}`; VoiceBridge parses viseme/wake/special/brain events; Settings gained
+   LocalEscalation/WarmLocal/HandsFree/EyeRevealEvents/BubbleX/Y. Fix round closed the escalated-tool
+   confirm dead-end (`_bridgePendingConfirm`, +5 selftest checks).
+
+**ENVIRONMENT CHANGE:** `C:\Users\only1\ai-memory\llama-cpp` upgraded b8369 (CPU-only, crashed on the
+gemma4 arch) → **b9873 win-vulkan-x64**; old build kept at `llama-cpp-b8369.bak`. Gemma 4 E4B QAT +
+mmproj loads healthy in ~17 s on the 3070.
+
+**Known lows (deliberately unfixed, seam review):** (a) `{"cmd":"say"}` typed-chat path bypasses trace
+clips (always live TTS); (b) `escalate()` returns no tool/outcome so escalated replies never hit
+`tool.<verb>.<outcome>` clips; (c) `{"type":"brain","name":"router"}` never emitted though the contract
+lists it. CLAUDE.md §6 NOT updated — the file was already dirty with unrelated work; fold this entry's
+summary in on the next clean pass.
+
+---
+
 ## native timeline round 3 — §12 field issues dead, ledger ported, native-only (2026-07-04, local, `claude/native-timeline-round3`)
 
 **Jordan's §12 field issues, all fixed + verified with real Win32 input + CDP on E:\TakingBack2007:**

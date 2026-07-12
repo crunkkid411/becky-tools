@@ -44,6 +44,7 @@
     </StackPanel>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,8,0"
                 shell:WindowChrome.IsHitTestVisibleInChrome="True">
+      <Button Content="&#x25CB;" Click="Bubble_Click" Style="{StaticResource IconButton}" ToolTip="Minimize to bubble (standby)" FontSize="14" />
       <Button Content="&#x2014;" Click="Min_Click" Style="{StaticResource IconButton}" FontSize="16" />
       <Button Content="&#x2750;" Click="Max_Click" Style="{StaticResource IconButton}" FontSize="13" />
       <Button Content="&#x2715;" Click="Close_Click" Style="{StaticResource IconButton}" Foreground="{StaticResource Accent}" FontSize="14" />

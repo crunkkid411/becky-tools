@@ -1,0 +1,12 @@
+canonical_face_model.obj
+
+Source:   https://raw.githubusercontent.com/google-ai-edge/mediapipe/master/mediapipe/modules/face_geometry/data/canonical_face_model.obj
+Project:  MediaPipe (Google AI Edge) - https://github.com/google-ai-edge/mediapipe
+Fetched:  2026-07-04 (committed as an embedded resource; never downloaded at runtime)
+
+License:  Apache License, Version 2.0
+          https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE
+          http://www.apache.org/licenses/LICENSE-2.0
+
+The MediaPipe canonical face model: 468 vertices, 898 triangles, the standard
+MediaPipe Face Mesh landmark topology (landmark index N = OBJ vertex N+1).
