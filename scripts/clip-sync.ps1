@@ -99,15 +99,21 @@ function GrabOne([string]$url, [string]$file) {
 
     # Deterministic path missed -> Gemma-4 recovery, then re-verify (regrab scores
     # its own output). This is the "gemma is part of the workflow every time" step.
-    # VRAM leak fix: kill any existing llama-server.exe before spawning a new one,
-    # and wrap the call in try/finally to guarantee cleanup on exit (normal or error).
+    # VRAM leak fix (PID-specific so a genuine llama-server -- e.g. WHORETANA's
+    # always-on brain/NeuTTS, which shares this same exe -- is NEVER touched):
+    # snapshot llama-server PIDs before regrab runs, then in finally kill ONLY the
+    # ones regrab spawned (PIDs not in the snapshot). A broad Stop-Process -Name
+    # would nuke WHORETANA. This guarantees regrab's own child is cleaned up on
+    # every exit path (success, error, timeout, or Task Scheduler kill).
     $rg = $null
+    $llamaBefore = @(Get-Process -Name llama-server -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     try {
-        Get-Process -Name llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         try { $rg = (& $regrab $url --vault $Target --output $file --json 2>$null) | ConvertFrom-Json } catch { $rg = $null }
     }
     finally {
-        Get-Process -Name llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process -Name llama-server -ErrorAction SilentlyContinue |
+            Where-Object { $llamaBefore -notcontains $_.Id } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
     }
     if ($rg) {
         return [pscustomobject]@{ verdict = $rg.verdict; method = $rg.method; recall = $rg.recall }
