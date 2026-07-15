@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"becky-go/internal/forensic"
@@ -190,7 +191,20 @@ func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signa
 	if level >= 2 {
 		model, env = "gemma4-12b", []string{"BECKY_AVLM_VARIANT=12b"}
 	}
-	out, err := g.run(context.Background(), "becky-validate", []string{g.file, "--backend", "gemma4-local"}, env)
+	// Aim the watch at THIS claim's moment. Without it every presence window's watch hit
+	// time 0, so a long video was only ever watched at its start — the on-screen sweep
+	// bug. Passing the claim's [t0-t1] makes becky-case watch each presence window across
+	// the whole timeline (identity claims stay whole-file: no window).
+	args := []string{g.file, "--backend", "gemma4-local"}
+	if c.IsPresence {
+		if start, dur, ok := presenceWindowFromKey(c.Key); ok {
+			args = append(args, "--window-start", ftoaSec(start))
+			if dur > 0 {
+				args = append(args, "--window", ftoaSec(dur))
+			}
+		}
+	}
+	out, err := g.run(context.Background(), "becky-validate", args, env)
 	if err != nil {
 		// The binary itself failed (absent/crashed) — return an error so the ladder STOPS (it
 		// would fail identically at the next level). A model that RAN but found nothing is handled
@@ -219,6 +233,42 @@ func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signa
 func NewGemmaLadder(file string) orchestrate.Executor {
 	return gemmaLadder{file: file, run: realRunner}
 }
+
+// presenceWindowFromKey pulls the [t0-t1] span out of an "onscreen=<subject>@[t0-t1]"
+// claim key: returns the window start and a length capped at the model's 60s video limit.
+// ok is false when the key has no parseable span (then the watch stays whole-file).
+func presenceWindowFromKey(key string) (start, dur float64, ok bool) {
+	i := strings.Index(key, "@[")
+	if i < 0 {
+		return 0, 0, false
+	}
+	rest := key[i+2:]
+	j := strings.IndexByte(rest, ']')
+	if j < 0 {
+		return 0, 0, false
+	}
+	span := rest[:j]
+	k := strings.IndexByte(span, '-')
+	if k <= 0 {
+		return 0, 0, false
+	}
+	t0, err0 := strconv.ParseFloat(strings.TrimSpace(span[:k]), 64)
+	t1, err1 := strconv.ParseFloat(strings.TrimSpace(span[k+1:]), 64)
+	if err0 != nil || err1 != nil {
+		return 0, 0, false
+	}
+	d := t1 - t0
+	if d > 60 {
+		d = 60 // the AV model's hard per-window limit
+	}
+	if d < 0 {
+		d = 0
+	}
+	return t0, d, true
+}
+
+// ftoaSec formats seconds compactly for a becky-validate CLI arg (no trailing zeros).
+func ftoaSec(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
 // presenceSubjectFromKey pulls "<subject>" out of an "onscreen=<subject>@[t0-t1]" claim key.
 func presenceSubjectFromKey(key string) string {

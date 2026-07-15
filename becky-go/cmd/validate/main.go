@@ -63,6 +63,7 @@ func main() {
 	backendName := flag.String("backend", "gemma4-local", "backend: gemma4-local, fusion, mock")
 	serverURL := flag.String("server-url", "", "reuse a running multimodal llama-server (default: spawn one per call)")
 	window := flag.Float64("window", 30, "AV window length in seconds (<= 60); overridden by --motion")
+	windowStart := flag.Float64("window-start", 0, "seconds into the clip to start the AV window (ignored when --motion targets a burst); lets the forensic engine sweep each presence moment of a long video")
 	fps := flag.Float64("fps", 1.0, "frame sample rate; overridden by --motion to 4.0 for a short targeted burst")
 	device := flag.String("device", "", "cpu|cuda (informational; GPU offload always used)")
 	out := flag.String("output", "", "output file (default: stdout)")
@@ -114,6 +115,14 @@ func main() {
 		beckyio.Logf(*verbose, "%s", mNote)
 	}
 
+	// A direct --window-start aims the watch at a specific moment when motion isn't
+	// targeting a burst. The forensic engine (becky-case) uses this to WATCH each
+	// presence window of a long video, instead of every watch hitting time 0.
+	startSec := mStart
+	if !motionTargeted && *windowStart > 0 {
+		startSec = *windowStart
+	}
+
 	qs := []string(questions)
 	if len(qs) == 0 {
 		qs = defaultQuestions
@@ -128,7 +137,7 @@ func main() {
 		Events:      ev,
 		Identify:    id,
 		Questions:   qs,
-		WindowStart: mStart,
+		WindowStart: startSec,
 		WindowSec:   *window,
 		FPS:         *fps,
 		Timeout:     *timeoutSec,
@@ -137,7 +146,7 @@ func main() {
 	}
 
 	beckyio.Logf(*verbose, "validating %s with %s backend (start=%.1fs window=%.0fs fps=%.2f timeout=%ds)...",
-		clip, backend.Name(), mStart, *window, *fps, *timeoutSec)
+		clip, backend.Name(), startSec, *window, *fps, *timeoutSec)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
 	defer cancel()
@@ -161,7 +170,7 @@ func main() {
 		Backend:           backend.Name(),
 		Model:             firstNonEmpty(res.Model, gemmaModelName),
 		Disclaimer:        Disclaimer,
-		WindowStart:       mStart,
+		WindowStart:       startSec,
 		WindowSec:         clampWindowSec(*window),
 		FPS:               *fps,
 		MotionTargeted:    motionTargeted,
