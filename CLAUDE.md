@@ -411,10 +411,24 @@ load-bearing rules, in brief:
   *how to change it without re-making solved mistakes* (gotchas, non-obvious logic, dead ends
   already ruled out). **Read the HANDOFF before touching becky-clip.**
 
+- `SPEC-BECKY-CREATOR.md` (cloud, design-only, 2026-07-01) — **the umbrella spec for turning
+  Becky Review into a full autopilot creator-editing suite** (competitive audit vs.
+  clipwith.ai/aiaicaptain.ai/wisecut.ai). Jordan has started using Becky Review as his daily
+  social-media edit GUI — this spec is the ratification of that as THE product, mapping the
+  missing pipeline stages (silence-cut wiring, highlight detection, style-learning from his
+  own saved `.reel.json` history, styled captions, B-roll, vertical reframe, music/ducking,
+  a multi-track `Reel` data-model prerequisite) each into its own future dedicated spec.
+  **Proposes pausing `SPEC-BECKY-NLE.md`'s Shotcut-fork plan** (never built in this repo) the
+  same way `CANVAS-NORTH-STAR.md` pinned canvas-over-REAPER — awaiting Jordan's confirm (§6
+  of the spec). Read this before any becky-clip/Becky-Review/video-editing-pipeline work.
+
 **Specs (read the one for the tool you're building):**
 - **PRIORITY BUILDS — 2026-06-23 (the "adopt a mature host, add the becky layer" pivot; see
   `BECKY-CANVAS-ROADMAP.md` + the `research/daw-nle-*` + `research/bookmarks-*` docs):**
-  - `SPEC-BECKY-NLE.md` — **the real video NLE, to be built FIRST** (Jordan's priority). ADOPT
+  - `SPEC-BECKY-NLE.md` — **PROPOSED PAUSED by `SPEC-BECKY-CREATOR.md` (2026-07-01, awaiting
+    Jordan's confirm)** — Becky Review has become the daily editor in practice; this Shotcut
+    plan was never built in this repo (zero QML/Shotcut refs here). Original plan preserved
+    below in case Jordan vetoes the pause. ADOPT
     **Shotcut** (Qt6/QML/**MLT** — the engine becky already writes) + a **Becky dock** that
     reuses the EXISTING becky-clip engine (`internal/footage`/`quotes`/`edl`/`reel`/`assistant`):
     point at a folder → search the `.srt` transcripts → **single-click a quote = preview
@@ -541,6 +555,14 @@ load-bearing rules, in brief:
 
 ### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
 
+- **Becky Review → full autopilot creator suite (`SPEC-BECKY-CREATOR.md`, landed 2026-07-01).**
+  Umbrella/vision spec, design only — nothing built yet. Maps the pipeline stages missing
+  from Becky Review vs. clipwith.ai/aiaicaptain.ai/wisecut.ai (highlight detection,
+  style-learning from Jordan's own saved `.reel.json` history, styled captions, B-roll,
+  vertical reframe, music/ducking) plus a required multi-track `Reel` data-model rewrite
+  (Phase 0). Each phase gets its own dedicated spec before build. **Before anyone builds
+  Phase 0, Jordan settles §6's open decisions — most importantly #1: confirming Becky
+  Review (not the `SPEC-BECKY-NLE.md` Shotcut fork) is the pinned creator-editing product.**
 - **OCR ensemble + adversarial corroboration (`SPEC-OCR-ENSEMBLE.md`, landed 2026-06-28).** The
   *spec* is on master (multi-model OCR ensemble + adversarial ≥2-engine corroboration; adds the
   Unlimited-OCR long-doc slot; GLM-OCR↔PaddleOCR-VL A/B; a mandatory leaderboard-sweep process fix;
