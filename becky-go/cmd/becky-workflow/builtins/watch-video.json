@@ -1,0 +1,9 @@
+{
+  "name": "watch-video",
+  "phrases": ["watch this video", "what is in this video", "look at this clip"],
+  "steps": [
+    { "tool": "becky-transcribe" },
+    { "tool": "becky-validate" },
+    { "merge": "report" }
+  ]
+}

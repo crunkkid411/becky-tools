@@ -20,18 +20,25 @@ import (
 	"strings"
 )
 
-// Step is one entry in a recipe. Exactly one of Tool / Verb / Merge is set:
+// Step is one entry in a recipe. Exactly one of Tool / Verb / Merge / Agent is set:
 //   - Tool:  shell an existing becky-*.exe tool (e.g. "becky-transcribe").
 //   - Verb:  an orchestrator op / named action (e.g. "verify-with-gemma4").
 //   - Merge:  a deterministic merge of prior outputs (e.g. "transcript").
+//   - Agent: run a headless AI agent (e.g. "claude-code" or "qwen") over the prior
+//     step outputs, with Prompt as its instruction. This is OPT-IN per recipe: a recipe
+//     with no Agent step spends ZERO AI tokens. That is the whole point vs Archon —
+//     the model runs only when a recipe file explicitly asks for it, never every run.
 //
+// Prompt is the instruction for an Agent (or Verb) step; tool/merge steps ignore it.
 // When, if non-empty, is a deterministic condition over facts; the step runs only when
 // it evaluates true. An empty When means "always run".
 type Step struct {
-	Tool  string `json:"tool,omitempty"`
-	Verb  string `json:"verb,omitempty"`
-	Merge string `json:"merge,omitempty"`
-	When  string `json:"when,omitempty"`
+	Tool   string `json:"tool,omitempty"`
+	Verb   string `json:"verb,omitempty"`
+	Merge  string `json:"merge,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	When   string `json:"when,omitempty"`
 }
 
 // Kind reports which of tool/verb/merge this step is, for the executor + reporting.
@@ -43,6 +50,8 @@ func (s Step) Kind() string {
 		return "verb"
 	case s.Merge != "":
 		return "merge"
+	case s.Agent != "":
+		return "agent"
 	default:
 		return ""
 	}
@@ -58,6 +67,8 @@ func (s Step) Name() string {
 		return s.Verb
 	case s.Merge != "":
 		return s.Merge
+	case s.Agent != "":
+		return s.Agent
 	default:
 		return ""
 	}
@@ -111,8 +122,11 @@ func (r Recipe) Validate() error {
 		if s.Merge != "" {
 			n++
 		}
+		if s.Agent != "" {
+			n++
+		}
 		if n != 1 {
-			return fmt.Errorf("recipe %q step %d must set exactly one of tool/verb/merge (got %d)", r.Name, i, n)
+			return fmt.Errorf("recipe %q step %d must set exactly one of tool/verb/merge/agent (got %d)", r.Name, i, n)
 		}
 		if s.When != "" {
 			if _, err := parseCondition(s.When); err != nil {

@@ -221,6 +221,13 @@ var ToolCatalog = []Capability{
 	// is ever touched. TierYellow: it creates + runs code, confined to its own
 	// sandbox, confirm-once, never destroys anything of Jordan's.
 	{Verb: "becky-devbuild", Summary: "Dev-agent auto-fix loop: describe a small project, it plans a file layout, writes each file, installs deps, runs it, and auto-fixes real errors (parses the traceback) for up to N attempts - python this slice.", Example: `becky-devbuild --desc "a CLI that converts CSV to JSON" [--lang python] [--name my_tool] [--max-attempts 5] [--json]`, Keywords: []string{"build", "build me", "write a script", "write a program", "make a tool", "create a project", "code this", "dev agent", "auto fix", "scratch project"}, Tier: TierYellow, Pack: "default"},
+	// Added 2026-07-14 (Jordan ask): the runnable front door for the declarative
+	// workflow engine (internal/workflowdef). Runs a recipe FILE (name/phrases/steps)
+	// step by step - tool / merge / OPT-IN agent step - and prints one JSON summary. The
+	// agent step is the anti-Archon: an AI runs ONLY when a recipe contains an `agent`
+	// step, never every run. TierGreen: runs curated read-only recipes; any agent step is
+	// budget-capped (--budget) and reasons over provided data only.
+	{Verb: "becky-workflow", Summary: "Run a workflow recipe file end to end: tool + merge + opt-in AI-agent steps, one JSON summary. Built-ins: watch-video (no AI) / watch-video-ai (one Opus step). `list` shows recipes.", Example: `becky-workflow run watch-video --target "clip.mp4"  |  becky-workflow list`, Keywords: []string{"workflow", "recipe", "run workflow", "run recipe", "chain tools", "watch video workflow", "agent step", "steps"}, Tier: TierGreen, Pack: "default"},
 }
 
 // All returns the orchestrator ops and the tool catalog concatenated, ops first.

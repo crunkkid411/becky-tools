@@ -3,6 +3,10 @@
 **Canonical (read these):**
 - `CLAUDE.md` — how we work. **NO LONGER** the *current* handoff state (§6) - moved to STATE-OF-MASTER.md and INDEX.md (Jordan, 7-04-2026).
 - `INDEX.md` (this file) - *current* doc map; which file, when. STOP updating in CLAUDE.md; it lives here now.
+- `BECKY-USER-GUIDE.md` — **plain, no-fluff guide for USING becky (not building it): the
+  watch-a-video commands, the real working-tool list, how to run a workflow `.json` +
+  the opt-in agent step, and an OSINT quickstart. For Jordan or any human/agent that just
+  wants to RUN becky.** New 2026-07-14. Keep it current when tools/commands change.
 - `MASTER.md` - *current* state of master. STOP updating in CLAUDE.md; it lives here now.
 - `HANDOFF-LOG.md` — the **full branch-by-branch handoff history** (newest-first). `STATE-OF- MASTER.md`
   carries only the current state; the complete log of every cloud/local session lives here. Append

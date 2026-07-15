@@ -1,0 +1,12 @@
+{
+  "name": "watch-video-ai",
+  "phrases": ["watch this video and tell me", "analyze this clip"],
+  "steps": [
+    { "tool": "becky-transcribe" },
+    { "tool": "becky-validate" },
+    {
+      "agent": "claude-code",
+      "prompt": "You are reviewing a short video clip for an OSINT case. Below is what the local tools extracted: the transcript (what is SAID) and becky-validate's observations (what is SEEN and HEARD). In 5 bullet points, state only what is supported by that evidence: who/what is on screen, any places, names, or on-screen text, and anything worth a closer look. Do not speculate beyond the data."
+    }
+  ]
+}
