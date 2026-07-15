@@ -7,43 +7,46 @@ There was no user guide before this one. This is it. Keep it up to date.
 
 ---
 
-## The one idea that saves you money
+## The one call: becky-case
 
-**Don't make Opus (or any AI) watch a video frame by frame. That's what burns
-millions of tokens.**
+For a forensic answer about a video — who is in it, what they say, who is on screen —
+the agent makes **ONE call** and becky does the rest:
 
-Becky's tools run on YOUR GPU, offline, near-free. They pull the facts out of a
-video — what's said, who's there, what's on screen — into small JSON. You hand
-that JSON to Opus to *reason* over. One cheap extract + one AI call, instead of an
-AI staring at hours of footage.
+```
+becky-case --file "video.mp4"                     corroborated who + what
+becky-case --file "video.mp4" --subject "Name"     + locate that person on screen
+```
 
-That's the whole point of becky. Use it that way.
+That's it. No flags to chain, no protocol to remember. Inside, becky runs the plan
+itself (transcribe, diarize only if there's more than one speaker, identify, and the
+Gemma-4 watch ladder), corroborates every finding, and returns a FINAL report: a name
+is stated only when two signals agree, an on-screen moment only where a model actually
+watched it, and everything uncertain is HELD — never dumped as a pile of maybes.
+
+This is the standard engine (`internal/forensicrun`) — the fix for "the agent ignored
+all the flags and protocols." There are no flags for the agent to ignore.
+
+**Why not just have Opus watch the raw video?** Not about money — about accuracy. No
+model, local OR Opus, ingests hours in one pass; they all sample frames and hand back a
+confident-sounding GUESS with no corroboration. For a warrant, a wrong ID is a real
+person wrongly placed. becky-case gives you corroborated-or-held. That's the point.
+
+### On a long video (hours)
+
+- **Who is in it (by voice) and everything said** — covered over the WHOLE video,
+  corroborated. `becky-case --file "long.mp4"` handles the full length.
+- **On-screen presence** — today becky watches the key motion moment(s), not every
+  minute of a multi-hour timeline (the local watch model sees ≤60s at a time). Sweeping
+  the whole timeline for on-screen presence is the one real build still open — see
+  "What's still open" at the bottom.
 
 ---
 
-## Watch a video
+## The individual tools
 
-| You want | Command | Note |
-|---|---|---|
-| "What's in this short clip?" | `becky-validate "clip.mp4"` | Seen / heard / said. Clips **≤ 60 sec** only. |
-| Everything said (any length) | `becky-transcribe "video.mp4"` | Text with timestamps. |
-| Said + who's on screen | `becky-transcribe "video.mp4" --forensic --subject "Name" --kb kb-final` | Names only when corroborated. |
-| Read ONE image / screenshot | `becky-vision --image "shot.png" --prompt "what does this show?"` | Image only — not video. |
-
-**Long vlogs / livestreams:** there is NO tool that watches hours of video in one
-shot (no local model can). Do this instead:
-
-1. `becky-transcribe "long.mp4"` — get the whole transcript.
-2. Read the transcript, pick the moments that matter.
-3. `becky-validate "long.mp4"` on the short windows around those moments.
-
-Never feed a whole long video to an AI. Pinpoint the short bits first.
-
----
-
-## The tools that work
-
-All run offline. `--json` on most gives machine-readable output.
+**`becky-case` chains these for you.** Reach for a single tool only when you want one
+specific piece, not the full corroborated pass. All run offline; `--json` on most gives
+machine-readable output.
 
 **See / read a video**
 | Tool | Does | Example |
@@ -172,6 +175,18 @@ Researching a person's vlogs/livestreams:
 5. **Reverse-image a photo / drive a browser** — not working yet; see `SPEC-BECKY-CHROME.md`.
 
 Then hand the JSON to Opus to connect the dots — don't have Opus watch the videos.
+
+---
+
+## What's still open
+
+**Sweeping a long video for on-screen presence.** `becky-case` corroborates *who is in*
+a video (by voice) and *everything said* over the whole length — but the on-screen WATCH
+currently looks at the key motion moment(s), not every window across hours, because the
+local watch model sees ≤60 seconds at a time. The fix is to have becky-case walk the
+whole timeline internally — pick candidate windows across the full duration (motion
+bursts + mention timestamps), watch each, and corroborate on-screen presence over the
+entire video — still one dumb call. That is a real forensic-engine change, not a flag.
 
 ---
 
