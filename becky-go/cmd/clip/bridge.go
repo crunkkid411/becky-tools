@@ -81,6 +81,11 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// window, for drawing a per-clip waveform on the timeline track.
 		// Degrades to {peaks:[],count:0} when ffmpeg/audio is unavailable.
 		return a.Peaks(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argInt(args, "buckets")), nil
+	case "peaks2":
+		// ACCURATE waveform: true min/max per column at ABSOLUTE scale
+		// (1.0 = digital full scale), backed by the shared .bpk peak cache
+		// the native timeline also uses. Degrades to {min:[],max:[],count:0}.
+		return a.Peaks2(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argInt(args, "columns")), nil
 	case "autocut_silence":
 		// Run becky-cut's existing silence/VAD detector (dry-run: decide only,
 		// never render) and return its KEEP segments as {in,out} seconds, ready
