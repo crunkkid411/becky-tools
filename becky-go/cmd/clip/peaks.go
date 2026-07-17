@@ -75,7 +75,7 @@ func (a *App) Peaks(source string, inSec, outSec float64, buckets int) PeaksResu
 		return emptyPeaks()
 	}
 
-	samples, err := decodePCMWindow(ffmpeg, v.Path, inSec, outSec)
+	samples, err := decodePCMWindow(ffmpeg, v.Path, inSec, outSec, peaksSampleRate)
 	if err != nil || len(samples) == 0 {
 		return emptyPeaks()
 	}
@@ -110,13 +110,14 @@ func peaksCacheKey(sourcePath string, inSec, outSec float64, buckets int) string
 }
 
 // decodePCMWindow shells ffmpeg to decode ONLY the [inSec,outSec) window of
-// source's audio to raw mono 16-bit PCM at peaksSampleRate, reading the
+// source's audio to raw mono 16-bit PCM at `rate` Hz (peaks uses 8 kHz for
+// its coarse envelope; peaks2 uses the cache's 48 kHz), reading the
 // samples from stdout (nothing touches disk). An accurate input seek (-ss
 // before -i) brackets the start; -t bounds the duration. A source with no
 // audio stream, or any ffmpeg failure, surfaces as an error (the caller
 // degrades). NoWindow suppresses the console flash the GUI would otherwise
 // show on every clip-waveform request — same as videoCodec in internal/reel.
-func decodePCMWindow(ffmpeg, source string, inSec, outSec float64) ([]int16, error) {
+func decodePCMWindow(ffmpeg, source string, inSec, outSec float64, rate int) ([]int16, error) {
 	dur := outSec - inSec
 	if dur <= 0 {
 		return nil, fmt.Errorf("empty window")
@@ -125,7 +126,7 @@ func decodePCMWindow(ffmpeg, source string, inSec, outSec float64) ([]int16, err
 		"-ss", fmt.Sprintf("%.3f", inSec),
 		"-i", source,
 		"-t", fmt.Sprintf("%.3f", dur),
-		"-vn", "-ac", "1", "-ar", fmt.Sprintf("%d", peaksSampleRate), "-f", "s16le",
+		"-vn", "-ac", "1", "-ar", fmt.Sprintf("%d", rate), "-f", "s16le",
 		"-hide_banner", "-loglevel", "error",
 		"-",
 	)
