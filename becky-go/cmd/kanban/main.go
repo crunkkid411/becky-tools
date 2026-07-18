@@ -130,6 +130,13 @@ func printPlain(res Result) {
 		if len(text) > 100 {
 			text = text[:100] + "..."
 		}
-		fmt.Fprintf(os.Stderr, "  [col %d] #%d  %s\n", c.Col, c.Index, text)
+		tag := ""
+		if c.ID != "" {
+			tag = fmt.Sprintf(" id=%s", c.ID)
+		}
+		if c.Rev != 0 {
+			tag += fmt.Sprintf(" rev=%d", c.Rev)
+		}
+		fmt.Fprintf(os.Stderr, "  [col %d] #%d%s  %s\n", c.Col, c.Index, tag, text)
 	}
 }

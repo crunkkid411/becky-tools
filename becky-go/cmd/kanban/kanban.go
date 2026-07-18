@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"becky-go/internal/pathx"
 )
@@ -40,8 +41,8 @@ import (
 // Card is one board card. It is stored as a raw key->value map, NOT a fixed
 // struct, so ANY field MissionControl or a future GUI adds (an id, an order, a
 // color) survives a round-trip untouched - dropping a field Jordan's board
-// carries would be exactly the data loss AUTOPILOT Law 8b forbids. The three
-// fields this tool knows about - agent, col, text - are read/written through
+// carries would be exactly the data loss AUTOPILOT Law 8b forbids. The known
+// fields - agent, col, text, title, details, rev, id - are read/written through
 // typed accessors; everything else is carried verbatim. encoding/json emits map
 // keys in sorted order, which for {agent,col,text} is the exact order the
 // existing kanban.json already uses.
@@ -51,10 +52,22 @@ type Card map[string]json.RawMessage
 // already reads.
 type Board []Card
 
+// MissionControl's kanban schema spans two generations. Legacy (BUILD_2 and
+// earlier) cards carry a single `text` field. The rebuilt v2 Board (BUILD_3,
+// 2026-07-16) uses structured fields: `title` + `details`, a UUID `id`, and a
+// `rev` that every writer bumps on the card it changes (the multi-writer
+// contract in docs/AUTOPILOT.md). This tool is v2-aware: it reads whatever text
+// is available (text -> title -> first line of details) so `list` is never
+// blank for a v2 card, and `move` bumps rev + updated so the GUI and other
+// writers see the change immediately.
 const (
-	keyAgent = "agent"
-	keyCol   = "col"
-	keyText  = "text"
+	keyAgent   = "agent"
+	keyCol     = "col"
+	keyText    = "text"
+	keyTitle   = "title"
+	keyDetails = "details"
+	keyRev     = "rev"
+	keyID      = "id"
 )
 
 // defaultStore is MissionControl's live Board file. Hardcoding the machine path
@@ -79,8 +92,44 @@ func (c Card) str(key string) string {
 	return s
 }
 
-// Text returns the card's text field ("" if absent).
-func (c Card) Text() string { return c.str(keyText) }
+// Text returns the card's display text. v2-aware: legacy cards use `text`;
+// v2 cards use `title` (with `details` holding the long body). Whatever is
+// present is shown, so `list` is never blank for a v2 card. Falls back across
+// text -> title -> first line of details.
+func (c Card) Text() string {
+	if t := c.str(keyText); t != "" {
+		return t
+	}
+	if t := c.str(keyTitle); t != "" {
+		return t
+	}
+	if d := c.str(keyDetails); d != "" {
+		if nl := strings.IndexByte(d, '\n'); nl >= 0 {
+			return d[:nl]
+		}
+		return d
+	}
+	return ""
+}
+
+// Title returns the v2 title field ("" if absent).
+func (c Card) Title() string { return c.str(keyTitle) }
+
+// ID returns the card's id field ("" if absent).
+func (c Card) ID() string { return c.str(keyID) }
+
+// Rev returns the card's rev (0 if absent or unreadable).
+func (c Card) Rev() int {
+	raw, ok := c[keyRev]
+	if !ok {
+		return 0
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return 0
+	}
+	return int(f)
+}
 
 // Agent returns the card's agent field ("" if absent).
 func (c Card) Agent() string { return c.str(keyAgent) }
@@ -111,20 +160,37 @@ func (c Card) setInt(key string, n int) {
 	c[key] = b
 }
 
-// CardView is the DISPLAY shape for the JSON envelope + human output: the three
-// known fields plus the card's index in the array (the handle callers use for
-// move/note). Extra on-disk fields are intentionally not shown here - the
-// envelope is informational; the on-disk store is what preserves them.
+// bumpRev increments the card's rev integer by 1 (starting at 0 if absent) and
+// stamps `updated` with a fresh UTC timestamp. Every writer that mutates a card
+// MUST call this so the GUI's merge-before-save protocol (docs/AUTOPILOT.md) and
+// other writers see the change immediately instead of a 1-second stale-save
+// window.
+func (c Card) bumpRev() {
+	c.setInt(keyRev, c.Rev()+1)
+	c.setStr("updated", nowUTC())
+}
+
+// CardView is the DISPLAY shape for the JSON envelope + human output: the known
+// fields plus the card's index in the array (the handle callers use for
+// move/note) and its v2 id/rev when present. Extra on-disk fields are
+// intentionally not shown here - the envelope is informational; the on-disk
+// store is what preserves them.
 type CardView struct {
 	Index int    `json:"index"`
 	Agent string `json:"agent"`
 	Col   int    `json:"col"`
 	Text  string `json:"text"`
+	ID    string `json:"id,omitempty"`
+	Rev   int    `json:"rev,omitempty"`
 }
 
 func view(i int, c Card) CardView {
-	return CardView{Index: i, Agent: c.Agent(), Col: c.Col(), Text: c.Text()}
+	return CardView{Index: i, Agent: c.Agent(), Col: c.Col(), Text: c.Text(), ID: c.ID(), Rev: c.Rev()}
 }
+
+// nowUTC returns an RFC3339 UTC timestamp, matching the format MissionControl's
+// GUI writes (NowIso8601Utc) so v2 cards stay consistent across writers.
+func nowUTC() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // Result is becky-kanban's stdout JSON envelope. Card is set for single-card
 // actions (add/move/note); Cards+Count for list. OK is false with Error set on
@@ -354,6 +420,7 @@ func doMove(path, sel, colStr string) Result {
 		return failResult("move", err)
 	}
 	board[idx].setInt(keyCol, col)
+	board[idx].bumpRev() // v2-aware: rev++ + updated so GUI/other writers see it now
 	if err := save(path, board); err != nil {
 		return failResult("move", err)
 	}
@@ -382,6 +449,7 @@ func doNote(path, sel, text string) Result {
 		cur = cur + " " + text
 	}
 	board[idx].setStr(keyText, cur)
+	board[idx].bumpRev()
 	if err := save(path, board); err != nil {
 		return failResult("note", err)
 	}

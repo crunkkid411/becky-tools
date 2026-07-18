@@ -259,6 +259,50 @@ func TestUnknownAction(t *testing.T) {
 	}
 }
 
+// TestListShowsV2CardText covers FOLLOW-UP #3: list must render text for a v2
+// card (title + details, no legacy `text`), not come back blank.
+func TestListShowsV2CardText(t *testing.T) {
+	o := tempStore(t)
+	seed := `[{"agent":"claude","col":0,"title":"Upgrade becky-kanban to v2","details":"bump rev on move; list shows v2 text","id":"f1a2","rev":0}]`
+	if err := os.WriteFile(o.store, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := run("list", nil, o)
+	if !r.OK || r.Count != 1 {
+		t.Fatalf("v2 list failed: %+v", r)
+	}
+	if r.Cards[0].Text != "Upgrade becky-kanban to v2" {
+		t.Fatalf("v2 card text not shown: %q", r.Cards[0].Text)
+	}
+	if r.Cards[0].ID != "f1a2" || r.Cards[0].Rev != 0 {
+		t.Fatalf("v2 card id/rev not shown: %+v", r.Cards[0])
+	}
+}
+
+// TestMoveBumpsRev covers FOLLOW-UP #3: move must bump rev and stamp updated
+// (the v2 multi-writer contract) so the GUI sees the change immediately.
+func TestMoveBumpsRev(t *testing.T) {
+	o := tempStore(t)
+	seed := `[{"agent":"claude","col":0,"title":"a v2 card","details":"x","id":"c9","rev":0}]`
+	if err := os.WriteFile(o.store, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := run("move", []string{"0", "2"}, o); !r.OK || r.Card.Rev != 1 {
+		t.Fatalf("move should bump rev to 1: %+v", r)
+	}
+	board, _ := load(o.store)
+	if board[0].Rev() != 1 {
+		t.Fatalf("rev not persisted: %d", board[0].Rev())
+	}
+	if board[0].str("updated") == "" {
+		t.Fatalf("updated timestamp not stamped on move")
+	}
+	// a second move bumps to 2
+	if r := run("move", []string{"0", "1"}, o); !r.OK || r.Card.Rev != 2 {
+		t.Fatalf("second move should bump rev to 2: %+v", r)
+	}
+}
+
 func TestEmptyBoardOps(t *testing.T) {
 	o := tempStore(t)
 	// list on a missing store is a fresh empty board, not an error
