@@ -264,6 +264,9 @@ func TestProbeVerbDegrades(t *testing.T) {
 	if pr.Duration != 0 {
 		t.Fatalf("fake-byte video should probe to 0, got %v", pr.Duration)
 	}
+	if pr.Fps != 0 {
+		t.Fatalf("fake-byte video should probe fps to 0, got %v", pr.Fps)
+	}
 
 	// Unknown source → also {duration:0}, ok=true (degrade, not an error).
 	r = callEnv(t, app, "probe", `{"source":"nope.mp4"}`)

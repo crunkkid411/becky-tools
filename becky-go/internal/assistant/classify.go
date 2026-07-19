@@ -131,6 +131,17 @@ var (
 	reAddClip = regexp.MustCompile(`^add\s+(?:the\s+)?(?:clip|quote|result|hit)\s+(\d+|last)\b`)
 	// "add the last clip" / "add the first quote" — adjective-then-noun ordering.
 	reAddClipAdj = regexp.MustCompile(`^add\s+the\s+(last|first)\s+(?:clip|quote|result|hit)\b`)
+	// "add clips 1, 3 and 5" / "add clip 2 and 4" — a comma/and-separated LIST of
+	// hit selectors. One add_clip{hit:N} per selector, in the order given, all in
+	// the SAME Proposal — so applyActions (app.go) batches every resolved clip
+	// into ONE apply_edit_batch call and one Ctrl+Z reverts the whole multi-clip
+	// add (H-4/H-6), with zero model tokens. Deliberately anchored at both ends
+	// ($) so it only fires on a clean list — never a sentence that happens to
+	// contain unrelated numbers.
+	reAddClipList = regexp.MustCompile(`^add\s+(?:the\s+)?(?:clips?|quotes?|results?|hits?)\s+((?:\d+|last)(?:\s*,\s*(?:\d+|last))*\s*(?:,?\s*and\s+(?:\d+|last))?)\s*$`)
+	// hitSelectorRE pulls the individual selector tokens out of reAddClipList's
+	// captured list.
+	hitSelectorRE = regexp.MustCompile(`\d+|last`)
 	// "remove clip 2" / "delete clip 2".
 	reRemoveClip = regexp.MustCompile(`^(?:remove|delete|drop)\s+(?:the\s+)?(?:clip|quote)\s+(\d+|last)\b`)
 	// "remove the last clip" / "delete the first clip".
@@ -150,6 +161,14 @@ var (
 func parseCommandGrammar(u string, cx Context) ([]Action, bool) {
 	u = strings.TrimSpace(u)
 
+	if m := reAddClipList.FindStringSubmatch(u); m != nil {
+		sels := hitSelectorRE.FindAllString(m[1], -1)
+		acts := make([]Action, 0, len(sels))
+		for _, sel := range sels {
+			acts = append(acts, Action{Verb: VerbAddClip, Args: map[string]any{"hit": sel}})
+		}
+		return acts, true
+	}
 	if m := reAddClip.FindStringSubmatch(u); m != nil {
 		return []Action{{Verb: VerbAddClip, Args: map[string]any{"hit": m[1]}}}, true
 	}

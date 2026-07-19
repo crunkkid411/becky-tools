@@ -61,6 +61,49 @@ func TestClassifyTier(t *testing.T) {
 	}
 }
 
+// TestAddClipListGrammar covers the multi-selector "add clips 1, 3 and 5"
+// grammar (reAddClipList): one Tier-0 add_clip{hit:N} action per selector, in
+// order, in a SINGLE Decision — this is what lets applyActions batch every
+// resolved clip into one apply_edit_batch call (H-4/H-6) with zero model
+// tokens. A single selector still yields exactly one action (no regression),
+// and a sentence with unrelated trailing text does NOT get swept into the
+// list (the $ anchor keeps this narrow).
+func TestAddClipListGrammar(t *testing.T) {
+	tests := []struct {
+		name     string
+		utt      string
+		wantTier Tier
+		wantSels []string // hit selector per action, in order; nil means "don't check"
+	}{
+		{"comma and list", "add clips 1, 3 and 5", TierDeterministic, []string{"1", "3", "5"}},
+		{"bare and, no comma", "add clip 2 and 4", TierDeterministic, []string{"2", "4"}},
+		{"comma only, no and", "add clips 1,2,3", TierDeterministic, []string{"1", "2", "3"}},
+		{"last in a list", "add clips 1 and last", TierDeterministic, []string{"1", "last"}},
+		{"single stays single", "add clip 7", TierDeterministic, []string{"7"}},
+		{"trailing text not swept in", "add clip 1 to the reel", TierDeterministic, []string{"1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := classifyTier(tt.utt, Context{})
+			if d.Tier != tt.wantTier {
+				t.Fatalf("classifyTier(%q).Tier = %v (%s), want %v", tt.utt, d.Tier, d.Reason, tt.wantTier)
+			}
+			if len(d.Actions) != len(tt.wantSels) {
+				t.Fatalf("classifyTier(%q) actions = %+v, want %d selectors %v", tt.utt, d.Actions, len(tt.wantSels), tt.wantSels)
+			}
+			for i, want := range tt.wantSels {
+				a := d.Actions[i]
+				if a.Verb != VerbAddClip {
+					t.Fatalf("action[%d] verb = %v, want add_clip", i, a.Verb)
+				}
+				if got, _ := a.Args["hit"].(string); got != want {
+					t.Fatalf("action[%d] hit = %q, want %q", i, got, want)
+				}
+			}
+		})
+	}
+}
+
 // TestSemanticPredicate isolates hasSemanticCue / isMultiStep so the routing
 // thresholds are pinned.
 func TestSemanticPredicate(t *testing.T) {

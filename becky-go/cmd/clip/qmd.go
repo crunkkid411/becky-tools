@@ -46,6 +46,11 @@ func (a *App) QmdSearch(query string) QmdResult {
 		seen[key] = true
 		out = append(out, r)
 	}
+	// Same referent-tracking as keyword Search: "add clip 3" after a smart search
+	// should resolve against what was actually shown, not go stale.
+	a.mu.Lock()
+	a.lastSearchHits = searchResultsToCandidates(out)
+	a.mu.Unlock()
 	return QmdResult{Results: out, Mode: mode, Note: note}
 }
 

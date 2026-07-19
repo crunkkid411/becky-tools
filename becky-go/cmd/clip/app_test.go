@@ -7,10 +7,13 @@ package main
 // ffmpeg, no production data. These run under `go test ./cmd/clip/...` everywhere.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"becky-go/internal/assistant"
 )
 
 // fixtureFolder writes a synthetic case folder: two videos, one with an .srt
@@ -127,6 +130,99 @@ func TestSearchKeyword(t *testing.T) {
 	// empty query → no results (not a crash).
 	if got := app.Search(""); len(got) != 0 {
 		t.Errorf("empty query should yield 0 results, got %d", len(got))
+	}
+}
+
+// TestAskAddClipByHitUsesLastSearch is the full-stack proof for the "add clip N"
+// chat command: App.Search records the as-displayed hit order, and App.Ask
+// (the GUI's "ask becky" entry point) now feeds that into the assistant router
+// instead of nil, so a Tier-0 hit-selector actually resolves to a real clip
+// instead of silently doing nothing.
+func TestAskAddClipByHitUsesLastSearch(t *testing.T) {
+	app, dir := openFixture(t)
+	hits := app.Search("money for the cat") // one hit: ring.mp4 @ 1-3s
+	if len(hits) == 0 {
+		t.Fatal("fixture search returned no hits — test setup is wrong")
+	}
+
+	p, err := app.Ask(context.Background(), "add clip 1")
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if len(p.Actions) != 1 || p.Actions[0].Verb != assistant.VerbAddClip {
+		t.Fatalf("actions = %+v, want one resolved add_clip", p.Actions)
+	}
+	wantSource := filepath.Join(dir, "ring.mp4")
+	if got := argStr(p.Actions[0], "source"); got != wantSource {
+		t.Fatalf("resolved source = %q, want %q", got, wantSource)
+	}
+
+	// Approve it exactly the way the GUI's Apply button does, and confirm the
+	// clip actually lands on the timeline (not just a well-formed proposal).
+	tl, _, err := app.ApplyProposal(p.ID)
+	if err != nil {
+		t.Fatalf("ApplyProposal: %v", err)
+	}
+	if len(tl.Clips) != 1 {
+		t.Fatalf("timeline after apply = %+v, want 1 clip", tl.Clips)
+	}
+}
+
+// TestAskAddClipListIsOneUndoableEdit is the deterministic multi-action proof
+// the cycle-22 review asked for: a SINGLE chat command ("add clips 1, 2 and
+// 3") resolves against three real search hits, and approving it lands all
+// three clips through ONE apply_edit_batch call — so ONE Ctrl+Z reverts the
+// whole batch, exactly like an AI-authored multi-action plan would (H-4/H-6),
+// but with zero model tokens (Tier-0 grammar only).
+func TestAskAddClipListIsOneUndoableEdit(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "showtime.mp4"), "not-real-video-bytes")
+	mustWrite(t, filepath.Join(dir, "showtime.srt"),
+		"1\r\n00:00:01,000 --> 00:00:02,000\r\nshowtime first moment\r\n\r\n"+
+			"2\r\n00:00:03,000 --> 00:00:04,000\r\nshowtime second moment\r\n\r\n"+
+			"3\r\n00:00:05,000 --> 00:00:06,000\r\nshowtime third moment\r\n\r\n")
+	mustWrite(t, filepath.Join(dir, "showtime.mp4.beckymeta.json"),
+		`{"date":"2026-06-14","person":"Test Person","location":"Stage","source_fps":30}`)
+
+	app := NewApp()
+	app.workDir = t.TempDir()
+	if _, err := app.OpenFolder(dir); err != nil {
+		t.Fatalf("OpenFolder: %v", err)
+	}
+	hits := app.Search("showtime")
+	if len(hits) != 3 {
+		t.Fatalf("fixture search returned %d hits, want 3 (test setup is wrong): %+v", len(hits), hits)
+	}
+
+	p, err := app.Ask(context.Background(), "add clips 1, 2 and 3")
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if len(p.Actions) != 3 {
+		t.Fatalf("actions = %+v, want 3 resolved add_clips", p.Actions)
+	}
+	for i, a := range p.Actions {
+		if a.Verb != assistant.VerbAddClip || argStr(a, "source") == "" {
+			t.Fatalf("action[%d] = %+v, want a resolved add_clip with a real source", i, a)
+		}
+	}
+
+	tl, _, err := app.ApplyProposal(p.ID)
+	if err != nil {
+		t.Fatalf("ApplyProposal: %v", err)
+	}
+	if len(tl.Clips) != 3 {
+		t.Fatalf("timeline after apply = %+v, want 3 clips", tl.Clips)
+	}
+
+	// THE one-undo-span proof: a single Ctrl+Z-equivalent call removes ALL
+	// three clips, not just the last one.
+	undone, ok := app.Undo()
+	if !ok {
+		t.Fatal("Undo reported nothing to undo after a 3-clip chat batch")
+	}
+	if len(undone.Clips) != 0 {
+		t.Fatalf("one undo did not revert the whole batch: %+v", undone.Clips)
 	}
 }
 
