@@ -999,6 +999,18 @@ struct Clip {
 static std::vector<Clip> g_track[2];
 static double g_compDur = 0;
 static bool g_group = true;
+// G-1 "Play tied clips" preview: g_track[0] doubles as both "the loaded edit reel"
+// and "whatever is currently being previewed" (the same pattern seekToSpan already
+// uses for search-hit auditions). Unlike a seekToSpan clip, a Q&A card's tied clips
+// are REAL clips copied straight out of the loaded reel with their REAL engine ids -
+// so while a tied-clip preview is showing, a drag-reorder gesture would compute its
+// "to" index against the visible SUBSET and send that position to the engine,
+// silently reshuffling the real reel. Snapshot the real reel before swapping in the
+// preview and restore it the instant playback stops; loadTimelineView (the function
+// that refreshes g_track[0] from an authoritative engine reply) always wins over a
+// stale preview restore, so it clears this flag too.
+static std::vector<Clip> g_reelBeforePreview;
+static bool g_inTiedPreview = false;
 
 // D-6: provenance overlay state, mirroring the engine's edl.Overlay (app.go
 // newReel defaults: everything on, position "bottom") so the native preview
@@ -1389,6 +1401,8 @@ static void recomputeQuiet() {
 
 // Load a TimelineView (from engine "timeline" verb) into the native track.
 static void loadTimelineView(const json& tv) {
+    // An authoritative reload always wins over a stale "Play tied clips" preview.
+    g_inTiedPreview = false; g_reelBeforePreview.clear();
     g_track[0].clear(); g_track[1].clear();
     if (tv.contains("clips") && tv["clips"].is_array()) {
         for (auto& c : tv["clips"]) {
@@ -2004,7 +2018,11 @@ static void drawTimeline(double& curSec, bool& playing) {
             bool changed = false;
             for (size_t i = 0; i < rest.size(); i++)
                 if (rest[i].id != g_track[0][i].id) { changed = true; break; }
-            if (changed) {
+            // A tied-clip preview (G-1) only ever shows a SUBSET of the real reel, so a
+            // "to" index computed against it does not mean the same position in the
+            // real reel - drop the drag instead of sending the engine a reorder that
+            // would corrupt the real reel out from under the preview.
+            if (changed && !g_inTiedPreview) {
                 g_track[0] = rest; packTrack(0); recomputeDur();
                 if (g.group.size() > 1) {
                     json ids = json::array();
@@ -3030,6 +3048,19 @@ int main(int argc, char** argv) {
             if (curSec >= g_compDur) curSec = 0;
         }
 
+        // G-1 "Play tied clips" preview ends the instant playback stops (pause, arrow
+        // step, or reaching a boundary handler that pauses) - restore the real reel
+        // that was showing before the preview so the timeline never sits corrupted.
+        if (g_inTiedPreview && !playing) {
+            g_track[0] = g_reelBeforePreview;
+            g_reelBeforePreview.clear();
+            g_inTiedPreview = false;
+            packTrack(0); recomputeDur();
+            curSec = std::min(curSec, g_compDur);
+            lastComposed = -1; g_quietDirty = true;
+            for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+        }
+
         // P1 fix: never decode on the UI thread. Post the newest target to the decode
         // thread (non-blocking); the decode thread issues the mpv seek and mpv paints
         // its own child hwnd directly - there is no frame buffer for the UI thread to
@@ -3352,12 +3383,16 @@ int main(int argc, char** argv) {
                             // G-1: play EVERY clip tied to this answer, in order - not just the
                             // first match. Collect before mutating (seekToSpan-style track
                             // replacement clears g_track[0], so a live iterate-and-break would
-                            // both skip later ties and corrupt the loop).
+                            // both skip later ties and corrupt the loop). Search the REAL reel
+                            // (the pre-preview backup if one is already active), never a track
+                            // that's already showing a different card's preview.
+                            const std::vector<Clip>& realReel = g_inTiedPreview ? g_reelBeforePreview : g_track[0];
                             std::vector<Clip> tied;
-                            for (auto& tc : g_track[0])
+                            for (auto& tc : realReel)
                                 if (std::find(c.clipIDs.begin(), c.clipIDs.end(), tc.id) != c.clipIDs.end())
                                     tied.push_back(tc);
                             if (!tied.empty()) {
+                                if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_inTiedPreview = true; }
                                 g_track[0].clear();
                                 for (auto& tc : tied) g_track[0].push_back(tc);
                                 packTrack(0); recomputeDur();
