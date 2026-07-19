@@ -220,6 +220,16 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "reject_proposal":
 		a.RejectProposal(argString(args, "id"))
 		return map[string]any{"rejected": argString(args, "id")}, nil
+	case "apply_edit_batch":
+		// H-4: a list of existing edit ops (add_clip/remove_clip/reorder/
+		// set_trim/split/set_label) applied as ONE atomic undo span — Ctrl+Z
+		// reverses the whole batch in one press. A malformed op is skipped
+		// and reported in "results", never a crash.
+		tl, results, err := a.ApplyEditBatch(argEditOps(args, "ops"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"timeline": tl, "results": results}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown command %q", verb)
@@ -413,6 +423,35 @@ func argClipSpecs(m map[string]any, key string) []ClipSpec {
 			Out:    argFloat(o, "out"),
 			Label:  argString(o, "label"),
 		})
+	}
+	return out
+}
+
+// argEditOps parses an apply_edit_batch payload: a JSON array of
+// {verb,args} objects. A malformed entry (missing verb, non-object) is
+// skipped, never an error — H-2's "malformed op = logged + ignored" applies
+// at parse time too, before ApplyEditBatch even sees the op.
+func argEditOps(m map[string]any, key string) []EditOp {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]EditOp, 0, len(arr))
+	for _, e := range arr {
+		o, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		verb := argString(o, "verb")
+		if verb == "" {
+			continue
+		}
+		opArgs, _ := o["args"].(map[string]any)
+		out = append(out, EditOp{Verb: verb, Args: opArgs})
 	}
 	return out
 }

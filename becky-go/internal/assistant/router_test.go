@@ -73,6 +73,69 @@ func TestHandleTier0(t *testing.T) {
 	}
 }
 
+// TestHandleAddClipByHitUsesSearchHits: the H-6 gap two review cycles flagged —
+// "add clip N" is a complete Tier-0 grammar match (classify.go's reAddClip), but
+// until now nothing ever turned the "hit" index it carries into a real
+// source/in/out, so it always applied as an empty add_clip. This proves the
+// wiring end-to-end: Handle's searchHits param (App.Ask now passes its last
+// Search()/QmdSearch() result here) resolves the index for real, with zero model
+// calls (still Tier 0).
+func TestHandleAddClipByHitUsesSearchHits(t *testing.T) {
+	hits := []footage.Candidate{
+		{Source: "ring.mp4", Timestamp: 10, End: 13, Text: "I will pay you for the cat"},
+		{Source: "bell.mp4", Timestamp: 20, End: 22, Text: "bring me the cat Penguin"},
+	}
+	local := &fakeBackend{name: "local", available: true, reply: "should-not-be-called"}
+	r := NewRouter(Options{Local: local})
+
+	p, err := r.Handle(context.Background(), "add clip 2", Context{}, hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Tier != TierDeterministic {
+		t.Fatalf("tier = %v, want deterministic (no model call for a hit-selector grammar)", p.Tier)
+	}
+	if local.callCount() != 0 {
+		t.Fatal("hit-selector resolution must not call any model")
+	}
+	if len(p.Actions) != 1 || p.Actions[0].Verb != VerbAddClip {
+		t.Fatalf("actions = %+v, want one resolved add_clip", p.Actions)
+	}
+	if got := argString(p.Actions[0], "source"); got != "bell.mp4" {
+		t.Fatalf("\"clip 2\" resolved source = %q, want bell.mp4 (the 2nd hit)", got)
+	}
+	if !p.Mutates {
+		t.Fatal("a resolved add_clip proposal must be flagged Mutates")
+	}
+
+	// Same wiring through Assist (the actual GUI chat entry point, App.Ask).
+	p2, err := r.Assist(context.Background(), "add clip 1", Context{}, hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p2.Actions) != 1 || argString(p2.Actions[0], "source") != "ring.mp4" {
+		t.Fatalf("Assist(\"add clip 1\") actions = %+v, want resolved to ring.mp4", p2.Actions)
+	}
+}
+
+// TestHandleAddClipByHitOutOfRangeDegradesHonestly: "add clip 9" with only 2
+// real search hits must not silently do nothing — it should come back with no
+// actions to approve and a plain-language reason in Note.
+func TestHandleAddClipByHitOutOfRangeDegradesHonestly(t *testing.T) {
+	hits := []footage.Candidate{{Source: "ring.mp4", Timestamp: 10, End: 13, Text: "x"}}
+	r := NewRouter(Options{})
+	p, err := r.Handle(context.Background(), "add clip 9", Context{}, hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Actions) != 0 {
+		t.Fatalf("actions = %+v, want none (index 9 is out of range for 1 hit)", p.Actions)
+	}
+	if p.Note == "" || !strings.Contains(p.Note, "out of range") {
+		t.Fatalf("Note = %q, want an honest out-of-range reason", p.Note)
+	}
+}
+
 // TestHandleTier1Local: a fuzzy single-action utterance goes to the local model;
 // its parsed action becomes the proposal.
 func TestHandleTier1Local(t *testing.T) {

@@ -1,9 +1,9 @@
 // becky-review - the full-native single-window Becky Review (phases 3+4 start).
 //
-// Grown from native/becky-timeline (Dear ImGui + D3D11 + GStreamer D3D11 decode).
+// Grown from native/becky-timeline (Dear ImGui + D3D11), video pane driven by mpv.
 // ONE process owns the whole window - no WebView2, no WPF, no airspace:
 //   left  = library / search / transcript (ImGui)
-//   center = video pane (GStreamer D3D11, child of our hwnd - no mpv dependency)
+//   center = video pane (mpv, --wid child of our hwnd, hwdec GPU decode)
 //   right = Q&A / ask-becky (ImGui)
 //   bottom = native timeline (the seed's code, in-process instead of embedded)
 //
@@ -12,14 +12,24 @@
 // ask. This process is VIEW/CONTROLLER only - every edit routes to engine verbs,
 // engine undo is THE undo. NDJSON seam = {"id","verb","args":{...}} -> {"id","reply":{ok,data,error}}.
 //
-// Streaming note: the old WebView2 app used mpv --wid. On this build machine mpv
-// is not installed and the SEED's proven path is GStreamer D3D11 NVDEC, so the
-// native video pane reuses that exact pipeline (d3d11h264dec). The seam and the
-// edit model are identical; only the decode library differs. This is recorded, not hidden.
+// D-1 (2026-07-19): the video pane is mpv (runtime/mpv/mpv.exe, fetched via
+// fetch-mpv.ps1), embedded as a genuine WS_CHILD hwnd via --wid, driven over its
+// JSON IPC named pipe (see MpvEmbed below) - no libmpv linking, same subprocess+
+// pipe pattern as the Go engine seam. Every UI-thread control loop (curSec, the
+// dt-driven playhead, threshold-skip, stock playhead, edit application) is
+// UNCHANGED from the prior GStreamer build: curSec stays the single authoritative
+// clock and the decode thread is simply told "show this exact frame" via an mpv
+// hr-seek instead of a GStreamer pull - a render-backend swap, not an architecture
+// change. GStreamer itself stays linked and initialized (gstInitSEH) because
+// peaksWorker still uses it for one-time per-source audio decode into the .bpk
+// peak cache (E-2) - that pipeline is unrelated to the video player and untouched.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
+#include <commdlg.h>
 #include <d3d11.h>
+#include <wincodec.h> // E-11: WIC decodes the thumb verb's JPEG - native platform feature, no image lib dependency
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -31,6 +41,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <cctype>
 #include <cmath>
 #include <algorithm>
 #include <atomic>
@@ -47,6 +58,7 @@
 #include <fstream>
 #include <sstream>
 #include <array>
+#include <exception>
 using json = nlohmann::json;
 
 static double nowSec() {
@@ -55,6 +67,8 @@ static double nowSec() {
     return (double)c.QuadPart / fq.QuadPart;
 }
 static void fwslash(std::string& s) { for (auto& c : s) if (c == '\\') c = '/'; }
+static void editLog(const std::string& line);   // fwd decl - defined below, used inside engineCall for diagnosis
+static thread_local const char* t_threadTag = "main/ui";   // set at each named thread's entry; read by the crash-log terminate handler
 static std::string baseName(const std::string& p) {
     size_t i = p.find_last_of("/\\");
     return i == std::string::npos ? p : p.substr(i + 1);
@@ -67,6 +81,7 @@ struct Engine {
     PROCESS_INFORMATION pi = {};
     HANDLE hin = nullptr, hout = nullptr;   // our write-end of its stdin, read-end of its stdout
     std::mutex mx;                      // guards the request id counter + reply map
+    std::mutex writeMx;                 // serializes WriteFile() - multiple threads call engineCall()
     std::condition_variable cv;
     std::map<std::string, json> replies;   // id -> reply envelope (ok/data/error)
     std::map<std::string, bool> seen;     // id -> received
@@ -112,31 +127,40 @@ static bool engineStart() {
 }
 
 // reader: parse the engine's {"id":..,"reply":{..}} lines, stash by id.
+// I-1 FIX (found live against the real E:\TakingBack2007 corpus, 2258 videos):
+// this used to hold the whole in-flight line in a FIXED 64KB buffer. open_folder's
+// reply for a real multi-thousand-clip corpus is well over 64KB of JSON with no
+// newline before the buffer fills, so `kBuf - held - 1` hit 0, ReadFile returned
+// got=0, and the `got > 0` loop condition silently exited - engineReader thought
+// the engine had died (it hadn't) and every in-flight call reported "engine
+// timeout / no reply" in single-digit milliseconds. Looked exactly like an engine
+// crash; was actually a fixed-size accumulator with no room for a big reply. Fix:
+// accumulate into a std::string that grows with the reply (no line-length cap) -
+// each ReadFile still reads a bounded 64KB chunk, but a partial line just carries
+// over to the next read instead of being capped.
 static void engineReader() {
-    const int kBuf = 1 << 16;
-    std::unique_ptr<char[]> buf(new char[kBuf]);
-    DWORD got = 0; char* p = buf.get(); int held = 0;
-    while (g_engine.hout && ReadFile(g_engine.hout, buf.get() + held, kBuf - held - 1, &got, nullptr) && got > 0) {
-        held += (int)got; buf[held] = 0;
-        char* line = buf.get();
-        for (char* q = buf.get(); q < buf.get() + held; q++) {
-            if (*q == '\n') {
-                *q = 0;
-                try {
-                    json j = json::parse(line);
-                    if (j.contains("id") && j.contains("reply")) {
-                        std::lock_guard<std::mutex> lk(g_engine.mx);
-                        std::string id = j["id"].get<std::string>();
-                        g_engine.replies[id] = j["reply"];
-                        g_engine.seen[id] = true;
-                        g_engine.cv.notify_all();
-                    }
-                } catch (...) {}
-                line = q + 1;
-            }
+    t_threadTag = "engineReader";
+    std::string buf;
+    char chunk[1 << 16];
+    DWORD got = 0;
+    while (g_engine.hout && ReadFile(g_engine.hout, chunk, sizeof chunk, &got, nullptr) && got > 0) {
+        buf.append(chunk, got);
+        size_t nl;
+        while ((nl = buf.find('\n')) != std::string::npos) {
+            std::string line = buf.substr(0, nl);
+            buf.erase(0, nl + 1);
+            if (line.empty()) continue;
+            try {
+                json j = json::parse(line);
+                if (j.contains("id") && j.contains("reply")) {
+                    std::lock_guard<std::mutex> lk(g_engine.mx);
+                    std::string id = j["id"].get<std::string>();
+                    g_engine.replies[id] = j["reply"];
+                    g_engine.seen[id] = true;
+                    g_engine.cv.notify_all();
+                }
+            } catch (...) {}
         }
-        held = (int)(buf.get() + held - line);
-        memmove(buf.get(), line, (size_t)held);
     }
     std::lock_guard<std::mutex> lk(g_engine.mx);
     g_engine.alive = false;
@@ -146,21 +170,32 @@ static void engineReader() {
 // Fire-and-wait: send a verb, block until its reply (or engine death). Returns the reply
 // envelope; ok=false with an error string on timeout/death. Thread-safe.
 static json engineCall(const std::string& verb, const json& args, double timeoutSec = 20.0) {
+    editLog("engineCall(" + verb + ") enter");
     if (!g_engine.alive) { if (!engineStart()) return { {"ok",false}, {"error","engine not running"} }; }
     std::string id;
     { std::lock_guard<std::mutex> lk(g_engine.mx); id = "c" + std::to_string(g_engine.nextId.fetch_add(1)); }
     json req = { {"id", id}, {"verb", verb}, {"args", args} };
     std::string line = req.dump() + "\n";
     DWORD written = 0;
-    if (!g_engine.hin || !WriteFile(g_engine.hin, line.c_str(), (DWORD)line.size(), &written, nullptr)) {
-        return { {"ok",false}, {"error","write to engine failed"} };
+    editLog("engineCall(" + verb + ") id=" + id + " about to write");
+    {
+        // Multiple threads can call engineCall() concurrently (editWorker,
+        // emitSelect's detached thread, occasional direct UI-thread calls) -
+        // serialize the actual pipe write so two callers' JSON lines can
+        // never interleave into one garbled line the engine can't parse.
+        std::lock_guard<std::mutex> wlk(g_engine.writeMx);
+        if (!g_engine.hin || !WriteFile(g_engine.hin, line.c_str(), (DWORD)line.size(), &written, nullptr)) {
+            return { {"ok",false}, {"error","write to engine failed"} };
+        }
     }
+    editLog("engineCall(" + verb + ") id=" + id + " wrote, waiting for reply");
     std::unique_lock<std::mutex> lk(g_engine.mx);
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds((int64_t)(timeoutSec * 1000));
     while (!g_engine.seen[id]) {
         if (!g_engine.alive) break;
         if (g_engine.cv.wait_until(lk, deadline) == std::cv_status::timeout) break;
     }
+    editLog("engineCall(" + verb + ") id=" + id + " wait done seen=" + (g_engine.seen[id] ? "1" : "0") + " alive=" + (g_engine.alive ? "1" : "0"));
     if (!g_engine.seen[id]) return { {"ok",false}, {"error","engine timeout / no reply"} };
     json r = g_engine.replies[id];
     g_engine.replies.erase(id); g_engine.seen.erase(id);
@@ -171,50 +206,361 @@ static void engineShutdown() {
     if (g_engine.pi.hProcess) { WaitForSingleObject(g_engine.pi.hProcess, 1500); CloseHandle(g_engine.pi.hProcess); CloseHandle(g_engine.pi.hThread); }
 }
 
-// --------------- GStreamer VIDEO decoder (proven path from the seed) ---------------
-struct Layer { GstElement* pipe = nullptr; GstBus* bus = nullptr; std::string loaded; };
-static Layer g_layer[1];
-static std::vector<uint8_t> g_rgba;
-static int g_vw = 0, g_vh = 0;
-static double g_composeMs = 0;
+// --------------- EDIT WORKER: split/delete/trim/undo routed off the UI thread (A-4) ---------------
+// Same request/poll shape as the decode worker's P1 fix, but DRAIN-ALL, not
+// coalesce-to-latest: a compose() request can safely drop stale positions
+// (only the newest matters), but an edit must never be dropped - 20 rapid
+// splits must land as 20 real edits (I-6). So completed edits queue up and
+// the UI thread applies every one, in strict FIFO order, once per frame -
+// never blocking the render loop while the engine round-trip is in flight.
+struct EditReq {
+    std::string verb;
+    json args;
+    int kind = 0;      // 0=split 1=remove 2=trimOut 3=trimIn 4=undo
+    double t = 0;       // editT() at request time, for the local group-track mirror
+    bool group = false;
+    std::pair<double, double> rem{ 0, 0 };   // precomputed ripple (Del/O/I only)
+};
+struct EditResult { EditReq req; bool ok = false; json data; };
+static std::deque<EditReq> g_editQ;
+static std::mutex g_editQMx; static std::condition_variable g_editQCv;
+static std::deque<EditResult> g_editDone;
+static std::mutex g_editDoneMx;
+static bool g_editQuit = false;
+// Clip ids with a split/remove/trim (kind 0/1/2/3) request already queued or
+// in flight on editWorker. UI-thread-only (inserted on keypress, erased when
+// the reply is drained), no extra lock needed. ROOT CAUSE FIX (found live
+// this session, real engine-backed clip, not the demo fallback): the S/Del/O/I
+// handlers read c->id from g_track[0] synchronously at keypress time, but
+// g_track[0] is only refreshed once the matching reply lands. A rapid burst
+// (real Jordan-speed multi-tap, or playback auto-repeat) queues N requests
+// against the SAME pre-split id before the first reply updates the track; the
+// engine accepts only the first (the id then no longer exists) and silently
+// rejects the rest (ok:false) - the UI drain loop's `if (!res.ok) continue`
+// swallows them with zero visible error. Net effect: 15 rapid S presses on a
+// real clip produced exactly 1 real split, not 15 - I-6's literal contract
+// line, previously "architecturally plausible but not end-to-end proven"
+// (the demo fallback's clips all share id="" so this race was invisible
+// there). Fix: don't let a second edit targeting the same still-resolving
+// clip id be queued at all; once its reply lands (typically single-digit ms),
+// the next press resolves against the fresh, engine-confirmed id.
+static std::set<std::string> g_editsInFlight;
 
-static bool layerInit(Layer& L, std::string file) {
-    fwslash(file);
-    char s[2048];
-    snprintf(s, sizeof s,
-        "filesrc location=\"%s\" ! parsebin ! d3d11h264dec ! d3d11convert ! "
-        "video/x-raw(memory:D3D11Memory),format=RGBA ! d3d11download ! appsink name=s sync=false max-buffers=2",
-        file.c_str());
-    GError* e = nullptr; L.pipe = gst_parse_launch(s, &e);
-    if (!L.pipe || e) { fprintf(stderr, "parse: %s\n", e ? e->message : "?"); return false; }
-    L.bus = gst_element_get_bus(L.pipe);
-    gst_element_set_state(L.pipe, GST_STATE_PAUSED);
-    return gst_element_get_state(L.pipe, nullptr, nullptr, 15 * GST_SECOND) == GST_STATE_CHANGE_SUCCESS;
+// Ground-truth edit trace, OPT-IN via BECKY_REVIEW_EDIT_LOG=<path> (unset =
+// zero overhead, no file touched). Settles the still-open question from the
+// prior session's COULD NOT DO: whether a rapid-burst S/Del/O/I keypress
+// actually reaches this handler at all (a GetAsyncKeyState edge-detection
+// question) vs. the request being correctly built but rejected/gated
+// downstream (an edit-correctness question). A screenshot/undo-count can't
+// tell those apart; this log can, independent of any synthetic-input or
+// vision-API flakiness.
+static std::ofstream g_editLog;
+static std::mutex g_editLogMx;   // editWorker's thread and the UI thread both log
+static void editLogInit() {
+    if (const char* p = getenv("BECKY_REVIEW_EDIT_LOG")) g_editLog.open(p, std::ios::app);
 }
-static bool layerLoad(Layer& L, const std::string& src) {
-    if (L.pipe && L.loaded == src) return true;
-    if (L.pipe) { gst_element_set_state(L.pipe, GST_STATE_NULL); gst_object_unref(L.bus); gst_object_unref(L.pipe); L.pipe = nullptr; }
-    if (!layerInit(L, src)) { L.loaded.clear(); return false; }
-    L.loaded = src; return true;
+static void editLog(const std::string& line) {
+    if (!g_editLog.is_open()) return;
+    std::lock_guard<std::mutex> lk(g_editLogMx);
+    g_editLog << nowSec() << " " << line << "\n"; g_editLog.flush();
 }
-static void layerSeek(Layer& L, double srcSec) {
-    GstClockTime pos = (GstClockTime)(srcSec * GST_SECOND);
-    gst_element_seek_simple(L.pipe, GST_FORMAT_TIME,
-        (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE), (gint64)pos);
+
+// I-9 evidence trail, OPT-IN via BECKY_REVIEW_FRAME_TRACE=<path> (unset = zero
+// overhead, no file touched). Every prior cycle's I-9/I-7 claim was a spot-check
+// or a log-timestamp inference; this is a per-frame wall-clock CSV so "no >100ms
+// stall for 5 minutes" is a number anyone can grep, not a narrative.
+static std::ofstream g_frameTrace;
+static long g_frameTraceStalls = 0;
+static void frameTraceInit() {
+    if (const char* p = getenv("BECKY_REVIEW_FRAME_TRACE")) {
+        g_frameTrace.open(p, std::ios::app);
+        if (g_frameTrace.is_open()) g_frameTrace << "frame,tSec,deltaMs,stall\n";
+    }
 }
-static bool layerPull(Layer& L, GstVideoFrame* f, GstSample** out) {
-    GstMessage* m = gst_bus_timed_pop_filtered(L.bus, 5 * GST_SECOND,
-        (GstMessageType)(GST_MESSAGE_ASYNC_DONE | GST_MESSAGE_ERROR));
-    if (!m) return false;
-    bool err = GST_MESSAGE_TYPE(m) == GST_MESSAGE_ERROR; gst_message_unref(m);
-    if (err) return false;
-    GstElement* sink = gst_bin_get_by_name(GST_BIN(L.pipe), "s");
-    GstSample* smp = gst_app_sink_pull_preroll(GST_APP_SINK(sink)); gst_object_unref(sink);
-    if (!smp) return false;
-    GstVideoInfo info;
-    if (!gst_video_info_from_caps(&info, gst_sample_get_caps(smp))) { gst_sample_unref(smp); return false; }
-    if (!gst_video_frame_map(f, &info, gst_sample_get_buffer(smp), GST_MAP_READ)) { gst_sample_unref(smp); return false; }
-    *out = smp; return true;
+static void frameTraceTick(long frameIdx, double tSec, double deltaMs) {
+    if (!g_frameTrace.is_open()) return;
+    bool stall = deltaMs > 100.0;
+    if (stall) g_frameTraceStalls++;
+    g_frameTrace << frameIdx << "," << tSec << "," << deltaMs << "," << (stall ? 1 : 0) << "\n";
+    if (stall || (frameIdx % 600) == 0) g_frameTrace.flush();
+}
+
+// Always-on crash diagnostic (no env gate - this is a safety net, not an opt-in
+// trace). Root cause of the recurring "becky-review.exe has stopped working"
+// (ucrtbase.dll, exception 0xC0000409) IS KNOWN from the undo-stack-underrun fix
+// above: an uncaught C++ exception on ANY thread reaches std::terminate(), whose
+// default handler calls abort(), and modern UCRT's abort() raises exactly that
+// fastfail code - there is no memory corruption, just a missed try/catch. A
+// std::terminate handler runs BEFORE abort() (fastfail bypasses SEH/VEH entirely,
+// but terminate() is a normal function call), so this is the one place that can
+// reliably capture what actually threw, on whichever thread it happened.
+static std::ofstream g_crashLog;
+static std::mutex g_crashLogMx;
+static void crashLog(const std::string& line) {
+    std::lock_guard<std::mutex> lk(g_crashLogMx);
+    if (!g_crashLog.is_open()) return;
+    g_crashLog << nowSec() << " [tid " << GetCurrentThreadId() << " " << t_threadTag << "] " << line << "\n";
+    g_crashLog.flush();
+}
+static void crashLogInit() {
+    char exe[MAX_PATH] = { 0 }; GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string p(exe); auto pos = p.find_last_of("\\/");
+    p = (pos == std::string::npos ? std::string(".") : p.substr(0, pos)) + "\\crash.log";
+    g_crashLog.open(p, std::ios::app);
+    std::set_terminate([] {
+        std::string msg = "terminate() with no active exception (likely noexcept violation or pure-virtual call)";
+        if (auto ep = std::current_exception()) {
+            try { std::rethrow_exception(ep); }
+            catch (const std::exception& e) { msg = std::string("uncaught std::exception: ") + e.what(); }
+            catch (...) { msg = "uncaught non-std exception"; }
+        }
+        crashLog(std::string("TERMINATE - ") + msg);
+        std::abort();
+    });
+}
+
+static void queueEdit(EditReq req) {
+    std::lock_guard<std::mutex> lk(g_editQMx);
+    g_editQ.push_back(std::move(req));
+    g_editQCv.notify_one();
+}
+// Worker thread: pops one request at a time (FIFO) and blocks ONLY this
+// thread on the engine round-trip - the UI thread is never touched. Requests
+// are processed strictly in enqueue order, so Ctrl+Z after a burst of splits
+// always undoes the correct (latest) one.
+static void editWorker() {
+    t_threadTag = "editWorker";
+    for (;;) {
+        EditReq req;
+        {
+            std::unique_lock<std::mutex> lk(g_editQMx);
+            g_editQCv.wait(lk, [] { return g_editQuit || !g_editQ.empty(); });
+            if (g_editQuit) return;
+            req = std::move(g_editQ.front()); g_editQ.pop_front();
+        }
+        EditResult res;
+        try {
+            json r = engineCall(req.verb, req.args, 5.0);
+            res.ok = r.value("ok", false); res.data = r.value("data", json::object());
+            if (res.ok && req.verb == "undo") {
+                // ROOT-CAUSED THIS SESSION (was the unsolved "undo-stack-underrun" artifact):
+                // "undo" on an exhausted stack still replies ok=true, changed=false, carrying
+                // the CURRENT (unchanged) engine timeline inline - it never needs the extra
+                // "timeline" round-trip split/remove/trim need. The old code (and this code,
+                // before this fix) blindly reloaded from it regardless of "changed", which
+                // wipes the display to whatever the engine's reel actually is - empty, if the
+                // UI is showing the client-only demo fallback (main() lines ~1737-1741, never
+                // registered with the engine) rather than a real opened/edited reel. Only
+                // apply the reload when the engine confirms something actually changed.
+                //
+                // CRASH ROOT-CAUSED THIS SESSION: this used to re-read the raw `r["data"]`
+                // here (a SECOND, separate access from the `res.data` already safely built
+                // above via r.value("data", json::object())). nlohmann's operator[] on an
+                // object silently vivifies a null child for a missing key; .value() on that
+                // null then THROWS json::type_error (306) instead of defaulting. An "undo"
+                // reply that omits "data" - observed live, right at undo-stack exhaustion,
+                // e.g. after 14 splits + 1 add, the 15th/16th Ctrl+Z - threw here, uncaught,
+                // on this background thread: std::terminate -> abort -> the exact recurring
+                // "becky-review.exe has stopped working" (ucrtbase.dll, 0xC0000409) seen in
+                // the Windows Event Log across many prior sessions, never root-caused before
+                // because it was always screenshot/undo-count verified, never log-instrumented.
+                // Fix: reuse res.data (already object-typed, already defaulted) - never touch
+                // raw `r` a second time.
+                if (res.data.value("changed", false)) res.data["__timeline"] = res.data.value("timeline", json::object());
+            } else if (res.ok) {
+                json tv = engineCall("timeline", {}, 5.0);
+                if (tv.value("ok", false)) res.data["__timeline"] = tv.value("data", json::object());
+            }
+        } catch (const std::exception& e) {
+            // H-2/H-3 "degrade, never crash": any other unexpected engine reply shape
+            // must never take the whole app down with it - log it and hand the UI thread
+            // a clean ok=false (its existing `if (!res.ok) continue;` already degrades
+            // gracefully) instead of letting the exception escape this thread.
+            editLog(std::string("EXCEPTION in editWorker verb=") + req.verb + ": " + e.what());
+            res = EditResult{}; res.ok = false;
+        }
+        editLog("editWorker post-try, about to push_back verb=" + req.verb);
+        res.req = std::move(req);
+        {
+            std::lock_guard<std::mutex> lk(g_editDoneMx);
+            g_editDone.push_back(std::move(res));
+        }
+        editLog("editWorker pushed_back, looping");
+    }
+}
+
+// #0 CRITICAL: on this machine gst_init()/its plugin-registry scan can hard-crash the
+// process (a native access violation, NOT a C++ exception - a plain try/catch cannot see
+// it) when the official msvc_x86_64 GStreamer DLLs and an Anaconda/conda-forge shadow
+// GStreamer install both land on PATH. SEH (__try/__except) is the only mechanism that can
+// catch a hardware/structured exception. If init fails or crashes, g_gstAvailable stays
+// false; every GStreamer call site below (peaksWorker, decodeWorker/composeOnDecodeThread,
+// the video pane draw, shutdown) checks it first, so the window still opens (shell, library,
+// timeline, search all work) and the video pane shows a plain "video decode unavailable"
+// note instead of the whole app dying before CreateWindow ever runs.
+static std::atomic<bool> g_gstAvailable{ false };
+static int gstInitSEH(int argc, char** argv) {
+    __try {
+        gst_init(&argc, &argv);
+        // FIX (cycle-4, root-caused via isolated repro): GStreamer/GLib lazily create
+        // GLib's internal "pool-spawner" thread-pool manager on the FIRST pipeline state
+        // change anywhere in the process. If that first-ever call happens on a thread
+        // already in THREAD_MODE_BACKGROUND_BEGIN - which every peaksWorker decode thread
+        // enters immediately - Windows rejects the manager thread's own SetThreadPriority
+        // call and GLib treats that as fatal. Fix: force that one-time lazy init here, on
+        // the main thread at normal priority, before any worker thread exists to race it.
+        GError* warmErr = nullptr;
+        GstElement* warm = gst_parse_launch("fakesrc num-buffers=1 ! fakesink", &warmErr);
+        if (warm) {
+            gst_element_set_state(warm, GST_STATE_PAUSED);
+            gst_element_get_state(warm, nullptr, nullptr, 5 * GST_SECOND);
+            gst_element_set_state(warm, GST_STATE_NULL);
+            gst_object_unref(warm);
+        }
+        if (warmErr) g_error_free(warmErr);
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+// --------------- D-1: mpv embedded video pane (--wid child hwnd over JSON IPC) ---------------
+// Same subprocess+pipe shape as the Go engine seam (CreateProcessW + a pipe reader
+// thread), except mpv's IPC pipe is a NAMED pipe it creates itself (--input-ipc-
+// server) rather than inherited stdio handles. #0-style guard: if mpv.exe is
+// missing, CreateProcess fails, or the pipe never comes up, g_mpvAvailable stays
+// false and the video pane shows a plain degrade note instead of hanging or
+// crashing - mirrors gstInitSEH/g_gstAvailable exactly, just for a subprocess
+// failure mode instead of a native in-process one (no SEH needed here: CreateProcess
+// failing is an ordinary Win32 return value, not a hardware exception).
+static std::atomic<bool> g_mpvAvailable{ false };
+static HWND g_mpvHwnd = nullptr;
+static PROCESS_INFORMATION g_mpvProc{};
+static HANDLE g_mpvPipe = INVALID_HANDLE_VALUE;       // write side (mpvWriteLine only)
+static HANDLE g_mpvPipeRead = INVALID_HANDLE_VALUE;   // read side (mpvReaderThread only)
+static std::string g_mpvPipeName;
+static std::mutex g_mpvWriteMx;
+static std::string g_mpvLoadedSource;   // which source file mpv currently has open (fwslash'd)
+
+static bool mpvWriteLine(const std::string& line) {
+    if (g_mpvPipe == INVALID_HANDLE_VALUE) return false;
+    std::lock_guard<std::mutex> lk(g_mpvWriteMx);
+    std::string s = line; s += "\n";
+    DWORD written = 0;
+    return WriteFile(g_mpvPipe, s.data(), (DWORD)s.size(), &written, nullptr) != 0;
+}
+static bool mpvCommand(const json& cmdArr) {
+    json j; j["command"] = cmdArr;
+    return mpvWriteLine(j.dump());
+}
+// Reader thread: drains mpv's IPC replies/events (we don't need to correlate
+// request ids - every command here is fire-and-forget). Its real job is
+// detecting mpv exiting/crashing so the video pane degrades visibly instead of
+// silently freezing on the last frame it ever showed. Reads on g_mpvPipeRead, a
+// DUPLICATE of the connect handle: a synchronous named-pipe HANDLE shared between
+// a thread parked in a blocking ReadFile and another thread calling WriteFile
+// deadlocks the writer on the handle's own I/O lock (observed live - the loadfile
+// command never reached mpv until this split) - two HANDLE values on the same
+// pipe instance, one per direction, is the fix (mirrors the engine seam's
+// separate hin/hout pipes, just via DuplicateHandle instead of two CreatePipes).
+static void mpvReaderThread() {
+    t_threadTag = "mpvReader";
+    char buf[8192];
+    for (;;) {
+        DWORD n = 0;
+        if (!ReadFile(g_mpvPipeRead, buf, sizeof buf, &n, nullptr) || n == 0) break;
+    }
+    crashLog("mpv: IPC pipe closed (mpv exited) - video decode disabled, window still open");
+    g_mpvAvailable.store(false);
+}
+static HANDLE mpvConnectOne() {
+    HANDLE h = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 50 && h == INVALID_HANDLE_VALUE; attempt++) {
+        h = CreateFileA(g_mpvPipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h == INVALID_HANDLE_VALUE) Sleep(100);
+    }
+    return h;
+}
+// Connects to the IPC pipe mpv creates a moment after launch (retried off the UI
+// thread so a slow/failed mpv startup can never block window-open or the render
+// loop - the exact P1 lesson this file already learned from gst_init). Opens TWO
+// independent client connections (mpv's named-pipe IPC server accepts multiple
+// simultaneous clients, one pipe instance each) rather than sharing one HANDLE
+// across the permanently-blocking reader and the writer: a DuplicateHandle of one
+// synchronous connection was tried first and still deadlocked the writer, so the
+// write side gets its own real connection instead - proven live via a manual
+// second-connection test that loaded a file cleanly while the first connection
+// was stuck. On success, becomes the reader thread.
+static void mpvConnectThread() {
+    t_threadTag = "mpvConnect";
+    g_mpvPipeRead = mpvConnectOne();
+    if (g_mpvPipeRead == INVALID_HANDLE_VALUE) {
+        crashLog("mpv: IPC read-pipe connect failed after 5s - video decode disabled, window still open");
+        return;
+    }
+    g_mpvPipe = mpvConnectOne();
+    if (g_mpvPipe == INVALID_HANDLE_VALUE) {
+        crashLog("mpv: IPC write-pipe connect failed after 5s - video decode disabled, window still open");
+        CloseHandle(g_mpvPipeRead); g_mpvPipeRead = INVALID_HANDLE_VALUE;
+        return;
+    }
+    g_mpvAvailable.store(true);
+    crashLog("mpv: launched + IPC connected, video decode available");
+    mpvReaderThread();
+}
+static bool mpvLaunch(HWND parent) {
+    static const wchar_t* kClass = L"beckyMpvHost";
+    WNDCLASSEXW wc{ sizeof wc };
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = kClass;
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    RegisterClassExW(&wc);
+    g_mpvHwnd = CreateWindowExW(0, kClass, L"", WS_CHILD, 0, 0, 16, 16, parent, nullptr, wc.hInstance, nullptr);
+    if (!g_mpvHwnd) { crashLog("mpv: child hwnd create failed - video decode disabled, window still open"); return false; }
+
+    std::string exe = "X:/AI-2/becky-tools/native/becky-review/runtime/mpv/mpv.exe";
+    if (!std::ifstream(exe)) {
+        crashLog("mpv: mpv.exe not found at " + exe + " (run fetch-mpv.ps1) - video decode disabled, window still open");
+        return false;
+    }
+    char pipeName[64]; snprintf(pipeName, sizeof pipeName, "beckyreviewmpv%lu", (unsigned long)GetCurrentProcessId());
+    g_mpvPipeName = std::string("\\\\.\\pipe\\") + pipeName;
+
+    std::wstring wex(exe.begin(), exe.end());
+    wchar_t wpipe[64]; MultiByteToWideChar(CP_UTF8, 0, pipeName, -1, wpipe, 64);
+    std::wstring cmd = L"\"" + wex + L"\""
+        L" --wid=" + std::to_wstring((unsigned long long)(uintptr_t)g_mpvHwnd) +
+        L" --input-ipc-server=\\\\.\\pipe\\" + wpipe +
+        L" --hr-seek=yes --hwdec=auto-safe --keep-open=yes --idle=yes"
+        L" --force-window=yes --no-osc --osc=no --sub-auto=no --sid=no"
+        L" --no-config --pause=yes --no-terminal --really-quiet"
+        L" --cache=yes --demuxer-readahead-secs=20";
+
+    STARTUPINFOW si{ sizeof si }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &g_mpvProc)) {
+        crashLog("mpv: CreateProcess failed - video decode disabled, window still open");
+        DestroyWindow(g_mpvHwnd); g_mpvHwnd = nullptr;
+        return false;
+    }
+    std::thread(mpvConnectThread).detach();
+    return true;
+}
+// Non-blocking: called from the decode thread (same dispatch site the old
+// GStreamer pull used). Atomic loadfile+start= on a source change (never
+// load-then-seek - the exact race this file already root-caused once for
+// search-hit clicks); a plain exact seek when only the position moved within
+// the already-loaded source (the common case during scrub/playhead-tick).
+static void mpvSeekExact(const std::string& source, double srcSec) {
+    if (!g_mpvAvailable.load()) return;
+    std::string src = source; fwslash(src);
+    if (src != g_mpvLoadedSource) {
+        char startOpt[64]; snprintf(startOpt, sizeof startOpt, "start=%.6f", srcSec);
+        mpvCommand(json::array({ "loadfile", src, "replace", 0, std::string(startOpt) }));
+        g_mpvLoadedSource = src;
+    } else {
+        mpvCommand(json::array({ "seek", srcSec, "absolute", "exact" }));
+    }
 }
 
 // --------------- ACCURATE WAVEFORMS: windowed, seek-first min/max peak pyramid ---------------
@@ -233,14 +579,43 @@ struct Peaks {
     bool failed = false;
     bool dirty = false;
     std::deque<std::pair<double, double>> jobs;
+    // I-6 dedup: the window currently popped off `jobs` and being decoded (not
+    // yet in secFilled, no longer in the deque either) - see peaksRequest.
+    std::pair<double, double> inFlight{ -1.0, -1.0 };
     std::condition_variable cv;
     double lastMissReq = 0;
+    // cycle 19 real-corpus finding (E:\TakingBack2007, a partially-downloaded
+    // livestream .mkv with a companion ".live_chat.json.part" - the known
+    // capture-gap corpus issue, see memory livestream-capture-corruption): a
+    // window whose audio is genuinely gapped/corrupt makes gst_element_seek's
+    // pipeline never produce samples for it. decodeWindow returns (no error, no
+    // crash) but fills NOTHING; drawWave's once-a-second "still missing" retry
+    // (throttled by lastMissReq) then re-requests it forever - confirmed live
+    // over 4+ minutes, filledSecs stuck at 0/N, job counter climbing at a slow
+    // but truly UNBOUNDED steady rate. stuckAttempts counts consecutive popped
+    // jobs that made zero fill progress; past kMaxStuckAttempts the source is
+    // marked `failed` (peaksRequest/drawWave both already early-return on
+    // `failed`), which stops the retries permanently instead of forever - the
+    // same "degrade, never hang" contract as a real decode error.
+    int stuckAttempts = 0;
     std::string source, cachePath;
 };
+static const int kMaxStuckAttempts = 8;
 static std::map<std::string, std::shared_ptr<Peaks>> g_peaks;
 static std::mutex g_peaksMx;
 static std::mutex g_decMx; static std::condition_variable g_decCv; static int g_decActive = 0;
 static std::atomic<bool> g_busyHint{ false };
+// E-18/I-6 instrumentation: counts every job actually PUSHED onto a Peaks.jobs
+// deque (peaksRequest below) - not decode work, the enqueue itself. BUILD_1.md's
+// verification bar for I-6 is literally "split 20x rapidly, assert 0 jobs
+// enqueued"; this is the counter that assertion reads (see peaksRequest's
+// already-filled short-circuit, which is what keeps it at 0 once a source's
+// audio is warm).
+static std::atomic<uint64_t> g_peaksJobsEnqueued{ 0 };
+// cycle 19 diagnostic: mirrors g_track[0].size() (declared later in this file) so
+// peaksRequest can log it without a forward-declaration of Clip/g_track. Updated
+// once per loadTimelineView call, right after the real track is rebuilt.
+static std::atomic<size_t> g_trackClipCountForLog{ 0 };
 
 static uint64_t fnv1a64(const std::string& s) {
     uint64_t h = 1469598103934665603ULL;
@@ -392,8 +767,15 @@ static void decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a,
     g_fillEpoch.fetch_add(1);
 }
 static void peaksWorker(std::shared_ptr<Peaks> P) {
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    t_threadTag = "peaksWorker";
+    // Spec 3.4 P3: CPU priority alone is not enough - a background thread doing disk
+    // I/O can still stall the OS cursor. BACKGROUND_BEGIN also drops I/O + memory
+    // priority (this is the documented fix for FB9's "even my mouse lags" bug).
+    if (!SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN))
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     if (loadPeaksCache(*P)) g_fillEpoch.fetch_add(1);
+    // #0 CRITICAL: GStreamer never initialized - do not touch any gst_* call, it is unsafe.
+    if (!g_gstAvailable.load()) { P->failed = true; return; }
     GError* uerr = nullptr;
     char* uri = gst_filename_to_uri(P->source.c_str(), &uerr);
     if (!uri) { if (uerr) g_error_free(uerr); P->failed = true; return; }
@@ -437,6 +819,14 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             if (P->jobs.empty()) continue;
         }
         auto job = P->jobs.front(); P->jobs.pop_front();
+        // I-6 dedup: mark this window in-flight WHILE still holding the lock, so
+        // a peaksRequest arriving between the pop above and the re-lock below
+        // (a split's reload can land at any point in that window - decodeWindow
+        // itself can take real wall-clock time) sees it as "already being
+        // handled" instead of finding it in neither `jobs` nor `secFilled` and
+        // re-pushing a brand-new duplicate. Cleared right after this job's runs
+        // are decoded, below.
+        P->inFlight = job;
         double a = std::max(0.0, job.first), b = std::min(P->duration, job.second);
         std::vector<std::pair<double, double>> runs;
         double runA = -1;
@@ -454,7 +844,13 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
                 g_decCv.wait(g, [] { return g_decActive < (g_busyHint.load() ? 1 : 2); });
                 g_decActive++;
             }
-            decodeWindow(*P, pipe, sink, r.first, r.second);
+            try {
+                decodeWindow(*P, pipe, sink, r.first, r.second);
+            } catch (const std::exception& e) {
+                crashLog(std::string("peaksWorker decodeWindow: caught ") + e.what() + " - window skipped, not crashing");
+            } catch (...) {
+                crashLog("peaksWorker decodeWindow: caught non-std exception - window skipped, not crashing");
+            }
             {
                 std::lock_guard<std::mutex> g(g_decMx);
                 g_decActive--;
@@ -462,6 +858,35 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             g_decCv.notify_one();
         }
         lk.lock();
+        P->inFlight = { -1.0, -1.0 };
+        // cycle 19 real-corpus finding: did this job's range actually gain any
+        // decoded seconds? A window whose audio is unseekable/gapped (confirmed
+        // live on a partially-downloaded livestream .mkv - see Peaks::stuckAttempts
+        // above) reaches here every single time with the EXACT same range still
+        // unfilled - decodeWindow hit no error to catch, it simply produced zero
+        // samples. Left unchecked, drawWave's once-a-second "still missing" retry
+        // (main.cpp drawWave) re-requests this same window forever - a real,
+        // slow-but-truly-unbounded job-enqueue growth, distinct from (and not
+        // fixed by) the split-time dedup above. Give up after kMaxStuckAttempts
+        // instead of retrying forever - same "degrade, never hang" contract as
+        // any other decode failure.
+        {
+            size_t s0 = (size_t)std::ceil(a), s1 = std::min(P->secFilled.size(), (size_t)std::floor(b));
+            bool nowFilled = true;
+            for (size_t s = s0; s < s1; s++) if (!P->secFilled[s]) { nowFilled = false; break; }
+            if (nowFilled) P->stuckAttempts = 0;
+            else if (++P->stuckAttempts >= kMaxStuckAttempts) {
+                P->failed = true;
+                lk.unlock();
+                crashLog("peaksWorker: giving up on " + baseName(P->source) + " - window [" +
+                    std::to_string(a) + "," + std::to_string(b) + "] never filled after " +
+                    std::to_string(kMaxStuckAttempts) + " attempts (likely corrupt/gapped media) - "
+                    "waveform disabled for this source, not retrying forever");
+                gst_element_set_state(pipe, GST_STATE_NULL);
+                gst_object_unref(sink); gst_object_unref(pipe);
+                return;
+            }
+        }
     }
 }
 static std::shared_ptr<Peaks> peaksGet(const std::string& source) {
@@ -481,12 +906,82 @@ static std::shared_ptr<Peaks> peaksEnsure(const std::string& source) {
     std::thread(peaksWorker, P).detach();
     return P;
 }
+// True if every second in [a,b) is already decoded (P.secFilled) - a pure cache
+// hit, nothing left for peaksWorker to do. Caller must hold P.mx.
+//
+// Uses ceil(a)/floor(b), matching decodeWindow's OWN fill-marking promise
+// (it only marks the INTERIOR whole seconds of a decoded run, never the
+// fractional boundary seconds - see decodeWindow above). A floor/floor check
+// (what this used to do) checks a boundary second decodeWindow can never mark,
+// so it always reported "not filled" - live-tested this session: every single
+// split re-enqueued exactly 1 job even on a fully-warm clip, because
+// peaksRequest's own -1s/+5s padding is essentially never second-aligned. A
+// window entirely inside one fractional second (no interior whole second to
+// check) is never trackable either way, so it's conservatively "not filled" -
+// re-checking a sub-second window is cheap; wrongly calling it cached is not.
+static bool peaksWindowFilled(const Peaks& P, double a, double b) {
+    if (!P.ready) return false;   // duration/secFilled not sized yet - unknown, not "filled"
+    double aa = std::max(0.0, a), bb = std::min((double)P.duration, b);
+    if (bb <= aa) return true;    // degenerate/empty window
+    size_t s0 = (size_t)std::ceil(aa), s1 = (size_t)std::floor(bb);
+    if (s1 <= s0) return false;   // sub-second window - no interior second to confirm, always re-check
+    if (s1 > P.secFilled.size()) s1 = P.secFilled.size();
+    for (size_t s = s0; s < s1; s++) if (!P.secFilled[s]) return false;
+    return true;
+}
 static void peaksRequest(const std::string& source, double a, double b) {
     auto P = peaksEnsure(source);
     if (!P || P->failed) return;
     std::lock_guard<std::mutex> lk(P->mx);
-    P->jobs.push_front({ std::max(0.0, a), b });
+    double aa = std::max(0.0, a);
+    // E-18/I-6 (BUILD_1.md SS3.4 P5): loadTimelineView re-requests peaks for EVERY
+    // clip on the track on EVERY edit reply (split/trim/delete/undo all reload the
+    // whole timeline) - without this short-circuit, splitting a clip 20x rapidly
+    // pushes a fresh job per clip per reload even though the audio was decoded once
+    // and is sitting in secFilled/the .bpk cache. A window that's already fully
+    // decoded is a pure cache hit: enqueue NOTHING (not even a cheap no-op job) -
+    // this is the literal "assert 0 jobs enqueued" the I-6 verification bar asks for.
+    if (peaksWindowFilled(*P, aa, b)) return;
+    // I-6 measured regression (this session, real corpus, real numbers): the
+    // "already decoded" short-circuit above only covers COMPLETED windows -
+    // it says nothing about windows already sitting in P->jobs waiting for the
+    // worker. Splitting a clip re-triggers loadTimelineView -> a fresh
+    // peaksRequest for every clip on the track (see the comment above); each
+    // split's two children request a window that is a SUBSET of the window
+    // already requested when the clip was first added (splitting only ever
+    // carves an EXISTING clip's span into smaller pieces, never extends it).
+    // Before this check, every reload re-pushed a brand-new job for every
+    // still-decoding source, even though an as-good-or-wider job for that
+    // exact source was already queued: live-measured on E:\TakingBack2007
+    // with 6 freshly-added sources, a burst of 20 rapid splits pushed the
+    // counter from 232 to 530 jobs (not the flat "0 enqueued once warm" the
+    // I-6 verification bar requires). Skip the push if any pending job for
+    // this source already covers [aa,b] - it will get decoded when that
+    // job's turn comes, same result, no duplicate work. Also check `inFlight`:
+    // a job already popped off `jobs` and mid-decode is in neither `jobs` nor
+    // `secFilled` - without this second check the counter kept climbing even
+    // after the `jobs`-only dedup above (measured: still +6..+17 per reload),
+    // because decodeWindow can take real wall-clock time and rapid splits
+    // land reloads faster than that.
+    for (auto& j : P->jobs) if (j.first <= aa && j.second >= b) return;
+    if (P->inFlight.first <= aa && P->inFlight.second >= b) return;
+    P->jobs.push_front({ aa, b });
+    g_peaksJobsEnqueued.fetch_add(1, std::memory_order_relaxed);
     P->cv.notify_one();
+    // cycle 19 diagnostic (review's suggested next step): log how many seconds of
+    // [aa,b] were ALREADY filled at push time and how many total clips are on the
+    // track right now. If pushes correlate with trackClips growing while
+    // filledSecs stays near 0 for a source whose OWN full window was requested
+    // long ago, that's the "still-cold-source" race, not a dedup logic bug - the
+    // fix is "wait for warm before splitting", not another dedup layer.
+    size_t filledSecs = 0, totalSecs = 0;
+    { size_t s0 = (size_t)std::ceil(aa), s1 = std::min(P->secFilled.size(), (size_t)std::floor(b));
+      if (s1 > s0) { totalSecs = s1 - s0; for (size_t s = s0; s < s1; s++) if (P->secFilled[s]) filledSecs++; } }
+    editLog("PEAKS PUSH src=" + baseName(source) + " aa=" + std::to_string(aa) + " b=" + std::to_string(b) +
+        " ready=" + (P->ready ? "1" : "0") + " dur=" + std::to_string(P->duration) +
+        " jobsLeft=" + std::to_string(P->jobs.size()) + " secFilledSz=" + std::to_string(P->secFilled.size()) +
+        " filledSecs=" + std::to_string(filledSecs) + "/" + std::to_string(totalSecs) +
+        " trackClips=" + std::to_string(g_trackClipCountForLog.load(std::memory_order_relaxed)));
 }
 
 // --------------- the clip track ---------------
@@ -495,10 +990,35 @@ struct Clip {
     std::string label, source, id;
     uint8_t r = 0, g = 174, b = 239;
     bool ready = true;
+    // D-6: provenance fields carried straight from the engine's ClipView JSON
+    // (becky-go/cmd/clip/app.go) - the same Meta the render's burned-in lower
+    // third uses (internal/reel/drawtext.go), so the preview overlay can show
+    // IDENTICAL text without a second source of truth.
+    std::string date, person, location, link;
 };
 static std::vector<Clip> g_track[2];
 static double g_compDur = 0;
 static bool g_group = true;
+
+// D-6: provenance overlay state, mirroring the engine's edl.Overlay (app.go
+// newReel defaults: everything on, position "bottom") so the native preview
+// and the render burn-in agree on which fields are enabled. Parsed fresh from
+// every loadTimelineView reply's "overlay" object - the engine is the one
+// source of truth, this is just a read-only mirror for preview rendering.
+struct OverlayState {
+    bool enabled = true, showFilename = true, showTimecode = true, showDate = true;
+    bool showLink = true, showPerson = true, showLocation = true;
+    std::string position = "bottom";
+};
+static OverlayState g_overlay;
+// 3-state PREVIEW toggle (BUILD_1.md D-6): 0=off (no overlay anywhere), 1=on
+// but hidden in the live preview (DEFAULT - render still burns it in), 2=on
+// and shown in the live preview too. This is purely a native/preview concept;
+// "enabled" on the engine's Overlay always tracks state!=0 so render is never
+// out of sync with "off".
+static int g_ovMode = 1;
+static std::atomic<bool> g_ovEngineEnabled{ true }; // last "enabled" value pushed to the engine
+static bool g_ovShowingInMpv = false; // whether mpv currently has an osd-overlay up
 
 static void relabel(int tr) {
     const char* p = tr == 0 ? "clip " : "pip ";
@@ -510,6 +1030,163 @@ static void packTrack(int tr) {
     double cs = 0;
     for (auto& c : g_track[tr]) { c.compStart = cs; cs += c.out - c.in; }
 }
+// Finds the clip on track tr covering compilation time t (nullptr if none). Shared by
+// the S/Del/O/I edit handlers below, which need the clip's engine id + source time
+// (splitTrack/deleteTrack only mutate the LOCAL track, which track 0 must no longer do).
+static Clip* clipAtComp(int tr, double t) {
+    for (auto& c : g_track[tr]) {
+        double d = c.out - c.in;
+        if (t >= c.compStart && t < c.compStart + d) return &c;
+    }
+    return nullptr;
+}
+
+// D-2: per-source frame rate cache, keyed by source path, so frame-exact stepping
+// uses the CLIP's actual fps instead of a hardcoded 30 (a 25fps source stepped at
+// 1/30s drifts 1.2 frames per press - not frame-exact). Populated lazily off the
+// UI thread (P1: never block a keypress on an engine round trip) via the probe
+// verb, which now also returns fps (ProbeResult.Fps, becky-go/cmd/clip/app.go).
+// Falls back to 30.0 until the async probe lands, matching playWholeVideo's own
+// probe-then-fallback shape for duration.
+static std::map<std::string, double> g_fpsBySource;
+static std::set<std::string> g_fpsInFlight;
+static std::mutex g_fpsMx;
+static double sourceFps(const std::string& source) {
+    if (source.empty()) return 30.0;
+    std::lock_guard<std::mutex> lk(g_fpsMx);
+    auto it = g_fpsBySource.find(source);
+    if (it != g_fpsBySource.end()) return it->second;
+    if (!g_fpsInFlight.count(source)) {
+        g_fpsInFlight.insert(source);
+        std::thread([source] {
+            json r = engineCall("probe", { {"source", source} }, 8.0);
+            double fps = 30.0;
+            if (r.value("ok", false)) {
+                const json& d = r.contains("data") ? r["data"] : r;
+                double p = d.value("fps", 0.0);
+                if (p > 1.0) fps = p;
+            }
+            std::lock_guard<std::mutex> lk2(g_fpsMx);
+            g_fpsBySource[source] = fps;
+        }).detach();
+    }
+    return 30.0;
+}
+
+// --------------- D-6: provenance overlay (Date+UTC / ORIG TC / filename) ---------------
+// Builds the SAME lines the engine's render burns in (becky-go/internal/reel/
+// drawtext.go lowerThirdFilter: Date, ORIG TC, filename|person|location, Link -
+// in that exact order) from the currently-loaded clip's fields, so switching the
+// preview to "shown" (g_ovMode==2) can never disagree with what Render produces
+// (BUILD_1.md D-6: "preview and render show IDENTICAL text or preview shows
+// none"). ASS special characters are escaped so a filename/person/location value
+// can never inject an override tag into the overlay.
+static std::string assEscape(const std::string& s) {
+    std::string out; out.reserve(s.size());
+    for (char c : s) {
+        if (c == '\\' || c == '{' || c == '}') out += '\\';
+        out += c;
+    }
+    return out;
+}
+// HH:MM:SS:FF non-drop timecode at fps - same rounding as edl.SecondsToTimecode
+// (Go side) so the burned-in and previewed timecodes are the identical string.
+static std::string secondsToTimecode(double sec, double fps) {
+    if (fps <= 0) fps = 30.0;
+    if (sec < 0) sec = 0;
+    long long ifps = (long long)std::llround(fps);
+    if (ifps <= 0) ifps = 30;
+    long long totalFrames = (long long)std::llround(sec * (double)ifps);
+    long long frames = totalFrames % ifps;
+    long long totalSecs = totalFrames / ifps;
+    long long secs = totalSecs % 60;
+    long long totalMins = totalSecs / 60;
+    long long mins = totalMins % 60;
+    long long hours = totalMins / 60;
+    char buf[32];
+    snprintf(buf, sizeof buf, "%02lld:%02lld:%02lld:%02lld", hours, mins, secs, frames);
+    return buf;
+}
+// Returns the overlay lines (top -> bottom) for clip c, honoring g_overlay's
+// per-field toggles - empty when nothing is enabled/has content, mirroring
+// metaLine/overlayDate/overlayLink in drawtext.go.
+static std::vector<std::string> overlayLines(const Clip& c) {
+    std::vector<std::string> lines;
+    if (g_overlay.showDate && !c.date.empty())
+        lines.push_back("Date: " + c.date + " UTC");
+    if (g_overlay.showTimecode)
+        lines.push_back("ORIG TC " + secondsToTimecode(c.in, sourceFps(c.source)));
+    {
+        std::vector<std::string> fields;
+        if (g_overlay.showFilename) {
+            std::string name = baseName(c.source);
+            if (!name.empty()) fields.push_back(name);
+        }
+        if (g_overlay.showPerson && !c.person.empty()) fields.push_back(c.person);
+        if (g_overlay.showLocation && !c.location.empty()) fields.push_back(c.location);
+        if (!fields.empty()) {
+            std::string joined;
+            for (size_t i = 0; i < fields.size(); i++) { if (i) joined += " | "; joined += fields[i]; }
+            lines.push_back(joined);
+        }
+    }
+    if (g_overlay.showLink && !c.link.empty()) lines.push_back(c.link);
+    return lines;
+}
+// Pushes (or clears) the preview overlay into mpv via its "osd-overlay" IPC
+// command (ass-events format) - mpv owns the video's own compositor surface (its
+// --wid child hwnd paints independently of our D3D11/ImGui surface), so this is
+// the only way preview text can actually appear ON the frame rather than being
+// drawn under it by ImGui. Fire-and-forget, same as every other mpvCommand call
+// in this file: a failure (old mpv build, IPC hiccup) just leaves the preview
+// showing no overlay, never a crash - render stays ground truth regardless.
+static void mpvClearOverlay() {
+    if (!g_ovShowingInMpv) return;
+    mpvCommand(json::array({ "osd-overlay", 9001, "none", "", 0, 0, 0 }));
+    g_ovShowingInMpv = false;
+}
+static void mpvUpdateOverlay(const Clip* cur) {
+    static std::string s_lastAss;
+    if (g_ovMode != 2 || !cur || !g_mpvAvailable.load()) { mpvClearOverlay(); return; }
+    std::vector<std::string> lines = overlayLines(*cur);
+    if (lines.empty()) { mpvClearOverlay(); return; }
+    std::string body;
+    for (size_t i = 0; i < lines.size(); i++) {
+        if (i) body += "\\N";
+        body += assEscape(lines[i]);
+    }
+    const char* anchor = (g_overlay.position == "top") ? "\\an7" : "\\an1";
+    std::string ass = std::string("{") + anchor + "\\fs28\\b1\\bord2\\shad0\\1c&HFFFFFF&\\3c&H000000&}" + body;
+    if (ass == s_lastAss && g_ovShowingInMpv) return; // unchanged text - skip the IPC round trip
+    s_lastAss = ass;
+    mpvCommand(json::array({ "osd-overlay", 9001, "ass-events", ass, 0, 0, 0 }));
+    g_ovShowingInMpv = true;
+}
+// Cycles/sets the 3-state preview toggle and keeps the engine's Overlay.Enabled
+// in sync: "off" must disable the render burn-in too (D-6's third state means no
+// overlay ANYWHERE), while both "on" states keep it enabled so Render always
+// matches whichever text the preview would show in "shown" mode. set_overlay is
+// a plain in-memory field flip on the engine side (no ffmpeg/IO), so this is
+// called synchronously like the other button-triggered engine verbs in this file.
+static void setOverlayMode(int m) {
+    g_ovMode = m;
+    bool wantEnabled = (m != 0);
+    // P1: never block the UI thread on this engine round trip. set_overlay is
+    // normally instant (an in-memory struct-field flip), but the engine's bridge
+    // dispatches one verb at a time - if a slow verb (e.g. transcribe, which can
+    // run for minutes) is already in flight, this call would otherwise queue
+    // behind it and stall the click that fired it (caught live this session: a
+    // synchronous version of this call took ~2.9s under exactly that contention).
+    // Fire-and-forget on its own thread, same shape as sourceFps/requestTranscribe.
+    if (wantEnabled != g_ovEngineEnabled.load()) {
+        std::thread([wantEnabled] {
+            json r = engineCall("set_overlay", { {"field", "enabled"}, {"value", wantEnabled} }, 20.0);
+            if (r.value("ok", false)) g_ovEngineEnabled.store(wantEnabled);
+        }).detach();
+    }
+    if (m != 2) mpvClearOverlay();
+}
+
 static void splitTrack(int tr, double t) {
     for (size_t i = 0; i < g_track[tr].size(); i++) {
         Clip& c = g_track[tr][i]; double d = c.out - c.in;
@@ -522,15 +1199,26 @@ static void splitTrack(int tr, double t) {
         }
     }
 }
-static void deleteTrack(int tr, double t) {
+// Ripple-deletes the clip covering t on track tr. Returns {removedCompStart, removedDur}
+// (removedDur==0 if nothing was deleted) so callers can compensate curSec on track 0 -
+// E-7: a ripple delete/trim must never silently shift what's already playing.
+static std::pair<double, double> deleteTrack(int tr, double t) {
     for (size_t i = 0; i < g_track[tr].size(); i++) {
         Clip& c = g_track[tr][i]; double d = c.out - c.in;
         if (t >= c.compStart && t < c.compStart + d) {
+            double cs = c.compStart;
             g_track[tr].erase(g_track[tr].begin() + i);
             for (size_t j = i; j < g_track[tr].size(); j++) g_track[tr][j].compStart -= d;
-            relabel(tr); return;
+            relabel(tr); return { cs, d };
         }
     }
+    return { 0, 0 };
+}
+// Applies deleteTrack's ripple to curSec: if the removed region started at or before
+// curSec, curSec shifts left by the removed duration (never past the removal point) so
+// playback stays pinned to the same underlying footage instead of jumping (B7/E-7).
+static void rippleCurSec(double& curSec, const std::pair<double, double>& rem) {
+    if (rem.second > 0 && rem.first <= curSec) curSec = std::max(rem.first, curSec - rem.second);
 }
 static void recomputeDur() {
     g_compDur = 0;
@@ -541,24 +1229,56 @@ static void recomputeDur() {
         }
 }
 
-// --------------- video compose (center pane) ---------------
-static void compose(double t) {
-    LARGE_INTEGER fq, a, b; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&a);
-    GstVideoFrame fa; GstSample* sa = nullptr;
+// --------------- video compose (center pane) - OFF the UI thread (spec 3.4 P1) ---------------
+// The decode thread's dispatch shape (post latest-wanted, overwrite a pending request
+// rather than queue it) is unchanged from the GStreamer build - review cycle-4's #1
+// finding was that this used to run synchronously on the UI thread every frame curSec
+// changed, the P1 violation behind B18/B22/B23. A burst of scrub/split/seek events still
+// can never back up behind stale decode work; only the body (an mpv IPC command instead
+// of a GStreamer pull) changed for D-1.
+static std::mutex g_decReqMx;
+static std::condition_variable g_decReqCv;
+static std::string g_decReqSource;
+static double g_decReqSrcSec = 0, g_decReqCompT = -1;
+static bool g_decReqPending = false;
+static bool g_decQuit = false;
+
+static void composeOnDecodeThread(const std::string& source, double srcSec, double /*compT*/) {
+    mpvSeekExact(source, srcSec);
+}
+static void decodeWorker() {
+    t_threadTag = "decodeWorker";
+    for (;;) {
+        std::string source; double srcSec, compT;
+        {
+            std::unique_lock<std::mutex> lk(g_decReqMx);
+            g_decReqCv.wait(lk, [] { return g_decQuit || g_decReqPending; });
+            if (g_decQuit) return;
+            source = g_decReqSource; srcSec = g_decReqSrcSec; compT = g_decReqCompT;
+            g_decReqPending = false;
+        }
+        try {
+            composeOnDecodeThread(source, srcSec, compT);
+        } catch (const std::exception& e) {
+            crashLog(std::string("decodeWorker: caught ") + e.what() + " source=" + source + " - degrading, not crashing");
+        } catch (...) {
+            crashLog("decodeWorker: caught non-std exception - degrading, not crashing");
+        }
+    }
+}
+// UI-thread entry point: NON-BLOCKING. Resolves which clip/source-time t maps to (a cheap
+// array scan over g_track[0], no I/O) and hands it to the decode thread; never touches
+// mpv's pipe directly from the UI thread.
+static void requestCompose(double t) {
     Clip* ca = nullptr;
     for (auto& c : g_track[0]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) { ca = &c; break; } }
     if (!ca && !g_track[0].empty()) ca = &g_track[0].back();
     if (!ca) return;
-    if (!layerLoad(g_layer[0], ca->source)) return;
-    double ta = ca->in + (t > ca->compStart ? t - ca->compStart : 0); if (ta > ca->out) ta = ca->out;
-    layerSeek(g_layer[0], ta);
-    if (!layerPull(g_layer[0], &fa, &sa)) return;
-    int wa = GST_VIDEO_FRAME_WIDTH(&fa), ha = GST_VIDEO_FRAME_HEIGHT(&fa);
-    uint8_t* da = (uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&fa, 0); int sta = GST_VIDEO_FRAME_PLANE_STRIDE(&fa, 0);
-    g_vw = wa; g_vh = ha; g_rgba.resize((size_t)wa * ha * 4);
-    for (int y = 0; y < ha; y++) memcpy(&g_rgba[(size_t)y * wa * 4], da + (size_t)y * sta, (size_t)wa * 4);
-    gst_video_frame_unmap(&fa); gst_sample_unref(sa);
-    QueryPerformanceCounter(&b); g_composeMs = 1000.0 * (b.QuadPart - a.QuadPart) / fq.QuadPart;
+    double srcSec = ca->in + (t > ca->compStart ? t - ca->compStart : 0); if (srcSec > ca->out) srcSec = ca->out;
+    std::lock_guard<std::mutex> lk(g_decReqMx);
+    g_decReqSource = ca->source; g_decReqSrcSec = srcSec; g_decReqCompT = t;
+    g_decReqPending = true;
+    g_decReqCv.notify_one();
 }
 
 // --------------- NDJSON out to the engine is over the subprocess; UI sends via engineCall ---------------
@@ -568,6 +1288,7 @@ static double g_pps = 60;
 static double g_scrollSec = 0;
 static bool g_visible = true;
 static bool g_playingExt = false;
+static double g_playRate = 1.0;   // D-4: 2x playback (button + Shift+Space)
 static double g_stockSec = -1;
 static bool g_stockFlash = false;
 static double g_lastUserScroll = 0;
@@ -591,8 +1312,8 @@ struct Gesture {
     bool dragged = false;
 };
 static Gesture g_gest;
-static json g_pendingReel; static bool g_havePendingReel = false;
 static double g_lastScrubEmit = 0, g_lastViewEmit = 0;
+static double g_lastUndoQueued = -1;
 
 static void emitScrub(double t, bool final_) {
     double n = nowSec();
@@ -609,10 +1330,19 @@ static bool emitView() {
     return true;
 }
 static void emitSelect() {
+    // A-4/P1 FIX (found live this session): this used to call engineCall()
+    // SYNCHRONOUSLY, and it is invoked from the split-reply-apply drain step
+    // in the main loop - i.e. from the UI thread, once per completed split.
+    // A burst of splits (I-6's exact scenario) lands several replies in one
+    // frame, each stacking ANOTHER blocking engine round trip on the UI
+    // thread before it can pump messages or present a frame - a direct P1
+    // violation that the rest of this file's split/delete/trim/undo path was
+    // specifically rearchitected (editWorker) to avoid. Detach it: selection
+    // sync to the engine is best-effort telemetry for the AI seam, not
+    // something the UI needs to block on or strictly order.
     json ids = json::array();
     for (auto& c : g_track[0]) if (g_sel.count(c.id)) ids.push_back(c.id);
-    json r = engineCall("set_select", { {"ids", ids} }, 2.0);
-    (void)r;
+    std::thread([ids] { json r = engineCall("set_select", { {"ids", ids} }, 2.0); (void)r; }).detach();
 }
 static void emitThreshold(bool final_) {
     double n = nowSec();
@@ -675,20 +1405,41 @@ static void loadTimelineView(const json& tv) {
                 cl.r = (uint8_t)((v >> 16) & 0xFF); cl.g = (uint8_t)((v >> 8) & 0xFF); cl.b = (uint8_t)(v & 0xFF);
             }
             cl.ready = true;
+            cl.date = c.value("date", std::string());
+            cl.person = c.value("person", std::string());
+            cl.location = c.value("location", std::string());
+            cl.link = c.value("link", std::string());
             g_track[0].push_back(cl);
         }
     }
     packTrack(0); recomputeDur();
+    g_trackClipCountForLog.store(g_track[0].size(), std::memory_order_relaxed);
     g_sel.clear();
     // Windowed waveform decode: only what's on the timeline, newest first. (FB9 fix: keyed by SOURCE.)
     for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
     g_quietDirty = true;
+    // D-6: mirror the engine's current overlay field toggles (edl.Overlay), so the
+    // preview knows exactly which lines the render is about to burn in.
+    if (tv.contains("overlay") && tv["overlay"].is_object()) {
+        const json& ov = tv["overlay"];
+        g_overlay.enabled = ov.value("enabled", g_overlay.enabled);
+        g_overlay.showFilename = ov.value("show_filename", g_overlay.showFilename);
+        g_overlay.showTimecode = ov.value("show_timecode", g_overlay.showTimecode);
+        g_overlay.showDate = ov.value("show_date", g_overlay.showDate);
+        g_overlay.showLink = ov.value("show_link", g_overlay.showLink);
+        g_overlay.showPerson = ov.value("show_person", g_overlay.showPerson);
+        g_overlay.showLocation = ov.value("show_location", g_overlay.showLocation);
+        g_overlay.position = ov.value("position", g_overlay.position);
+        g_ovEngineEnabled = g_overlay.enabled;
+    }
 }
 
 // --------------- D3D11 display ---------------
+// (the video FRAME itself is no longer a D3D11 texture ImGui draws - mpv paints
+// directly into its own --wid child hwnd, see MpvEmbed above; this swapchain is
+// only the ImGui/UI surface now.)
 static ID3D11Device* g_dev = nullptr; static ID3D11DeviceContext* g_ctx = nullptr; static IDXGISwapChain* g_swap = nullptr;
 static ID3D11RenderTargetView* g_rtv = nullptr;
-static ID3D11Texture2D* g_frameTex = nullptr; static ID3D11ShaderResourceView* g_frameSrv = nullptr; static int g_texW = 0, g_texH = 0;
 static int g_W = 1280, g_H = 800;
 static bool g_resize = false;
 
@@ -715,23 +1466,160 @@ static void resizeD3D() {
     g_swap->ResizeBuffers(0, g_W, g_H, DXGI_FORMAT_UNKNOWN, 0);
     createRTV();
 }
-static void uploadFrame() {
-    if (g_rgba.empty() || g_vw <= 0 || g_vh <= 0) return;
-    if (!g_frameTex || g_texW != g_vw || g_texH != g_vh) {
-        if (g_frameSrv) { g_frameSrv->Release(); g_frameSrv = nullptr; }
-        if (g_frameTex) { g_frameTex->Release(); g_frameTex = nullptr; }
-        D3D11_TEXTURE2D_DESC td = {};
-        td.Width = g_vw; td.Height = g_vh; td.MipLevels = 1; td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;
-        td.Usage = D3D11_USAGE_DYNAMIC; td.BindFlags = D3D11_BIND_SHADER_RESOURCE; td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        if (FAILED(g_dev->CreateTexture2D(&td, nullptr, &g_frameTex))) return;
-        g_dev->CreateShaderResourceView(g_frameTex, nullptr, &g_frameSrv);
-        g_texW = g_vw; g_texH = g_vh;
+
+// --------------- E-11: clip thumbnails ---------------
+// The engine's "thumb" verb (becky-go cmd/clip/export.go Thumb) already returns a
+// small CACHED first-frame JPEG as a base64 data: URI - built for the abandoned
+// WebView2 build's <img> tag. This native app has no <img>, so it needs its own
+// decode: base64 -> JPEG bytes -> WIC (Windows' built-in image codec, a native
+// platform feature - no external image library needed, ladder rung 4) -> a D3D11
+// texture ImGui can draw with AddImage. Fetched off the UI thread (the engine
+// round-trip + JPEG decode are both too slow to do inline in a frame - same A-4
+// shape as requestTranscribe/requestAddExternal); the finished SRV is created via
+// the DEVICE (not the immediate context), which is free-threaded per the D3D11
+// spec, so it is safe to hand straight to the UI thread's cache for drawing.
+static std::vector<uint8_t> base64Decode(const std::string& in) {
+    static int8_t T[256]; static bool init = false;
+    if (!init) {
+        std::fill(std::begin(T), std::end(T), (int8_t)-1);
+        const char* alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; i++) T[(unsigned char)alpha[i]] = (int8_t)i;
+        init = true;
     }
-    D3D11_MAPPED_SUBRESOURCE ms;
-    if (SUCCEEDED(g_ctx->Map(g_frameTex, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
-        for (int y = 0; y < g_vh; y++) memcpy((uint8_t*)ms.pData + (size_t)y * ms.RowPitch, &g_rgba[(size_t)y * g_vw * 4], (size_t)g_vw * 4);
-        g_ctx->Unmap(g_frameTex, 0);
+    std::vector<uint8_t> out; out.reserve(in.size() * 3 / 4 + 3);
+    int val = 0, bits = -8;
+    for (unsigned char c : in) {
+        if (c == '=' || T[c] < 0) continue;
+        val = (val << 6) + T[c]; bits += 6;
+        if (bits >= 0) { out.push_back((uint8_t)((val >> bits) & 0xFF)); bits -= 8; }
+    }
+    return out;
+}
+struct ThumbTex { ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
+static std::map<std::string, ThumbTex> g_thumbCache; // UI-thread-owned, no lock needed
+static std::mutex g_thumbMx;
+static std::set<std::string> g_thumbInFlight;
+struct ThumbDone { std::string key; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
+static std::deque<ThumbDone> g_thumbDoneQ;
+static std::string thumbKey(const std::string& source, double t) {
+    char buf[40]; snprintf(buf, sizeof buf, "@%.1f", t);
+    return source + buf;
+}
+// Degrade-never-crash: any WIC failure (bad JPEG, codec missing) yields nullptr -
+// the clip just shows no thumbnail, exactly like the engine's own {data:""} degrade.
+static ID3D11ShaderResourceView* decodeJpegToTexture(const uint8_t* data, size_t len, int& outW, int& outH) {
+    if (!data || len == 0 || !g_dev) return nullptr;
+    HRESULT coHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool coOwned = SUCCEEDED(coHr);
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr; IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr; IWICFormatConverter* conv = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    do {
+        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) break;
+        if (FAILED(factory->CreateStream(&stream))) break;
+        if (FAILED(stream->InitializeFromMemory((BYTE*)data, (DWORD)len))) break;
+        if (FAILED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder))) break;
+        if (FAILED(decoder->GetFrame(0, &frame))) break;
+        if (FAILED(factory->CreateFormatConverter(&conv))) break;
+        if (FAILED(conv->Initialize(frame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) break;
+        UINT w = 0, h = 0; conv->GetSize(&w, &h);
+        if (w == 0 || h == 0 || w > 4096 || h > 4096) break;
+        std::vector<uint8_t> px((size_t)w * h * 4);
+        if (FAILED(conv->CopyPixels(nullptr, w * 4, (UINT)px.size(), px.data()))) break;
+        D3D11_TEXTURE2D_DESC td{}; td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM; td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_IMMUTABLE;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA sub{}; sub.pSysMem = px.data(); sub.SysMemPitch = w * 4;
+        ID3D11Texture2D* tex = nullptr;
+        if (FAILED(g_dev->CreateTexture2D(&td, &sub, &tex)) || !tex) break;
+        D3D11_SHADER_RESOURCE_VIEW_DESC svd{}; svd.Format = td.Format;
+        svd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; svd.Texture2D.MipLevels = 1;
+        HRESULT hr = g_dev->CreateShaderResourceView(tex, &svd, &srv);
+        tex->Release();
+        if (FAILED(hr)) { srv = nullptr; break; }
+        outW = (int)w; outH = (int)h;
+    } while (false);
+    if (conv) conv->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (stream) stream->Release();
+    if (factory) factory->Release();
+    if (coOwned) CoUninitialize();
+    return srv;
+}
+static void requestThumb(const std::string& source, double t) {
+    std::string key = thumbKey(source, t);
+    {
+        std::lock_guard<std::mutex> lk(g_thumbMx);
+        if (g_thumbInFlight.count(key)) return;
+        g_thumbInFlight.insert(key);
+    }
+    std::thread([source, t, key] {
+        t_threadTag = "thumbWorker";
+        ThumbDone d; d.key = key;
+        try {
+            json r = engineCall("thumb", { {"source", source}, {"t", t} }, 15.0);
+            if (r.value("ok", false)) {
+                std::string uri = r.value("data", json::object()).value("data", std::string());
+                const std::string marker = "base64,";
+                size_t p = uri.find(marker);
+                if (p != std::string::npos) {
+                    auto bytes = base64Decode(uri.substr(p + marker.size()));
+                    if (!bytes.empty()) d.srv = decodeJpegToTexture(bytes.data(), bytes.size(), d.w, d.h);
+                }
+            }
+        } catch (...) {}
+        std::lock_guard<std::mutex> lk(g_thumbMx);
+        g_thumbInFlight.erase(key);
+        g_thumbDoneQ.push_back(d);
+    }).detach();
+}
+// Moves any textures finished since last frame into the UI-thread cache. Call
+// once per frame before drawing clips.
+static void drainThumbs() {
+    std::deque<ThumbDone> done;
+    { std::lock_guard<std::mutex> lk(g_thumbMx); done.swap(g_thumbDoneQ); }
+    for (auto& d : done) g_thumbCache[d.key] = ThumbTex{ d.srv, d.w, d.h };
+}
+// nullptr = not ready yet (kicks off a fetch the first time a clip asks); a
+// cached entry with srv==nullptr means "fetched, no thumbnail available" - a
+// terminal degrade state that is never retried every frame (E-18: no repeated
+// media work for a clip that's already been resolved, even to "none").
+static ThumbTex* getThumb(const std::string& source, double t) {
+    std::string key = thumbKey(source, t);
+    auto it = g_thumbCache.find(key);
+    if (it != g_thumbCache.end()) return &it->second;
+    requestThumb(source, t);
+    return nullptr;
+}
+
+// E-13: WM_DROPFILES only captures client-space drop data here - the real work
+// (path filtering, screen->timeline-seconds conversion via g_scrollSec/g_pps,
+// and the add_external engine call) happens once per frame in drawTimeline,
+// same "WndProc stays a thin OS-message forwarder" pattern as g_resize/g_W/g_H.
+struct PendingDrop { std::vector<std::string> paths; int clientX = 0, clientY = 0; };
+static std::vector<PendingDrop> g_pendingDrops;
+static void requestAddExternal(const std::string& path, int at); // defined below, near requestTranscribe
+
+// DragQueryFileW/DragQueryPoint/DragFinish are SHELL32 calls - live-tested this
+// session and a malformed/foreign drop payload faulted (0xc0000005) INSIDE
+// SHELL32.dll, killing the whole process. SEH-guarded per the exact #0 CRITICAL
+// precedent above (gstInitSEH): degrade (drop the message) rather than crash the
+// window. Kept free of C++ objects with destructors, matching gstInitSEH's shape -
+// MSVC disallows mixing __try with unwind-cleanup objects in the same function.
+static bool dropFilesSEH(HDROP hDrop, POINT& pt, wchar_t paths[16][MAX_PATH], int& count) {
+    count = 0;
+    __try {
+        DragQueryPoint(hDrop, &pt);
+        UINT n = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+        if (n > 16) n = 16;
+        for (UINT i = 0; i < n; i++)
+            if (DragQueryFileW(hDrop, i, paths[count], MAX_PATH)) count++;
+        DragFinish(hDrop);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
     }
 }
 
@@ -740,6 +1628,24 @@ static LRESULT WINAPI WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (ImGui_ImplWin32_WndProcHandler(h, m, w, l)) return true;
     if (m == WM_SIZE && w != SIZE_MINIMIZED) { g_W = LOWORD(l); g_H = HIWORD(l); g_resize = true; }
     if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
+    if (m == WM_DROPFILES) {
+        POINT pt{};
+        static wchar_t paths[16][MAX_PATH];
+        int count = 0;
+        if (dropFilesSEH((HDROP)w, pt, paths, count) && count > 0) {
+            PendingDrop d; d.clientX = pt.x; d.clientY = pt.y;
+            for (int i = 0; i < count; i++) {
+                int len = WideCharToMultiByte(CP_UTF8, 0, paths[i], -1, nullptr, 0, nullptr, nullptr);
+                if (len > 1) {
+                    std::string p(len - 1, '\0');
+                    WideCharToMultiByte(CP_UTF8, 0, paths[i], -1, p.data(), len, nullptr, nullptr);
+                    d.paths.push_back(std::move(p));
+                }
+            }
+            if (!d.paths.empty()) g_pendingDrops.push_back(std::move(d));
+        }
+        return 0;
+    }
     return DefWindowProcW(h, m, w, l);
 }
 
@@ -839,6 +1745,11 @@ static double snapComp(double t, double pps, double curSec, int exclIdx, float p
     return best;
 }
 
+// Forward decls (defined later, with the library/panel state they need) so the
+// timeline's right-click clip menu (E-14) can reach them.
+static void openInFileBrowser(const std::string& path);
+static void openTranscript(const std::string& fullVideoPath);
+
 static void drawTimeline(double& curSec, bool& playing) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -869,9 +1780,45 @@ static void drawTimeline(double& curSec, bool& playing) {
     auto xToSec = [&](float x) { return std::max(0.0, g_scrollSec + (x - tlX) / g_pps); };
     auto secToX = [&](double s) { return tlX + (float)((s - g_scrollSec) * g_pps); };
 
+    // E-13: drain any WM_DROPFILES drops queued this frame. Only a drop landing
+    // ON the clip lane counts as a timeline drop (dropping elsewhere - e.g. onto
+    // the ruler or library - is a no-op, matching the deliberate "engine add_external"
+    // scope in BUILD_1.md). Each dropped file inserts at the drop position, in
+    // drop order, same insertion-index math the multi-select drag reorder uses below.
+    if (!g_pendingDrops.empty()) {
+        static const std::set<std::string> kVideoExts = {
+            ".mp4",".mov",".mkv",".avi",".m4v",".webm",".mpg",".mpeg",
+            ".wmv",".flv",".ts",".mts",".m2ts",".3gp",".vob"
+        };
+        std::vector<PendingDrop> drops; drops.swap(g_pendingDrops);
+        for (auto& d : drops) {
+            if (d.clientY < aY || d.clientY > aY + laneH) continue;
+            double dropSec = xToSec((float)d.clientX);
+            int to = 0;
+            for (auto& c : g_track[0]) if (c.compStart + (c.out - c.in) / 2 < dropSec) to++;
+            for (auto& path : d.paths) {
+                std::string ext = path.substr(path.find_last_of('.') == std::string::npos ? path.size() : path.find_last_of('.'));
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                if (!kVideoExts.count(ext)) continue; // not a video file - silently skip (degrade, never crash)
+                requestAddExternal(path, to);
+                to++; // subsequent files in the same drop insert after the previous one
+            }
+        }
+    }
+
     float labelH = laneH > 46 ? 17.0f : 0.0f;
-    float wy0 = aY + 2 + labelH, wy1 = aY + laneH - 2;
+    // E-11: "clips 2x tall with the small fixed thumbnail kept out of the cut
+    // area" - a small fixed-size thumbnail chip shares the header row with the
+    // label, ABOVE the waveform band. thumbH is fixed (doesn't grow with laneH
+    // like the old label-only header did) so it stays "small", and wy0 is
+    // pushed down by whichever of the two is taller - the waveform (the "cut
+    // area" zero-crossings live in) is never overlapped by the thumbnail, and
+    // is drawn at its FULL clip width underneath, same as before.
+    float thumbH = laneH > 70 ? 40.0f : 0.0f;
+    float headerH = std::max(labelH, thumbH > 0 ? thumbH + 4 : 0.0f);
+    float wy0 = aY + 2 + headerH, wy1 = aY + laneH - 2;
     float waveMid = (wy0 + wy1) * 0.5f, waveHalf = (wy1 - wy0) * 0.5f - 1.0f;
+    drainThumbs(); // cheap (swaps a small deque under a lock) even when nothing finished this frame
 
     auto zoomTo = [&](double newPps, float anchorX) {
         double anchor = xToSec(anchorX);
@@ -899,7 +1846,9 @@ static void drawTimeline(double& curSec, bool& playing) {
 
     bool playingNow = g_playingExt;
     double viewDur = tlW / g_pps;
-    if (playingNow && g_gest.kind == 0 && nowSec() - g_lastUserScroll > 1.5) {
+    // FB6/E-6: once the stock has been manually placed, stop auto-following the live
+    // playhead off-screen - the user is looking at the stock, not chasing playback.
+    if (playingNow && g_gest.kind == 0 && g_stockSec < 0 && nowSec() - g_lastUserScroll > 1.5) {
         if (curSec < g_scrollSec || curSec > g_scrollSec + viewDur * 0.95)
             g_scrollSec = std::max(0.0, curSec - viewDur * 0.3);
     }
@@ -935,6 +1884,24 @@ static void drawTimeline(double& curSec, bool& playing) {
         return false;
     };
 
+    // E-14: right-click a clip -> Open in File Browser / Copy File Name / Open transcript.
+    static int s_ctxIdx = -1;
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        int idx, zone;
+        if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
+    }
+    if (ImGui::BeginPopup("clipctx")) {
+        if (s_ctxIdx >= 0 && s_ctxIdx < (int)g_track[0].size()) {
+            Clip& c = g_track[0][s_ctxIdx];
+            ImGui::TextDisabled("%s", c.label.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(c.source);
+            if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(c.source).c_str());
+            if (ImGui::MenuItem("Open Transcript")) openTranscript(c.source);
+        }
+        ImGui::EndPopup();
+    }
+
     if (pressed) {
         int idx, zone;
         g_gest = Gesture{};
@@ -955,7 +1922,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         } else {
             g_gest.kind = 1;
             curSec = std::min(xToSec(mx), g_compDur);
-            playing = false;
+            playing = false; g_playingExt = false;
             g_gest.gIn = curSec;
             emitScrub(curSec, false);
         }
@@ -1061,10 +2028,6 @@ static void drawTimeline(double& curSec, bool& playing) {
                 emitSelect();
             }
         }
-        if (g_havePendingReel) {
-            g_havePendingReel = false;
-            if (g_pendingReel.contains("clips")) loadTimelineView(g_pendingReel);
-        }
     }
 
     int epoch = g_fillEpoch.load();
@@ -1134,12 +2097,25 @@ static void drawTimeline(double& curSec, bool& playing) {
                 dl->PopClipRect();
             }
         }
+        // E-11: small fixed thumbnail chip, top-left of the header row - never
+        // resized to the clip's width (stays "small fixed"), never drawn into
+        // the waveform band below it (wy0 already accounts for thumbH above).
+        bool showThumb = thumbH > 0 && (x1 - x0) > thumbH + 28;
+        float labX0 = x0 + 6;
+        if (showThumb) {
+            ThumbTex* tt = getThumb(c.source, cin);
+            ImVec2 t0(x0 + 3, aY + 3), t1(x0 + 3 + thumbH, aY + 3 + thumbH);
+            if (tt && tt->srv) dl->AddImage((ImTextureID)tt->srv, t0, t1);
+            else dl->AddRectFilled(t0, t1, IM_COL32(0, 0, 0, 90));
+            dl->AddRect(t0, t1, IM_COL32(255, 255, 255, 60));
+            labX0 = t1.x + 6;
+        }
         if (labelH > 0 && x1 - x0 > 34) {
             char lab[160]; double d = cout - cin; char tb[24]; fmtTime(d, tb, sizeof tb, d < 10);
             snprintf(lab, sizeof lab, "%s  %s", c.label.c_str(), tb);
-            dl->PushClipRect(ImVec2(x0 + 4, aY), ImVec2(x1 - 4, aY + labelH + 4), true);
-            dl->AddText(ImVec2(x0 + 6, aY + 4), IM_COL32(0, 0, 0, 200), lab);
-            dl->AddText(ImVec2(x0 + 5, aY + 3), COL_LABEL, lab);
+            dl->PushClipRect(ImVec2(labX0, aY), ImVec2(x1 - 4, aY + headerH + 4), true);
+            dl->AddText(ImVec2(labX0 + 1, aY + 4), IM_COL32(0, 0, 0, 200), lab);
+            dl->AddText(ImVec2(labX0, aY + 3), COL_LABEL, lab);
             dl->PopClipRect();
         }
         if (x1 - x0 > 20) {
@@ -1205,10 +2181,6 @@ static void drawTimeline(double& curSec, bool& playing) {
     }
     if (ImGui::IsItemDeactivated() && g_gest.kind == 6) {
         g_gest = Gesture{};
-        if (g_havePendingReel) {
-            g_havePendingReel = false;
-            if (g_pendingReel.contains("clips")) loadTimelineView(g_pendingReel);
-        }
     }
 
     static double s_lastPps = -1, s_lastScroll = -1;
@@ -1218,16 +2190,460 @@ static void drawTimeline(double& curSec, bool& playing) {
 }
 
 // --------------- left panel: library / search / transcript (ImGui) ---------------
-// P2 stub: the layout is present and the engine verbs are wired; the full list/transcript
-// rendering lands in P2. Tonight we prove the SHIP works end-to-end (window + engine
-// + timeline + reel load + play/scrub).
+// The left panel is the LIBRARY: a scrollable list of the open folder's videos
+// (with transcript pairing), a search box whose hits render as structured rows
+// (verbatim .srt timecode, playable clip), and a flowing single-video
+// transcript view (audapolis pattern) reachable by Enter/double-click on a row.
+
+// ---- library state ----
+struct VideoRow { std::string path, name, date; bool hasTranscript = false; };
+static std::vector<VideoRow> g_videos;
+static std::string g_folderRoot;
+static int g_orphanCount = 0;
+static std::string g_folderErr;
+
+// Sort mode for the library list (B-3): 0=date-newest,1=date-oldest,2=name-AZ,3=name-ZA
+static int g_sortMode = 0;
+// ONE selection model (B-4): a single selected index shared by mouse + arrows.
+static int g_libSel = -1;
+static bool g_libScrollPending = false;   // keyboard nav just moved g_libSel; scroll it into view
+static bool g_libFocused = false;        // library window (or a child) had focus last frame
+static int g_libJustViewedIdx = -1;      // green outline for the just-viewed video (B-6)
+
+// ---- B-2: one-click local transcription ----
+// The engine's "transcribe" verb (becky-go/cmd/clip/transcribe.go) already does the
+// whole job - official-caption-first, else a local Parakeet pass into a SEPARATE
+// "<stem>_parakeet_transcription.srt" sidecar, NEVER touching an original transcript
+// - and is synchronous + long-running (real ASR, can take minutes on a long clip).
+// Calling it on the UI thread would freeze the whole window for that whole span,
+// exactly the P1 mistake this file already root-caused once for search (see
+// searchWorker above) - so this is a one-shot background thread per click (a
+// context-menu click is a single discrete action, not a rapid-fire stream like
+// search-as-you-type, so no coalescing queue is needed, just an in-flight guard
+// against double-firing the same video).
+struct TranscribeDone { std::string name; bool ok = false; std::string err; };
+static std::mutex g_transcribeMx;
+static std::set<std::string> g_transcribeInFlight; // video paths currently transcribing
+static std::deque<TranscribeDone> g_transcribeDoneQ;
+// path is the full source path (used as the UI's in-flight/done-queue key, same
+// as every other row identifier in this file); baseName is the bare filename the
+// engine's lookupVideo/VideoByName actually indexes by. A REAL BUG FOUND LIVE THIS
+// SESSION: this used to send the full path as the "name" arg to the "transcribe"
+// verb, but becky-go's VideoByName matches only v.Name (the basename) - so every
+// Transcribe() call was guaranteed to fail with "no such video in folder" on
+// every prior session, no matter how the menu was clicked. Confirmed by tracing
+// becky-go/internal/footage/index.go's VideoByName + becky-go/cmd/clip/app.go's
+// lookupVideo, and independently by running becky-transcribe.exe directly on the
+// same test clip (succeeded instantly, proving the ASR pipeline itself was never
+// the problem).
+static void requestTranscribe(const std::string& path, const std::string& baseName) {
+    {
+        std::lock_guard<std::mutex> lk(g_transcribeMx);
+        if (g_transcribeInFlight.count(path)) return; // already running - never double-fire
+        g_transcribeInFlight.insert(path);
+    }
+    std::thread([path, baseName] {
+        t_threadTag = "transcribeWorker";
+        TranscribeDone d; d.name = path;
+        try {
+            json r = engineCall("transcribe", { {"name", baseName} }, 900.0); // real ASR - generous timeout
+            d.ok = r.value("ok", false);
+            if (!d.ok) d.err = r.value("error", std::string("transcribe failed"));
+        } catch (const std::exception& e) {
+            d.ok = false; d.err = std::string("transcribe exception: ") + e.what();
+        }
+        std::lock_guard<std::mutex> lk(g_transcribeMx);
+        g_transcribeInFlight.erase(path);
+        g_transcribeDoneQ.push_back(std::move(d));
+    }).detach();
+}
+
+// E-13: add_external shells out to ffprobe (AddExternalClip's Probe() call) to
+// learn the dropped file's duration, which can be slow for a file on a network
+// share or a huge capture - so this is a background thread per drop, same A-4
+// "never block the UI thread on an engine call" shape as requestTranscribe,
+// not the direct engineCall() the fast in-memory verbs (reorder/set_trim) use.
+struct AddExternalDone { bool ok = false; std::string err; json data; };
+static std::mutex g_addExtMx;
+static std::deque<AddExternalDone> g_addExtDoneQ;
+static void requestAddExternal(const std::string& path, int at) {
+    std::thread([path, at] {
+        t_threadTag = "addExternalWorker";
+        AddExternalDone d;
+        try {
+            json r = engineCall("add_external", { {"path", path}, {"at", at} }, 20.0);
+            d.ok = r.value("ok", false);
+            if (d.ok) d.data = r.contains("data") ? r["data"] : json::object();
+            else d.err = r.value("error", std::string("add_external failed"));
+        } catch (const std::exception& e) {
+            d.ok = false; d.err = std::string("add_external exception: ") + e.what();
+        }
+        std::lock_guard<std::mutex> lk(g_addExtMx);
+        g_addExtDoneQ.push_back(std::move(d));
+    }).detach();
+}
+
+// ---- search state ----
 static char g_searchBuf[256] = { 0 };
-static std::string g_searchResult;
-static bool g_hasSearch = false;
+struct Hit {
+    std::string source, name, date, text, timecode;
+    double start = 0, end = 0, score = 0;
+    bool transcriptOnly = false;
+};
+static std::vector<Hit> g_hits;
+static std::string g_searchMode;         // "" | "keyword" | "qmd"
+static std::string g_searchNote;         // qmd note / degradation note
+static std::string g_searchErr;
+static bool g_searching = false;          // C-5 "Searching..." state
+
+// I-* fix (found live this session via the frame-trace CSV, BECKY_REVIEW_FRAME_TRACE):
+// runSearch() used to call engineCall("search"/"qmd_search", ...) directly on the UI
+// thread. Against the real corpus (10,000 quotes for a common word like "the") that
+// round trip took over FIVE SECONDS - a single frame's "dt" spiked to 5131ms in the
+// trace, a dead, unresponsive window for that whole span (Present() never runs while
+// blocked inside engineCall). Every edit (S/Del/O/I/Z) was already made async via
+// editWorker/g_editQ (see A-4) specifically to avoid this; search never got the same
+// treatment. Fixed the same way: search runs on its own worker thread; the UI thread
+// only ever touches g_searchPending/g_searchDone under their own small mutex.
+struct SearchReq { std::string query; bool qmd = false; double t0 = 0; };
+struct SearchDone { bool ok = false; std::string mode, note, err, query; std::vector<Hit> hits; double elapsedMs = 0; };
+static std::deque<SearchReq> g_searchQ;
+static std::mutex g_searchQMx; static std::condition_variable g_searchQCv;
+static bool g_searchQuit = false;
+static std::mutex g_searchDoneMx;
+static bool g_searchDonePending = false;
+static SearchDone g_searchDoneResult;
+
+// ---- transcript view (B-8) ----
+struct CueRow { std::string source, name, text, timecode; double start = 0, end = 0; };
+static std::vector<CueRow> g_cues;
+static std::string g_cueName;             // which video's transcript is open
+static std::string g_cueErr;
+static char g_withinBuf[128] = { 0 };     // search-within-this-transcript
+
+// ---- Q&A cards (G-1) ----
+struct QACard {
+    std::string id, question, answer;
+    std::vector<std::string> clipIDs;
+    bool answered = false;
+};
+static std::vector<QACard> g_cards;
+static std::string g_cardsErr;
+static std::string g_askAnswer;           // last ask-becky reply (G-3)
+// H-6: a mutating "ask" turn returns a Proposal (id + preview + diff), not a
+// direct edit - nothing lands on the timeline until the human hits Apply.
+// This is the small inline card the adversarial review found missing: without
+// it apply_edit_batch (H-4) and applyActions' one-undo-span fix (H-6 Go side)
+// were unreachable from the chat - "ask" just dumped JSON text and threw the
+// proposal away. G-3 rules out a heavy dialog ("no apply/reject friction
+// wall"), so this stays two small buttons inline, never a modal.
+static std::string g_proposalID;
+static std::string g_proposalPreview;
+static std::string g_proposalNote;
+static json g_proposalDiff = json::array();  // Proposal.Preview: []{label,before,after}
+static bool g_proposalPending = false;
+// palette assignment for cards (G-4), persistent by id
+static std::map<std::string, uint32_t> g_cardColor;
+static const uint32_t kPalette[8] = {
+    IM_COL32(0x14,0xFF,0x39,255), IM_COL32(0x00,0xAE,0xEF,255), IM_COL32(0xDC,0x14,0x3C,255),
+    IM_COL32(0x8A,0x2B,0xE2,255), IM_COL32(0xFF,0x57,0xD1,255), IM_COL32(0xFF,0xD7,0x00,255),
+    IM_COL32(0x16,0xF0,0xEA,255), IM_COL32(0xFF,0x8C,0x00,255),
+};
+static uint32_t cardColorFor(const std::string& id) {
+    auto it = g_cardColor.find(id);
+    if (it != g_cardColor.end()) return it->second;
+    uint32_t c = kPalette[(g_cardColor.size()) % 8];
+    g_cardColor[id] = c; return c;
+}
+
+// ---- render/export toolbar requests (done on engine, shown in-window) ----
+static std::string g_renderMsg;           // last render outcome (plain language)
+static double g_renderMsgAt = 0;
+
+// ---- library helpers ----
+// Sort g_videos in place per g_sortMode (B-3).
+static void sortLibrary() {
+    auto cmp = [](const VideoRow& a, const VideoRow& b) -> bool {
+        switch (g_sortMode) {
+        case 1: return a.date < b.date;                                 // oldest
+        case 2: return a.name < b.name;                                // name A-Z
+        case 3: return a.name > b.name;                                // name Z-A
+        default: return a.date > b.date;                               // newest first
+        }
+    };
+    std::sort(g_videos.begin(), g_videos.end(), cmp);
+}
+// Remember the last opened folder across launches (A-3): a tiny sidecar file,
+// not the registry — cheap, and this app has no other persisted settings yet.
+static std::string lastFolderStatePath() {
+    const char* base = getenv("LOCALAPPDATA");
+    std::string dir = std::string(base ? base : ".") + "\\becky";
+    CreateDirectoryA(dir.c_str(), nullptr);
+    return dir + "\\becky_review_last_folder.txt";
+}
+static void rememberFolder(const std::string& folder) {
+    std::ofstream f(lastFolderStatePath(), std::ios::trunc);
+    if (f) f << folder;
+}
+static std::string recallFolder() {
+    std::ifstream f(lastFolderStatePath());
+    std::string s; if (f) std::getline(f, s);
+    return s;
+}
+// applyFolderView loads a FolderView (from open_folder or pick_folder) into the
+// local library list and remembers it as the last-opened folder.
+static void applyFolderView(const json& d, const std::string& fallbackRoot) {
+    g_folderRoot = d.value("root", fallbackRoot);
+    g_orphanCount = d.value("orphan_count", 0);
+    g_videos.clear();
+    if (d.contains("videos") && d["videos"].is_array()) {
+        for (auto& v : d["videos"]) {
+            VideoRow row;
+            row.path = v.value("path", std::string());
+            row.name = v.value("name", std::string());
+            row.date = v.value("date", std::string());
+            row.hasTranscript = v.value("has_transcript", false);
+            if (!row.name.empty()) g_videos.push_back(row);
+        }
+    }
+    sortLibrary();
+    g_libSel = g_videos.empty() ? -1 : 0;
+    g_libJustViewedIdx = -1;
+    g_cueName.clear(); g_cues.clear();
+    g_renderMsg = "Loaded " + std::to_string(g_videos.size()) + " videos from " + baseName(g_folderRoot);
+    g_renderMsgAt = nowSec();
+    if (!g_folderRoot.empty()) rememberFolder(g_folderRoot);
+}
+// loadFolder loads a folder into the engine and caches its view locally.
+static bool loadFolder(const std::string& folder) {
+    // A cold index of a large real-world case folder (hundreds of GB, many
+    // sidecar files) is a multi-directory-walk filesystem scan, not a media
+    // decode - it can genuinely take minutes on a big corpus. This is a
+    // one-time per-session cost, so a long timeout beats a false "failed".
+    json r = engineCall("open_folder", { {"folder", folder} }, 600.0);
+    if (!r.value("ok", false)) { g_folderErr = r.value("error", std::string("open_folder failed")); return false; }
+    g_folderErr.clear();
+    applyFolderView(r.contains("data") ? r["data"] : r, folder);
+    return true;
+}
+
+// reveal a file in Explorer with it pre-selected (B-7).
+static void openInFileBrowser(const std::string& path) {
+    std::wstring arg = L"/select,\"" + utf8ToWide(path) + L"\"";
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+}
+static std::string wideToUtf8(const std::wstring& w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s(n > 0 ? n - 1 : 0, '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
+    return s;
+}
+// Native Win32 "Open" dialog filtered to reel .json files first (F-2 Load dialog).
+static std::string pickOpenReelFile(HWND owner) {
+    wchar_t file[MAX_PATH] = L"";
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof ofn;
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"Reel files (*.json)\0*.json\0All files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle = L"Load Reel";
+    if (!GetOpenFileNameW(&ofn)) return {};
+    std::string s = wideToUtf8(file);
+    fwslash(s);
+    return s;
+}
+
+// seekToSpan puts ONE clip [a,b) of source on the (local) track and repositions
+// the playhead to it, atomically (no load-then-seek race). D-3: a transcript/
+// library click navigates PAUSED; a search-hit click / Play / Space starts
+// playback (startPlaying=true) — shared by C-4 (search hit) and B-8 (cue click).
+static void seekToSpan(const std::string& source, double a, double b, bool startPlaying,
+                        double& curSec, bool& playing, double& lastComposed) {
+    Clip cl; cl.in = a; cl.out = (b > a + 0.05) ? b : a + 0.05;
+    cl.source = source; cl.label = baseName(source); cl.r = 220; cl.g = 30; cl.b = 60;
+    g_track[0].clear(); g_track[0].push_back(cl);
+    packTrack(0); recomputeDur();
+    curSec = 0; playing = startPlaying; g_playingExt = playing; lastComposed = -1;
+    g_quietDirty = true; peaksRequest(source, a - 1.0, b + 5.0);
+}
+// playWholeVideo puts a video's WHOLE span on the track (B-5 "spacebar plays the
+// selected row"). Duration comes from the engine probe; an unprobe-able source
+// degrades to a generous cap rather than blocking playback.
+static void playWholeVideo(const std::string& path, double& curSec, bool& playing, double& lastComposed) {
+    json pr = engineCall("probe", { {"source", path} }, 8.0);
+    double dur = 0;
+    if (pr.value("ok", false)) { const json& d = pr.contains("data") ? pr["data"] : pr; dur = d.value("duration", 0.0); }
+    if (dur <= 0) dur = 3600;
+    seekToSpan(path, 0.0, dur, true, curSec, playing, lastComposed);
+}
+
+// openTranscript opens a video's transcript (B-8) and remembers which row was viewed.
+static void openTranscript(const std::string& fullVideoPath) {
+    std::string name = baseName(fullVideoPath);
+    if (g_cueName == name) return;       // already open
+    g_cueErr.clear();
+    json r = engineCall("transcript", { {"name", name} }, 25.0);
+    if (!r.value("ok", false)) { g_cueErr = r.value("error", std::string("transcript unavailable")); g_cues.clear(); g_cueName = name; return; }
+    const json& d = r.contains("data") ? r["data"] : r;
+    g_cues.clear();
+    if (d.is_array()) {
+        for (auto& c : d) {
+            CueRow cr;
+            cr.source = c.value("source", std::string());
+            cr.name = c.value("name", std::string());
+            cr.text = c.value("text", std::string());
+            cr.timecode = c.value("timecode", std::string());
+            cr.start = c.value("start", 0.0);
+            cr.end = c.value("end", 0.0);
+            g_cues.push_back(cr);
+        }
+    }
+    g_cueName = name;
+}
+
+// render Q&A cards from the engine `questions` verb (G-1).
+static void refreshCards() {
+    g_cardsErr.clear();
+    json r = engineCall("questions", {}, 8.0);
+    if (!r.value("ok", false)) { g_cardsErr = r.value("error", std::string("questions unavailable")); g_cards.clear(); return; }
+    const json& d = r.contains("data") ? r["data"] : r;
+    g_cards.clear();
+    if (d.contains("questions") && d["questions"].is_array()) {
+        for (auto& q : d["questions"]) {
+            QACard card;
+            card.id = q.value("id", std::string());
+            card.question = q.value("question", std::string());
+            card.answered = q.value("answered", false);
+            card.answer = q.value("answer", std::string());
+            if (q.contains("clip_ids") && q["clip_ids"].is_array())
+                for (auto& cid : q["clip_ids"]) card.clipIDs.push_back(cid.get<std::string>());
+            g_cards.push_back(card);
+        }
+    }
+}
+
+// parse one search reply (shared by keyword + qmd) into a flat Hit list.
+static void parseSearchReply(bool qmd, const json& d, std::vector<Hit>& out) {
+    if (qmd) {
+        if (d.contains("results") && d["results"].is_array()) {
+            for (auto& h : d["results"]) {
+                Hit z; z.source=h.value("source",""); z.name=h.value("name",""); z.date=h.value("date","");
+                z.text=h.value("text",""); z.timecode=h.value("timecode",""); z.start=h.value("start",0.0);
+                z.end=h.value("end",0.0); z.score=h.value("score",0.0); z.transcriptOnly=h.value("transcript_only",false);
+                out.push_back(z);
+            }
+        }
+    } else {
+        if (d.is_array()) {
+            for (auto& h : d) {
+                Hit z; z.source=h.value("source",""); z.name=h.value("name",""); z.date=h.value("date","");
+                z.text=h.value("text",""); z.timecode=h.value("timecode",""); z.start=h.value("start",0.0);
+                z.end=h.value("end",0.0); z.score=h.value("score",0.0); z.transcriptOnly=h.value("transcript_only",false);
+                out.push_back(z);
+            }
+        } else if (d.is_object() && d.contains("results")) {
+            for (auto& h : d["results"]) {
+                Hit z; z.source=h.value("source",""); z.name=h.value("name",""); z.date=h.value("date","");
+                z.text=h.value("text",""); z.timecode=h.value("timecode",""); z.start=h.value("start",0.0);
+                z.end=h.value("end",0.0); z.score=h.value("score",0.0); z.transcriptOnly=h.value("transcript_only",false);
+                out.push_back(z);
+            }
+        }
+    }
+}
+
+// Worker thread: owns the engineCall("search"/"qmd_search", ...) round trip, which
+// can take several real seconds against the actual corpus (see g_searchDoneResult's
+// comment at declaration). Only the LATEST queued query is ever run - if the user
+// retypes/resubmits before a slow search returns, the stale one is dropped rather
+// than both racing to post a result.
+static void searchWorker() {
+    t_threadTag = "searchWorker";
+    for (;;) {
+        SearchReq req;
+        {
+            std::unique_lock<std::mutex> lk(g_searchQMx);
+            g_searchQCv.wait(lk, [] { return g_searchQuit || !g_searchQ.empty(); });
+            if (g_searchQuit) return;
+            req = std::move(g_searchQ.back()); g_searchQ.clear();
+        }
+        SearchDone done; done.mode = req.qmd ? "qmd" : "keyword"; done.query = req.query;
+        try {
+            json r = req.qmd
+                ? engineCall("qmd_search", { {"query", req.query} }, 25.0)
+                : engineCall("search",       { {"query", req.query} }, 20.0);
+            done.ok = r.value("ok", false);
+            if (!done.ok) { done.err = r.value("error", std::string("search failed")); }
+            else {
+                const json& d = r.contains("data") ? r["data"] : r;
+                if (req.qmd) done.note = d.value("mode", std::string()) + (d.contains("note") && !d["note"].get<std::string>().empty() ? (" \xE2\x80\x94 " + d["note"].get<std::string>()) : std::string());
+                parseSearchReply(req.qmd, d, done.hits);
+            }
+        } catch (const std::exception& e) {
+            done.ok = false; done.err = std::string("search exception: ") + e.what();
+        }
+        // I-4 measurement: log wall-clock round-trip so "<2s over the full corpus"
+        // is a grepped number (crash.log), not a claim. req.t0 is stamped in
+        // runSearch() on the UI thread before the request ever reaches this worker.
+        done.elapsedMs = (nowSec() - req.t0) * 1000.0;
+        crashLog("I-4 search query='" + done.query + "' mode=" + done.mode +
+                  " ok=" + (done.ok ? "1" : "0") + " hits=" + std::to_string(done.hits.size()) +
+                  " elapsedMs=" + std::to_string(done.elapsedMs));
+        std::lock_guard<std::mutex> lk(g_searchDoneMx);
+        g_searchDoneResult = std::move(done);
+        g_searchDonePending = true;
+    }
+}
+
+// enqueue a search (C-1/C-2/C-3/C-5) - returns immediately, never blocks the UI thread.
+static void runSearch(bool qmd) {
+    std::string q(g_searchBuf);
+    if (q.empty()) { g_hits.clear(); g_searchMode.clear(); g_searchNote.clear(); return; }
+    g_searching = true; g_searchErr.clear();
+    {
+        std::lock_guard<std::mutex> lk(g_searchQMx);
+        g_searchQ.clear();
+        g_searchQ.push_back({ q, qmd, nowSec() });
+    }
+    g_searchQCv.notify_one();
+}
+
+// add a search-hit's span as a clip to the timeline (C-4 double-click). The
+// engine is authoritative on success ("clips" = a TimelineView, same shape as
+// the "timeline" verb); a degraded/failed engine call still responds locally
+// so the UI never silently no-ops.
+static void addHitToTimeline(const Hit& h) {
+    double a = h.start, b = (h.end > a + 0.05) ? h.end : a + 0.05;
+    std::string label = baseName(h.source);
+    json r = engineCall("add_clip", { {"source", h.source}, {"in", a}, {"out", b}, {"label", label} }, 6.0);
+    if (r.value("ok", false) && r.contains("data") && r["data"].contains("clips")) {
+        loadTimelineView(r["data"]);
+        return;
+    }
+    Clip cl; cl.in = a; cl.out = b; cl.source = h.source; cl.label = label;
+    cl.r = 220; cl.g = 30; cl.b = 60;
+    g_track[0].push_back(cl); packTrack(0); recomputeDur();
+    g_quietDirty = true; peaksRequest(h.source, a - 1.0, b + 5.0);
+}
 
 // --------------- main ---------------
 int main(int argc, char** argv) {
-    gst_init(&argc, &argv);
+    crashLogInit();
+    crashLog("=== becky-review starting ===");
+    editLogInit();
+    frameTraceInit();
+    // #0 CRITICAL: SEH-guarded - a gst_init crash must never take the window down with it.
+    // GStreamer is only used by peaksWorker now (one-time per-source audio decode into
+    // the .bpk peak cache, E-2) - the video player is mpv (D-1, launched after the
+    // window exists, below).
+    g_gstAvailable.store(gstInitSEH(argc, argv) != 0);
+    if (g_gstAvailable.load()) crashLog("gst_init: OK, waveform decode available");
+    else crashLog("gst_init: FAILED or crashed (caught) - waveform decode disabled, window still opening");
+    std::thread(decodeWorker).detach();   // P1 fix: owns the mpv IPC dispatch, off the UI thread
+    std::thread(editWorker).detach();     // A-4 fix: owns split/delete/trim/undo engine round-trips, off the UI thread
+    std::thread(searchWorker).detach();   // I-* fix: owns search/qmd_search engine round-trips, off the UI thread
     g_engine.lastError.clear();
     bool engineOk = engineStart();
     if (!engineOk) fprintf(stderr, "engine: %s\n", g_engine.lastError.c_str());
@@ -1238,22 +2654,36 @@ int main(int argc, char** argv) {
             json r = engineCall("load_reel", { {"path", std::string(rp)} }, 30.0);
             if (r.value("ok", false)) { json tv = engineCall("timeline", {}, 10.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]); }
         }
-        // Boot a default folder if supplied (env), so there is something to show.
+        // Boot a default folder if supplied (env); else A-3: reopen whatever
+        // folder was open last session, so the app is never blank on relaunch.
         if (const char* fp = getenv("BECKY_REVIEW_FOLDER")) {
-            json r = engineCall("open_folder", { {"folder", std::string(fp)} }, 60.0);
-            (void)r;
+            loadFolder(std::string(fp));
+        } else {
+            std::string last = recallFolder();
+            if (!last.empty()) loadFolder(last);
         }
         if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
             json tv = engineCall("timeline", {}, 10.0);
             if (tv.value("ok", false)) loadTimelineView(tv["data"]);
         }
+        // Q&A cards via BECKY_REVIEW_QUESTIONS sidecar (G-1). The engine loads them
+        // itself from that env at bridge boot; here we just pull the exposed list.
+        if (const char* qp = getenv("BECKY_REVIEW_QUESTIONS")) { (void)qp; refreshCards(); }
     }
 
     double curSec = 0;
     if (g_track[0].empty()) {
         // demo reel so the window is never blank (proves the pipeline without a folder).
-        struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
-        double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "clip", "X:/AI-2/becky-tools/native/timeline-bench/proxyA.mp4", "" }); cs += s.out - s.in; }
+        // Was pointed at "timeline-bench" (multi-GB source footage, never named proxyA.mp4
+        // there) - the real 120s bench proxy lives in "ges-bench". Guarded on existence so a
+        // missing file leaves the timeline empty (visibly "no reel loaded") instead of showing
+        // dead clips with no video/waveform.
+        const char* demoSrc = "X:/AI-2/becky-tools/native/ges-bench/proxyA.mp4";
+        std::ifstream demoCheck(demoSrc, std::ios::binary);
+        if (demoCheck.good()) {
+            struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
+            double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "clip", demoSrc, "" }); cs += s.out - s.in; }
+        }
     }
     recomputeDur(); relabel(0); relabel(1);
     for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
@@ -1262,43 +2692,375 @@ int main(int argc, char** argv) {
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowW(wc.lpszClassName, L"Becky Review (native)", WS_OVERLAPPEDWINDOW, 80, 40, g_W, g_H, nullptr, nullptr, wc.hInstance, nullptr);
     g_hwnd = hwnd;
+    DragAcceptFiles(hwnd, TRUE); // E-13: external video files can be dropped onto the timeline
     if (!CreateD3D(hwnd)) { fprintf(stderr, "D3D11 init failed\n"); return 4; }
-    ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd);
+    ShowWindow(hwnd, SW_SHOWMAXIMIZED); UpdateWindow(hwnd);   // A-2: opens maximized
+
+    // D-1: launch mpv AFTER the window is visible - CreateProcess itself is fast, but
+    // the IPC pipe connect retries on its own thread (mpvLaunch only spawns; it never
+    // blocks here), so a slow/missing mpv.exe can never delay the window Jordan sees.
+    if (!mpvLaunch(hwnd)) crashLog("mpv: launch failed - video decode disabled, window still opening");
 
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::StyleColorsDark();
     ImGui::GetIO().FontGlobalScale = 1.2f;
     ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     double lastComposed = -1; bool playing = false;
+    bool mpvArmedOnce = false;   // forces one dispatch the instant mpv finishes its async connect (see below)
     LARGE_INTEGER fq, prev; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&prev);
     bool run = true;
+    long frameIdx = 0; double traceT0 = nowSec();
     while (run) {
         MSG msg; while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); if (msg.message == WM_QUIT) run = false; }
         if (!run) break;
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
         double dt = (double)(now.QuadPart - prev.QuadPart) / fq.QuadPart; prev = now;
+        frameTraceTick(++frameIdx, nowSec() - traceT0, dt * 1000.0);
 
         g_busyHint = playing || g_gest.kind != 0;
 
         if (!g_visible) { Sleep(30); continue; }
 
-        // keyboard (standalone focus): play / split / delete / trim / group
-        if (GetForegroundWindow() == hwnd) {
-            if (GetAsyncKeyState(VK_SPACE) & 1) { playing = !playing; g_playingExt = playing; }
-            if (GetAsyncKeyState('S') & 1) { json r = engineCall("split", { {"t", curSec} }, 3.0); (void)r; splitTrack(0, curSec); if (g_group) splitTrack(1, curSec); recomputeDur(); lastComposed = -1; }
-            if (GetAsyncKeyState(VK_DELETE) & 1) { json r = engineCall("remove_clip", { {"t", curSec} }, 3.0); (void)r; deleteTrack(0, curSec); if (g_group) deleteTrack(1, curSec); recomputeDur(); curSec = std::min(curSec, g_compDur); lastComposed = -1; }
-            if (GetAsyncKeyState('O') & 1) { double t = curSec; json r = engineCall("trim_out", { {"t", t} }, 3.0); (void)r; splitTrack(0, t); deleteTrack(0, t); if (g_group) { splitTrack(1, t); deleteTrack(1, t); } recomputeDur(); curSec = std::min(curSec, g_compDur); lastComposed = -1; }
-            if (GetAsyncKeyState('I') & 1) { double t = curSec; json r = engineCall("trim_in", { {"t", t} }, 3.0); (void)r; splitTrack(0, t); deleteTrack(0, t - 0.02); if (g_group) { splitTrack(1, t); deleteTrack(1, t - 0.02); } recomputeDur(); curSec = std::min(curSec, g_compDur); lastComposed = -1; }
+        // keyboard (standalone focus): play / split / delete / trim / group / seek.
+        // Gated on !WantCaptureKeyboard so typing in the search/ask/within boxes
+        // never also splits/deletes/undoes the timeline underneath it.
+        if (GetForegroundWindow() == hwnd && !ImGui::GetIO().WantCaptureKeyboard) {
+            // E-6 (the differentiator): while playing, edits apply at the STOCK
+            // playhead (set by clicking a clip during playback), never at the live
+            // curSec - so a burst of splits never touches the running playback and
+            // never forces a reload. Paused = the only playhead is curSec, as before.
+            auto editT = [&]() -> double { return (playing && g_stockSec >= 0) ? g_stockSec : curSec; };
+            if (GetAsyncKeyState(VK_SPACE) & 1) {
+                if (GetKeyState(VK_SHIFT) & 0x8000) {
+                    // D-4: Shift+Space toggles 2x playback rate (not play state).
+                    g_playRate = (g_playRate > 1.5) ? 1.0 : 2.0;
+                } else {
+                    playing = !playing; g_playingExt = playing;
+                    if (!playing && g_stockSec >= 0) { curSec = g_stockSec; g_stockSec = -1; g_stockFlash = false; }
+                }
+            }
+            // NOTE (fixes the "split-brain edit model" the adversarial review flagged as
+            // priority #1): track 0 is no longer mutated locally by these handlers. The
+            // engine's reel is the ONE model - every S/Del/O/I keypress calls a REAL verb
+            // (split/remove_clip/set_trim all exist in bridge.go; "seek"/"set_select"/
+            // "trim_out"/"trim_in" never did and were silent no-ops). The keypress only
+            // reads local state to build the request and hands it to editWorker (A-4 fix:
+            // was a synchronous NDJSON round-trip on the UI thread; now the request is
+            // enqueued and the round-trip runs on editWorker's own thread) - the render
+            // loop never blocks on a split/delete/trim/undo. Track 1 ("pip") has no engine
+            // equivalent at all (the Go reel models one track), so its local mirror mutation
+            // is deferred to the drain step below, applied only once the engine confirms.
+            // B-5 gate-leak fix (cycle 11 review, priority #1): a clip built by seekToSpan
+            // (Space-played whole video, a single-click search-hit preview, a cue click) has
+            // NO engine id by design - it is a local-only preview, not yet on the real reel
+            // (only addHitToTimeline's double-click actually calls add_clip). Before this fix,
+            // pressing S/Del/O/I on one of these inserted "" into g_editsInFlight; the engine
+            // correctly rejects the edit (empty id), but the drain's gate-release only fires
+            // for a non-empty id, so the empty-string gate was NEVER released - permanently
+            // (silently) swallowing every future edit on any local-only clip for the rest of
+            // the session. Fix: treat "no id" as "not editable yet", same as "gated" - never
+            // insert the gate for it in the first place. Root-caused once here, in the shared
+            // check every edit key goes through, so it covers all three preview call sites.
+            if (GetAsyncKeyState('S') & 1) {
+                double t = editT();
+                Clip* c = clipAtComp(0, t);
+                bool noId = c && c->id.empty();
+                bool gated = c && !noId && g_editsInFlight.count(c->id);
+                editLog("EDGE S clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
+                if (c && !noId && !gated) {
+                    double srcT = c->in + (t - c->compStart);
+                    EditReq req; req.verb = "split"; req.args = { {"id", c->id}, {"at", srcT} };
+                    req.kind = 0; req.t = t; req.group = g_group;
+                    g_editsInFlight.insert(c->id);
+                    queueEdit(std::move(req));
+                    editLog("QUEUE split id=" + c->id);
+                }
+                if (!playing) lastComposed = -1;
+            }
+            if (GetAsyncKeyState(VK_DELETE) & 1) {
+                double t = editT();
+                Clip* c = clipAtComp(0, t);
+                bool noId = c && c->id.empty();
+                bool gated = c && !noId && g_editsInFlight.count(c->id);
+                editLog("EDGE DEL clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
+                if (c && !noId && !gated) {
+                    auto rem = std::make_pair(c->compStart, c->out - c->in);
+                    EditReq req; req.verb = "remove_clip"; req.args = { {"id", c->id} };
+                    req.kind = 1; req.t = t; req.group = g_group; req.rem = rem;
+                    g_editsInFlight.insert(c->id);
+                    queueEdit(std::move(req));
+                    editLog("QUEUE remove_clip id=" + c->id);
+                }
+                curSec = std::min(curSec, g_compDur); if (!playing) lastComposed = -1;
+            }
+            if (GetAsyncKeyState('O') & 1) {
+                // Trim OUT: shorten the clip's tail to end at t. No engine "trim_out" verb
+                // exists, but this IS exactly what set_trim(id, in, out) is for - same clip
+                // id, out lowered to srcT. ONE engine edit = ONE Ctrl+Z undoes it (an
+                // earlier draft used split+remove_clip here, which is two separate
+                // pushUndoLocked edits - it would have cost the user two undo presses per
+                // trim, the exact "phantom moves" undo bug the spec calls out by name).
+                double t = editT();
+                Clip* c = clipAtComp(0, t);
+                double srcT = c ? c->in + (t - c->compStart) : 0;
+                bool noId = c && c->id.empty();
+                bool gated = c && !noId && g_editsInFlight.count(c->id);
+                editLog("EDGE O clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
+                if (c && !noId && !gated && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
+                    auto rem = std::make_pair(t, c->compStart + (c->out - c->in) - t);
+                    EditReq req; req.verb = "set_trim"; req.args = { {"id", c->id}, {"in", c->in}, {"out", srcT} };
+                    req.kind = 2; req.t = t; req.group = g_group; req.rem = rem;
+                    g_editsInFlight.insert(c->id);
+                    queueEdit(std::move(req));
+                    editLog("QUEUE set_trim(out) id=" + c->id);
+                }
+                curSec = std::min(curSec, g_compDur); if (!playing) lastComposed = -1;
+            }
+            if (GetAsyncKeyState('I') & 1) {
+                // Trim IN: shorten the clip's head to start at t - same clip id, `in`
+                // raised to srcT, one set_trim edit. Same one-press-undo reasoning as O;
+                // also keeps the original id (a split+remove_clip version would hand the
+                // surviving piece a NEW id, silently orphaning anything keyed to the old
+                // one, e.g. a Q&A card tied to this clip).
+                double t = editT();
+                Clip* c = clipAtComp(0, t);
+                double srcT = c ? c->in + (t - c->compStart) : 0;
+                bool noId = c && c->id.empty();
+                bool gated = c && !noId && g_editsInFlight.count(c->id);
+                editLog("EDGE I clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
+                if (c && !noId && !gated && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
+                    auto rem = std::make_pair(c->compStart, t - c->compStart);
+                    EditReq req; req.verb = "set_trim"; req.args = { {"id", c->id}, {"in", srcT}, {"out", c->out} };
+                    req.kind = 3; req.t = t; req.group = g_group; req.rem = rem;
+                    g_editsInFlight.insert(c->id);
+                    queueEdit(std::move(req));
+                    editLog("QUEUE set_trim(in) id=" + c->id);
+                }
+                curSec = std::min(curSec, g_compDur); if (!playing) lastComposed = -1;
+            }
             if (GetAsyncKeyState('G') & 1) { g_group = !g_group; }
-            if (GetAsyncKeyState('Z') & 1) { if (GetKeyState(VK_CONTROL) & 0x8000) { json r = engineCall("undo", {}, 3.0); (void)r; json tv = engineCall("timeline", {}, 5.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]); } }
+            if (GetAsyncKeyState('Z') & 1) { if (GetKeyState(VK_CONTROL) & 0x8000) {
+                // Debounced: with the blocking engineCall() this replaced, a physical
+                // keypress could never queue a second "undo" before the first's round
+                // trip finished - the block was an accidental throttle. Non-blocking
+                // removes that throttle, and undo is the one edit where a spurious
+                // extra call is destructive (it walks past the intended edit into
+                // whatever came before it, observed live this session: a single split
+                // plus two Ctrl+Z presses emptied the whole demo reel, not just the
+                // split - see COULD NOT DO, not fully root-caused). 250ms is far under
+                // any real double-tap but absorbs a same/next-frame double edge.
+                double n = nowSec();
+                if (n - g_lastUndoQueued > 0.25) {
+                    g_lastUndoQueued = n;
+                    editLog("EDGE CTRLZ");
+                    // req.args MUST be json::object(), not {} - "json x = {}" prefers the
+                    // default ctor over the initializer-list ctor for an empty brace list,
+                    // producing JSON null. The drain loop below (~line 2280) unconditionally
+                    // calls res.req.args.value("id", ...) for every completed edit including
+                    // undo; a null args threw json::type_error.306 there on EVERY undo (caught,
+                    // logged, silently swallowed), which skipped the rest of that drain
+                    // iteration - including the loadTimelineView(__timeline) call - so undo's
+                    // engine round-trip succeeded but the visible timeline was NEVER refreshed
+                    // to match it. Found live via a 5-minute rapid split/undo stress drive
+                    // (BECKY_REVIEW_EDIT_LOG showed "EXCEPTION in UI drain: cannot use value()
+                    // with null" on every single Ctrl+Z) - this is almost certainly the real
+                    // cause of the earlier "two Ctrl+Z emptied the whole reel" oddity, not just
+                    // a walked-past-the-edit undo bug.
+                    EditReq req; req.verb = "undo"; req.args = json::object(); req.kind = 4; req.t = curSec;
+                    queueEdit(std::move(req));
+                }
+            } }
+            bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            if (GetAsyncKeyState(VK_LEFT) & 1) {
+                if (ctrlDown) {
+                    // E-4: jump to the previous clip boundary anywhere on the timeline.
+                    double best = 0; bool found = false;
+                    for (auto& c : g_track[0]) if (c.compStart < curSec - 0.01 && (!found || c.compStart > best)) { best = c.compStart; found = true; }
+                    if (found) { curSec = best; playing = false; g_playingExt = false; }
+                } else {
+                    // D-2/E-5: one-frame step back at the clip's OWN source fps (sourceFps
+                    // degrades to 30.0 until its async probe lands - see sourceFps above).
+                    Clip* c = clipAtComp(0, curSec);
+                    double fps = sourceFps(c ? c->source : std::string());
+                    curSec = std::max(0.0, curSec - (1.0 / fps)); playing = false; g_playingExt = false;
+                }
+            }
+            if (GetAsyncKeyState(VK_RIGHT) & 1) {
+                if (ctrlDown) {
+                    double best = g_compDur; bool found = false;
+                    for (auto& c : g_track[0]) { double end = c.compStart + (c.out - c.in); if (end > curSec + 0.01 && (!found || end < best)) { best = end; found = true; } }
+                    if (found) { curSec = best; playing = false; g_playingExt = false; }
+                } else {
+                    Clip* c = clipAtComp(0, curSec);
+                    double fps = sourceFps(c ? c->source : std::string());
+                    curSec = std::min(g_compDur, curSec + (1.0 / fps)); playing = false; g_playingExt = false;
+                }
+            }
         }
 
-        if (playing && !g_track[0].empty()) { curSec += dt; if (curSec >= g_compDur) curSec = 0; }
+        // I-* fix: apply a finished search from searchWorker (see runSearch/searchWorker
+        // above) - the UI thread only ever touches the small pending flag + result here,
+        // never blocks on the engine round-trip itself.
+        {
+            SearchDone done; bool have = false;
+            {
+                std::lock_guard<std::mutex> lk(g_searchDoneMx);
+                if (g_searchDonePending) { done = std::move(g_searchDoneResult); g_searchDonePending = false; have = true; }
+            }
+            if (have) {
+                g_searching = false;
+                char msMsg[64]; snprintf(msMsg, sizeof(msMsg), " (%.0fms)", done.elapsedMs);
+                if (!done.ok) { g_searchErr = (done.err.empty() ? "search failed" : done.err) + msMsg; g_searchMode.clear(); g_hits.clear(); }
+                else { g_searchErr.clear(); g_searchMode = done.mode; g_searchNote = done.note + msMsg; g_hits = std::move(done.hits); }
+            }
+        }
 
-        if (!g_track[0].empty() && curSec != lastComposed) { compose(curSec); uploadFrame(); lastComposed = curSec; }
+        // B-2: apply every transcribe finished since last frame - a targeted flip of
+        // that one row's hasTranscript flag (not a full applyFolderView reload, which
+        // would reset g_libSel/scroll position and regress B-6/B-4 for no reason).
+        {
+            std::deque<TranscribeDone> done;
+            {
+                std::lock_guard<std::mutex> lk(g_transcribeMx);
+                done.swap(g_transcribeDoneQ);
+            }
+            for (auto& d : done) {
+                if (d.ok) {
+                    for (auto& v : g_videos) if (v.path == d.name) { v.hasTranscript = true; break; }
+                    g_renderMsg = "Transcribed " + baseName(d.name);
+                } else {
+                    g_renderMsg = "Transcribe failed (" + baseName(d.name) + "): " + d.err;
+                }
+                g_renderMsgAt = nowSec();
+            }
+        }
+
+        // E-13: apply every add_external finished since last frame - the engine reply
+        // carries the full new TimelineView (same shape addHitToTimeline/loadTimelineView
+        // already handle), so a dropped file just lands on the timeline like any other add.
+        {
+            std::deque<AddExternalDone> done;
+            { std::lock_guard<std::mutex> lk(g_addExtMx); done.swap(g_addExtDoneQ); }
+            for (auto& d : done) {
+                if (d.ok && d.data.contains("clips")) {
+                    loadTimelineView(d.data);
+                    g_renderMsg = "Added dropped file to timeline";
+                } else {
+                    g_renderMsg = "Add file failed: " + (d.err.empty() ? std::string("?") : d.err);
+                }
+                g_renderMsgAt = nowSec();
+            }
+        }
+
+        // A-4 fix: apply every edit editWorker has finished since last frame, in the
+        // exact order they were requested (never just the latest - a burst of splits
+        // must land as that many real edits, I-6). Each completed reply already carries
+        // the full "timeline" reload; the per-edit side effects that reload can't
+        // express (the local track-1/"pip" mirror, curSec ripple compensation, and
+        // E-1's post-split selection) are replayed here from the request's own snapshot.
+        {
+            std::deque<EditResult> done;
+            { std::lock_guard<std::mutex> lk(g_editDoneMx); done.swap(g_editDone); }
+            if (!done.empty()) editLog("UI drain: " + std::to_string(done.size()) + " replies to apply");
+            for (auto& res : done) {
+                editLog("drain loop entered, kind=" + std::to_string(res.req.kind) + " ok=" + (res.ok ? "1" : "0"));
+                try {
+                    // Release the in-flight gate (see g_editsInFlight) whether the engine
+                    // accepted or rejected this edit - either way this id is resolved and
+                    // the next keypress may target it (or its post-split successor) again.
+                    if (res.req.kind >= 0 && res.req.kind <= 3) {
+                        std::string rid = res.req.args.value("id", std::string());
+                        if (!rid.empty()) g_editsInFlight.erase(rid);
+                    }
+                    editLog("drain: gate released, building reply log line");
+                    std::string replyId = res.req.args.value("id", std::string());
+                    editLog("drain: got id=" + replyId);
+                    std::string newIdField = res.data.value("new_id", std::string());
+                    editLog("drain: got new_id=" + newIdField);
+                    editLog("REPLY verb=" + res.req.verb + " ok=" + (res.ok ? "1" : "0") +
+                        " id=" + replyId + " new_id=" + newIdField);
+                    if (!res.ok) continue;
+                    if (res.data.contains("__timeline")) {
+                        loadTimelineView(res.data["__timeline"]);
+                        // I-6 verification bar (BUILD_1.md SS4-E-18): "split 20x rapidly, assert
+                        // 0 jobs enqueued" - g_peaksJobsEnqueued only increments on a genuine
+                        // cache-miss window (peaksRequest's peaksWindowFilled short-circuit).
+                        // Logged here (once per edit reply, i.e. once per reload) so a live run
+                        // with BECKY_REVIEW_EDIT_LOG set can grep this line and see the counter
+                        // stop climbing once the reel's audio is warm.
+                        editLog("loadTimelineView done, " + std::to_string(g_track[0].size()) +
+                            " clips, peaksJobsEnqueued=" + std::to_string(g_peaksJobsEnqueued.load()));
+                    }
+                    switch (res.req.kind) {
+                    case 0: { // split
+                        if (res.req.group) splitTrack(1, res.req.t);
+                        std::string newId = res.data.value("new_id", std::string());
+                        if (!newId.empty()) { g_sel.insert(newId); g_selAnchor = newId; emitSelect(); }
+                        break;
+                    }
+                    case 1: // remove
+                        if (res.req.group) deleteTrack(1, res.req.t);
+                        rippleCurSec(curSec, res.req.rem);
+                        break;
+                    case 2: // trim out
+                        if (res.req.group) { splitTrack(1, res.req.t); deleteTrack(1, res.req.t); }
+                        rippleCurSec(curSec, res.req.rem);
+                        break;
+                    case 3: // trim in
+                        if (res.req.group) { splitTrack(1, res.req.t); deleteTrack(1, res.req.t - 0.02); }
+                        rippleCurSec(curSec, res.req.rem);
+                        break;
+                    case 4: default: // undo
+                        break;
+                    }
+                    curSec = std::min(curSec, g_compDur);
+                    if (!playing) lastComposed = -1;
+                } catch (const std::exception& e) {
+                    editLog(std::string("EXCEPTION in UI drain: ") + e.what());
+                }
+                editLog("drain loop iteration done");
+            }
+        }
+
+        if (playing && !g_track[0].empty()) {
+            curSec += dt * g_playRate;
+            // E-10: below-threshold ranges are SKIPPED seamlessly during playback,
+            // never just dimmed-and-played (FB7: "the single biggest breakthrough").
+            if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; break; }
+            if (curSec >= g_compDur) curSec = 0;
+        }
+
+        // P1 fix: never decode on the UI thread. Post the newest target to the decode
+        // thread (non-blocking); the decode thread issues the mpv seek and mpv paints
+        // its own child hwnd directly - there is no frame buffer for the UI thread to
+        // poll anymore (D-1: mpv owns the pixels), only the pane's position/size is
+        // pushed to it each frame below (center video pane block).
+        // mpvArmedOnce: mpv connects to its IPC pipe on its OWN thread, asynchronously
+        // (mpvLaunch never blocks the UI thread - see its comment). On a paused/static
+        // startup curSec never changes, so the ordinary "curSec != lastComposed" gate
+        // fires exactly once, at t=0 - before mpv is necessarily connected yet - and
+        // then never again, leaving the video pane permanently black even after mpv
+        // comes up a moment later. Force exactly one extra dispatch the first frame
+        // mpv reports available, so the pending clip always gets shown.
+        bool mpvReadyNow = g_mpvAvailable.load();
+        if (!g_track[0].empty() && (curSec != lastComposed || (mpvReadyNow && !mpvArmedOnce))) {
+            requestCompose(curSec); lastComposed = curSec;
+        }
+        if (mpvReadyNow) mpvArmedOnce = true;
         if (g_resize) { resizeD3D(); g_resize = false; }
 
         ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
+
+        // #0 CRITICAL backstop (H-2/H-3 "degrade, never crash"): everything below this
+        // point runs dozens of engineCall()-driven button/panel handlers that were NOT
+        // individually try/catch-guarded (unlike editWorker's edit path). The undo-stack
+        // bug already root-caused in this file proves the failure mode is real: one
+        // uncaught json exception on this thread -> std::terminate -> abort ->
+        // "becky-review.exe has stopped working" (ucrtbase.dll 0xC0000409), taking the
+        // whole app down over a single bad engine reply. This wraps the whole frame's UI
+        // logic so a single bad frame degrades (logged, ImGui frame still closed out via
+        // Render() below) instead of killing the process Jordan is mid-edit in.
+        try {
 
         // ---- top menu / status bar ----
         if (ImGui::BeginMainMenuBar()) {
@@ -1306,73 +3068,379 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             if (ImGui::MenuItem("Open Folder...", "Ctrl+O")) {
                 // Native folder dialog via the engine (pick_folder verb on Windows).
-                json r = engineCall("pick_folder", {}, 30.0);
-                if (r.value("ok", false)) { json tv = engineCall("timeline", {}, 10.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]); }
+                json r = engineCall("pick_folder", {}, 600.0);   // PickFolder also indexes (see loadFolder note)
+                if (r.value("ok", false)) {
+                    const json& d = r.contains("data") ? r["data"] : r;
+                    if (d.value("picked", false) && d.contains("folder")) { g_folderErr.clear(); applyFolderView(d["folder"], std::string()); }
+                } else {
+                    g_folderErr = r.value("error", std::string("pick_folder failed"));
+                }
             }
-            ImGui::Text("%.1fs / %.0fs  compose %.2f ms", curSec, g_compDur, g_composeMs);
+            ImGui::Text("%.1fs / %.0fs", curSec, g_compDur);
             if (!g_engine.alive) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "  ENGINE DOWN");
+            if (!g_mpvAvailable.load()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "  MPV DOWN");
             ImGui::EndMainMenuBar();
         }
 
-        // ---- left panel: library / search ----
+        // ---- left panel: library / search / transcript (B, C) ----
         ImGui::SetNextWindowPos({ 0, 0 }); ImGui::SetNextWindowSize({ (float)g_W * 0.22f, (float)g_H });
         if (ImGui::Begin("library", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+            bool libFocusedNow = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGui::Text("Library / Search");
             ImGui::Separator();
-            if (ImGui::InputText("##search", g_searchBuf, sizeof g_searchBuf, ImGuiInputTextFlags_EnterReturnsTrue)) {
-                std::string q(g_searchBuf);
-                if (!q.empty()) { json r = engineCall("search", { {"query", q} }, 10.0); if (r.value("ok", false)) g_searchResult = r["data"].dump(); else g_searchResult = r.value("error", "search failed"); g_hasSearch = true; }
-            }
-            if (ImGui::Button("Smart (qmd)")) {
-                std::string q(g_searchBuf);
-                if (!q.empty()) { json r = engineCall("qmd_search", { {"query", q} }, 15.0); if (r.value("ok", false)) g_searchResult = r["data"].dump(); else g_searchResult = r.value("error", "qmd failed"); g_hasSearch = true; }
-            }
+            bool submitted = ImGui::InputText("##search", g_searchBuf, sizeof g_searchBuf, ImGuiInputTextFlags_EnterReturnsTrue);
+            if (submitted) runSearch(false);
+            if (ImGui::SmallButton("Search")) runSearch(false);
             ImGui::SameLine();
-            if (ImGui::Button("Clear")) { g_searchBuf[0] = 0; g_hasSearch = false; g_searchResult.clear(); }
+            if (ImGui::SmallButton("Smart (qmd)")) runSearch(true);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear")) { g_searchBuf[0] = 0; g_hits.clear(); g_searchMode.clear(); g_searchErr.clear(); }
             ImGui::Separator();
-            if (g_hasSearch) {
-                ImGui::TextWrapped("%s", g_searchResult.c_str());
+
+            if (g_searching) {
+                ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), "Searching...");
+            } else if (!g_searchErr.empty()) {
+                ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_searchErr.c_str());
+            } else if (!g_searchMode.empty()) {
+                // ---- structured search hits (C-1/C-2/C-3/C-4/C-5) ----
+                int playable = 0, transcriptOnly = 0;
+                for (auto& h : g_hits) { if (h.transcriptOnly) transcriptOnly++; else playable++; }
+                ImGui::TextDisabled("%d quotes - %d playable, %d transcript-only%s", (int)g_hits.size(), playable, transcriptOnly,
+                    g_searchMode == "qmd" ? " (smart)" : "");
+                if (!g_searchNote.empty()) ImGui::TextDisabled("%s", g_searchNote.c_str());
+                ImGui::Separator();
+                ImGui::BeginChild("hits", { 0, 0 }, false);
+                for (size_t i = 0; i < g_hits.size(); i++) {
+                    Hit& h = g_hits[i];
+                    ImGui::PushID((int)i);
+                    std::string line = h.timecode + "  " + h.text;
+                    if (h.transcriptOnly) {
+                        ImGui::TextDisabled("%s", line.c_str());
+                    } else {
+                        // click plays at the verbatim timestamp (C-4); double-click adds to timeline.
+                        if (ImGui::Selectable(line.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h);
+                            else seekToSpan(h.source, h.start, h.end, true, curSec, playing, lastComposed);
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", h.name.c_str(), h.date.c_str());
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+            } else if (!g_cueName.empty()) {
+                // ---- flowing single-video transcript view (B-8) ----
+                if (ImGui::SmallButton("< Back")) { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); }
+                ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
+                ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
+                ImGui::Separator();
+                if (!g_cueErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cueErr.c_str());
+                ImGui::BeginChild("transcript", { 0, 0 }, false);
+                std::string within(g_withinBuf);
+                for (auto& c : g_cues) {
+                    if (!within.empty() && c.text.find(within) == std::string::npos) continue;
+                    std::string line = c.timecode + "  " + c.text;
+                    // click a cue -> player seeks there, PAUSED (D-3/B-8).
+                    if (ImGui::Selectable(line.c_str())) seekToSpan(c.source, c.start, c.end, false, curSec, playing, lastComposed);
+                }
+                ImGui::EndChild();
             } else {
-                ImGui::TextDisabled("search above, or open a folder");
-                ImGui::BulletText("Right panel = Q&A / ask-becky (P4)");
-                ImGui::BulletText("Transcript view (P2)");
+                // ---- video library list (B-1/B-3/B-4/B-5/B-6/B-7) ----
+                const char* sortLabel = g_sortMode == 0 ? "Date (newest)" : g_sortMode == 1 ? "Date (oldest)" : g_sortMode == 2 ? "Name A-Z" : "Name Z-A";
+                if (ImGui::SmallButton(sortLabel)) { g_sortMode = (g_sortMode + 1) % 4; sortLibrary(); }
+                if (g_orphanCount > 0) { ImGui::SameLine(); ImGui::TextDisabled("(+%d orphan transcripts)", g_orphanCount); }
+                if (!g_folderErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_folderErr.c_str());
+                ImGui::Separator();
+                if (g_videos.empty()) {
+                    ImGui::TextDisabled("Ctrl+O to open a folder");
+                } else if (libFocusedNow && !ImGui::GetIO().WantTextInput) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) { g_libSel = std::min((int)g_videos.size() - 1, g_libSel + 1); g_libScrollPending = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) { g_libSel = std::max(0, g_libSel - 1); g_libScrollPending = true; }
+                }
+                ImGui::BeginChild("videos", { 0, 0 }, false);
+                for (int i = 0; i < (int)g_videos.size(); i++) {
+                    VideoRow& v = g_videos[i];
+                    ImGui::PushID(i);
+                    bool sel = (g_libSel == i);
+                    bool inFlight;
+                    { std::lock_guard<std::mutex> lk(g_transcribeMx); inFlight = g_transcribeInFlight.count(v.path) != 0; }
+                    std::string label = v.name + (inFlight ? "  (transcribing...)" : v.hasTranscript ? "" : "  [no transcript]");
+                    // ONE selection model (B-4): mouse click sets the SAME index arrows move.
+                    if (ImGui::Selectable(label.c_str(), sel, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        g_libSel = i;
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { openTranscript(v.path); g_libJustViewedIdx = i; }
+                    }
+                    if (g_libJustViewedIdx == i) {
+                        ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(0x14, 0xFF, 0x39, 255));
+                    }
+                    if (ImGui::BeginPopupContextItem("rowctx")) {
+                        g_libSel = i;
+                        if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(v.path);
+                        if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(v.path).c_str());
+                        // B-2: one-click local transcription (Parakeet, official-first) - never
+                        // overwrites an original transcript (enforced engine-side). Disabled
+                        // while this exact video is already transcribing (in-flight guard).
+                        if (inFlight) ImGui::BeginDisabled();
+                        if (ImGui::MenuItem(v.hasTranscript ? "Re-transcribe" : "Transcribe")) requestTranscribe(v.path, v.name);
+                        if (inFlight) ImGui::EndDisabled();
+                        ImGui::EndPopup();
+                    }
+                    if (g_libSel == i && g_libScrollPending) { ImGui::SetScrollHereY(0.5f); g_libScrollPending = false; }
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+                // B-5: Space plays the selected row; Enter = double-click (open transcript).
+                // Guarded on !WantTextInput (I-4 fix, found live this session): the search
+                // box's InputText lives in this SAME panel, so IsWindowFocused(RootAndChild)
+                // stays true while typing in it - without this guard, pressing Enter to submit
+                // a keyword search ALSO fired "open transcript of selected row" (hijacking C-1
+                // search-via-Enter every time), and Space in a query string ALSO played the
+                // selected video mid-keystroke.
+                if (libFocusedNow && !ImGui::GetIO().WantTextInput && g_libSel >= 0 && g_libSel < (int)g_videos.size()) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) { openTranscript(g_videos[g_libSel].path); g_libJustViewedIdx = g_libSel; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_Space)) playWholeVideo(g_videos[g_libSel].path, curSec, playing, lastComposed);
+                }
             }
+            g_libFocused = libFocusedNow;
         }
         ImGui::End();
 
-        // ---- center video pane ----
+        // ---- center video pane (D-1: mpv --wid child hwnd, not an ImGui image) ----
         ImGui::SetNextWindowPos({ (float)g_W * 0.22f, 0 }); ImGui::SetNextWindowSize({ (float)g_W * 0.56f, (float)g_H * 0.78f });
         if (ImGui::Begin("video", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
-            if (g_vw > 0 && g_frameSrv) {
-                float availW = ImGui::GetContentRegionAvail().x, availH = ImGui::GetContentRegionAvail().y;
-                float sc = availH / g_vh; if (g_vw * sc > availW) sc = availW / g_vw;
-                float iw = g_vw * sc, ih = g_vh * sc;
-                ImGui::SetCursorPosX((availW - iw) * 0.5f);
-                ImGui::Image((ImTextureID)g_frameSrv, { iw, ih });
+            bool haveClip = !g_track[0].empty();
+            if (g_mpvHwnd && g_mpvAvailable.load() && haveClip) {
+                // mpv paints this rect itself (GPU hwdec, its own compositor surface) -
+                // the app only has to keep the child hwnd positioned/sized to match the
+                // pane and reserve that space in the ImGui layout below it.
+                ImVec2 origin = ImGui::GetCursorScreenPos();
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                // Reserve room for BOTH control rows below the preview (Play/|<</2x/Overlay/
+                // Render/Render Selection, then Screenshot/Save Reel/Load Reel/Export EDL) plus
+                // the curSec/dur text line and the g_renderMsg status line - reserving only ONE
+                // row here (the bug found live this session) let the video Dummy eat the space
+                // row 2 and g_renderMsg needed, silently clipping them outside the fixed-height
+                // "video" window: Render/Transcribe/Screenshot never had a visible success/fail
+                // readout, which is exactly why B-2 could never be confirmed complete on screen.
+                float ctrlH = ImGui::GetTextLineHeightWithSpacing() * 2 + ImGui::GetFrameHeightWithSpacing() * 2;
+                float videoH = std::max(0.0f, avail.y - ctrlH);
+                POINT pt{ (LONG)origin.x, (LONG)origin.y }; ScreenToClient(g_hwnd, &pt);
+                MoveWindow(g_mpvHwnd, pt.x, pt.y, (int)avail.x, (int)videoH, TRUE);
+                ShowWindow(g_mpvHwnd, SW_SHOWNA);
+                ImGui::Dummy({ avail.x, videoH });
+                // D-6: push/refresh the provenance overlay into mpv's own surface for
+                // whichever clip is under the playhead right now - every frame is cheap
+                // (mpvUpdateOverlay no-ops unless the mode is "shown" or the text changed).
+                mpvUpdateOverlay(clipAtComp(0, curSec));
             } else {
-                ImGui::TextDisabled("video pane (GStreamer D3D11)");
+                if (g_mpvHwnd) ShowWindow(g_mpvHwnd, SW_HIDE);
+                if (!g_mpvAvailable.load()) {
+                    ImGui::TextDisabled("video decode unavailable (mpv failed to start - shell/library/timeline still work)");
+                } else {
+                    ImGui::TextDisabled("video pane (mpv) - no clip loaded");
+                }
+                mpvClearOverlay();
             }
             ImGui::Text("%.1f / %.1f s", curSec, g_compDur);
             if (ImGui::Button(playing ? "Pause##play" : "Play##play")) { playing = !playing; g_playingExt = playing; }
             ImGui::SameLine();
             if (ImGui::Button("|<<")) { curSec = 0; g_playingExt = playing; }
             ImGui::SameLine();
-            if (ImGui::Button("2x")) { /* 2x handled by engine playback rate in P4 */ }
+            if (g_playRate > 1.5) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1));
+            if (ImGui::Button("2x")) g_playRate = (g_playRate > 1.5) ? 1.0 : 2.0;
+            if (g_playRate > 1.5) ImGui::PopStyleColor();
+            ImGui::SameLine();
+            // D-6: 3-state provenance overlay toggle (off / on-hidden-in-preview DEFAULT /
+            // on-previewed) - clicking cycles it; render always burns in whichever text
+            // "on-previewed" would show, since Render.Enabled tracks mode!=0 (setOverlayMode).
+            {
+                const char* ovLabel = g_ovMode == 0 ? "Overlay: Off##ov"
+                                    : g_ovMode == 1 ? "Overlay: On (hidden)##ov"
+                                                    : "Overlay: On (shown)##ov";
+                if (ImGui::Button(ovLabel)) setOverlayMode((g_ovMode + 1) % 3);
+            }
+            ImGui::SameLine();
+            // F-3/F-4: naming (clips_SOURCE_NNNN.mp4 / clips_compilation_NNNN.mp4,
+            // never overwrites) is entirely engine-side (renderReel) - the button
+            // just calls export with no output path and shows what came back.
+            if (ImGui::Button("Render")) {
+                json r = engineCall("export", { {"output", ""} }, 300.0);
+                if (r.value("ok", false)) {
+                    const json& d = r.contains("data") ? r["data"] : r;
+                    g_renderMsg = "Rendered " + d.value("mp4", std::string());
+                    openInFileBrowser(d.value("mp4", std::string()));
+                } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
+                g_renderMsgAt = nowSec();
+            }
+            ImGui::SameLine();
+            char selLabel[40]; snprintf(selLabel, sizeof selLabel, "Render Selection (%d)", (int)g_sel.size());
+            if (g_sel.empty()) ImGui::BeginDisabled();
+            if (ImGui::Button(selLabel)) {
+                std::vector<std::string> ids(g_sel.begin(), g_sel.end());
+                json r = engineCall("export_selection", { {"ids", ids}, {"output", ""} }, 300.0);
+                if (r.value("ok", false)) {
+                    const json& d = r.contains("data") ? r["data"] : r;
+                    g_renderMsg = "Rendered " + d.value("mp4", std::string());
+                    openInFileBrowser(d.value("mp4", std::string()));
+                } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
+                g_renderMsgAt = nowSec();
+            }
+            if (g_sel.empty()) ImGui::EndDisabled();
+            // D-5/F-2/F-5: screenshot + save/load reel + EDL export. Engine verbs already
+            // existed (grab_frame/save_reel/load_reel/write_edl); only the buttons were missing.
+            if (ImGui::Button("Screenshot")) {
+                Clip* cur = nullptr;
+                for (auto& c : g_track[0]) if (curSec >= c.compStart && curSec < c.compStart + (c.out - c.in)) { cur = &c; break; }
+                if (!cur && !g_track[0].empty()) cur = &g_track[0].back();
+                if (cur) {
+                    double srcT = cur->in + (curSec - cur->compStart);
+                    json r = engineCall("grab_frame", { {"source", cur->source}, {"t", srcT} }, 20.0);
+                    // Same bug class root-caused for "undo" above (line ~281): r["data"] on a
+                    // reply that omits "data" vivifies a null, and .value() on that null throws
+                    // uncaught on the UI thread -> std::terminate -> abort (ucrtbase.dll 0xC0000409).
+                    // r.value("data", json::object()) never vivifies; always safe.
+                    g_renderMsg = r.value("ok", false) ? "Saved " + r.value("data", json::object()).value("path", std::string()) : "Screenshot failed: " + r.value("error", std::string("?"));
+                } else g_renderMsg = "Screenshot failed: no clip at playhead";
+                g_renderMsgAt = nowSec();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save Reel")) {
+                json r = engineCall("save_reel", { {"path", ""} }, 20.0);
+                g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
+                g_renderMsgAt = nowSec();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load Reel")) {
+                std::string path = pickOpenReelFile(hwnd);
+                if (!path.empty()) {
+                    json r = engineCall("load_reel", { {"path", path} }, 30.0);
+                    if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; g_renderMsg = "Loaded reel " + baseName(path); }
+                    else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Export EDL")) {
+                json r = engineCall("write_edl", { {"output", ""} }, 30.0);
+                if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
+                else g_renderMsg = "Export EDL failed: " + r.value("error", std::string("?"));
+                g_renderMsgAt = nowSec();
+            }
+            if (!g_renderMsg.empty() && nowSec() - g_renderMsgAt < 8.0) ImGui::TextDisabled("%s", g_renderMsg.c_str());
         }
         ImGui::End();
 
-        // ---- right panel: Q&A / ask (P4 stub) ----
+        // ---- right panel: Q&A / ask-becky (G) ----
         ImGui::SetNextWindowPos({ (float)g_W * 0.78f, 0 }); ImGui::SetNextWindowSize({ (float)g_W * 0.22f, (float)g_H });
         if (ImGui::Begin("qa", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             ImGui::Text("Q&A / Ask-Becky");
             ImGui::Separator();
-            ImGui::TextDisabled("agent questions land here (P4)");
-            static char askBuf[512] = { 0 };
-            if (ImGui::InputTextMultiline("##ask", askBuf, sizeof askBuf, { -1, (float)g_H * 0.2f }, ImGuiInputTextFlags_EnterReturnsTrue)) {
-                std::string q(askBuf);
-                if (!q.empty()) { json r = engineCall("ask", { {"prompt", q} }, 30.0); if (r.value("ok", false)) g_searchResult = r["data"].dump(); }
+            if (!g_cardsErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cardsErr.c_str());
+            if (g_cards.empty()) {
+                ImGui::TextDisabled("no review questions loaded");
+            } else {
+                ImGui::BeginChild("cards", { 0, (float)g_H * 0.45f }, true);
+                for (size_t i = 0; i < g_cards.size(); i++) {
+                    QACard& c = g_cards[i];
+                    ImGui::PushID((int)i);
+                    ImVec4 col = ImGui::ColorConvertU32ToFloat4(cardColorFor(c.id));
+                    ImGui::PushStyleColor(ImGuiCol_Text, col);
+                    bool open = ImGui::CollapsingHeader(c.answered ? (c.question + "  [answered]").c_str() : c.question.c_str());
+                    ImGui::PopStyleColor();
+                    if (open) {
+                        bool haveClip = false;
+                        if (ImGui::SmallButton("Play tied clips")) {
+                            // G-1: play EVERY clip tied to this answer, in order - not just the
+                            // first match. Collect before mutating (seekToSpan-style track
+                            // replacement clears g_track[0], so a live iterate-and-break would
+                            // both skip later ties and corrupt the loop).
+                            std::vector<Clip> tied;
+                            for (auto& tc : g_track[0])
+                                if (std::find(c.clipIDs.begin(), c.clipIDs.end(), tc.id) != c.clipIDs.end())
+                                    tied.push_back(tc);
+                            if (!tied.empty()) {
+                                g_track[0].clear();
+                                for (auto& tc : tied) g_track[0].push_back(tc);
+                                packTrack(0); recomputeDur();
+                                curSec = 0; playing = true; g_playingExt = true; lastComposed = -1;
+                                g_quietDirty = true;
+                                for (auto& tc : tied) peaksRequest(tc.source, tc.in - 1.0, tc.out + 5.0);
+                                haveClip = true;
+                            }
+                        }
+                        (void)haveClip;
+                        if (!c.answer.empty()) ImGui::TextWrapped("answer: %s", c.answer.c_str());
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
             }
-            ImGui::TextWrapped("%s", g_searchResult.c_str());
+            ImGui::Separator();
+            static char askBuf[512] = { 0 };
+            if (ImGui::InputTextMultiline("##ask", askBuf, sizeof askBuf, { -1, (float)g_H * 0.15f }, ImGuiInputTextFlags_EnterReturnsTrue)) {
+                std::string q(askBuf);
+                if (!q.empty()) {
+                    json r = engineCall("ask", { {"utterance", q} }, 30.0);
+                    if (r.value("ok", false)) {
+                        json d = r["data"];
+                        g_askAnswer = d.value("preview_text", std::string());
+                        std::string note = d.value("note", std::string());
+                        if (g_askAnswer.empty()) g_askAnswer = note.empty() ? d.dump() : note;
+                        else if (!note.empty()) g_askAnswer += "\n(" + note + ")";
+                        // A mutating turn carries an id + at least one action - anything
+                        // else (a plain answer, a Tier-0 command that already ran) has
+                        // nothing to approve, so no card.
+                        std::string id = d.value("id", std::string());
+                        json actions = d.value("actions", json::array());
+                        if (!id.empty() && actions.is_array() && !actions.empty()) {
+                            g_proposalID = id;
+                            g_proposalPreview = d.value("preview_text", std::string("(edit proposed)"));
+                            g_proposalNote = note;
+                            g_proposalDiff = d.value("preview", json::array());
+                            g_proposalPending = true;
+                        } else {
+                            g_proposalPending = false;
+                        }
+                    } else {
+                        g_askAnswer = r.value("error", std::string("ask failed"));
+                        g_proposalPending = false;
+                    }
+                    askBuf[0] = 0;
+                }
+            }
+            ImGui::TextWrapped("%s", g_askAnswer.c_str());
+            if (g_proposalPending) {
+                ImGui::Separator();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.25f, 1.0f));
+                ImGui::TextWrapped("Proposed: %s", g_proposalPreview.c_str());
+                ImGui::PopStyleColor();
+                if (g_proposalDiff.is_array()) {
+                    for (auto& dl : g_proposalDiff) {
+                        std::string label = dl.value("label", std::string());
+                        std::string before = dl.value("before", std::string());
+                        std::string after = dl.value("after", std::string());
+                        ImGui::BulletText("%s: %s -> %s", label.c_str(), before.c_str(), after.c_str());
+                    }
+                }
+                if (ImGui::Button("Apply##proposal")) {
+                    json ar = engineCall("apply_proposal", { {"id", g_proposalID} }, 30.0);
+                    if (ar.value("ok", false)) {
+                        json d = ar["data"];
+                        if (d.contains("timeline")) loadTimelineView(d["timeline"]);
+                        g_askAnswer = "Applied: " + g_proposalPreview + " (Ctrl+Z reverts the whole pass)";
+                    } else {
+                        g_askAnswer = "Apply failed: " + ar.value("error", std::string("?"));
+                    }
+                    g_proposalPending = false;
+                    g_proposalID.clear();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reject##proposal")) {
+                    engineCall("reject_proposal", { {"id", g_proposalID} }, 10.0);
+                    g_askAnswer = "Rejected: " + g_proposalPreview;
+                    g_proposalPending = false;
+                    g_proposalID.clear();
+                }
+            }
         }
         ImGui::End();
 
@@ -1384,6 +3452,12 @@ int main(int argc, char** argv) {
         }
         ImGui::End();
 
+        } catch (const std::exception& e) {
+            crashLog(std::string("UI frame: caught ") + e.what() + " - frame degraded, not crashing");
+        } catch (...) {
+            crashLog("UI frame: caught non-std exception - frame degraded, not crashing");
+        }
+
         ImGui::Render();
         float clr[4] = { 0.06f, 0.07f, 0.09f, 1.0f };
         g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
@@ -1392,10 +3466,17 @@ int main(int argc, char** argv) {
         g_swap->Present(1, 0);
     }
 
+    if (g_frameTrace.is_open()) {
+        g_frameTrace << "# total_frames=" << frameIdx << " stalls_over_100ms=" << g_frameTraceStalls << "\n";
+        g_frameTrace.flush();
+    }
+
     engineShutdown();
+    if (g_mpvPipe != INVALID_HANDLE_VALUE) CloseHandle(g_mpvPipe);
+    if (g_mpvPipeRead != INVALID_HANDLE_VALUE) CloseHandle(g_mpvPipeRead);
+    if (g_mpvProc.hProcess) { TerminateProcess(g_mpvProc.hProcess, 0); WaitForSingleObject(g_mpvProc.hProcess, 1500); CloseHandle(g_mpvProc.hProcess); CloseHandle(g_mpvProc.hThread); }
+    if (g_mpvHwnd) DestroyWindow(g_mpvHwnd);
     ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
-    if (g_frameSrv) g_frameSrv->Release(); if (g_frameTex) g_frameTex->Release();
     if (g_rtv) g_rtv->Release(); if (g_swap) g_swap->Release(); if (g_ctx) g_ctx->Release(); if (g_dev) g_dev->Release();
-    for (auto& L : g_layer) { if (L.pipe) { gst_element_set_state(L.pipe, GST_STATE_NULL); gst_object_unref(L.bus); gst_object_unref(L.pipe); } }
     return 0;
 }

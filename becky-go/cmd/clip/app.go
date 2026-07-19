@@ -106,6 +106,13 @@ type App struct {
 	// exact files are accepted by resolveSource / served — a per-FILE allow-list, so
 	// dropping one external clip never widens the scope to a whole other folder.
 	extraFiles map[string]bool
+
+	// lastSearchHits is the most recent Search() result, in the exact order the
+	// GUI displayed it — the referent for a chat "add clip 3"/"add the last clip"
+	// (see assistant.resolveHitActions) and for Tier-2's funnel candidates. Reset
+	// to nil whenever OpenFolder/Reindex changes the corpus underneath it, so a
+	// stale index can never resolve to the wrong clip.
+	lastSearchHits []footage.Candidate
 }
 
 // NewApp builds an empty App with config loaded and a fresh empty reel. The
@@ -179,7 +186,15 @@ func (a *App) OpenFolder(folder string) (FolderView, error) {
 	a.mu.Lock()
 	a.folder = abs
 	a.index = idx
+	a.lastSearchHits = nil // a new corpus invalidates any prior "add clip N" referent
 	a.mu.Unlock()
+
+	// I-4 (M: becky-review-3-review cycle 18): the first keyword search after a
+	// fresh engine boot pays ~7.8-8.0s to parse+cache every transcript (measured
+	// on the real 1,136-transcript corpus); every later search is 226-270ms.
+	// Pay that cost here, in the background, right after indexing - not on
+	// Jordan's first search keystroke.
+	go footage.WarmTranscriptCache(idx)
 
 	return a.folderView(), nil
 }
@@ -323,20 +338,23 @@ func (a *App) lookupVideo(name string) (footage.Video, bool) {
 }
 
 // ProbeResult is the reply for the probe verb: a source's true duration in
-// seconds (float). The frontend uses it to clamp timeline trim/extend so a clip
-// can't be dragged past the end of its source. Duration is 0 when the source
-// isn't probe-able (no ffprobe, unreadable, not in the folder) — a degrade, not an
-// error, so the UI just falls back to its own bounds.
+// seconds (float) and its video frame rate. The frontend uses Duration to clamp
+// timeline trim/extend so a clip can't be dragged past the end of its source,
+// and Fps to step frame-exact (BUILD_1.md D-2) instead of assuming 30fps on
+// every source. Both are 0 when the source isn't probe-able (no ffprobe,
+// unreadable, not in the folder) — a degrade, not an error, so the UI just
+// falls back to its own bounds/default.
 type ProbeResult struct {
 	Duration float64 `json:"duration"`
+	Fps      float64 `json:"fps"`
 }
 
-// Probe returns the duration (seconds) of a source video via ffprobe. The source
-// must be an indexed video in the open folder (path security — probe can only
-// touch originals the case folder already knows). Degrade-never-crash: an
-// unresolved source or an ffprobe failure returns {duration: 0}, never an error,
-// so the timeline UI keeps working without ffprobe. Read-only: the video bytes are
-// only inspected, never written.
+// Probe returns the duration (seconds) and frame rate of a source video via
+// ffprobe. The source must be an indexed video in the open folder (path
+// security — probe can only touch originals the case folder already knows).
+// Degrade-never-crash: an unresolved source or an ffprobe failure returns
+// {duration: 0, fps: 0}, never an error, so the timeline UI keeps working
+// without ffprobe. Read-only: the video bytes are only inspected, never written.
 func (a *App) Probe(source string) ProbeResult {
 	v, ok := a.resolveSource(source)
 	if !ok {
@@ -350,7 +368,7 @@ func (a *App) Probe(source string) ProbeResult {
 	if err != nil || info.Duration < 0 {
 		return ProbeResult{Duration: 0}
 	}
-	return ProbeResult{Duration: info.Duration}
+	return ProbeResult{Duration: info.Duration, Fps: info.FPS}
 }
 
 // ---- search (keyword across the folder's transcripts) ---------------------
@@ -434,7 +452,33 @@ func (a *App) Search(query string) []SearchResult {
 	// the top), so scrolling jumps through time fast. Files with no date-coded name
 	// fall to the bottom. (The folder LIST stays newest-file-by-mtime — unchanged.)
 	sortSearchByDate(out)
+
+	// Remember this exact, as-displayed order so a later "add clip 3" in the chat
+	// resolves against what the user actually saw, not the pre-sort grep order.
+	a.mu.Lock()
+	a.lastSearchHits = searchResultsToCandidates(out)
+	a.mu.Unlock()
+
 	return out
+}
+
+// searchResultsToCandidates converts a displayed SearchResult list back into
+// footage.Candidate — the type assistant.Router.Assist expects for its
+// searchHits param — preserving order (the referent for "add clip N").
+func searchResultsToCandidates(out []SearchResult) []footage.Candidate {
+	cands := make([]footage.Candidate, 0, len(out))
+	for _, r := range out {
+		cands = append(cands, footage.Candidate{
+			Source:    r.Source,
+			Name:      r.Name,
+			Date:      r.Date,
+			Timestamp: r.Start,
+			End:       r.End,
+			Text:      r.Text,
+			Score:     r.Score,
+		})
+	}
+	return cands
 }
 
 // sortSearchByDate orders search hits by their file-name date, newest first, with
@@ -1208,6 +1252,7 @@ func (a *App) Ask(ctx context.Context, utterance string) (assistant.Proposal, er
 	a.mu.Lock()
 	idx := a.index
 	online := a.online
+	hits := a.lastSearchHits
 	cx := assistant.Context{
 		FolderRoot: a.folder,
 		Index:      &idx,
@@ -1222,7 +1267,10 @@ func (a *App) Ask(ctx context.Context, utterance string) (assistant.Proposal, er
 	// instantly, a "find every time X" ask runs the retrieval funnel, and anything
 	// else (a question, a fuzzy request) is ANSWERED by Claude (CLI/OAuth or API
 	// key) when available — so becky is a real assistant, not a keyword grep.
-	return r.Assist(ctx, utterance, cx, nil)
+	// hits is the last Search()/QmdSearch() result — lets Tier-0's "add clip 3"
+	// resolve a real source/in/out (assistant.resolveHitActions) and gives Tier-2's
+	// funnel real candidates instead of nothing.
+	return r.Assist(ctx, utterance, cx, hits)
 }
 
 // BeckyStatus reports which AI backends are usable right now (claude CLI / API key
@@ -1291,31 +1339,52 @@ func (a *App) RejectProposal(id string) {
 // Reel. Read/new-file verbs (search/find_quotes/preview/grab/export) are handled
 // by the GUI via ExecCommands or its own handlers; here we apply the timeline
 // mutations the assistant proposed.
+//
+// H-4/H-6: every CLIP-mutating action (add_clip/remove_clip/reorder/set_label)
+// in the proposal is queued into ONE apply_edit_batch call instead of being
+// applied one-by-one — each of AddClip/RemoveClip/Reorder/SetLabel pushes its
+// OWN undo snapshot, so a 5-action AI pass used to cost 5 separate Ctrl+Z
+// presses to fully revert. Routing them through ApplyEditBatch makes the whole
+// approved pass ONE undo span, which is the entire point of H-4 ("Jordan's
+// 90-100% + flare-pass model requires cheap wholesale rejection"). set_marker
+// and set_overlay stay outside the batch (they were already excluded from clip
+// undo — see reelSnapshot's doc comment — and act on different state, so
+// interleaving order with the clip ops doesn't matter).
 func (a *App) applyActions(actions []assistant.Action) {
+	var ops []EditOp
 	for _, act := range actions {
 		switch act.Verb {
 		case assistant.VerbAddClip:
-			src := argStr(act, "source")
-			in := tcOrSeconds(argStr(act, "in"))
-			out := tcOrSeconds(argStr(act, "out"))
-			_, _ = a.AddClip(src, in, out, argStr(act, "label"))
+			ops = append(ops, EditOp{Verb: "add_clip", Args: map[string]any{
+				"source": argStr(act, "source"),
+				"in":     tcOrSeconds(argStr(act, "in")),
+				"out":    tcOrSeconds(argStr(act, "out")),
+				"label":  argStr(act, "label"),
+			}})
 		case assistant.VerbRemoveClip:
 			if id := argStr(act, "id"); id != "" {
-				_, _ = a.RemoveClip(id)
+				ops = append(ops, EditOp{Verb: "remove_clip", Args: map[string]any{"id": id}})
 			}
 		case assistant.VerbReorder:
 			if id := argStr(act, "id"); id != "" {
-				_, _ = a.Reorder(id, atoiSafe(argStr(act, "to")))
+				ops = append(ops, EditOp{Verb: "reorder", Args: map[string]any{
+					"id": id, "to": atoiSafe(argStr(act, "to")),
+				}})
 			}
 		case assistant.VerbSetLabel:
 			if id := argStr(act, "id"); id != "" {
-				_, _ = a.SetLabel(id, argStr(act, "text"))
+				ops = append(ops, EditOp{Verb: "set_label", Args: map[string]any{
+					"id": id, "text": argStr(act, "text"),
+				}})
 			}
 		case assistant.VerbSetMarker:
 			a.AddMarker(tcOrSeconds(argStr(act, "at")), argStr(act, "label"))
 		case assistant.VerbSetOverlay:
 			a.applyOverlayAction(argStr(act, "field"), argStr(act, "value"))
 		}
+	}
+	if len(ops) > 0 {
+		_, _, _ = a.ApplyEditBatch(ops)
 	}
 }
 

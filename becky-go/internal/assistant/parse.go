@@ -13,7 +13,11 @@ package assistant
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
+
+	"becky-go/internal/footage"
 )
 
 // requiredArgs lists the arg keys each verb must have to be runnable. A verb
@@ -232,4 +236,66 @@ func hasArg(a Action, key string) bool {
 		return strings.TrimSpace(s) != ""
 	}
 	return true
+}
+
+// resolveHitActions turns each Tier-0 "add clip N" placeholder (a VerbAddClip
+// carrying only a "hit" arg — see classify.go's reAddClip/reAddClipAdj) into a
+// real add_clip with source/in/out/label, by indexing into hits: the caller's
+// most recent search results, in the same order the GUI showed them (1-based;
+// "last" means the final result). Every other action passes through unchanged.
+//
+// An out-of-range index, an empty hits list, or a transcript-only orphan (no
+// playable video) demotes the action to Invalid with a plain-language reason
+// instead of silently doing nothing or shipping an add_clip with an empty
+// source — "add clip 3" must either really add clip 3 or say why it can't.
+func resolveHitActions(acts []Action, hits []footage.Candidate) (valid []Action, invalid []Invalid) {
+	for _, a := range acts {
+		if a.Verb != VerbAddClip || !hasArg(a, "hit") {
+			valid = append(valid, a)
+			continue
+		}
+		sel, _ := a.Args["hit"].(string)
+		idx, ok := resolveHitIndex(sel, len(hits))
+		if !ok {
+			invalid = append(invalid, Invalid{Action: a, Reason: hitRangeReason(sel, len(hits))})
+			continue
+		}
+		h := hits[idx]
+		if h.Source == "" {
+			invalid = append(invalid, Invalid{Action: a, Reason: "that result has no playable video (transcript-only)"})
+			continue
+		}
+		valid = append(valid, Action{Verb: VerbAddClip, Args: map[string]any{
+			"source": h.Source,
+			"in":     secondsToTimecode(h.Timestamp),
+			"out":    secondsToTimecode(h.End),
+			"label":  truncate(h.Text, 60),
+		}})
+	}
+	return valid, invalid
+}
+
+// resolveHitIndex turns "3" (1-based) or "last" into a 0-based index into a
+// list of n hits. ok is false when n is 0 or the selector is out of range.
+func resolveHitIndex(sel string, n int) (idx int, ok bool) {
+	if n == 0 {
+		return 0, false
+	}
+	if sel == "last" {
+		return n - 1, true
+	}
+	i, err := strconv.Atoi(sel)
+	if err != nil || i < 1 || i > n {
+		return 0, false
+	}
+	return i - 1, true
+}
+
+// hitRangeReason renders the plain-language reason a hit selector didn't
+// resolve — no results yet vs. an index past the end of a real result list.
+func hitRangeReason(sel string, n int) string {
+	if n == 0 {
+		return `no search results yet -- run a search first, then "add clip ` + sel + `"`
+	}
+	return fmt.Sprintf(`only %d search result(s) -- "clip %s" is out of range`, n, sel)
 }

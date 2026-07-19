@@ -96,7 +96,7 @@ func (r *Router) Handle(ctx context.Context, utt string, cx Context, searchHits 
 	var p Proposal
 	switch d.Tier {
 	case TierDeterministic:
-		p = r.deterministic(d, cx)
+		p = r.deterministic(d, cx, searchHits)
 	case TierLocal:
 		p = r.viaLocal(ctx, utt, d, cx)
 	case TierFrontier:
@@ -153,14 +153,23 @@ func (r *Router) logApproval(p Proposal) {
 // --- Tier 0: deterministic -------------------------------------------------
 
 // deterministic builds a Proposal from the Tier-0 parsed actions (or literal
-// retrieval). search/find_quotes get their exec command formed here.
-func (r *Router) deterministic(d Decision, cx Context) Proposal {
+// retrieval). search/find_quotes get their exec command formed here. An
+// add_clip parsed by hit selector ("add clip 3") is resolved against
+// searchHits — the caller's most recent search results — into a real
+// source/in/out before the preview/diff is built, so "add clip 3" from the
+// chat either really adds clip 3 or says plainly why it can't.
+func (r *Router) deterministic(d Decision, cx Context, searchHits []footage.Candidate) Proposal {
 	valid, invalid := ParseActions(d.Actions)
+	valid, hitInvalid := resolveHitActions(valid, searchHits)
+	invalid = append(invalid, hitInvalid...)
 	p := Proposal{
 		Actions:     valid,
 		Invalid:     invalid,
 		Tier:        TierDeterministic,
 		PreviewText: summarize(valid),
+	}
+	if len(valid) == 0 && len(hitInvalid) > 0 {
+		p.Note = hitInvalid[0].Reason
 	}
 	r.attachExec(&p, cx)
 	r.attachPreview(&p, cx)

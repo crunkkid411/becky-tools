@@ -104,6 +104,27 @@ type Candidate struct {
 	Terms     []string `json:"terms"`          // which query terms hit this cue
 }
 
+// WarmTranscriptCache parses and caches every transcript in index (videos and
+// orphans alike), discarding the parsed content - it exists purely to pay
+// parseSubtitleCached's first-parse cost ONCE, up front, instead of on Jordan's
+// first real search. Measured live on E:\TakingBack2007 (671 videos, 1136
+// transcripts): the first keyword search after a fresh engine boot took
+// ~7.8-8.0s regardless of query, every subsequent search 226-270ms - the gap IS
+// this parse cost (see parseSubtitleCached's doc comment). Call this from a
+// background goroutine right after OpenFolder indexes the folder, so the cache
+// is warm (or warming) before the user ever types - never from the search path
+// itself (P1: the UI/search path must not block on this).
+func WarmTranscriptCache(index FolderIndex) {
+	for _, v := range index.Videos {
+		if v.HasTranscript {
+			parseSubtitleCached(v.TranscriptPath)
+		}
+	}
+	for _, o := range index.Orphans {
+		parseSubtitleCached(o.Path)
+	}
+}
+
 // GrepTranscripts scans the transcripts of every video in the index for the
 // given terms (case-insensitive substring match) and returns matching cue
 // snippets, ranked best-first and deterministically ordered. Matching is OR

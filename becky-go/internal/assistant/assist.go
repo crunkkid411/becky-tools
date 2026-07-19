@@ -46,7 +46,7 @@ func (r *Router) Assist(ctx context.Context, utt string, cx Context, searchHits 
 	switch {
 	case d.Tier == TierDeterministic && len(d.Actions) > 0:
 		// A fully-parsed command or literal search — run it, no model tokens.
-		p = r.deterministic(d, cx)
+		p = r.deterministic(d, cx, searchHits)
 	case investigateIntent(utt):
 		// "find the documented evidence in my vault / which video / look it up in my
 		// notes" — becky navigates the granted folders READ-ONLY and cites the
