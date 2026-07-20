@@ -5569,9 +5569,16 @@ int main(int argc, char** argv) {
             // move" complaint fixedButton exists to prevent. Reserve three digits.
             char selLabel[48]; snprintf(selLabel, sizeof selLabel, "Render Selection (%d)##rensel", (int)g_sel.size());
             if (g_sel.empty()) ImGui::BeginDisabled();
+            // ASYNC, exactly like Render beside it. This was the ONE render path still
+            // calling engineCall straight from the button handler, with a 300 SECOND
+            // timeout - and unlike add_clip (4-16ms, measured) a render is genuinely
+            // minutes of ffmpeg. The whole window was dead for all of it: no repaint,
+            // no input, Windows greying the title bar and offering to kill it. Render
+            // was fixed; Render Selection sat one line below it and was missed.
             if (fixedButton(selLabel, { "Render Selection (000)" })) {
                 std::vector<std::string> ids(g_sel.begin(), g_sel.end());
-                json r = engineCall("export_selection", { {"ids", ids}, {"output", ""} }, 300.0);
+                engineCallAsync("export_selection", { {"ids", ids}, {"output", ""} }, 300.0,
+                                "Rendering the selected clips...", [](const json& r) {
                 if (r.value("ok", false)) {
                     const json& d = r.contains("data") ? r["data"] : r;
                     // A selection render carries NO captions - the .srt is timed to the
@@ -5585,6 +5592,7 @@ int main(int argc, char** argv) {
                     openInFileBrowser(d.value("mp4", std::string()));
                 } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
                 g_renderMsgAt = nowSec();
+                });
             }
             if (g_sel.empty()) ImGui::EndDisabled();
             // D-5/F-2/F-5: screenshot + save/load reel + EDL export. Engine verbs already
@@ -5594,15 +5602,23 @@ int main(int argc, char** argv) {
                 for (auto& c : g_track[0]) if (curSec >= c.compStart && curSec < c.compStart + (c.out - c.in)) { cur = &c; break; }
                 if (!cur && !g_track[0].empty()) cur = &g_track[0].back();
                 if (cur) {
+                    // COPY the source and time out of the Clip before going async. The
+                    // Clip* must never be captured: g_track is rebuilt by every edit
+                    // reply, so a pointer into it is dangling by the time a reply lands.
+                    std::string src = cur->source;
                     double srcT = cur->in + (curSec - cur->compStart);
-                    json r = engineCall("grab_frame", { {"source", cur->source}, {"t", srcT} }, 20.0);
-                    // Same bug class root-caused for "undo" above (line ~281): r["data"] on a
-                    // reply that omits "data" vivifies a null, and .value() on that null throws
-                    // uncaught on the UI thread -> std::terminate -> abort (ucrtbase.dll 0xC0000409).
-                    // r.value("data", json::object()) never vivifies; always safe.
-                    g_renderMsg = r.value("ok", false) ? "Saved " + r.value("data", json::object()).value("path", std::string()) : "Screenshot failed: " + r.value("error", std::string("?"));
-                } else g_renderMsg = "Screenshot failed: no clip at playhead";
-                g_renderMsgAt = nowSec();
+                    // ASYNC: grab_frame shells out to ffmpeg, so this was up to 20s of
+                    // dead window for one screenshot.
+                    engineCallAsync("grab_frame", { {"source", src}, {"t", srcT} }, 20.0,
+                                    "Saving a screenshot...", [](const json& r) {
+                        // Same bug class root-caused for "undo" above (line ~281): r["data"] on a
+                        // reply that omits "data" vivifies a null, and .value() on that null throws
+                        // uncaught on the UI thread -> std::terminate -> abort (ucrtbase.dll 0xC0000409).
+                        // r.value("data", json::object()) never vivifies; always safe.
+                        g_renderMsg = r.value("ok", false) ? "Saved " + r.value("data", json::object()).value("path", std::string()) : "Screenshot failed: " + r.value("error", std::string("?"));
+                        g_renderMsgAt = nowSec();
+                    });
+                } else { g_renderMsg = "Screenshot failed: no clip at playhead"; g_renderMsgAt = nowSec(); }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screenshot the frame at the playhead");
             ImGui::SameLine();
