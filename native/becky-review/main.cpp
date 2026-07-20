@@ -4702,6 +4702,29 @@ int main(int argc, char** argv) {
                 if (ImGui::Button(ovLabel)) setOverlayMode((g_ovMode + 1) % 3);
             }
             ImGui::SameLine();
+            // E-10 SKIP QUIET — the feature Jordan called "the single biggest
+            // breakthrough" (feedback7): during playback, everything under the
+            // loudness threshold is SKIPPED seamlessly instead of played, so
+            // reviewing footage does not mean sitting through the silence.
+            //
+            // All of it was already written — the draggable threshold bar
+            // (onThresholdBar), the quiet-range computation (recomputeQuiet), the
+            // dimming, and the seamless mpv skip during playback — and ALL of it
+            // sat behind g_thrOn, which was declared false and then NEVER ASSIGNED
+            // ANYWHERE. Six reads, zero writes: a finished feature with no way to
+            // turn it on. This button is that missing write.
+            {
+                char qLabel[40];
+                snprintf(qLabel, sizeof qLabel, "Skip Quiet: %s##thr", g_thrOn ? "On" : "Off");
+                if (ImGui::Button(qLabel)) {
+                    g_thrOn = !g_thrOn;
+                    g_quietDirty = true;      // force recomputeQuiet on the next frame
+                    emitThreshold(true);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Skip everything quieter than the threshold bar during playback.\nDrag the bar on the timeline to set the level.");
+            }
+            ImGui::SameLine();
             // F-3/F-4: naming (clips_SOURCE_NNNN.mp4 / clips_compilation_NNNN.mp4,
             // never overwrites) is entirely engine-side (renderReel) - the button
             // just calls export with no output path and shows what came back.

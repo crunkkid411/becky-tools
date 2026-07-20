@@ -30,7 +30,12 @@ already answered below.
    you touch it.** The bug-fixing in `HANDOFF-BECKY-REVIEW-3.md` is maintenance,
    not the product. See "The missing half" below — an agent that reads only the
    handoff will rebuild a video player and think it finished.
-7. **Output goes with the footage that made it.** Never the cwd, never a
+7. **Becky Review 3 runs `becky-review-engine.exe`, NOT `becky-clip.exe`.** Both
+   are built from `cmd/clip`. On 2026-07-20 the alias was three hours stale and a
+   whole night of engine fixes was invisible in the GUI while every test passed —
+   the exact shape of "works on my machine". `build-all-tools.bat` now builds the
+   alias explicitly. If a Go change does not show up in the app, check this first.
+8. **Output goes with the footage that made it.** Never the cwd, never a
    hardcoded drive. A render lands in a `Rendered/` subfolder of its source; a
    proxy/still lands beside its source. This is enforced in
    `internal/reel/reel_output_test.go` because as prose it silently drifted and
