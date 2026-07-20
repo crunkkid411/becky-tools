@@ -61,19 +61,13 @@ type orResponse struct {
 func reviewerModelID(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "hy3", "free":
-		return defaultReviewer // tencent/hy3:free — costs nothing
-	case "sonnet", "sonnet5", "sonnet-5":
-		return "anthropic/claude-sonnet-5" // PAID: needs OpenRouter credit
-	case "opus":
-		return "anthropic/claude-opus-4.8" // PAID
-	case "glm", "glm-5.2", "glm5":
-		return "z-ai/glm-5.2"
-	case "minimax", "minimax-m3":
-		return "minimax/minimax-m3"
+		return defaultReviewer
 	case "nemotron":
 		return "nvidia/nemotron-3-ultra-550b-a55b:free"
 	case "gemma":
 		return "google/gemma-4-31b-it:free"
+	case "laguna":
+		return "poolside/laguna-xs-2.1:free"
 	}
 	return name // already a full OpenRouter id
 }
@@ -116,7 +110,26 @@ func openRouterModel(name string, verbose bool) subs.ModelFunc {
 	}
 }
 
+// isFreeModel is the SPENDING GUARD. Jordan pays for Claude Max; his OAuth
+// covers Sonnet 5 and every other Anthropic model at no extra cost. Any paid
+// API call is spending his money for something he ALREADY owns.
+//
+// This is not advice, it is enforced: a run of the caption pass on
+// anthropic/claude-sonnet-5 burned his entire $0.67 OpenRouter balance, after
+// which every batch 402'd. That must be impossible, not discouraged.
+//
+// OpenRouter is for FREE models only. Anything else returns an error before a
+// single request leaves the machine.
+func isFreeModel(id string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(id)), ":free")
+}
+
 func openRouterOnce(ctx context.Context, client *http.Client, key, model, prompt string) (string, error) {
+	if !isFreeModel(model) {
+		return "", fmt.Errorf("refusing to call %q: OpenRouter is FREE MODELS ONLY (ids ending in :free). "+
+			"Anthropic models are covered by the Claude Max subscription - reach them through the OAuth "+
+			"session, never a paid API", model)
+	}
 	body, err := json.Marshal(orRequest{
 		Model:     model,
 		Messages:  []orMessage{{Role: "user", Content: prompt}},
