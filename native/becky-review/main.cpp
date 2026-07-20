@@ -839,6 +839,36 @@ static std::map<std::string, std::shared_ptr<Peaks>> g_peaks;
 static std::mutex g_peaksMx;
 static std::mutex g_decMx; static std::condition_variable g_decCv; static int g_decActive = 0;
 static std::atomic<bool> g_busyHint{ false };
+
+// ---- "something is happening" ----
+//
+// Jordan asked for "a non-intrusive, semi-transparent loading bar for any
+// operation taking more than one second" (feedback5). Before this, a transcribe
+// (up to 900s), a render, a qmd search or an edit round-trip gave NO visible
+// sign the app was working - it simply looked frozen. He is vision-impaired and
+// describes the previous build as having "FROZEN when i tried touching it"; an
+// app that is busy and an app that is dead must not look the same.
+//
+// ONE SECOND is the threshold on purpose: showing an indicator for a 100ms
+// operation is flicker, which is worse than nothing. beginWork/endWork are
+// counted, not boolean, so overlapping operations (a search while a transcribe
+// runs) do not clear each other's indicator.
+static std::mutex g_workMx;
+static std::string g_workLabel;
+static int g_workCount = 0;
+static double g_workSince = 0;
+
+static void beginWork(const std::string& label) {
+    std::lock_guard<std::mutex> lk(g_workMx);
+    if (g_workCount == 0) g_workSince = nowSec();
+    g_workCount++;
+    g_workLabel = label;   // newest wins: it is the thing he just asked for
+}
+static void endWork() {
+    std::lock_guard<std::mutex> lk(g_workMx);
+    if (g_workCount > 0) g_workCount--;
+    if (g_workCount == 0) g_workLabel.clear();
+}
 // E-18/I-6 instrumentation: counts every job actually PUSHED onto a Peaks.jobs
 // deque (peaksRequest below) - not decode work, the enqueue itself. BUILD_1.md's
 // verification bar for I-6 is literally "split 20x rapidly, assert 0 jobs
@@ -3213,8 +3243,10 @@ static void requestTranscribe(const std::string& path, const std::string& baseNa
         if (g_transcribeInFlight.count(path)) return; // already running - never double-fire
         g_transcribeInFlight.insert(path);
     }
+    beginWork("Transcribing " + baseName + "...");
     std::thread([path, baseName] {
         t_threadTag = "transcribeWorker";
+        struct WorkGuard { ~WorkGuard() { endWork(); } } wg;   // clears on EVERY exit path, including a throw
         TranscribeDone d; d.name = path;
         try {
             json r = engineCall("transcribe", { {"name", baseName} }, 900.0); // real ASR - generous timeout
@@ -3628,6 +3660,7 @@ static void runSearch(bool qmd) {
     std::string q(g_searchBuf);
     if (q.empty()) { g_hits.clear(); g_searchMode.clear(); g_searchNote.clear(); return; }
     g_searching = true; g_searchErr.clear();
+    beginWork("Searching...");
     {
         std::lock_guard<std::mutex> lk(g_searchQMx);
         g_searchQ.clear();
@@ -4077,6 +4110,7 @@ int main(int argc, char** argv) {
             }
             if (have) {
                 g_searching = false;
+                endWork();   // pairs with beginWork("Searching...") in runSearch
                 char msMsg[64]; snprintf(msMsg, sizeof(msMsg), " (%.0fms)", done.elapsedMs);
                 if (!done.ok) { g_searchErr = (done.err.empty() ? "search failed" : done.err) + msMsg; g_searchMode.clear(); g_hits.clear(); }
                 else { g_searchErr.clear(); g_searchMode = done.mode; g_searchNote = done.note + msMsg; g_hits = std::move(done.hits); }
@@ -4848,6 +4882,58 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // ---- bottom timeline ----
+        // ---- the >1s work indicator (feedback5) ----
+        // Drawn LAST so it floats over every panel, and with no interaction of any
+        // kind: no window decoration, no focus, no input capture. It must never be
+        // a thing he has to dismiss or click past while editing. Bottom-right, out
+        // of the way of the timeline he is working in.
+        {
+            std::string label; double since = 0; bool busy = false;
+            {
+                std::lock_guard<std::mutex> lk(g_workMx);
+                busy = g_workCount > 0; label = g_workLabel; since = g_workSince;
+            }
+            // BECKY_REVIEW_WORKTEST=1 pins the indicator on so it can be SEEN
+            // without waiting for a slow operation. This exists because the
+            // obvious way to verify it - run a search - completes in 298ms on his
+            // real 722-video library, i.e. correctly below the threshold, so the
+            // honest check would otherwise be "I believe it works".
+            if (getenv("BECKY_REVIEW_WORKTEST")) { busy = true; since = nowSec() - 3.0; label = "Self-test: work indicator"; }
+
+            // The one-second threshold: below it an indicator is just flicker.
+            if (busy && nowSec() - since > 1.0) {
+                ImGui::SetNextWindowBgAlpha(0.62f);           // semi-transparent, as asked
+                // Bottom-right of the UPPER half - i.e. resting just above the
+                // timeline, never on it. The first version sat in the window's
+                // bottom-right and covered the caption lane; "non-intrusive" cannot
+                // mean "on top of the thing he is editing".
+                ImGui::SetNextWindowPos({ (float)g_W - 20.0f, topY + topH - 12.0f }, ImGuiCond_Always, { 1.0f, 1.0f });
+                if (ImGui::Begin("##work", nullptr,
+                        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove)) {
+                    double el = nowSec() - since;
+                    ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.45f, 1.0f), "%s", label.c_str());
+                    // Indeterminate: none of these operations report real progress, and
+                    // a fake percentage that stalls at 90% is worse than none. A moving
+                    // bar says "alive", the elapsed count says how long - which is what
+                    // he actually needs to decide whether to wait.
+                    float t = (float)std::fmod(el, 1.6) / 1.6f;
+                    ImVec2 p0 = ImGui::GetCursorScreenPos();
+                    float bw = 220 * ImGui::GetIO().FontGlobalScale, bh = 6;
+                    ImDrawList* d = ImGui::GetWindowDrawList();
+                    d->AddRectFilled(p0, ImVec2(p0.x + bw, p0.y + bh), IM_COL32(255, 255, 255, 40), 3);
+                    float sw = bw * 0.30f, sx = (bw + sw) * t - sw;
+                    d->AddRectFilled(ImVec2(p0.x + std::max(0.0f, sx), p0.y),
+                                     ImVec2(p0.x + std::min(bw, sx + sw), p0.y + bh),
+                                     IM_COL32(242, 217, 115, 220), 3);
+                    ImGui::Dummy(ImVec2(bw, bh));
+                    ImGui::TextDisabled("%.0fs", el);
+                }
+                ImGui::End();
+            }
+        }
+
         ImGui::SetNextWindowPos({ 0, topY + topH });
         ImGui::SetNextWindowSize({ (float)g_W, timelineH });
         if (ImGui::Begin("timeline", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
