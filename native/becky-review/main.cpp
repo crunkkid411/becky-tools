@@ -3351,7 +3351,13 @@ static void drawTimeline(double& curSec, bool& playing) {
 // transcript view (audapolis pattern) reachable by Enter/double-click on a row.
 
 // ---- library state ----
-struct VideoRow { std::string path, name, date; bool hasTranscript = false; };
+struct VideoRow {
+    std::string path, name, date; bool hasTranscript = false;
+    // B-1 card display cache: the middle-ellipsised name and the width it was
+    // measured at. Recomputed only when the panel width changes, so a 2258-video
+    // corpus costs zero CalcTextSize work per frame while the panel is still.
+    std::string disp; float dispW = -1.0f;
+};
 static std::vector<VideoRow> g_videos;
 static std::string g_folderRoot;
 static int g_orphanCount = 0;
@@ -3359,6 +3365,12 @@ static std::string g_folderErr;
 
 // Sort mode for the library list (B-3): 0=date-newest,1=date-oldest,2=name-AZ,3=name-ZA
 static int g_sortMode = 0;
+// "Transcribe all" is in flight (UI thread only: set on click, cleared in the
+// drainAsync callback, which also runs on the UI thread).
+static bool g_transcribeAllBusy = false;
+// The library row whose right-click menu is open. The list is clipped, so
+// without this the menu vanishes the moment its row scrolls off screen.
+static int g_libCtxIdx = -1;
 // ONE selection model (B-4): a single selected index shared by mouse + arrows.
 static int g_libSel = -1;
 static bool g_libScrollPending = false;   // keyboard nav just moved g_libSel; scroll it into view
@@ -3442,6 +3454,9 @@ static void requestAddExternal(const std::string& path, int at) {
 
 // ---- search state ----
 static char g_searchBuf[256] = { 0 };
+// Checklist 20: qmd is a persistent TOGGLE (the reference's "smart" pill), not a
+// second submit button - so Enter always runs the mode he can see is armed.
+static bool g_smartSearch = false;
 struct Hit {
     std::string source, name, date, text, timecode;
     double start = 0, end = 0, score = 0;
@@ -3526,6 +3541,164 @@ static void sortLibrary() {
     };
     std::sort(g_videos.begin(), g_videos.end(), cmp);
 }
+
+// ---------------- B-1: the library is CARDS, not a flat list ----------------
+// The reference GUI (gui/BeckyReviewNative) shows each video as a tall rounded
+// card: a big readable filename, a dim date/status line, and one large round
+// green "+" that transcribes it. This app showed an ImGui::Selectable per video,
+// which sliced the filename mid-word and offered no visible affordance at all.
+// Jordan reads the screen with difficulty - a truncated name is not a cosmetic
+// problem, it is the difference between finding the video and not.
+// Immediate-mode: two InvisibleButtons and a handful of ImDrawList calls. No
+// widget framework, no theme system.
+
+// MIDDLE-ellipsis, not tail-ellipsis. His filenames are
+// "2026-07-19_they_tried_to_kill_me.mp4" - the head (the date he scans by) and
+// the tail (the extension, and the digits that tell near-duplicates apart) are
+// BOTH load-bearing; the middle is the disposable part. Tail-truncation throws
+// away the half that disambiguates. The card also tooltips the FULL name.
+static std::string midEllipsis(const std::string& s, float maxW) {
+    if (maxW <= 0.0f || ImGui::CalcTextSize(s.c_str()).x <= maxW) return s;
+    size_t tail = (std::min)(s.size() / 3, (size_t)12);
+    std::string tailS = s.substr(s.size() - tail);
+    for (size_t head = s.size() - tail; head > 1; head--) {
+        std::string out = s.substr(0, head - 1) + "..." + tailS;
+        if (ImGui::CalcTextSize(out.c_str()).x <= maxW) return out;
+    }
+    return "..." + tailS;
+}
+
+// The reference's little rounded segmented control (.sortbtn / .smartbtn): a pill
+// that is TINTED WITH ITS ACCENT COLOUR when on, outlined when off. Colour is how
+// he reads state - never render these as plain grey text. The OFF state is still
+// a clearly drawn outline with near-white text: a 15%-alpha ghost outline reads
+// as "nothing is there" to an impaired eye, which is worse than the plain button
+// this replaces.
+static bool pillButton(const char* label, bool on, ImU32 accent) {
+    const float S = ImGui::GetIO().FontGlobalScale;
+    ImVec4 a = ImGui::ColorConvertU32ToFloat4(accent);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 999.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11.0f * S, 4.0f * S));
+    ImGui::PushStyleColor(ImGuiCol_Button,        on ? ImVec4(a.x * 0.22f, a.y * 0.22f, a.z * 0.22f, 1.0f) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(a.x * 0.36f, a.y * 0.36f, a.z * 0.36f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(a.x * 0.52f, a.y * 0.52f, a.z * 0.52f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          on ? ImVec4(1, 1, 1, 1) : ImVec4(0.80f, 0.84f, 0.90f, 1.0f));
+    bool hit = ImGui::Button(label);
+    ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+        on ? accent : IM_COL32(255, 255, 255, 130), 999.0f, 0, on ? 2.0f : 1.5f);
+    ImGui::PopStyleColor(4); ImGui::PopStyleVar(2);
+    return hit;
+}
+
+struct LibCardResult { bool clicked = false, dbl = false, plus = false; };
+
+// ONE number, so the card and the list clipper can never disagree about row height.
+static float libCardHeight() {
+    const float S = ImGui::GetIO().FontGlobalScale;
+    return 10.0f * S * 2.0f + ImGui::GetTextLineHeight() * 2.0f + 4.0f * S;
+}
+static float libCardStride() { return libCardHeight() + 8.0f * ImGui::GetIO().FontGlobalScale; }
+
+// One card. `accent` is the colour this video's clips already wear on the timeline
+// (0 = none on the timeline yet). Returns what the user did; the CALLER performs
+// the actions, so this helper needs nothing declared later in the file.
+static LibCardResult drawLibraryCard(VideoRow& v, bool selected, bool justViewed,
+                                     bool inFlight, ImU32 accent) {
+    LibCardResult res;
+    const float S    = ImGui::GetIO().FontGlobalScale;
+    const float pad  = 10.0f * S;
+    const float lh   = ImGui::GetTextLineHeight();
+    const float btnD = 30.0f * S;                    // round action button
+    const float h    = libCardHeight();
+    const float w    = ImGui::GetContentRegionAvail().x;
+    const ImVec2 p0  = ImGui::GetCursorScreenPos();
+    // InvisibleButton asserts on a zero size. Bail out, but STILL advance one
+    // stride - the clipper assumes a fixed height per item, and a row that
+    // silently occupies none would slide every card below it out of place.
+    if (w < 40.0f) { ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + libCardStride())); return res; }
+    ImDrawList* dl   = ImGui::GetWindowDrawList();
+    const ImVec2 p1  = ImVec2(p0.x + w, p0.y + h);
+
+    // --- the card body. AllowOverlap so the round button submitted below can
+    //     steal the click when the cursor is over it.
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##card", ImVec2(w, h));
+    bool hov    = ImGui::IsItemHovered();
+    res.clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    res.dbl     = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("rowctx");
+
+    // Checklist 35/101: selection is a FILL, never a yellow/white outline.
+    ImU32 bg = selected ? IM_COL32(28, 44, 28, 255)
+             : hov      ? IM_COL32(24, 28, 22, 255)
+                        : IM_COL32(20, 22, 26, 255);
+    dl->AddRectFilled(p0, p1, bg, 7.0f * S);
+    dl->AddRect(p0, p1, selected ? IM_COL32(0x14, 0xFF, 0x39, 255) : IM_COL32(255, 255, 255, 26),
+                7.0f * S, 0, selected ? 2.0f : 1.0f);
+    // Checklist 22: the transcript just viewed keeps a green outline after "back".
+    if (justViewed)
+        dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p1.x + 1, p1.y + 1),
+                    IM_COL32(0x14, 0xFF, 0x39, 255), 8.0f * S, 0, 2.0f);
+    // Checklist 32/36/37: the card wears the SAME colour its clips wear on the
+    // timeline, so "which library video is the crimson stuff from" is one glance.
+    if (accent) dl->AddRectFilled(p0, ImVec2(p0.x + 4.0f * S, p1.y), accent, 7.0f * S, ImDrawFlags_RoundCornersLeft);
+
+    // --- text. Name is big; the sub-line is dim and never competes with it.
+    const float textX = p0.x + pad + (accent ? 6.0f * S : 0.0f);
+    const float textR = p1.x - pad - btnD - 8.0f * S;
+    const float nameW = textR - textX;
+    if (v.dispW != nameW) { v.disp = midEllipsis(v.name, nameW); v.dispW = nameW; }
+    dl->PushClipRect(ImVec2(textX, p0.y), ImVec2(textR, p1.y), true);
+    dl->AddText(ImVec2(textX, p0.y + pad), IM_COL32(235, 238, 245, 255), v.disp.c_str());
+    std::string sub = v.date;
+    const char* status = inFlight ? "transcribing..." : (v.hasTranscript ? nullptr : "no transcript");
+    if (status) { if (!sub.empty()) sub += "  -  "; sub += status; }
+    if (!sub.empty())
+        dl->AddText(ImVec2(textX, p0.y + pad + lh + 4.0f * S),
+                    inFlight ? IM_COL32(0xFF, 0xD7, 0x00, 255) : IM_COL32(150, 158, 170, 255), sub.c_str());
+    dl->PopClipRect();
+
+    // --- the round action button (the reference's green "+"). DRAWN, not a glyph:
+    //     the merged Segoe MDL2 range is the toolbar's, and a circled plus is two
+    //     primitives - cheaper and crisper than another font dependency.
+    const ImVec2 bc = ImVec2(p1.x - pad - btnD * 0.5f, (p0.y + p1.y) * 0.5f);
+    ImGui::SetCursorScreenPos(ImVec2(bc.x - btnD * 0.5f, bc.y - btnD * 0.5f));
+    res.plus = ImGui::InvisibleButton("##add", ImVec2(btnD, btnD)) && !inFlight;
+    const bool bhov = ImGui::IsItemHovered();
+    // The button is INSIDE the card, so a click on it also registered as a card
+    // click above (ImGui resolves overlap after the fact). Clicking "+" must not
+    // also open the transcript.
+    if (bhov) { res.clicked = false; res.dbl = false; }
+    const float r = btnD * 0.5f;
+    if (inFlight) {
+        float a0 = (float)(ImGui::GetTime() * 3.0);
+        dl->PathArcTo(bc, r - 2.0f * S, a0, a0 + 4.2f, 24);
+        dl->PathStroke(IM_COL32(0xFF, 0xD7, 0x00, 255), 0, 3.0f * S);
+    } else if (v.hasTranscript) {
+        ImU32 tc = bhov ? IM_COL32(0x14, 0xFF, 0x39, 255) : IM_COL32(170, 178, 190, 255);
+        dl->AddCircle(bc, r - 1.0f, bhov ? IM_COL32(0x14, 0xFF, 0x39, 255) : IM_COL32(255, 255, 255, 60), 0, 2.0f);
+        dl->AddLine(ImVec2(bc.x - r * 0.34f, bc.y + r * 0.02f), ImVec2(bc.x - r * 0.06f, bc.y + r * 0.30f), tc, 2.5f * S);
+        dl->AddLine(ImVec2(bc.x - r * 0.06f, bc.y + r * 0.30f), ImVec2(bc.x + r * 0.38f, bc.y - r * 0.30f), tc, 2.5f * S);
+    } else {
+        dl->AddCircleFilled(bc, bhov ? r : r - 1.0f, IM_COL32(0x14, 0xFF, 0x39, 255));
+        float k = r * 0.44f;
+        dl->AddLine(ImVec2(bc.x - k, bc.y), ImVec2(bc.x + k, bc.y), IM_COL32(0, 0, 0, 255), 3.0f * S);
+        dl->AddLine(ImVec2(bc.x, bc.y - k), ImVec2(bc.x, bc.y + k), IM_COL32(0, 0, 0, 255), 3.0f * S);
+    }
+    if (bhov) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetTooltip("%s", inFlight ? "transcribing..." : v.hasTranscript
+            ? "re-transcribe locally (writes a SEPARATE _parakeet_transcription.srt; your original is never touched)"
+            : "transcribe this video (local Parakeet ASR)");
+    } else if (hov) {
+        ImGui::SetTooltip("%s", v.name.c_str());   // the FULL name, never ellipsised
+    }
+
+    // Advance EXACTLY one stride so ImGuiListClipper's fixed item height matches.
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y + 8.0f * S));
+    return res;
+}
+
 // Remember the last opened folder across launches (A-3): a tiny sidecar file,
 // not the registry — cheap, and this app has no other persisted settings yet.
 static std::string lastFolderStatePath() {
@@ -4655,13 +4828,56 @@ int main(int argc, char** argv) {
             bool libFocusedNow = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGui::Text("Library / Search");
             ImGui::Separator();
-            bool submitted = ImGui::InputText("##search", g_searchBuf, sizeof g_searchBuf, ImGuiInputTextFlags_EnterReturnsTrue);
-            if (submitted) runSearch(false);
-            if (ImGui::SmallButton("Search")) runSearch(false);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Smart (qmd)")) runSearch(true);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Clear")) { g_searchBuf[0] = 0; g_hits.clear(); g_searchMode.clear(); g_searchErr.clear(); }
+            // ONE search row, like the reference: [magnifier][box][smart pill][x].
+            // Three same-size SmallButtons ("Search" / "Smart (qmd)" / "Clear") read
+            // as three equal choices and the middle one got clipped at 320px.
+            {
+                const float S  = ImGui::GetIO().FontGlobalScale;
+                const float fh = ImGui::GetFrameHeight();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+
+                ImVec2 mp = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##mag", ImVec2(fh, fh))) runSearch(g_smartSearch);
+                bool mh = ImGui::IsItemHovered();
+                ImU32 mc = mh ? IM_COL32(0x14, 0xFF, 0x39, 255) : IM_COL32(150, 158, 170, 255);
+                ImVec2 mc0 = ImVec2(mp.x + fh * 0.45f, mp.y + fh * 0.42f);
+                float mr = fh * 0.20f;
+                dl->AddCircle(mc0, mr, mc, 0, 2.0f * S);
+                dl->AddLine(ImVec2(mc0.x + mr * 0.7f, mc0.y + mr * 0.7f),
+                            ImVec2(mc0.x + mr * 1.9f, mc0.y + mr * 1.9f), mc, 2.5f * S);
+                if (mh) ImGui::SetTooltip("search every transcript in this folder (Enter)");
+                ImGui::SameLine(0, 6 * S);
+
+                float pillW  = ImGui::CalcTextSize("smart").x + 22.0f * S;
+                float clearW = fh;
+                ImGui::SetNextItemWidth((std::max)(60.0f, ImGui::GetContentRegionAvail().x - pillW - clearW - 14.0f * S));
+                if (ImGui::InputTextWithHint("##search", "search all transcripts", g_searchBuf, sizeof g_searchBuf,
+                                             ImGuiInputTextFlags_EnterReturnsTrue))
+                    runSearch(g_smartSearch);
+                ImGui::SameLine(0, 6 * S);
+
+                // Checklist 20: a TOGGLE, blue when on, so single-word keyword search
+                // stays one click away and Enter always runs the armed mode.
+                if (pillButton("smart", g_smartSearch, IM_COL32(0x00, 0xAE, 0xEF, 255))) {
+                    g_smartSearch = !g_smartSearch;
+                    if (g_searchBuf[0]) runSearch(g_smartSearch);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", g_smartSearch ? "smart search ON - qmd finds meaning, not just the exact word"
+                                                          : "smart search OFF - exact keyword match");
+                ImGui::SameLine(0, 4 * S);
+
+                ImVec2 xp = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##clr", ImVec2(clearW, fh)))
+                    { g_searchBuf[0] = 0; g_hits.clear(); g_searchMode.clear(); g_searchErr.clear(); }
+                bool xh = ImGui::IsItemHovered();
+                ImU32 xc = xh ? IM_COL32(0xDC, 0x14, 0x3C, 255) : IM_COL32(150, 158, 170, 255);
+                ImVec2 xm = ImVec2(xp.x + clearW * 0.5f, xp.y + fh * 0.5f);
+                float xk = clearW * 0.22f;
+                dl->AddLine(ImVec2(xm.x - xk, xm.y - xk), ImVec2(xm.x + xk, xm.y + xk), xc, 2.5f * S);
+                dl->AddLine(ImVec2(xm.x - xk, xm.y + xk), ImVec2(xm.x + xk, xm.y - xk), xc, 2.5f * S);
+                if (xh) ImGui::SetTooltip("clear the search");
+            }
             ImGui::Separator();
 
             if (g_searching) {
@@ -4712,9 +4928,63 @@ int main(int argc, char** argv) {
                 ImGui::EndChild();
             } else {
                 // ---- video library list (B-1/B-3/B-4/B-5/B-6/B-7) ----
-                const char* sortLabel = g_sortMode == 0 ? "Date (newest)" : g_sortMode == 1 ? "Date (oldest)" : g_sortMode == 2 ? "Name A-Z" : "Name Z-A";
-                if (ImGui::SmallButton(sortLabel)) { g_sortMode = (g_sortMode + 1) % 4; sortLibrary(); }
-                if (g_orphanCount > 0) { ImGui::SameLine(); ImGui::TextDisabled("(+%d orphan transcripts)", g_orphanCount); }
+                // Checklist 18, reference .findhead: the count, then two sort pills.
+                // The old control was ONE button cycling four hidden states - you had
+                // to click it and read it to find out what it did.
+                {
+                    const float S = ImGui::GetIO().FontGlobalScale;
+                    ImGui::Text("%d video%s", (int)g_videos.size(), g_videos.size() == 1 ? "" : "s");
+                    ImGui::SameLine(0, 12 * S);
+                    // Clicking the ACTIVE pill flips its direction; clicking the other
+                    // switches to it (date->newest, name->Z-A, both his stated defaults).
+                    if (pillButton(g_sortMode == 1 ? "oldest" : "newest", g_sortMode <= 1, IM_COL32(0x14, 0xFF, 0x39, 255)))
+                        { g_sortMode = (g_sortMode == 0) ? 1 : 0; sortLibrary(); }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_sortMode <= 1
+                        ? "sorted by date - click again to flip newest/oldest" : "sort by date");
+                    ImGui::SameLine(0, 4 * S);
+                    if (pillButton(g_sortMode == 2 ? "A-Z" : "Z-A", g_sortMode >= 2, IM_COL32(0x14, 0xFF, 0x39, 255)))
+                        { g_sortMode = (g_sortMode == 3) ? 2 : 3; sortLibrary(); }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_sortMode >= 2
+                        ? "sorted by name - click again to flip A-Z/Z-A" : "sort by name");
+
+                    // No folder open = nothing to transcribe. Rendering this live over
+                    // an empty library invites a click that can only fail.
+                    if (!g_videos.empty()) {
+                        if (g_transcribeAllBusy) ImGui::BeginDisabled();
+                        if (fixedButton(g_transcribeAllBusy ? "Transcribing all..." : "Transcribe all",
+                                        { "Transcribe all", "Transcribing all..." })) {
+                            g_transcribeAllBusy = true;
+                            // Whole-folder ASR: minutes to hours, so it goes through
+                            // engineCallAsync (never the UI thread) and its reply lands on
+                            // the UI thread via drainAsync.
+                            engineCallAsync("transcribe_all", json::object(), 7200.0, "Transcribing every video...",
+                                [](const json& r) {
+                                    g_transcribeAllBusy = false;
+                                    // g_renderMsgAt must be set on BOTH paths: the status
+                                    // line only shows a message less than 8s old, so an
+                                    // untimestamped failure is a silent failure - he waits
+                                    // an hour and is told nothing at all.
+                                    if (!r.value("ok", false)) {
+                                        g_renderMsg = "Transcribe all failed: " + r.value("error", std::string("unknown"));
+                                        g_renderMsgAt = nowSec();
+                                        return;
+                                    }
+                                    const json& d = r.contains("data") ? r["data"] : r;
+                                    if (d.contains("folder")) applyFolderView(d["folder"], g_folderRoot);
+                                    int okN = d.value("transcribed", 0), badN = d.value("failed", 0);
+                                    g_renderMsg = "Transcribed " + std::to_string(okN) +
+                                                  (badN ? (", " + std::to_string(badN) + " failed") : "");
+                                    g_renderMsgAt = nowSec();
+                                });
+                        }
+                        if (g_transcribeAllBusy) ImGui::EndDisabled();
+                    }
+                    // Its OWN row, not SameLine after "Transcribe all": at 320px the
+                    // panel had no width left and the sentence was sliced mid-word
+                    // ("+652 orphan transcri"), which is the exact failure this
+                    // whole panel was rebuilt to stop.
+                    if (g_orphanCount > 0) ImGui::TextDisabled("(+%d orphan transcripts)", g_orphanCount);
+                }
                 if (!g_folderErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_folderErr.c_str());
                 ImGui::Separator();
                 if (g_videos.empty()) {
@@ -4724,36 +4994,59 @@ int main(int argc, char** argv) {
                     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) { g_libSel = std::max(0, g_libSel - 1); g_libScrollPending = true; }
                 }
                 ImGui::BeginChild("videos", { 0, 0 }, false);
-                for (int i = 0; i < (int)g_videos.size(); i++) {
-                    VideoRow& v = g_videos[i];
-                    ImGui::PushID(i);
-                    bool sel = (g_libSel == i);
-                    bool inFlight;
-                    { std::lock_guard<std::mutex> lk(g_transcribeMx); inFlight = g_transcribeInFlight.count(v.path) != 0; }
-                    std::string label = v.name + (inFlight ? "  (transcribing...)" : v.hasTranscript ? "" : "  [no transcript]");
-                    // ONE selection model (B-4): mouse click sets the SAME index arrows move.
-                    if (ImGui::Selectable(label.c_str(), sel, ImGuiSelectableFlags_AllowDoubleClick)) {
-                        g_libSel = i;
-                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { openTranscript(v.path); g_libJustViewedIdx = i; }
+                // The colours the timeline already assigned per source, so a card
+                // wears the same colour as its clips (checklist 37).
+                // ponytail: rebuilt each frame - O(clips on the timeline), a few
+                // hundred at most. Key it off a track revision counter only if a
+                // reel ever gets big enough to measure.
+                std::map<std::string, ImU32> srcCol;
+                for (auto& c : g_track[0]) srcCol.emplace(baseName(c.source), IM_COL32(c.r, c.g, c.b, 255));
+
+                // His real corpus is 2258 videos. Build only the cards actually on
+                // screen - a card is more draw work than a Selectable was, and this
+                // is a responsiveness requirement, not an optimisation.
+                ImGuiListClipper clip;
+                clip.Begin((int)g_videos.size(), libCardStride());
+                if (g_libScrollPending && g_libSel >= 0) clip.IncludeItemByIndex(g_libSel);
+                // A clipped-away row never calls BeginPopup, which closes its menu.
+                // Keep the row with the open menu submitted no matter where it scrolls.
+                if (g_libCtxIdx >= 0 && g_libCtxIdx < (int)g_videos.size()) clip.IncludeItemByIndex(g_libCtxIdx);
+                while (clip.Step()) {
+                    for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
+                        VideoRow& v = g_videos[i];
+                        ImGui::PushID(i);
+                        bool inFlight;
+                        { std::lock_guard<std::mutex> lk(g_transcribeMx); inFlight = g_transcribeInFlight.count(v.path) != 0; }
+                        auto it = srcCol.find(baseName(v.path));
+                        LibCardResult res = drawLibraryCard(v, g_libSel == i, g_libJustViewedIdx == i, inFlight,
+                                                            it == srcCol.end() ? 0u : it->second);
+                        // ONE selection model (B-4): mouse click sets the SAME index arrows move.
+                        if (res.clicked) g_libSel = i;
+                        if (res.dbl) { openTranscript(v.path); g_libJustViewedIdx = i; }
+                        if (res.plus) { g_libSel = i; requestTranscribe(v.path, v.name); }
+                        // Opened by the card's right-click (drawLibraryCard), same ID scope.
+                        if (ImGui::BeginPopup("rowctx")) {
+                            g_libCtxIdx = i;
+                            g_libSel = i;
+                            if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(v.path);
+                            if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(v.path).c_str());
+                            // B-2: one-click local transcription (Parakeet, official-first) - never
+                            // overwrites an original transcript (enforced engine-side). Disabled
+                            // while this exact video is already transcribing (in-flight guard).
+                            if (inFlight) ImGui::BeginDisabled();
+                            if (ImGui::MenuItem(v.hasTranscript ? "Re-transcribe" : "Transcribe")) requestTranscribe(v.path, v.name);
+                            if (inFlight) ImGui::EndDisabled();
+                            ImGui::EndPopup();
+                        } else if (g_libCtxIdx == i) {
+                            g_libCtxIdx = -1;
+                        }
+                        // The last submitted item is the round button, which is vertically
+                        // centred in the card - so this centres the CARD.
+                        if (g_libSel == i && g_libScrollPending) { ImGui::SetScrollHereY(0.5f); g_libScrollPending = false; }
+                        ImGui::PopID();
                     }
-                    if (g_libJustViewedIdx == i) {
-                        ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(0x14, 0xFF, 0x39, 255));
-                    }
-                    if (ImGui::BeginPopupContextItem("rowctx")) {
-                        g_libSel = i;
-                        if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(v.path);
-                        if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(v.path).c_str());
-                        // B-2: one-click local transcription (Parakeet, official-first) - never
-                        // overwrites an original transcript (enforced engine-side). Disabled
-                        // while this exact video is already transcribing (in-flight guard).
-                        if (inFlight) ImGui::BeginDisabled();
-                        if (ImGui::MenuItem(v.hasTranscript ? "Re-transcribe" : "Transcribe")) requestTranscribe(v.path, v.name);
-                        if (inFlight) ImGui::EndDisabled();
-                        ImGui::EndPopup();
-                    }
-                    if (g_libSel == i && g_libScrollPending) { ImGui::SetScrollHereY(0.5f); g_libScrollPending = false; }
-                    ImGui::PopID();
                 }
+                clip.End();
                 ImGui::EndChild();
                 // B-5: Space plays the selected row; Enter = double-click (open transcript).
                 // Guarded on !WantTextInput (I-4 fix, found live this session): the search
