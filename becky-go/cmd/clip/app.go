@@ -113,6 +113,31 @@ type App struct {
 	// to nil whenever OpenFolder/Reindex changes the corpus underneath it, so a
 	// stale index can never resolve to the wrong clip.
 	lastSearchHits []footage.Candidate
+
+	// emit is H-5's AI-activity sink: set by cmdBridge (main.go) to push
+	// {"event":{...}} lines over the NDJSON stdio seam (GUI-RULES.md §2's
+	// "event" message kind) so the right panel can show what becky is doing
+	// without blocking Jordan's own editing. nil in every path with no
+	// listener (unit tests, the WebView2 build, headless `call`) — emitEvent
+	// no-ops then, so this is purely additive and never required.
+	emit EventEmitter
+}
+
+// EventEmitter pushes one plain-language AI-activity line. kind is
+// "started"|"progress"|"done" (GUI-RULES.md §2); source names the seam that
+// produced it ("ask", "apply_edit_batch"); text is the one sentence a human
+// reads. See App.emitEvent for the nil-safe call site.
+type EventEmitter func(kind, source, text string)
+
+// emitEvent is the nil-safe call site every long-running/AI-driven verb uses
+// to announce activity (H-5). A no-op when nothing is listening — this can
+// never block, error, or affect the verb's own return value, so it is safe to
+// call from inside a locked section (it never touches App state).
+func (a *App) emitEvent(kind, source, text string) {
+	if a.emit == nil || text == "" {
+		return
+	}
+	a.emit(kind, source, text)
 }
 
 // NewApp builds an empty App with config loaded and a fresh empty reel. The
@@ -1263,6 +1288,13 @@ func (a *App) Ask(ctx context.Context, utterance string) (assistant.Proposal, er
 	}
 	a.mu.Unlock()
 
+	// H-5: bracket the turn with started/done events so the right panel shows
+	// AI activity for a turn that can run up to askReply's 300s deadline (an
+	// online Tier-2 call) — WITHOUT touching the timeline lock, so Jordan's own
+	// editing (which runs through the same App under a.mu) is never blocked by
+	// this being slow.
+	a.emitEvent("started", "ask", "Thinking: "+truncateText(strings.TrimSpace(utterance), 80))
+
 	// Assist is the CHAT brain (not the action-only Handle): a Tier-0 command runs
 	// instantly, a "find every time X" ask runs the retrieval funnel, and anything
 	// else (a question, a fuzzy request) is ANSWERED by Claude (CLI/OAuth or API
@@ -1270,7 +1302,13 @@ func (a *App) Ask(ctx context.Context, utterance string) (assistant.Proposal, er
 	// hits is the last Search()/QmdSearch() result — lets Tier-0's "add clip 3"
 	// resolve a real source/in/out (assistant.resolveHitActions) and gives Tier-2's
 	// funnel real candidates instead of nothing.
-	return r.Assist(ctx, utterance, cx, hits)
+	p, err := r.Assist(ctx, utterance, cx, hits)
+	if err != nil {
+		a.emitEvent("done", "ask", "Could not answer: "+truncateText(err.Error(), 80))
+		return p, err
+	}
+	a.emitEvent("done", "ask", p.PreviewText)
+	return p, nil
 }
 
 // BeckyStatus reports which AI backends are usable right now (claude CLI / API key
