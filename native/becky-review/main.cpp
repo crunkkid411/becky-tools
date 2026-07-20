@@ -4851,15 +4851,41 @@ int main(int argc, char** argv) {
             // ANYWHERE. Six reads, zero writes: a finished feature with no way to
             // turn it on. This button is that missing write.
             {
-                char qLabel[40];
-                snprintf(qLabel, sizeof qLabel, "Skip Quiet: %s##thr", g_thrOn ? "On" : "Off");
-                if (fixedButton(qLabel, { "Skip Quiet: On", "Skip Quiet: Off" })) {
-                    g_thrOn = !g_thrOn;
-                    g_quietDirty = true;      // force recomputeQuiet on the next frame
-                    emitThreshold(true);
+                // THE ICON HE ASKED FOR. feedback7: "add a toggle button to the
+                // timeline toolbar (have it simply be an icon that looks like a
+                // person running)". It shipped as a text button; this is the
+                // button he actually specified.
+                //
+                // Drawn with ImDrawList primitives, NOT an icon font: no icon
+                // font is loaded here and a missing glyph renders as a hollow
+                // square, which is a documented past failure in this project
+                // (the "square play button"). Primitives cannot go missing.
+                //
+                // Colour carries the state as well as the fill, because at a
+                // glance he should not have to decode a shape: lit amber when
+                // skipping is ON, dim when off.
+                {
+                    const float h = ImGui::GetFrameHeight();
+                    ImVec2 p0 = ImGui::GetCursorScreenPos();
+                    bool pressed = ImGui::Button("##thr", ImVec2(h * 1.15f, h));
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImU32 col = g_thrOn ? IM_COL32(242, 217, 115, 255) : IM_COL32(150, 160, 175, 210);
+                    float cx = p0.x + h * 0.575f, cy = p0.y + h * 0.5f, u = h * 0.085f;
+                    dl->AddCircleFilled(ImVec2(cx + u * 0.9f, cy - u * 2.6f), u * 0.95f, col, 10); // head
+                    dl->AddLine(ImVec2(cx + u * 0.7f, cy - u * 1.5f), ImVec2(cx - u * 0.6f, cy + u * 0.6f), col, 1.8f); // torso, leaning
+                    dl->AddLine(ImVec2(cx + u * 0.5f, cy - u * 1.0f), ImVec2(cx + u * 2.4f, cy - u * 0.2f), col, 1.6f); // forward arm
+                    dl->AddLine(ImVec2(cx + u * 0.5f, cy - u * 1.0f), ImVec2(cx - u * 1.6f, cy - u * 1.6f), col, 1.6f); // trailing arm
+                    dl->AddLine(ImVec2(cx - u * 0.6f, cy + u * 0.6f), ImVec2(cx + u * 1.5f, cy + u * 2.6f), col, 1.8f); // forward leg
+                    dl->AddLine(ImVec2(cx - u * 0.6f, cy + u * 0.6f), ImVec2(cx - u * 2.3f, cy + u * 2.2f), col, 1.8f); // trailing leg
+                    if (pressed) {
+                        g_thrOn = !g_thrOn;
+                        g_quietDirty = true;      // force recomputeQuiet on the next frame
+                        emitThreshold(true);
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Skip quiet parts during playback: %s\nDrag the bar on the timeline to set the level.",
+                                          g_thrOn ? "ON" : "OFF");
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Skip everything quieter than the threshold bar during playback.\nDrag the bar on the timeline to set the level.");
             }
             ImGui::SameLine();
             // F-3/F-4: naming (clips_SOURCE_NNNN.mp4 / clips_compilation_NNNN.mp4,

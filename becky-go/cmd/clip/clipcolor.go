@@ -1,51 +1,89 @@
 package main
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 // clipPalette is the review app's timeline palette, byte-for-byte the same eight
-// colours in the same order as kPalette in native/becky-review/main.cpp. Jordan
-// chose these; they are an ACCESSIBILITY AID, not decoration. Never mute,
-// desaturate or "tone down" any of them.
+// colours in the same order as kPalette in native/becky-review/main.cpp, and the
+// same order Jordan names them in: "#14FF39 (video 1), #00AEEF (video 2),
+// #DC143C (video 3)". They are an ACCESSIBILITY AID, not decoration — he is
+// vision-impaired and identifies which video a clip came from by its colour at a
+// glance. Never mute, desaturate or "tone down" any of them.
 var clipPalette = []string{
-	"#14FF39", // green
-	"#00AEEF", // blue
-	"#DC143C", // crimson
-	"#8A2BE2", // violet
-	"#FF57D1", // pink
-	"#FFD700", // gold
-	"#16F0EA", // cyan
-	"#FF8C00", // orange
+	"#14FF39", // video 1
+	"#00AEEF", // video 2
+	"#DC143C", // video 3
+	"#8A2BE2",
+	"#FF57D1",
+	"#FFD700",
+	"#16F0EA",
+	"#FF8C00",
 }
 
-// clipColor picks a clip's colour from its SOURCE FILE, deterministically.
+// Source -> colour, ASSIGNED IN ORDER OF FIRST APPEARANCE AND NEVER REASSIGNED.
 //
-// The requirement is not just "colour the clips" — it is that the assignment is
-// PERMANENT. Jordan's rule: deleting every clip that came from video 2 must
-// never recolour video 3. Any scheme that assigns colours by position, by
-// first-appearance order, or by counting distinct sources present fails that,
-// because removing one source renumbers the rest and the whole timeline changes
-// colour under him mid-edit. For someone who identifies clips by colour at a
-// glance, that is worse than having no colours at all.
+// Both halves of that are Jordan's spec, verbatim (becky-review-gui-user-feedback7.md):
 //
-// So the colour is a pure function of the source path: the same file is always
-// the same colour, in every reel, forever, no matter what else is on the
-// timeline and no matter what is deleted. Nothing to persist and nothing that
-// can drift.
+//	"Once a color is assigned to a video, question, etc. that color must be
+//	 persistent for the remainder of that project."
+//	"if user deletes all clips from video 2, then clips from video 3 change color
+//	 to #00AEEF. This should not happen."
 //
-// FNV-1a because it is stable across runs and platforms — Go's built-in map
-// hashing is deliberately randomised per process and would give the same file a
-// different colour every launch.
+// So the map only ever GROWS. Deleting every clip of a source does not release
+// its colour, which is exactly what stops the rest of the timeline recolouring
+// under him mid-edit.
+//
+// An earlier version hashed the path instead. That satisfied persistence but not
+// his ORDERING — his first video came out violet instead of #14FF39 — and the
+// ordering is the half he actually wrote down, because "video 1 is green" is
+// what he has learned to read.
+var (
+	clipColorMu   sync.Mutex
+	clipColorBy   = map[string]string{}
+	clipColorNext int
+)
+
+// colorKey normalises a path so Windows handing back C:\A.MP4 and c:/a.mp4 can
+// never become two different colours for one file.
+func colorKey(source string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(source), "/", `\`))
+}
+
+// clipColor returns this source's "#RRGGBB", assigning the next palette colour
+// the first time a source is seen.
 func clipColor(source string) string {
-	if strings.TrimSpace(source) == "" {
+	k := colorKey(source)
+	if k == "" {
 		return ""
 	}
-	// Case-insensitive: Windows hands us the same file as both C:\A.MP4 and
-	// c:\a.mp4, and those must not be two different colours.
-	key := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(source), "/", "\\"))
-	var h uint32 = 2166136261
-	for i := 0; i < len(key); i++ {
-		h ^= uint32(key[i])
-		h *= 16777619
+	clipColorMu.Lock()
+	defer clipColorMu.Unlock()
+	if c, ok := clipColorBy[k]; ok {
+		return c
 	}
-	return clipPalette[h%uint32(len(clipPalette))]
+	c := clipPalette[clipColorNext%len(clipPalette)]
+	clipColorBy[k] = c
+	clipColorNext++
+	return c
+}
+
+// SeedClipColors assigns colours in the order sources appear in a freshly loaded
+// reel, so a reopened project colours video 1 green again rather than in
+// whatever order the UI happened to ask about clips.
+func SeedClipColors(sources []string) {
+	for _, s := range sources {
+		clipColor(s)
+	}
+}
+
+// ResetClipColors clears the assignment. Called when a DIFFERENT project is
+// loaded — "for the remainder of that project" ends when the project does, and
+// without this a long session would exhaust the palette on stale sources.
+func ResetClipColors() {
+	clipColorMu.Lock()
+	defer clipColorMu.Unlock()
+	clipColorBy = map[string]string{}
+	clipColorNext = 0
 }
