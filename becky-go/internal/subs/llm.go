@@ -4,8 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 )
+
+// reviewConcurrency is how many review batches are in flight at once. Batches
+// are independent; running them serially left minutes of dead air.
+const reviewConcurrency = 4
+
+// DefaultReviewBatch is how many cuts go in one review call. Kept SMALL on
+// purpose: at 24 the reply overran the response budget and came back truncated
+// or empty ("unexpected end of JSON input"), silently dropping whole ranges of
+// cuts back to pacing-only chunking.
+const DefaultReviewBatch = 8
 
 // Pass 2 — the LLM chunk review.
 //
@@ -49,7 +61,7 @@ type segReply struct {
 // Captions are always produced.
 func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Options, batchSize int) ([][][]Word, []string) {
 	if batchSize <= 0 {
-		batchSize = 24
+		batchSize = DefaultReviewBatch
 	}
 
 	// Pass 1 first — it is both the input to the review and the fallback.
@@ -65,7 +77,16 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 
 	out := make([][][]Word, len(segments))
 	copy(out, pass1)
-	var warnings []string
+
+	// Batches are INDEPENDENT, so they run concurrently. Sequentially this was
+	// minutes of dead air; a small pool turns it into roughly one batch's worth
+	// of waiting. The cap is modest because the far side rate-limits.
+	var (
+		mu       sync.Mutex
+		warnings []string
+		wg       sync.WaitGroup
+	)
+	sem := make(chan struct{}, reviewConcurrency)
 
 	for start := 0; start < len(segments); start += batchSize {
 		end := start + batchSize
@@ -84,25 +105,38 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 			continue
 		}
 
-		replies, err := reviewBatch(ctx, model, plans, opt.MaxChars)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("caption review (cuts %d-%d) fell back to pacing-only: %v", start+1, end, err))
-			continue
-		}
-		for _, r := range replies {
-			if r.Index < start || r.Index >= end {
-				continue
-			}
-			groups, err := applyGroups(inRange[r.Index], r.Groups)
+		wg.Add(1)
+		go func(start, end int, plans []segPlan) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			replies, err := reviewBatch(ctx, model, plans, opt.MaxChars)
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("cut %d fell back to pacing-only: %v", r.Index+1, err))
-				continue
+				warnings = append(warnings, fmt.Sprintf("caption review (cuts %d-%d) fell back to pacing-only: %v", start+1, end, err))
+				return
 			}
-			// The model is asked for phrase integrity but is not consistent about
-			// it, so the rule is enforced deterministically on its output too.
-			out[r.Index] = RepairDangling(groups, opt.MaxChars)
-		}
+			for _, r := range replies {
+				if r.Index < start || r.Index >= end {
+					continue
+				}
+				groups, err := applyGroups(inRange[r.Index], r.Groups)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("cut %d fell back to pacing-only: %v", r.Index+1, err))
+					continue
+				}
+				// The model is asked for phrase integrity but is not consistent
+				// about it, so the rule is enforced deterministically on its
+				// output too.
+				out[r.Index] = EnforceMaxChars(RepairDangling(groups, opt.MaxChars), opt.MaxChars)
+			}
+		}(start, end, plans)
 	}
+	wg.Wait()
+
+	sort.Strings(warnings)
 	return out, warnings
 }
 

@@ -130,6 +130,96 @@ func isContentless(chunk []Word) bool {
 	return len(chunk) == 1 && isDangling(chunk[0].Word)
 }
 
+// EnforceMaxChars splits any line longer than maxChars into readable pieces.
+//
+// The review model groups by MEANING, which is what makes captions read well -
+// but it ignores the character cap and happily returns a 67-character line
+// ("want to challenge this notion that in order to grow on social media"),
+// which is unusable burned onto a vertical video. Jordan's own rule covers this
+// exact case: `"can you post" / "ten times a day?" is correct ... if it's too
+// many characters, then it should be; "can you post" / "ten times" / "a day?"`.
+//
+// So the model decides WHERE the thoughts are and this decides where a long
+// thought has to break, filling greedily up to the cap and then handing the
+// pieces to RepairDangling so no piece ends on a word that governs the next.
+func EnforceMaxChars(chunks [][]Word, maxChars int) [][]Word {
+	if maxChars <= 0 {
+		return chunks
+	}
+	out := make([][]Word, 0, len(chunks))
+	for _, chunk := range chunks {
+		if lineLen(chunk) <= maxChars {
+			out = append(out, chunk)
+			continue
+		}
+		out = append(out, RepairDangling(splitAtBiggestPause(chunk, maxChars), maxChars)...)
+	}
+	return out
+}
+
+// splitAtBiggestPause breaks an over-long line at the point the SPEAKER paused
+// longest, then recurses until every piece fits.
+//
+// Filling greedily to the cap instead would be wrong on Jordan's own rule -
+// "A SHORTER line that is phrase-complete always beats a longer line that
+// splits a phrase. Do NOT pad a line toward the character cap." Greedy fill
+// produced "can you post ten times" | "a day?" (22 chars, splits the phrase);
+// splitting on the pause produces "can you post" | "ten times a day?", which is
+// the grouping he asked for.
+//
+// A split is only considered where the LEFT piece fits; if nothing fits (one
+// enormous word run), it falls back to the most balanced point so the recursion
+// always shrinks.
+func splitAtBiggestPause(chunk []Word, maxChars int) [][]Word {
+	if len(chunk) < 2 || lineLen(chunk) <= maxChars {
+		return [][]Word{chunk}
+	}
+
+	best, bestGap := -1, -1.0
+	fallback, bestBalance := 1, 1<<30
+	for i := 1; i < len(chunk); i++ {
+		left := lineLen(chunk[:i])
+
+		// Most balanced point, used only if no split leaves a fitting left side.
+		if d := abs(left - (lineLen(chunk) - left)); d < bestBalance {
+			bestBalance, fallback = d, i
+		}
+		right := lineLen(chunk) - left
+		// Both sides must carry real content. Without this the biggest pause is
+		// often right after the first word, which strands "want" / "can" / "that"
+		// on a line of their own - technically a pause, useless as a caption.
+		if left > maxChars || left < minPiece(maxChars) || right < minPiece(maxChars) {
+			continue
+		}
+		gap := chunk[i].Start - chunk[i-1].End
+		if gap < 0 {
+			gap = 0
+		}
+		// >= keeps the LATER of two equal pauses, which fills a line more fully
+		// without ever exceeding the cap.
+		if gap >= bestGap {
+			bestGap, best = gap, i
+		}
+	}
+	if best < 0 {
+		best = fallback
+	}
+
+	out := splitAtBiggestPause(chunk[:best], maxChars)
+	return append(out, splitAtBiggestPause(chunk[best:], maxChars)...)
+}
+
+// minPiece is the smallest a split piece may be. A third of the cap keeps
+// lines substantial without forcing an unnatural break.
+func minPiece(maxChars int) int { return maxChars / 3 }
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 // RepairDangling pushes any phrase-splitting trailing word onto the next line,
 // and merges away a line that is nothing but such words. It never changes word
 // order and never drops a word, so the result is still a strict in-order
@@ -166,6 +256,12 @@ func RepairDangling(chunks [][]Word, maxChars int) [][]Word {
 		for i := len(in) - 2; i >= 0; i-- {
 			for len(in[i]) > 1 && isDangling(in[i][len(in[i])-1].Word) {
 				word := in[i][len(in[i])-1]
+				// Never strand what is left behind. Pushing "to" out of "want to"
+				// leaves "want" alone on screen, which is worse than the dangle
+				// it was fixing.
+				if lineLen(in[i])-len(strings.TrimSpace(word.Word))-1 < minPiece(maxChars) {
+					break
+				}
 				// A number moves regardless of length; anything else yields to
 				// readability once the next line is already full.
 				if !isNumber(word.Word) &&
