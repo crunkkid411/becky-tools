@@ -2771,7 +2771,14 @@ static void drawTimeline(double& curSec, bool& playing) {
     float wy0 = aY + 2 + headerH, wy1 = aY + laneH - 2;
     float waveMid = (wy0 + wy1) * 0.5f, waveHalf = (wy1 - wy0) * 0.5f - 1.0f;
     drainThumbs(); // cheap (swaps a small deque under a lock) even when nothing finished this frame
-    drainAsync();  // deliver finished engine verbs (Render/Save/Export) on the UI thread
+    // (drainAsync used to be called HERE. It is not anymore - see main()'s drain
+    // block. Delivering async replies from the MIDDLE of drawTimeline meant a
+    // callback like add_clip's or apply_proposal's could replace g_track while
+    // this function was halfway through reading it. It happened not to crash only
+    // because no live reference to g_track survived across this exact line - a
+    // property nobody could see, that any future edit above this point would have
+    // silently broken. Model mutations now land with every other drain, BEFORE
+    // the frame reads anything.)
 
     auto zoomTo = [&](double newPps, float anchorX) {
         double anchor = xToSec(anchorX);
@@ -4108,25 +4115,44 @@ static void runSearch(bool qmd) {
 // engine is authoritative on success ("clips" = a TimelineView, same shape as
 // the "timeline" verb); a degraded/failed engine call still responds locally
 // so the UI never silently no-ops.
+// THE "EVERY NEW CLIP LAGS EVERYTHING" BUG. Jordan, feedback9, verbatim:
+// "every new clip on the timeline makes everything - even my mouse - lag super
+// bad for like 2 seconds."
+//
+// This ran engineCall("add_clip", ...) with a SIX SECOND timeout directly on the
+// UI thread, from the search-hit double-click handler. For that whole span the
+// message pump does not run: no repaint, no input, nothing. add_clip itself is a
+// fast in-memory reel edit - but the engine's bridge DISPATCHES ONE VERB AT A
+// TIME (see setOverlayMode's comment, which measured 2.9s of exactly this
+// contention), so the add waits behind whatever else is in flight - a peaks
+// probe, a thumbnail, a transcript - and hands that entire wait to the UI
+// thread. "About two seconds", every time he adds a clip, is precisely that.
+//
+// Async: the click lands instantly, the reply arrives on the UI thread via
+// drainAsync, and the >1s work indicator covers a genuinely slow one.
 static void addHitToTimeline(const Hit& h) {
     double a = h.start, b = (h.end > a + 0.05) ? h.end : a + 0.05;
     std::string label = baseName(h.source);
+    std::string src = h.source;
     // I-2 measurement: wall-clock the add_clip round trip (always-on, crash.log -
     // one line per add, negligible cost) so "<200ms, proxy building never gates
     // the add" is a grepped number, not a claim - same pattern as I-4's search
-    // timing (see searchWorker). AddClipAt (becky-go/cmd/clip/app.go) is a pure
-    // in-memory reel-list edit - no proxy/peaks work runs synchronously inside it.
+    // timing (see searchWorker). It now measures the WORKER's wait, not a stall
+    // Jordan can feel, which is the entire point of the change.
     double t0 = nowSec();
-    json r = engineCall("add_clip", { {"source", h.source}, {"in", a}, {"out", b}, {"label", label} }, 6.0);
-    crashLog("I-2 add_clip source=" + label + " elapsedMs=" + std::to_string((nowSec() - t0) * 1000.0));
-    if (r.value("ok", false) && r.contains("data") && r["data"].contains("clips")) {
-        loadTimelineView(r["data"]);
-        return;
-    }
-    Clip cl; cl.in = a; cl.out = b; cl.source = h.source; cl.label = label;
-    cl.r = 220; cl.g = 30; cl.b = 60;
-    g_track[0].push_back(cl); packTrack(0); recomputeDur();
-    g_quietDirty = true; peaksRequest(h.source, a - 1.0, b + 5.0);
+    engineCallAsync("add_clip", { {"source", src}, {"in", a}, {"out", b}, {"label", label} }, 6.0,
+                    "Adding " + label + " to the timeline...",
+                    [src, a, b, label, t0](const json& r) {
+        crashLog("I-2 add_clip source=" + label + " elapsedMs=" + std::to_string((nowSec() - t0) * 1000.0));
+        if (r.value("ok", false) && r.contains("data") && r["data"].contains("clips")) {
+            loadTimelineView(r["data"]);
+            return;
+        }
+        Clip cl; cl.in = a; cl.out = b; cl.source = src; cl.label = label;
+        cl.r = 220; cl.g = 30; cl.b = 60;
+        g_track[0].push_back(cl); packTrack(0); recomputeDur();
+        g_quietDirty = true; peaksRequest(src, a - 1.0, b + 5.0);
+    });
 }
 
 // --------------- main ---------------
@@ -4759,6 +4785,19 @@ int main(int argc, char** argv) {
                 editLog("drain loop iteration done");
             }
         }
+
+        // Finished async engine verbs (add_clip, Render, Save, Export, ask,
+        // apply_proposal) are delivered HERE, on the UI thread, together with
+        // every other drain and BEFORE any UI code reads the model this frame.
+        //
+        // This used to sit in the middle of drawTimeline(), which runs at the END
+        // of the frame - so a callback that swaps g_track out (add_clip's reload,
+        // apply_proposal's) fired while drawTimeline was partway through reading
+        // it. That was safe only by accident of where the call happened to sit.
+        // Here there is nothing to be halfway through: the key handlers above have
+        // finished with their Clip* pointers, and every panel below re-reads
+        // g_track from scratch.
+        drainAsync();
 
         // D-9: PLAYBACK. This used to be the whole of "playing": a simulated clock
         // (curSec += dt) driving per-frame hr-seeks into a permanently paused mpv - which
