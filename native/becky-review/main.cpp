@@ -3045,9 +3045,26 @@ static void drawTimeline(double& curSec, bool& playing) {
             } else {
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
-                double t = std::max(0.0, std::min(xToSec(mx), g_compDur));
-                if (!g_playingExt) { curSec = t; emitScrub(curSec, true); }
-                else { g_stockSec = t; g_stockFlash = true; }
+                // MUST-NEVER-DO, in his own words. Selecting a clip cost him his
+                // place on the timeline EVERY TIME: clicking a clip body - to
+                // delete it, to trim it, to nudge it a frame - snapped curSec to
+                // wherever the cursor happened to land. The single gesture an
+                // editor makes most often was also the one that threw away his
+                // position, so selecting anything meant re-finding his spot.
+                //
+                // A clip-body click now SELECTS and does nothing else. The RULER
+                // is the control that moves the playhead (click = playhead+stock,
+                // drag = pan) - one obvious place to move, and clips are safe to
+                // touch.
+                //
+                // While PLAYING it still sets the STOCK, which is a DIFFERENT
+                // thing and stays: the stock is where edit keys apply and where
+                // Space returns to (E-6), and it never moves the live playhead
+                // either. Paused, there is no stock to set - just a selection.
+                if (g_playingExt) {
+                    g_stockSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+                    g_stockFlash = true;
+                }
             }
         } else if (g.kind == 3 && !g.group.empty()) {
             double cur = xToSec(mx);
