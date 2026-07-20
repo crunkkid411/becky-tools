@@ -231,7 +231,10 @@ func reviewBatch(ctx context.Context, model ModelFunc, plans []segPlan, maxChars
 	if err != nil {
 		return nil, err
 	}
-	prompt := fmt.Sprintf(reviewSystem, maxChars) + "\n\nSegments:\n" + string(payload)
+	// The prompt is Jordan-editable — see prompt.go. A plain text file beats a Go
+	// constant when the person who needs to tune it is not a developer.
+	tmpl, _ := ReviewPrompt()
+	prompt := fmt.Sprintf(tmpl, maxChars) + "\n\nSegments:\n" + string(payload)
 
 	raw, err := model(ctx, prompt)
 	if err != nil {

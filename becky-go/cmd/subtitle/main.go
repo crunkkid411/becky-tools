@@ -38,12 +38,17 @@ import (
 )
 
 type report struct {
-	Reel     string   `json:"reel"`
-	SRT      string   `json:"srt"`
-	Cues     int      `json:"cues"`
-	Clips    int      `json:"clips"`
-	Duration float64  `json:"duration"`
-	PauseGap float64  `json:"pause_gap"` // the pause threshold actually used
+	Reel     string  `json:"reel"`
+	SRT      string  `json:"srt"`
+	Cues     int     `json:"cues"`
+	Clips    int     `json:"clips"`
+	Duration float64 `json:"duration"`
+	PauseGap float64 `json:"pause_gap"` // the pause threshold actually used
+	// Prompt says WHICH caption prompt was used - "built-in", or the path of
+	// Jordan's caption-prompt.txt. He edits that file to tune how his captions
+	// read, so he has to be able to see at a glance that his edit took effect
+	// rather than being silently ignored.
+	Prompt   string   `json:"prompt"`
 	Style    string   `json:"style"`
 	Burned   bool     `json:"burned"`
 	Output   string   `json:"output,omitempty"`
@@ -216,6 +221,7 @@ func main() {
 		Clips:    len(reel.Clips),
 		Duration: round3(reel.Duration()),
 		PauseGap: round3(opt.GapSeconds),
+		Prompt:   promptSource(),
 		Style:    style.ForceStyle(),
 		Warnings: warnings,
 	}
@@ -447,3 +453,10 @@ func mustAbs(p string) string {
 }
 
 func round3(f float64) float64 { return float64(int(f*1000+0.5)) / 1000 }
+
+// promptSource reports where the caption-grouping prompt came from, for the
+// report above.
+func promptSource() string {
+	_, src := subs.ReviewPrompt()
+	return src
+}
