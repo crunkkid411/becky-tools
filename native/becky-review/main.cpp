@@ -2836,7 +2836,21 @@ static void drawTimeline(double& curSec, bool& playing) {
         int idx, zone;
         g_gest = Gesture{};
         g_gest.pressX = mx; g_gest.ctrl = io.KeyCtrl; g_gest.shiftK = io.KeyShift;
-        if (onThresholdBar(mx, my)) {
+        if (my < aY) {
+            // RULER BAND (items 52/53/107). The ruler is where a Vegas editor
+            // instinctively grabs to move around the timeline, and grabbing it
+            // used to scrub instead - the playhead shot off with the cursor.
+            //
+            // Click sets the playhead AND the stock (the return point playback
+            // resumes from), because on the ruler he is choosing where to work,
+            // not auditioning a moment. Dragging PANS the view, leaving the
+            // playhead where he put it.
+            g_gest.kind = 11;
+            g_gest.gIn = g_scrollSec;                 // view position at grab time
+            curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+            g_stockSec = curSec;
+            emitScrub(curSec, true);
+        } else if (onThresholdBar(mx, my)) {
             g_gest.kind = 7;
         } else if (clipHit(mx, my, idx, zone)) {
             g_gest.idx = idx;
@@ -2868,6 +2882,13 @@ static void drawTimeline(double& curSec, bool& playing) {
         if (g_gest.kind == 1) {
             curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
             if (std::abs(curSec - g_gest.gIn) > 1e-9) { g_gest.gIn = curSec; emitScrub(curSec, false); }
+        } else if (g_gest.kind == 11) {
+            // Pan, exactly like the middle-drag above - same formula, so the two
+            // ways of moving the view can never drift apart.
+            if (io.MouseDelta.x != 0) {
+                g_scrollSec = std::max(0.0, g_scrollSec - io.MouseDelta.x / g_pps);
+                g_lastUserScroll = nowSec();
+            }
         } else if (g_gest.kind == 7) {
             float y = std::max(thrLaneTop, std::min(thrLaneBot, my));
             double frac = (thrLaneBot - y) / std::max(1.0f, thrLaneBot - thrLaneTop);
