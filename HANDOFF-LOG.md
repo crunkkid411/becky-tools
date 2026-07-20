@@ -10,6 +10,66 @@
 
 ---
 
+## Vegas import + cut-snapped burn-in captions (2026-07-19, local, `brn-native-review`)
+
+**Why:** Jordan asked two questions — can becky read the `.txt`/`.xml` Vegas exports of an edit he
+already cut, and did we ever build the caption tool that aligns captions to cut points. Answers: no
+(export was one-way by design), and yes but it never survived the port to Go.
+
+**The caption finding.** The logic exists in the pre-Go `cli-cut`
+(`X:\Videos\video_tools\cli-cut\helpers\render.py:330` `build_master_srt` — *"gap-free,
+segment-aligned caption timing"*). When `becky-cut` was ported from `ae-vad-wrapper.py`, only the
+auto-editor + Silero VAD architecture came across; the whole `helpers/render.py` caption path was
+left behind. Ported to `internal/subs`: first caption of a cut snaps to the cut start, last snaps to
+the cut end, `caption[i].End == caption[i+1].Start` (no gaps), 0.10 s flash floor, 0.35 s
+post-speech hold. `cli-cut`'s two-pass LLM chunk review is NOT ported — pass-1 deterministic only.
+
+**New:**
+- `internal/subs` — chunking + cut-snapped timing + SRT + `force_style`. 13 tests.
+- `internal/edl/vegasimport.go` — Vegas EDL TXT and FCP7 XML importers. 10 tests.
+- `cmd/subtitle` → `becky-subtitle.exe`, with `--selftest` (9 checks, no files/media/models).
+- `becky-otio --import` — the inverse of the existing exporters, same tool.
+- `Caption This Edit.bat` — drag a Vegas edit on, get a captioned video.
+
+**Verified on real work** (`X:\Videos\2025\11_November\Rendered\post_constantly.*`, an 88-cut edit):
+- Both Vegas files import to **88 clips** and agree to **0.31 ms** — 1/100th of a frame at 29.97.
+- Font is not assumed: libass logged `fontselect: (ProximaNova-Semibold, 400, 0) ->
+  ProximaNova-Semibold` — an exact match, no silent substitution.
+- Sync proved by mapping output time back through the cuts to source time and comparing against an
+  INDEPENDENT pre-existing transcript: matches at 5 s, 40 s, 80 s, 120 s and **149 s**. Zero
+  cumulative drift. Burned output duration 150.15 s == his Vegas render exactly.
+
+**Two traps found, both now handled in code:**
+1. **FCP7 file-id resolution.** FCP7 declares a media `<pathurl>` once and refers to it by id
+   afterwards — and in a Vegas export that declaration lives in the **bin**, which the importer
+   skips (the bin's own `<clipitem>` spans the whole 5-minute file and must not become an event).
+   Resolving only from `<sequence>` imports **zero clips**. Paths are now collected document-wide
+   first. Caught by a fixture, not on the real file.
+2. **`cli-cut`'s 0.120 s pause constant does not transfer between ASRs.** Parakeet quantises to
+   0.08 s and leaves **49% of words with `end == start`**, so ordinary connected speech reads as a
+   0.16-0.24 s gap — above the constant. Measured result: **421 captions from 631 words**, nearly
+   one word each. `subs.AutoGapSeconds` now takes the p90 of the transcript's own gaps (0.32 s here
+   → **180 captions**, 3-4 words each), floored at 0.120 s so a tight transcript still behaves
+   exactly as `cli-cut` did.
+
+**Deliberate deviation from `cli-cut`:** captions are **not lowercased** by default. `cli-cut`
+lowercased and stripped trailing punctuation, but Jordan's own published captions
+(`grammy.mp4`, `hot_girl_toddler_with_captions.mp4`) keep sentence case and punctuation — "Their
+label doesn't want you...". `--lower` restores the old look. The style question he answered covered
+font/colour/outline, not casing; his published work settled it.
+
+**KNOWN BUG, NOT FIXED — `becky-reel render` drifts.** Rendering the same 88-cut reel through
+`becky-reel` produced **151.452 s against the reel's nominal 150.183 s: +1.27 s, 38 frames**. It
+renders at `defaultOutFPS = 30.0` against 29.97 sources and does not quantise per-clip durations to
+output frames, so each clip gains a fraction of a frame and the error accumulates. Harmless for
+Jordan today (he renders from Vegas, which is frame-exact — 150.15 s, one frame off the edit), but
+**any caption burned onto a becky-reel render will desync by the end**, and the reel's own
+`edl.WriteSRT` export has the same exposure. Left for a dedicated fix.
+
+**Not done:** wiring captions into a review GUI. `Becky Review 3` = `native\becky-review`
+(C++/ImGui); `Becky Review Native` = `gui\BeckyReviewNative` (WPF/.NET) — Jordan reports the first
+unusable and the second working, so which one gets the button is his call, not a guess.
+
 ## whoretana v2 — mesh-driven orb (OrbEngine), gemma4 escalation ladder, trace dataset, wake word + bubble (2026-07-04, local, `whoretana-v2`)
 
 > **SUPERSEDED same day — this branch is an ARCHIVE.** Jordan corrected the premise: WHORETANA must be

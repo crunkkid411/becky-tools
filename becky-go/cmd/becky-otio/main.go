@@ -53,6 +53,7 @@ func main() {
 	outDir := fs.String("out", "", "output directory (default: alongside the reel, or cwd for stdin)")
 	audio := fs.Bool("audio", false, "also emit a parallel audio track (otio)")
 	viaOtioCLI := fs.String("via-otio-cli", "", "after writing .otio, run otioconvert to also emit <name>.<ext> (comma list, e.g. aaf,ale); needs the OTIO python package on PATH, degrades silently if absent")
+	importPath := fs.String("import", "", "IMPORT an already-cut edit into a Reel JSON: a Vegas Pro 'EDL TXT' (.txt) or a Final Cut Pro 7 XML (.xml) export")
 	selftest := fs.Bool("selftest", false, "run the offline self-test (no files needed) and exit")
 	_ = fs.Parse(os.Args[1:])
 
@@ -60,8 +61,13 @@ func main() {
 		runSelftest()
 		return
 	}
+	// --import is the inverse direction: interchange file -> becky Reel.
+	if *importPath != "" {
+		runImport(*importPath, *outDir)
+		return
+	}
 	if *reelPath == "" {
-		beckyio.Fatalf("--reel is required (or use --selftest)")
+		beckyio.Fatalf("--reel is required (or use --import <edit file>, or --selftest)")
 	}
 
 	r, srcName, err := loadReel(*reelPath)
