@@ -15,71 +15,93 @@ import (
 	"becky-go/internal/subs"
 )
 
-// The pass-2 caption reviewer runs on Sonnet 5 through the `claude` CLI, which
-// is how the rest of becky reaches Claude (internal/assistant/backend_claude.go)
-// — it uses the existing OAuth login, so there is no API key to configure.
+// The pass-2 caption reviewer goes through fleet-run.ps1 — "THE one reliable way
+// to hand a job to a free-fleet model headless" — NOT a direct `claude -p` call.
 //
-// The flags are the ones that comment documents as load-bearing: without them a
-// heavy Claude Code install boots its whole MCP ecosystem per call, or the model
-// burns its single turn trying to use tools and returns no text.
-const claudeBin = "claude"
+// Calling the CLI directly is what hung Jordan's launcher on "reviewing caption
+// grouping with sonnet". The wrapper's own header documents why, from traps that
+// were already field-verified here:
+//   - a long prompt passed as an argument gets MANGLED crossing a process
+//     boundary, so the order lives in a FILE the model reads itself;
+//   - streamed stdout TRUNCATES long answers, so the model WRITES its answer to
+//     a file and stdout is ignored;
+//   - a spawned session stops to "ask permission" nobody can grant, so an
+//     UNATTENDED preamble is injected and stdin is closed (” | claude).
+//
+// Reinventing this was the mistake. Use the wrapper.
+const fleetRunner = `X:\AI-2\fleet\fleet-run.ps1`
 
-// reviewCallTimeout bounds ONE review call. The CLI normally answers a batch in
-// well under a minute; anything past this is a stall (a busy machine, a
-// rate-limit wait, another agent holding the CLI) and the deterministic
-// chunking is a perfectly good answer, so we take it rather than hang.
-const reviewCallTimeout = 100 * time.Second
+// fleetRunnerPath allows the wrapper to move without a rebuild.
+func fleetRunnerPath() string {
+	if p := os.Getenv("BECKY_FLEET_RUN"); p != "" {
+		return p
+	}
+	return fleetRunner
+}
 
-// claudeModel returns a subs.ModelFunc backed by `claude -p`.
-func claudeModel(model string, verbose bool) subs.ModelFunc {
+// fleetModel returns a subs.ModelFunc that runs one review batch through
+// fleet-run.ps1: the prompt goes out as an order file, the answer comes back as
+// a file. Nothing large crosses the command line, and nothing is read off stdout.
+func fleetModel(model string, verbose bool) subs.ModelFunc {
 	if model == "" {
 		model = "sonnet"
 	}
+	var batch int
 	return func(ctx context.Context, prompt string) (string, error) {
-		args := []string{
-			"-p",
-			"--output-format", "json",
-			"--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
-			"--system-prompt", "You regroup caption word indices and reply with JSON only. No prose, no markdown fence.",
-			"--model", model,
-			"--tools", "",
-			"--max-turns", "1",
-		}
-		// Bound every call. Without this a stalled CLI hangs the whole run with
-		// no output — observed live at >10 minutes. Degrade-never-crash: on
-		// timeout the batch falls back to the deterministic chunking.
-		ctx, cancel := context.WithTimeout(ctx, reviewCallTimeout)
-		defer cancel()
+		batch++
+		start := time.Now()
+		fmt.Fprintf(os.Stderr, "  reviewing caption grouping, batch %d...\n", batch)
+		defer func() {
+			fmt.Fprintf(os.Stderr, "  batch %d finished in %.0fs\n", batch, time.Since(start).Seconds())
+		}()
 
-		cmd := exec.CommandContext(ctx, claudeBin, args...)
+		runner := fleetRunnerPath()
+		if _, err := os.Stat(runner); err != nil {
+			return "", fmt.Errorf("fleet runner not found at %s", runner)
+		}
+
+		dir, err := os.MkdirTemp("", "becky-caption-review-")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(dir)
+
+		orderPath := filepath.Join(dir, "order.md")
+		outPath := filepath.Join(dir, "result.json")
+		order := prompt + "\n\nWrite ONLY the JSON array to the output file. No prose, no markdown fence.\n"
+		if err := os.WriteFile(orderPath, []byte(order), 0o644); err != nil {
+			return "", err
+		}
+
+		cmd := exec.CommandContext(ctx, "pwsh", "-NoProfile", "-File", runner,
+			"-Mode", model,
+			"-OrderFile", orderPath,
+			"-OutFile", outPath,
+			"-MaxAttempts", "1",
+			"-TimeoutMin", "5",
+			"-StallMin", "3",
+			"-MinBytes", "10",
+		)
+		cmd.WaitDelay = 5 * time.Second
 		proc.NoWindow(cmd)
-		cmd.Stdin = strings.NewReader(prompt)
-		var out, errb bytes.Buffer
-		cmd.Stdout = &out
+		var errb bytes.Buffer
 		cmd.Stderr = &errb
-		if err := cmd.Run(); err != nil {
-			msg := strings.TrimSpace(errb.String())
-			if msg == "" {
-				msg = err.Error()
-			}
-			return "", fmt.Errorf("%s: %s", model, firstLine(msg))
+		if verbose {
+			cmd.Stdout = os.Stderr
 		}
-		return extractResult(out.String()), nil
-	}
-}
+		runErr := cmd.Run()
 
-// extractResult unwraps `claude -p --output-format json`'s envelope. If the
-// output is not that envelope, it is returned as-is so a plain-text reply still
-// works.
-func extractResult(s string) string {
-	var env struct {
-		Result  string `json:"result"`
-		IsError bool   `json:"is_error"`
+		// The wrapper's own contract: the ONLY pass signal is the out file
+		// existing with content. Exit code proves nothing.
+		b, readErr := os.ReadFile(outPath)
+		if readErr != nil || len(bytes.TrimSpace(b)) == 0 {
+			if runErr != nil {
+				return "", fmt.Errorf("%s: %s", model, firstLine(strings.TrimSpace(errb.String()+" "+runErr.Error())))
+			}
+			return "", fmt.Errorf("%s wrote no result", model)
+		}
+		return string(b), nil
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &env); err == nil && env.Result != "" {
-		return env.Result
-	}
-	return s
 }
 
 func firstLine(s string) string {
@@ -114,13 +136,6 @@ func loadMarginV(srt string) int {
 		return 0
 	}
 	return cs.MarginV
-}
-
-// haveClaude reports whether the `claude` CLI is reachable, so --review can
-// degrade with a clear reason instead of failing 90 times.
-func haveClaude() bool {
-	_, err := exec.LookPath(claudeBin)
-	return err == nil
 }
 
 // noteReviewSkipped writes the reason to stderr so a silent fallback is never

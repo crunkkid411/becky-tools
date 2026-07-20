@@ -168,12 +168,11 @@ func main() {
 	// even though every timing is frame-correct.
 	var model subs.ModelFunc
 	if *review {
-		if haveClaude() {
-			model = claudeModel(*reviewModel, *verbose)
-			beckyio.Logf(*verbose, "reviewing caption grouping with %s...", *reviewModel)
+		if _, err := os.Stat(fleetRunnerPath()); err == nil {
+			model = fleetModel(*reviewModel, *verbose)
 		} else {
-			noteReviewSkipped("the claude CLI is not on PATH")
-			warnings = append(warnings, "caption review skipped: the claude CLI is not on PATH")
+			noteReviewSkipped("the fleet runner was not found at " + fleetRunnerPath())
+			warnings = append(warnings, "caption review skipped: fleet runner not found")
 		}
 	}
 	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, 24)

@@ -400,22 +400,94 @@ public partial class MainWindow : Window
     // A video dragged in from ANY folder: post its path(s) to the page, which calls the
     // engine's add_external so the clip lands at the playhead (like a panel add) and shows
     // a toast. Posting to the page (not calling the engine here) keeps ONE add path.
-    private void OnWebDrop(object sender, DragEventArgs e)
+    private async void OnWebDrop(object sender, DragEventArgs e)
     {
+        e.Handled = true;
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { return; }
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) { return; }
+
+        // An EDIT dropped in (a Vegas .txt / Final Cut .xml export, or a reel .json)
+        // loads as the timeline. Dropping one used to do nothing at all, silently,
+        // because only video extensions were accepted.
+        foreach (var p in paths)
+        {
+            if (!IsEditFile(p) && !IsReelFile(p)) { continue; }
+            var reel = await ConvertEditIfNeededAsync(p);
+            if (!string.IsNullOrEmpty(reel)) { PostToPage(new { t = "openReel", path = reel }); }
+            return;
+        }
+
         var vids = new List<string>();
         foreach (var p in paths)
         {
             if (IsVideoFile(p)) { vids.Add(p); }
         }
         if (vids.Count > 0) { PostToPage(new { t = "externalDrop", paths = vids }); }
-        e.Handled = true;
     }
 
     private static readonly HashSet<string> VideoExts = new(StringComparer.OrdinalIgnoreCase)
     { ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".ts", ".m2ts", ".wmv", ".flv", ".mpg", ".mpeg" };
     private static bool IsVideoFile(string path) => VideoExts.Contains(Path.GetExtension(path));
+
+    // An NLE edit export: Vegas "EDL TXT" or Final Cut Pro 7 XML.
+    private static readonly HashSet<string> EditExts = new(StringComparer.OrdinalIgnoreCase)
+    { ".txt", ".xml" };
+    private static bool IsEditFile(string path) => EditExts.Contains(Path.GetExtension(path));
+    private static bool IsReelFile(string path) =>
+        string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Turns a Vegas/Final Cut edit export into a becky reel and returns the reel path.
+    /// A path that is already a reel (or empty, i.e. the dialog was cancelled) comes
+    /// straight back. The conversion is becky-otio --import; on failure the reason is
+    /// shown in the status bar and "" is returned, so the caller loads nothing rather
+    /// than a broken reel.
+    /// </summary>
+    private async Task<string> ConvertEditIfNeededAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !IsEditFile(path)) { return path; }
+
+        var bin = BeckyTools.BinDir;
+        var exe = bin is null ? "becky-otio.exe" : Path.Combine(bin, "becky-otio.exe");
+        SetStatus($"Converting {Path.GetFileName(path)}...");
+
+        var outPath = Path.Combine(
+            Path.GetDirectoryName(path) ?? ".",
+            Path.GetFileNameWithoutExtension(path) + ".reel.json");
+        try
+        {
+            var (code, stdout, stderr) = await BeckyTools.RunAsync(exe, new[] { "--import", path, "--out", outPath });
+            if (code != 0 || !File.Exists(outPath))
+            {
+                var why = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                SetStatus($"Could not read that edit: {FirstLine(why)}");
+                return "";
+            }
+            var clips = 0;
+            try
+            {
+                using var doc = JsonDocument.Parse(stdout);
+                if (doc.RootElement.TryGetProperty("clips", out var cEl)) { clips = cEl.GetInt32(); }
+            }
+            catch { /* the reel loaded; the count is only for the status line */ }
+            SetStatus(clips > 0
+                ? $"Loaded {clips} cuts from {Path.GetFileName(path)}"
+                : $"Loaded {Path.GetFileName(path)}");
+            return outPath;
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Could not read that edit: {ex.Message}");
+            return "";
+        }
+    }
+
+    private static string FirstLine(string s)
+    {
+        if (string.IsNullOrEmpty(s)) { return "unknown error"; }
+        var i = s.IndexOfAny(new[] { '\r', '\n' });
+        return (i >= 0 ? s[..i] : s).Trim();
+    }
 
     private async Task HandleCallAsync(JsonElement root)
     {
@@ -438,6 +510,7 @@ public partial class MainWindow : Window
                 def = dEl.GetString() ?? "";
             }
             var path = await ShowReelDialogAsync(verb == "save_dialog", def);
+            if (verb == "load_dialog") { path = await ConvertEditIfNeededAsync(path); }
             PostToPage(new { t = "reply", id, reply = new { ok = true, data = new { path } } });
             return;
         }
@@ -534,7 +607,18 @@ public partial class MainWindow : Window
     {
         return Dispatcher.InvokeAsync(() =>
         {
-            const string filter = "Becky reel (*.reel.json)|*.reel.json|JSON (*.json)|*.json|All files (*.*)|*.*";
+            // Jordan edits in Vegas and opens the EXPORT, not a becky reel: "i STILL
+            // can't load .txt or .xml files with the load button (it should be able to
+            // fucking convert them)". So the edit formats come FIRST in the list and are
+            // converted transparently on the way in - he must never have to run a tool
+            // by hand to open his own edit.
+            string filter = save
+                ? "Becky reel (*.reel.json)|*.reel.json|JSON (*.json)|*.json|All files (*.*)|*.*"
+                : "Edits and reels (*.txt;*.xml;*.json)|*.txt;*.xml;*.json"
+                  + "|Vegas EDL text (*.txt)|*.txt"
+                  + "|Final Cut / Premiere XML (*.xml)|*.xml"
+                  + "|Becky reel (*.json)|*.json"
+                  + "|All files (*.*)|*.*";
             string initialDir = "", fileName = "";
             try
             {
