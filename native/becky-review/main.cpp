@@ -3567,12 +3567,33 @@ struct Hit {
     std::string source, name, date, text, timecode;
     double start = 0, end = 0, score = 0;
     bool transcriptOnly = false;
+    // The order the ENGINE returned this hit in (it sorts by date). Kept so the
+    // relevance sort below is REVERSIBLE without re-running the search - one int
+    // per hit instead of a second copy of the whole result set.
+    int ord = 0;
 };
 static std::vector<Hit> g_hits;
 // Which hit row the keyboard is on (items 68/76). Mirrors g_libSel for the video
 // rows, including the "scroll it into view after an arrow key" flag.
 static int g_hitSel = -1;
 static bool g_hitScrollPending = false;
+// Items 18/19: the third sort, "most relevant results at top". The engine already
+// returns a score on every hit and sorts by date, so this is purely a client-side
+// re-sort. Sticky across searches - having to re-assert it every query would make
+// it useless.
+static bool g_hitRelevance = false;
+static void applyHitSort() {
+    if (g_hitRelevance)
+        std::stable_sort(g_hits.begin(), g_hits.end(),
+                         [](const Hit& a, const Hit& b) { return a.score > b.score; });
+    else
+        std::stable_sort(g_hits.begin(), g_hits.end(),
+                         [](const Hit& a, const Hit& b) { return a.ord < b.ord; });
+    // Every row index just changed meaning, so the keyboard cursor has to go back
+    // to the top rather than point at whatever landed on its old index.
+    g_hitSel = g_hits.empty() ? -1 : 0;
+    g_hitScrollPending = true;
+}
 static std::string g_searchMode;         // "" | "keyword" | "qmd"
 static std::string g_searchNote;         // qmd note / degradation note
 static std::string g_searchErr;
@@ -4764,8 +4785,11 @@ int main(int argc, char** argv) {
                 else { g_searchErr.clear(); g_searchMode = done.mode; g_searchNote = done.note + msMsg; g_hits = std::move(done.hits); }
                 // A new result set means the old row index points at a different
                 // quote - park the keyboard on the first hit, never on whatever
-                // happened to be at that index before.
-                g_hitSel = g_hits.empty() ? -1 : 0;
+                // happened to be at that index before. Stamp the engine's own
+                // order first so the relevance pill stays reversible, then apply
+                // whichever sort is currently on.
+                for (size_t i = 0; i < g_hits.size(); i++) g_hits[i].ord = (int)i;
+                applyHitSort();
                 g_hitScrollPending = false;
             }
         }
@@ -5258,6 +5282,34 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("%d quotes - %d playable, %d transcript-only%s", (int)g_hits.size(), playable, transcriptOnly,
                     g_searchMode == "qmd" ? " (smart)" : "");
                 if (!g_searchNote.empty()) ImGui::TextDisabled("%s", g_searchNote.c_str());
+                // ---- THE THIRD SORT (items 18/19): "most relevant results at top" ----
+                //
+                // It lives HERE, on the hits header, and not beside the newest/Z-A
+                // pills: those sort the VIDEO LIBRARY, and a video has no relevance
+                // score - only a search hit does. This row is the hits view's own
+                // count-plus-pills line, so it is the same control in the same place
+                // for the list it can actually sort.
+                //
+                // NOT THE CROWN ICON HE ASKED FOR, and this is the one place I went
+                // against the request on purpose. Segoe MDL2 Assets - the font this
+                // app loads - HAS NO CROWN. All 1792 glyphs in the loaded E700-EDFF
+                // range were rendered and looked at; the nearest candidates are a
+                // star (reads as "favourite", which would be a lie here) and a
+                // trophy that does not exist. His own standing rule is that a glyph
+                // he has to decode is worse than the word, so this is the word.
+                // Blue, as he asked, using the app's established blue accent - the
+                // same one the "smart" pill wears - so it reads as a distinct family
+                // from the green library sorts.
+                {
+                    const float S = ImGui::GetIO().FontGlobalScale;
+                    ImGui::SameLine(0, 8 * S);
+                    if (pillButton("relevant", g_hitRelevance, IM_COL32(0x00, 0xAE, 0xEF, 255)))
+                        { g_hitRelevance = !g_hitRelevance; applyHitSort(); }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", g_hitRelevance
+                            ? "BEST MATCHES FIRST - click to go back to the order the search returned"
+                            : "sorted the way the search returned them - click for best matches first");
+                }
                 ImGui::Separator();
                 // ---- KEYBOARD REACH ON HITS (items 68/76) ----
                 // A hit row was mouse-only: no way to copy a filename, open its
