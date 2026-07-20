@@ -40,6 +40,17 @@ type Options struct {
 	Width   int     // output width;  <=0 -> match the first clip (else 1280)
 	Height  int     // output height; <=0 -> match the first clip (else 720)
 	Verbose bool
+
+	// SubtitleSRT burns a caption file INTO the render, in the same ffmpeg pass as
+	// the concat (no second re-encode, so no generation loss). "" = no captions.
+	// The .srt must be timed to the REEL TIMELINE (0 = first frame of the
+	// compilation) — which is exactly what becky-subtitle writes and what the
+	// review apps' caption lane edits.
+	SubtitleSRT string
+	// SubtitleMarginV is the caption height Jordan set by dragging in the review
+	// app (ASS MarginV, distance up from the bottom edge). <=0 -> the shipped
+	// subs.DefaultStyle() value.
+	SubtitleMarginV int
 }
 
 // Result is the structured outcome of a render, serialized to JSON by the CLI.
@@ -61,6 +72,10 @@ type resolvedOpts struct {
 	Width    int
 	Height   int
 	FontFile string
+
+	// SubtitleSRT/SubtitleMarginV: the caption burn-in (see Options).
+	SubtitleSRT     string
+	SubtitleMarginV int
 
 	// Audio turns on keeping the clips' sound in the compilation (set by Render
 	// whenever ffprobe is available to detect streams). ClipHasAudio[i] says whether
@@ -168,13 +183,15 @@ var firstClipProbe = probeFirstClip
 // classic 1280x720/30 fallback applies so a render still succeeds.
 func resolveOptions(r edl.Reel, opts Options, cfg config.Config) resolvedOpts {
 	ro := resolvedOpts{
-		Output:   opts.Output,
-		Codec:    opts.Codec,
-		Bitrate:  opts.Bitrate,
-		OutFPS:   opts.FPS,
-		Width:    opts.Width,
-		Height:   opts.Height,
-		FontFile: fontFile(),
+		Output:          opts.Output,
+		Codec:           opts.Codec,
+		Bitrate:         opts.Bitrate,
+		OutFPS:          opts.FPS,
+		Width:           opts.Width,
+		Height:          opts.Height,
+		FontFile:        fontFile(),
+		SubtitleSRT:     opts.SubtitleSRT,
+		SubtitleMarginV: opts.SubtitleMarginV,
 	}
 	if ro.Codec == "" {
 		ro.Codec = cfg.Codec
@@ -197,6 +214,13 @@ func resolveOptions(r edl.Reel, opts Options, cfg config.Config) resolvedOpts {
 			}
 		}
 	}
+
+	// Whatever the rate came from, put it on the same grid the cut points use.
+	// A container tag is routinely rounded (2997/100 = 29.970000) while the edit
+	// that produced the reel is on true NTSC (30000/1001 = 29.970030); rendering
+	// on a different grid than the .srt was timed against drifts them apart.
+	// An explicit --fps is normalized too: asking for "29.97" means true NTSC.
+	ro.OutFPS = edl.NormalizeRate(ro.OutFPS)
 
 	// Fallbacks if the probe was unavailable or returned nothing usable.
 	if ro.OutFPS <= 0 {

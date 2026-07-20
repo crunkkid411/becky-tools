@@ -109,7 +109,7 @@ func ImportTimeline(path string) (ImportResult, error) {
 	}
 	// One grid for everyone: the edit's stated rate and the media's container tag
 	// must resolve to the SAME rational or the two drift apart across the file.
-	fps = normalizeRate(fps)
+	fps = NormalizeRate(fps)
 
 	// Vegas edited on FRAMES. The .txt expresses those frames as milliseconds,
 	// which is a lossy rendering of a frame index - snapping back to the nearest
@@ -149,7 +149,7 @@ func ImportTimeline(path string) (ImportResult, error) {
 // drift ~0.3ms apart by the end of a 5-minute file, which lands cut points
 // between frames and clips consonants. Snapping the RATE makes every consumer
 // share one grid.
-func normalizeRate(fps float64) float64 {
+func NormalizeRate(fps float64) float64 {
 	if fps <= 0 {
 		return 0
 	}

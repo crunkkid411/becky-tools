@@ -201,8 +201,8 @@ func TestNormalizeRatePullsContainerTagsOntoTrueNTSC(t *testing.T) {
 		{0, 0, "unknown stays unknown rather than inventing a rate"},
 	}
 	for _, c := range cases {
-		if got := normalizeRate(c.in); !impClose(got, c.want) {
-			t.Errorf("normalizeRate(%v) = %v, want %v - %s", c.in, got, c.want, c.why)
+		if got := NormalizeRate(c.in); !impClose(got, c.want) {
+			t.Errorf("NormalizeRate(%v) = %v, want %v - %s", c.in, got, c.want, c.why)
 		}
 	}
 }

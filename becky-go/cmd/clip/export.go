@@ -18,6 +18,7 @@ import (
 	"becky-go/internal/edl"
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/reel"
+	"becky-go/internal/subs"
 )
 
 // ExportResult is the payload the UI shows after an export: the MP4 + the sidecar
@@ -40,6 +41,12 @@ type ExportResult struct {
 	// is effectively silent; Audio is the plain-language summary the GUI shows.
 	AudioOK bool   `json:"audio_ok"`
 	Audio   string `json:"audio,omitempty"`
+
+	// Captions is the .srt actually BURNED INTO the MP4 ("" = none). The review
+	// apps show this so "did my captions make it into the render?" is answered by
+	// the render itself, not by opening the file and hoping. Preview-only captions
+	// were a real, day-costing bug — this field is what makes the render honest.
+	Captions string `json:"captions,omitempty"`
 }
 
 // ExportReel renders the current reel to a compilation MP4 and writes the EDL +
@@ -54,7 +61,39 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 	if len(r.Clips) == 0 {
 		return ExportResult{}, fmt.Errorf("the timeline is empty — add a clip before exporting")
 	}
-	return a.renderReel(r, outPath, "_reel")
+	// The captions the reviewer is looking at go INTO the file. The .srt is timed
+	// to the whole reel, which is exactly what a full-reel render outputs.
+	srt, marginV := a.reelCaptions()
+	return a.renderReel(r, outPath, "_reel", srt, marginV)
+}
+
+// reelCaptions returns the hand-edited caption .srt sitting beside the OPEN reel
+// file, plus the height Jordan set by dragging a caption in the review app —
+// i.e. exactly the captions the caption lane is previewing. ("", 0) when no reel
+// file is open or it was never captioned, which simply means no captions burn in.
+//
+// Both "<name>.json" and "<name>.reel.json" are in circulation as reel files and
+// becky-subtitle writes "<name>.srt" for either, so both stems are tried. A
+// missing .srt is NOT an error — it is the un-captioned case.
+func (a *App) reelCaptions() (srt string, marginV int) {
+	a.mu.Lock()
+	path := a.reelPath
+	a.mu.Unlock()
+	if strings.TrimSpace(path) == "" {
+		return "", 0
+	}
+	stem := strings.TrimSuffix(path, filepath.Ext(path))
+	stems := []string{stem}
+	if base := strings.TrimSuffix(stem, ".reel"); base != stem {
+		stems = append(stems, base)
+	}
+	for _, s := range stems {
+		cand := s + ".srt"
+		if fi, err := os.Stat(cand); err == nil && fi.Size() > 0 {
+			return cand, subs.LoadMarginV(cand)
+		}
+	}
+	return "", 0
 }
 
 // ExportSelection renders ONLY the clips whose IDs are in ids (kept in their current
@@ -81,14 +120,20 @@ func (a *App) ExportSelection(ids []string, outPath string) (ExportResult, error
 	if len(sub.Clips) == 0 {
 		return ExportResult{}, fmt.Errorf("no selected clips to render — select one or more clips first")
 	}
-	return a.renderReel(sub, outPath, "_selection")
+	// ponytail: no captions on a selection render. The .srt is timed to the WHOLE
+	// reel, so dropping clips shifts every later cue off its words — silently wrong
+	// captions are worse than none. renderReel says so in the note. Upgrade path:
+	// re-base the cues onto the selection's timeline before burning.
+	return a.renderReel(sub, outPath, "_selection", "", 0)
 }
 
 // renderReel renders r to outPath (or an auto-sequenced <slug><suffix>_NNNN.mp4 in
 // the render dir) and writes the EDL + re-based SRT sidecars beside it, then
 // corroborates the output actually has audible audio. Shared by ExportReel (whole
 // timeline) and ExportSelection (a filtered sub-reel) so both behave identically.
-func (a *App) renderReel(r edl.Reel, outPath, suffix string) (ExportResult, error) {
+// capSRT (when non-empty) is BURNED INTO the video in the render's own ffmpeg
+// pass — the rendered file is the product, so preview-only captions are a bug.
+func (a *App) renderReel(r edl.Reel, outPath, suffix, capSRT string, capMarginV int) (ExportResult, error) {
 	if strings.TrimSpace(outPath) == "" {
 		dir, err := a.renderDir()
 		if err != nil {
@@ -102,7 +147,11 @@ func (a *App) renderReel(r edl.Reel, outPath, suffix string) (ExportResult, erro
 	}
 	outPath = absOut(outPath)
 
-	res, err := reel.Render(r, reel.Options{Output: outPath})
+	res, err := reel.Render(r, reel.Options{
+		Output:          outPath,
+		SubtitleSRT:     capSRT,
+		SubtitleMarginV: capMarginV,
+	})
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -132,8 +181,14 @@ func (a *App) renderReel(r edl.Reel, outPath, suffix string) (ExportResult, erro
 	if !audioOK && audioNote != "" {
 		noteParts = append(noteParts, "AUDIO CHECK: "+audioNote)
 	}
+	if capSRT == "" && suffix == "_selection" {
+		if s, _ := a.reelCaptions(); s != "" {
+			noteParts = append(noteParts, "captions NOT burned in: the .srt is timed to the whole reel, so it would sit wrong on a selection — use Render for a captioned file")
+		}
+	}
 
 	return ExportResult{
+		Captions:    capSRT,
 		MP4:         res.Output,
 		EDL:         edlPath,
 		SRT:         srtPath,

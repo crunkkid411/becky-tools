@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"becky-go/internal/edl"
+	"becky-go/internal/subs"
 )
 
 // Normalization defaults. Mixed-source clips must be brought to a common
@@ -164,7 +165,8 @@ func buildFilterComplex(r edl.Reel, opts resolvedOpts) (graph, vOut, aOut string
 	vOut = "[vout]"
 	if !opts.Audio {
 		concat := fmt.Sprintf("%sconcat=n=%d:v=1:a=0%s", strings.Join(vLabels, ""), len(r.Clips), vOut)
-		return strings.Join(chains, ";") + ";" + concat, vOut, ""
+		graph, vOut = burnCaptionsChain(strings.Join(chains, ";")+";"+concat, vOut, opts)
+		return graph, vOut, ""
 	}
 
 	aOut = "[aout]"
@@ -174,7 +176,30 @@ func buildFilterComplex(r edl.Reel, opts resolvedOpts) (graph, vOut, aOut string
 		inter.WriteString(aLabels[i])
 	}
 	concat := fmt.Sprintf("%sconcat=n=%d:v=1:a=1%s%s", inter.String(), len(r.Clips), vOut, aOut)
-	return strings.Join(chains, ";") + ";" + concat, vOut, aOut
+	graph, vOut = burnCaptionsChain(strings.Join(chains, ";")+";"+concat, vOut, opts)
+	return graph, vOut, aOut
+}
+
+// burnCaptionsChain hangs the caption burn-in off the CONCAT's video output, so
+// the whole compilation is captioned in the SAME ffmpeg pass that assembles it —
+// one encode, no generation loss from a second re-encode.
+//
+// It goes after the concat, not per-clip, because the .srt is timed to the REEL
+// TIMELINE (0 = first frame of the compilation), which is exactly the PTS the
+// concat emits. Burning per clip would need every cue re-based to that clip.
+//
+// Returns the graph and the label the caller must -map: unchanged when there is
+// no .srt to burn.
+func burnCaptionsChain(graph, vIn string, opts resolvedOpts) (string, string) {
+	if strings.TrimSpace(opts.SubtitleSRT) == "" {
+		return graph, vIn
+	}
+	style := subs.DefaultStyle()
+	if opts.SubtitleMarginV > 0 {
+		style.MarginV = opts.SubtitleMarginV
+	}
+	const vSub = "[vsub]"
+	return graph + ";" + vIn + style.SubtitlesFilter(opts.SubtitleSRT) + vSub, vSub
 }
 
 // codecQualityArgs returns the quality flags for the chosen codec. An explicit
