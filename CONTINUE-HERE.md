@@ -171,6 +171,30 @@ Every item below was verified by RUNNING it and looking, not by the tests passin
 above. Items it lists as ABSENT that are now done: 15, 36, 37, 48, 52, 109 (plus
 8). Re-audit before trusting its counts.
 
+## WHERE IT ACTUALLY STANDS (2026-07-20 ~05:00, measured)
+
+`GUI-CHECKLIST-STATUS.md` was RE-AUDITED against the current ~6100-line
+main.cpp by reading it, not grepping it. **96 DONE / 17 PARTIAL / 4 ABSENT /
+3 UNVERIFIED**, up from 69/31/11/9 at midnight. That file supersedes every
+earlier audit; an older copy of it caused a real failure by being confidently
+wrong in both directions.
+
+The lag he reported on 2026-07-17 — *"every new clip on the timeline makes
+everything - even my mouse - lag super bad for like 2 seconds"* — was found and
+measured. It was **Render Selection**, sitting one line below Render, still
+holding a 300s timeout on the UI thread after Render was made async:
+
+| pressing Ctrl+Right during a Render Selection | worst frame | frames / 4.9s |
+|---|---|---|
+| before | **2,173 ms** | 407 |
+| after | **47 ms** | 590 |
+
+`addHitToTimeline` was suspected and cleared by measurement (4-16ms, zero
+stalls). The remaining synchronous `engineCall` sites were also measured and
+none stalls (median 16.0ms, 0 frames over 100ms in a full drag/scrub/split/
+render session) — converting them is real risk for no measured gain. The
+frame-trace harness is compiled in; revisit if one ever shows a stall.
+
 ## KNOWN LANDMINE — flagged, deliberately not defused
 
 `apply_proposal`'s async completion callback mutates `g_track` from inside
