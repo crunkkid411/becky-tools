@@ -3535,6 +3535,57 @@ static uint32_t cardColorFor(const std::string& id) {
     g_cardColor[id] = c; return c;
 }
 
+// ---- header: WHICH FOLDER IS OPEN, on WHICH DRIVE (safety, not decoration) ----
+//
+// Jordan works across two drives that must never be confused: X: is his own video
+// work, E: is a REMOVABLE criminal-case evidence drive. g_folderRoot was set at
+// boot and then shown NOWHERE permanent - only its basename, for a few seconds,
+// inside the transient g_renderMsg line - so "which case am I in" could not be
+// answered by looking. The menu bar now carries it permanently.
+//
+// The colour is keyed to the DRIVE LETTER, deterministically, so a given drive
+// always wears the SAME colour and the wrong drive is wrong on sight before he has
+// read a character. No hardcoded drive list: a new evidence volume gets a stable
+// colour for free.
+static uint32_t driveColor(const std::string& path) {
+    char d = path.empty() ? '?' : path[0];
+    if (d >= 'a' && d <= 'z') d = (char)(d - 'a' + 'A');
+    if (d < 'A' || d > 'Z') return IM_COL32(0x8A, 0x8A, 0x8A, 255);   // UNC / relative
+    return kPalette[(d - 'A') % 8];
+}
+// Black or white ink, whichever actually READS on that chip. kPalette spans gold
+// through blueviolet; one fixed ink colour is illegible on half of it. Threshold
+// 105 was checked against all 8 palette entries plus the grey fallback.
+static ImU32 inkFor(uint32_t bg) {
+    int r = bg & 0xFF, g = (bg >> 8) & 0xFF, b = (bg >> 16) & 0xFF;   // IM_COL32 packs R,G,B,A low->high
+    return ((r * 299 + g * 587 + b * 114) / 1000 > 105) ? IM_COL32(0, 0, 0, 255)
+                                                        : IM_COL32(255, 255, 255, 255);
+}
+// Trim the MIDDLE of a path to fit maxW, keeping the two load-bearing ends: the
+// DRIVE LETTER and the actual folder name. A plain right-truncating ellipsis would
+// eat the folder name; a left one would eat the drive. Both are the point.
+// Cached, because this runs every frame and CalcTextSize per candidate is not free.
+static std::string elideMiddle(const std::string& s, float maxW) {
+    // Bucketed to 16px: maxW is derived from the window width, so during a resize
+    // DRAG it changes every frame, every frame misses the cache, and the loop runs
+    // a CalcTextSize per candidate for the whole drag. Re-fit once per 16px instead.
+    maxW = floorf(maxW / 16.0f) * 16.0f;
+    static std::string cacheIn, cacheOut;
+    static float cacheW = -1.0f;
+    if (s == cacheIn && maxW == cacheW) return cacheOut;
+    std::string out = s;
+    if (ImGui::CalcTextSize(s.c_str()).x > maxW) {
+        const size_t head = (s.size() > 2 && s[1] == ':') ? 3 : 2;   // "X:\" or "\\"
+        for (size_t tail = s.size(); tail > 4; tail--) {
+            std::string cand = s.substr(0, head) + "..." + s.substr(s.size() - tail);
+            if (ImGui::CalcTextSize(cand.c_str()).x <= maxW) { out = cand; break; }
+            out = cand;
+        }
+    }
+    cacheIn = s; cacheW = maxW; cacheOut = out;
+    return out;
+}
+
 // ---- library helpers ----
 // Sort g_videos in place per g_sortMode (B-3).
 static void sortLibrary() {
@@ -4785,7 +4836,24 @@ int main(int argc, char** argv) {
 
         // ---- top menu / status bar ----
         if (ImGui::BeginMainMenuBar()) {
-            ImGui::Text("Becky Review (native)");
+            // Brand, matching the reference app's .brandbar: a neon diamond +
+            // white "becky" + neon "review". #39FF14 is the accessibility
+            // palette, not styling - do not tone it down.
+            {
+                const ImVec2 c = ImGui::GetCursorScreenPos();
+                const float h = ImGui::GetTextLineHeight(), s = h * 0.42f;
+                const ImVec2 m(c.x + s, c.y + h * 0.5f);
+                ImGui::GetWindowDrawList()->AddQuadFilled(
+                    ImVec2(m.x, m.y - s), ImVec2(m.x + s, m.y),
+                    ImVec2(m.x, m.y + s), ImVec2(m.x - s, m.y), IM_COL32(0x39, 0xFF, 0x14, 255));
+                ImGui::Dummy(ImVec2(s * 2.4f, h));
+            }
+            ImGui::SameLine(0, 0); ImGui::TextUnformatted("becky");
+            ImGui::SameLine(0, 0); ImGui::TextColored(ImVec4(0.224f, 1.0f, 0.078f, 1.0f), " review");
+            // NOT TextDisabled. Both apps sit open side by side while he compares
+            // them, so the "3" is the one token that has to read at a glance -
+            // dimmed grey is the wrong colour for the only disambiguator on the bar.
+            ImGui::SameLine(0, 0); ImGui::Text(" 3");
             ImGui::Separator();
             if (ImGui::MenuItem("Open Folder...", "Ctrl+O")) {
                 // Native folder dialog via the engine (pick_folder verb on Windows).
@@ -4798,8 +4866,83 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::Text("%.1fs / %.0fs", curSec, g_compDur);
-            if (!g_engine.alive) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "  ENGINE DOWN");
-            if (!g_mpvAvailable.load()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "  MPV DOWN");
+            // ---- RIGHT of the bar: health flags, then WHICH FOLDER IS OPEN ----
+            //
+            // Right-aligned and drawn LAST so the left cluster's width can never push
+            // it, and its own width can never push anything. The chip is a FILLED
+            // drive-coloured badge, not text, because a line of grey path text in a
+            // busy bar is exactly what he does not see.
+            {
+                const bool haveFolder = !g_folderRoot.empty();
+                const std::string full = haveFolder ? g_folderRoot
+                                                    : std::string("NO FOLDER OPEN - press Ctrl+O");
+                const ImGuiStyle& st = ImGui::GetStyle();
+                const float pad = st.FramePadding.x;
+                const float barW = ImGui::GetWindowWidth();
+
+                // ---- optional second badge: where a render would actually LAND ----
+                // Mirrors becky-go/internal/reel/reel.go RenderDirFor(): output goes to a
+                // "Rendered" folder NEXT TO THE FIRST CLIP'S SOURCE - NOT next to the
+                // folder being browsed. Browsing E: while the timeline holds X: footage is
+                // the exact state that put personal renders onto the evidence volume.
+                // Shown ONLY when the two drives disagree, so it is silent normally.
+                std::string warnDir;
+                if (haveFolder && !g_track[0].empty()) {
+                    const std::string& src = g_track[0].front().source;
+                    if (src.size() > 2 && src[1] == ':' && toupper((unsigned char)src[0]) != toupper((unsigned char)g_folderRoot[0])) {
+                        size_t i = src.find_last_of("/\\");
+                        std::string dir = (i == std::string::npos) ? src : src.substr(0, i);
+                        warnDir = (baseName(dir) == "Rendered") ? dir : dir + "\\Rendered";
+                    }
+                }
+                const std::string warnTxt = warnDir.empty() ? std::string()
+                                                            : std::string("renders -> ") + warnDir.substr(0, 2);
+
+                // measure everything, then place once
+                const std::string shown = elideMiddle(full, (std::max)(140.0f, barW * 0.45f));
+                const ImVec2 ts = ImGui::CalcTextSize(shown.c_str());
+                const float chipW = ts.x + pad * 2;
+                float x = barW - chipW - pad;
+                if (!warnTxt.empty()) x -= ImGui::CalcTextSize(warnTxt.c_str()).x + pad * 3;
+                if (!g_engine.alive)          x -= ImGui::CalcTextSize("ENGINE DOWN").x + pad * 2;
+                if (!g_mpvAvailable.load())   x -= ImGui::CalcTextSize("MPV DOWN").x + pad * 2;
+                if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
+
+                if (!g_engine.alive) { ImGui::TextColored(ImVec4(1, 0.25f, 0.25f, 1), "ENGINE DOWN"); ImGui::SameLine(); }
+                if (!g_mpvAvailable.load()) { ImGui::TextColored(ImVec4(1, 0.25f, 0.25f, 1), "MPV DOWN"); ImGui::SameLine(); }
+
+                // one badge painter, used for the warning and the folder chip
+                auto badge = [&](const char* txt, uint32_t bg, const char* tip, const char* openPath) {
+                    const ImVec2 t = ImGui::CalcTextSize(txt);
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImGui::InvisibleButton(txt, ImVec2(t.x + pad * 2, t.y));   // same height as a Text item
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    const ImVec2 a(p.x, p.y - 3), b(p.x + t.x + pad * 2, p.y + t.y + 3);
+                    dl->AddRectFilled(a, b, bg, st.FrameRounding);
+                    if (ImGui::IsItemHovered()) {
+                        dl->AddRect(a, b, IM_COL32(255, 255, 255, 255), st.FrameRounding, 0, 2.0f);
+                        ImGui::SetTooltip("%s", tip);
+                    }
+                    dl->AddText(ImVec2(p.x + pad, p.y), inkFor(bg), txt);
+                    // Hand the PATH to ShellExecute, not "explorer.exe" + the path as
+                    // an argument: unquoted, "X:\Case Files\Jan" splits at the space
+                    // and Explorer opens Documents instead. His folders have spaces.
+                    if (openPath && *openPath && ImGui::IsItemClicked())
+                        ShellExecuteW(nullptr, L"open", utf8ToWide(openPath).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                };
+
+                if (!warnTxt.empty()) {
+                    const std::string tip = "This timeline's footage lives on another drive.\n"
+                                            "A render will land in:\n" + warnDir +
+                                            "\n(click to open it in Explorer)";
+                    badge(warnTxt.c_str(), driveColor(warnDir), tip.c_str(), warnDir.c_str());
+                    ImGui::SameLine();
+                }
+                const uint32_t bg = haveFolder ? driveColor(g_folderRoot) : IM_COL32(0xDC, 0x14, 0x3C, 255);
+                const std::string tip = haveFolder ? (full + "\n(click to open this folder in Explorer)")
+                                                   : std::string("No case folder is open. Press Ctrl+O.");
+                badge(shown.c_str(), bg, tip.c_str(), haveFolder ? g_folderRoot.c_str() : nullptr);
+            }
             ImGui::EndMainMenuBar();
         }
 
