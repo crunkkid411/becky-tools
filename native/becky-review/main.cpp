@@ -2412,6 +2412,60 @@ static void mpvUpdateCaptionOsd(double t) {
 static void openInFileBrowser(const std::string& path);
 static void openTranscript(const std::string& fullVideoPath);
 
+// ---- Ctrl+Left / Ctrl+Right: step to the previous/next EDIT POINT ----
+//
+// Jordan marked this CRITICAL and noted "we've tried to fix this several times".
+// The reason it kept coming back is that the two directions were separate loops
+// searching DIFFERENT things: Ctrl+Left scanned only clip STARTS (c.compStart)
+// while Ctrl+Right scanned only clip ENDS, and BOTH looked at g_track[0] alone.
+// So the playhead could not reach a boundary that existed only on track 1 or in
+// the caption lane, the two directions disagreed about where the edit points
+// were, and neither could land on 0 or the very end of the timeline - which is
+// what "sticks at the clip edge" feels like in the hand.
+//
+// One list, built once, used by both directions. Every clip edge on EVERY track,
+// plus the two ends of the timeline. Now Ctrl+Left and Ctrl+Right are exact
+// inverses by construction, which is the property that was missing - not any
+// single off-by-one.
+//
+// CAPTION edges are deliberately NOT in this list. The first version included
+// them and I drove it: three Ctrl+Right presses advanced 0.8s, because 179
+// captions subdivide the 88 clips. Stepping caption-by-caption makes crossing
+// the timeline slower, which is the opposite of the complaint. Ctrl+arrow means
+// CLIP edit points, the way Vegas does it.
+//
+// eps is one frame at 60fps: a boundary closer than that to the playhead is the
+// one we are standing on, not one to jump to, so holding the key walks instead
+// of sticking.
+static void collectBoundaries(std::vector<double>& out) {
+    out.clear();
+    out.push_back(0.0);
+    if (g_compDur > 0) out.push_back(g_compDur);
+    for (int tr = 0; tr < 2; tr++)
+        for (auto& c : g_track[tr]) {
+            out.push_back(c.compStart);
+            out.push_back(c.compStart + (c.out - c.in));
+        }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end(),
+                          [](double a, double b) { return std::fabs(a - b) < 1e-6; }),
+              out.end());
+}
+
+static bool nextBoundary(double from, double& hit) {
+    static std::vector<double> b; collectBoundaries(b);
+    const double eps = 1.0 / 60.0;
+    for (double t : b) if (t > from + eps) { hit = t; return true; }
+    return false;
+}
+
+static bool prevBoundary(double from, double& hit) {
+    static std::vector<double> b; collectBoundaries(b);
+    const double eps = 1.0 / 60.0;
+    for (auto it = b.rbegin(); it != b.rend(); ++it) if (*it < from - eps) { hit = *it; return true; }
+    return false;
+}
+
 static void drawTimeline(double& curSec, bool& playing) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -3757,7 +3811,7 @@ int main(int argc, char** argv) {
             // never forces a reload. Paused = the only playhead is curSec, as before.
             auto editT = [&]() -> double { return (playing && g_stockSec >= 0) ? g_stockSec : curSec; };
             if (GetAsyncKeyState(VK_SPACE) & 1) {
-                if (GetKeyState(VK_SHIFT) & 0x8000) {
+                if (GetAsyncKeyState(VK_SHIFT) & 0x8001) {   // held OR pressed since last frame - see ctrlDown
                     // D-4: Shift+Space toggles 2x playback rate (not play state).
                     g_playRate = (g_playRate > 1.5) ? 1.0 : 2.0;
                 } else {
@@ -3870,7 +3924,7 @@ int main(int argc, char** argv) {
                 curSec = std::min(curSec, g_compDur); if (!playing) lastComposed = -1;
             }
             if (GetAsyncKeyState('G') & 1) { g_group = !g_group; }
-            if (GetAsyncKeyState('Z') & 1) { if (GetKeyState(VK_CONTROL) & 0x8000) {
+            if (GetAsyncKeyState('Z') & 1) { if (GetAsyncKeyState(VK_CONTROL) & 0x8001) {
                 // Debounced: with the blocking engineCall() this replaced, a physical
                 // keypress could never queue a second "undo" before the first's round
                 // trip finished - the block was an accidental throttle. Non-blocking
@@ -3901,13 +3955,43 @@ int main(int argc, char** argv) {
                     queueEdit(std::move(req));
                 }
             } }
-            bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            // MODIFIERS MUST BE READ FROM THE SAME CLOCK AS THE KEYS.
+            //
+            // The arrow keys above are polled with GetAsyncKeyState - real-time
+            // hardware state. Ctrl was read with GetKeyState, which reports the
+            // state as of the last message THIS THREAD RETRIEVED. Those are two
+            // different clocks, and the gap between them is exactly one message
+            // pump.
+            //
+            // Press Ctrl+Right quickly and the arrow's edge is seen instantly by
+            // GetAsyncKeyState while GetKeyState still says Ctrl is UP, because no
+            // message carrying the Ctrl-down has been processed yet. The chord
+            // silently degrades to a plain Right - a one-frame nudge instead of a
+            // jump to the next edit point. The faster the user, the more often it
+            // happens, which is why "Ctrl+arrow sticks at the clip edge" kept
+            // coming back after being "fixed" several times: nothing was wrong
+            // with the jump logic, the modifier was being dropped.
+            //
+            // Observed directly: driving Ctrl+Right four times advanced the
+            // playhead 0.2s (four single frames) instead of four edit points.
+            //
+            // Moving Ctrl to GetAsyncKeyState was necessary but NOT sufficient, and
+            // the second half is the subtler half. The two bits mean different
+            // things: 0x8000 is "held RIGHT NOW", while bit 0 is "was pressed at
+            // some point since the previous call" - a LATCH. The arrow keys are
+            // read with the latch (& 1), so an arrow tapped between two polls is
+            // still caught. Reading Ctrl with 0x8000 alone asked whether it happened
+            // to be down at the instant of the poll, so a chord pressed and released
+            // inside one 16ms frame kept its arrow but lost its modifier.
+            //
+            // Reading BOTH bits puts the modifier on the same footing as the key it
+            // modifies: held, or pressed since the last frame, either counts.
+            SHORT ctrlState = GetAsyncKeyState(VK_CONTROL);
+            bool ctrlDown = (ctrlState & 0x8000) != 0 || (ctrlState & 1) != 0;
             if (GetAsyncKeyState(VK_LEFT) & 1) {
                 if (ctrlDown) {
-                    // E-4: jump to the previous clip boundary anywhere on the timeline.
-                    double best = 0; bool found = false;
-                    for (auto& c : g_track[0]) if (c.compStart < curSec - 0.01 && (!found || c.compStart > best)) { best = c.compStart; found = true; }
-                    if (found) { curSec = best; playing = false; g_playingExt = false; }
+                    // E-4: step to the previous EDIT POINT anywhere on the timeline.
+                    double best; if (prevBoundary(curSec, best)) { curSec = best; playing = false; g_playingExt = false; }
                 } else {
                     // D-2/E-5: one-frame step back at the clip's OWN source fps (sourceFps
                     // degrades to 30.0 until its async probe lands - see sourceFps above).
@@ -3918,9 +4002,7 @@ int main(int argc, char** argv) {
             }
             if (GetAsyncKeyState(VK_RIGHT) & 1) {
                 if (ctrlDown) {
-                    double best = g_compDur; bool found = false;
-                    for (auto& c : g_track[0]) { double end = c.compStart + (c.out - c.in); if (end > curSec + 0.01 && (!found || end < best)) { best = end; found = true; } }
-                    if (found) { curSec = best; playing = false; g_playingExt = false; }
+                    double best; if (nextBoundary(curSec, best)) { curSec = best; playing = false; g_playingExt = false; }
                 } else {
                     Clip* c = clipAtComp(0, curSec);
                     double fps = sourceFps(c ? c->source : std::string());
