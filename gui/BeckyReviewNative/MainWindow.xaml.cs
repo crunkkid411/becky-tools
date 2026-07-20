@@ -49,6 +49,28 @@ public partial class MainWindow : Window
     private int _hostH;
     private double _lastPos;
 
+    // --- caption preview (the .srt shown ON the video, osd id 3) -----------------
+    // The page owns the cues (it loads/edits/writes the .srt); the host only DRAWS the
+    // one that covers the current position, styled to match the burned-in render, and
+    // owns the up/down DRAG that sets the placement — because the mpv pane is a native
+    // window sitting ON TOP of the WebView, so the page never sees a mouse on the video.
+    private readonly List<CapCue> _caps = new();
+    private bool _capsOn;
+    private int _capMarginV = 90;   // ASS MarginV in the 384x288 srt->ass script box
+    private int _capLastIdx = -2;   // which cue is currently drawn (-1 = none); -2 = nothing drawn yet
+    private CapDrag? _capDrag;      // an in-progress up/down placement drag on the video
+    private bool _capDragMoved;     // that drag actually travelled -> swallow the trailing click
+    private sealed record CapCue(double Start, double End, string Text);
+    private sealed record CapDrag(int StartY, int StartMargin);
+
+    // becky-subtitle's shipped look (internal/subs/style.go DefaultStyle), expressed in
+    // the SAME 384x288 script box ffmpeg's srt->ass conversion uses — so the preview and
+    // the burned-in render read the same. Outline is 1: Jordan judged cli-cut's 2 too heavy.
+    private const double AssResY = 288.0;
+    private const int CapFontSize = 12;
+    private const int CapOutline = 1;
+    private const int CapMarginMax = 240;   // 240/288 = ~83% up the frame
+
     public MainWindow()
     {
         InitializeComponent();
@@ -170,8 +192,47 @@ public partial class MainWindow : Window
             // INTO this panel and never receives the mouse itself), so the HOST panel
             // takes the click and toggles pause over IPC. The pause-observe then syncs
             // _paused + the page, so the timeline + transport stay consistent.
+            // Drag a caption UP or DOWN on the video to set where EVERY caption sits
+            // (Jordan: "Simply dragging a caption up or down should affect all captions
+            // vertical placement"). Horizontal is centred and deliberately has no control.
+            // Armed only while the caption preview is on, so ordinary review clicks on the
+            // video still just play/pause.
+            _videoPanel.MouseDown += (s, e) =>
+            {
+                _capDragMoved = false;
+                _capDrag = (e.Button == WinForms.MouseButtons.Left && _capsOn && _caps.Count > 0)
+                    ? new CapDrag(e.Y, _capMarginV)
+                    : null;
+            };
+            _videoPanel.MouseMove += (s, e) =>
+            {
+                if (_capDrag is not { } d) { return; }
+                var dy = d.StartY - e.Y;                       // dragging UP (smaller Y) lifts the captions
+                if (!_capDragMoved && Math.Abs(dy) < 4) { return; }
+                _capDragMoved = true;
+                var dispH = PanelVideoHeight();
+                var v = d.StartMargin + dy / Math.Max(1.0, dispH) * AssResY;
+                _capMarginV = (int)Math.Round(Math.Clamp(v, 0, CapMarginMax));
+                DrawCaption(_lastPos, force: true);            // the captions follow the hand live
+                SetStatus("Captions " + (int)Math.Round(_capMarginV / AssResY * 100) + "% up from the bottom");
+                // Report DURING the drag, not only on release: a MouseUp on this panel is
+                // not guaranteed to arrive (mpv owns a child window over it and can swallow
+                // the release), and losing it would silently lose the placement Jordan just
+                // set. The page debounces the disk write, so a per-move post is cheap.
+                PostToPage(new { t = "capMargin", v = _capMarginV });
+            };
+            _videoPanel.MouseUp += (s, e) =>
+            {
+                if (_capDrag == null) { return; }
+                _capDrag = null;
+                if (_capDragMoved) { PostToPage(new { t = "capMargin", v = _capMarginV }); }
+            };
+
             _videoPanel.MouseClick += (s, e) =>
             {
+                // A caption drag ends with a click on this panel too — don't also toggle
+                // playback, or every height adjustment would start or stop the video.
+                if (_capDragMoved) { _capDragMoved = false; return; }
                 if (e.Button == WinForms.MouseButtons.Left && _mpv != null)
                 {
                     _paused = !_paused;
@@ -229,6 +290,7 @@ public partial class MainWindow : Window
             {
                 UpdateOverlay(pos);
             }
+            if (_capsOn) { DrawCaption(pos); }   // no-ops unless the visible cue changed
         });
     }
 
@@ -243,6 +305,7 @@ public partial class MainWindow : Window
             _ovW = w;
             _ovH = h;
             if (_overlayOn) { UpdateOverlay(_lastPos); }
+            if (_capsOn) { DrawCaption(_lastPos, force: true); }   // re-fit to the new video rect
         });
     }
 
@@ -296,6 +359,9 @@ public partial class MainWindow : Window
                 break;
             case "tlOp":
                 HandleTimelineOp(root);
+                break;
+            case "captions":
+                HandleCaptions(root);
                 break;
         }
     }
@@ -395,12 +461,67 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Host-handled caption sidecar I/O: the caption lane reads and writes the reel's
+        // .srt directly. The engine's write_srt REGENERATES the file from the reel, which
+        // would throw away Jordan's hand-typed wording and hand-dragged timings — so the
+        // lane owns this file and the host is a plain text read/write.
+        // Args: read_srt {path} -> {text}; write_srt_file {path, text} -> {path}.
+        if (verb == "read_srt" || verb == "write_srt_file")
+        {
+            HandleSrtIo(id, verb, args as JsonElement?);
+            return;
+        }
+
         JsonElement reply = default;
         if (_engine != null)
         {
             reply = await _engine.CallAsync(verb, args);
         }
         PostReply(id, reply);
+    }
+
+    /// <summary>
+    /// Read or write a caption sidecar for the timeline's caption lane. Bounded to .srt
+    /// so a page bug can never overwrite a video or a reel; a missing file on read is a
+    /// normal empty result (the lane just shows nothing), not an error.
+    /// </summary>
+    private void HandleSrtIo(string? id, string verb, JsonElement? argsEl)
+    {
+        string Arg(string key)
+        {
+            if (argsEl is not { ValueKind: JsonValueKind.Object } a) { return ""; }
+            return a.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+        }
+
+        // Bounded to the two caption sidecars so a page bug can never overwrite a video,
+        // a transcript, or a reel: the captions themselves (.srt) and the one global
+        // vertical placement that travels beside them (.capstyle.json).
+        var path = Arg("path");
+        if (path.Length == 0 ||
+            !(path.EndsWith(".srt", StringComparison.OrdinalIgnoreCase) ||
+              path.EndsWith(".capstyle.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            PostToPage(new { t = "reply", id, reply = new { ok = false, error = "caption path must be an .srt or .capstyle.json file" } });
+            return;
+        }
+
+        try
+        {
+            if (verb == "read_srt")
+            {
+                var text = File.Exists(path) ? File.ReadAllText(path) : "";
+                PostToPage(new { t = "reply", id, reply = new { ok = true, data = new { text, exists = File.Exists(path) } } });
+                return;
+            }
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir)) { Directory.CreateDirectory(dir); }
+            File.WriteAllText(path, Arg("text"));
+            PostToPage(new { t = "reply", id, reply = new { ok = true, data = new { path } } });
+        }
+        catch (Exception ex)
+        {
+            PostToPage(new { t = "reply", id, reply = new { ok = false, error = ex.Message } });
+        }
     }
 
     /// <summary>
@@ -512,6 +633,7 @@ public partial class MainWindow : Window
             _hostW = (int)Math.Round(w);
             _hostH = (int)Math.Round(h);
             if (_overlayOn) { UpdateOverlay(_lastPos); }   // re-fit the lower-third to the new size
+            if (_capsOn) { DrawCaption(_lastPos, force: true); }
         });
     }
 
@@ -660,14 +782,17 @@ public partial class MainWindow : Window
     // WIDTH (a detective needs the whole name/URL, so we shrink rather than truncate;
     // the floor keeps it legible — widen the panel if a line ends up small).
 
-    private void UpdateOverlay(double pos)
+    /// <summary>
+    /// Where the VIDEO really sits inside the mpv window (letterbox/pillarbox), in mpv's
+    /// OSD coordinate space — which maps to the WINDOW, not the picture. Both the
+    /// forensic lower-third and the caption preview anchor to this rect so they track the
+    /// video instead of the window. Falls back to the whole window until the real dims
+    /// are known (they arrive as an observed property, not a racy one-shot read).
+    /// </summary>
+    private (int W, int H, int DispW, int DispH, int XOff, int YOff) VideoRect()
     {
-        // res_x/res_y for the overlay = the host window (mpv maps OSD to the window).
         var w = _hostW > 0 ? _hostW : (_ovW > 0 ? _ovW : 1280);
         var h = _hostH > 0 ? _hostH : (_ovH > 0 ? _ovH : 720);
-
-        // Where the video really sits inside that window (letterbox/pillarbox). Until
-        // the real dims are known, fall back to the whole window.
         int dispW = w, dispH = h, xoff = 0, yoff = 0;
         if (_ovW > 0 && _ovH > 0 && h > 0)
         {
@@ -675,6 +800,12 @@ public partial class MainWindow : Window
             if (winAspect > videoAspect) { dispH = h; dispW = (int)Math.Round(h * videoAspect); xoff = (w - dispW) / 2; }
             else { dispW = w; dispH = (int)Math.Round(w / videoAspect); yoff = (h - dispH) / 2; }
         }
+        return (w, h, dispW, dispH, xoff, yoff);
+    }
+
+    private void UpdateOverlay(double pos)
+    {
+        var (w, h, dispW, dispH, xoff, yoff) = VideoRect();
 
         // MATCH THE RENDER (drawtext.go): white monospace lines on a semi-transparent black
         // panel. The render draws 42px text on the source-resolution frame; scale that fixed
@@ -798,6 +929,104 @@ public partial class MainWindow : Window
         // The lower-third now uses two overlays (1 = black panel, 2 = white text) — clear both.
         _ = _mpv!.SendAsync(default, "osd-overlay", 1, "none", "", 0, 0, 0, false, false);
         _ = _mpv!.SendAsync(default, "osd-overlay", 2, "none", "", 0, 0, 0, false, false);
+    }
+
+    // --- the caption preview (osd id 3, ABOVE the lower-third) --------------------
+    // The page owns the .srt — it loads, edits and writes it. The host only draws the
+    // cue covering the current position, in the burned-in render's style, and owns the
+    // up/down DRAG that moves every caption: the mpv pane is a native window ON TOP of
+    // the WebView, so a mouse on the video never reaches the page at all.
+
+    /// <summary>Page pushed a new cue list / placement / on-off. Redraw immediately.</summary>
+    private void HandleCaptions(JsonElement root)
+    {
+        _capsOn = root.TryGetProperty("on", out var onEl) && onEl.ValueKind == JsonValueKind.True;
+        if (root.TryGetProperty("marginV", out var mEl) && mEl.ValueKind == JsonValueKind.Number
+            && mEl.TryGetDouble(out var mv))
+        {
+            _capMarginV = (int)Math.Round(Math.Clamp(mv, 0, CapMarginMax));
+        }
+        _caps.Clear();
+        if (root.TryGetProperty("cues", out var cEl) && cEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in cEl.EnumerateArray())
+            {
+                if (it.ValueKind != JsonValueKind.Object) { continue; }
+                double s = Num(it, "s"), e = Num(it, "e");
+                if (e > s) { _caps.Add(new CapCue(s, e, Str(it, "t"))); }
+            }
+        }
+        if (_capsOn) { DrawCaption(_lastPos, force: true); } else { ClearCaption(); }
+    }
+
+    /// <summary>Index of the cue covering pos, or -1 between cues.</summary>
+    private int CapIndexAt(double pos)
+    {
+        for (var i = 0; i < _caps.Count; i++)
+        {
+            if (pos >= _caps[i].Start && pos < _caps[i].End) { return i; }
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Draw the caption for <paramref name="pos"/> exactly as the render burns it: white
+    /// fill, thin black outline, no shadow, centred, lifted MarginV off the bottom. The
+    /// style numbers live in the 384x288 script box ffmpeg's srt->ass conversion uses, so
+    /// they are scaled by the video's DISPLAYED height to preview at the same size.
+    /// Only talks to mpv when the visible cue actually changes (a position tick fires
+    /// several times a second; re-sending the same ASS would be pure churn).
+    /// </summary>
+    private void DrawCaption(double pos, bool force = false)
+    {
+        if (_mpv == null) { return; }
+        if (!_capsOn) { ClearCaption(); return; }
+        var idx = CapIndexAt(pos);
+        if (!force && idx == _capLastIdx) { return; }
+        _capLastIdx = idx;
+        if (idx < 0) { ClearCaption(keepIndex: true); return; }   // between cues: blank, as the render is
+
+        var r = VideoRect();
+        var k = r.DispH / AssResY;                                 // script units -> displayed px
+        var fontPx = Math.Max(10, (int)Math.Round(CapFontSize * k));
+        var marginPx = (int)Math.Round(_capMarginV * k);
+        var bord = Math.Max(1.0, Math.Round(CapOutline * k, 1));
+        var cx = r.XOff + r.DispW / 2;                             // centred: no horizontal control by design
+        var cy = r.YOff + r.DispH - marginPx;                      // \an2 = the text's bottom edge
+
+        var sb = new StringBuilder();
+        sb.Append("{\\an2}{\\fnProximaNova-Semibold}{\\pos(").Append(cx).Append(',').Append(cy).Append(")}")
+          .Append("{\\1c&HFFFFFF&}{\\3c&H000000&}{\\shad0}{\\bord")
+          .Append(bord.ToString(CultureInfo.InvariantCulture))
+          .Append("}{\\fs").Append(fontPx).Append('}');
+        var lines = _caps[idx].Text.Replace("\r", "").Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (i > 0) { sb.Append("\\N"); }
+            sb.Append(AssEscape(lines[i]));
+        }
+        _ = _mpv.SendAsync(default, "osd-overlay", 3, "ass-events", sb.ToString(), r.W, r.H, 0, false, false);
+    }
+
+    private void ClearCaption(bool keepIndex = false)
+    {
+        if (!keepIndex) { _capLastIdx = -2; }
+        _ = _mpv?.SendAsync(default, "osd-overlay", 3, "none", "", 0, 0, 0, false, false);
+    }
+
+    /// <summary>
+    /// The video's DISPLAYED height inside the mpv panel, in the PANEL's own pixels — so
+    /// an up/down caption drag converts pixels to placement without any DIP/DPI step
+    /// (the OSD rect above is in DIPs; a mouse event here is not).
+    /// </summary>
+    private double PanelVideoHeight()
+    {
+        if (_videoPanel == null) { return 0; }
+        double ph = _videoPanel.ClientSize.Height, pw = _videoPanel.ClientSize.Width;
+        if (ph <= 0) { return 0; }
+        if (_ovW <= 0 || _ovH <= 0) { return ph; }
+        double videoAspect = (double)_ovW / _ovH;
+        return (pw / ph) > videoAspect ? ph : pw / videoAspect;
     }
 
     // --- folder open (native pick OR remembered) ---------------------------------
