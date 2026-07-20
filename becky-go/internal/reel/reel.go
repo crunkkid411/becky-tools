@@ -23,6 +23,7 @@ import (
 	"becky-go/internal/config"
 	"becky-go/internal/edl"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/pathx"
 	"becky-go/internal/proc"
 )
 
@@ -106,6 +107,14 @@ func Render(r edl.Reel, opts Options) (Result, error) {
 	}
 
 	ropts := resolveOptions(r, opts, cfg)
+
+	// The default output now lives in a Rendered/ subfolder of the footage, which
+	// may not exist yet. ffmpeg does not create directories — it just fails.
+	if dir := filepath.Dir(ropts.Output); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return Result{}, fmt.Errorf("create output folder %s: %w", dir, err)
+		}
+	}
 
 	// Keep the clips' AUDIO in the compilation — it is a record of WHAT WAS SAID; a
 	// transcript/quote tool whose export is silent is useless. We can do this safely
@@ -310,13 +319,47 @@ func checkSourcesReadable(r edl.Reel) error {
 	return nil
 }
 
-// defaultReelOutput builds "<reel-name>_reel.mp4" (slugified) in the cwd.
+// RenderSubdir is the folder a render goes in, under the raw footage.
+//
+// Jordan's rule, established months ago and never written down anywhere the
+// code could enforce it: "RENDER = A SUBFOLDER OF THE RAW, UNTOUCHED FOOTAGE."
+// A subfolder, so the render sits with the job it belongs to but can never be
+// confused with, or overwrite, the untouched originals.
+const RenderSubdir = "Rendered"
+
+// defaultReelOutput builds "<reel-name>_reel.mp4" (slugified) in a Rendered/
+// subfolder OF THE RAW FOOTAGE — the directory of the reel's first clip.
+//
+// It used to land in the process's cwd, which is not a location anyone chose:
+// it is wherever the launcher happened to start. That put Jordan's own YouTube
+// edits onto E:\, a REMOVABLE FORENSIC DRIVE holding evidence for a criminal
+// case, purely because a test run had left the cwd there. Different drives are
+// different jobs; a rendered skit has no business on an evidence volume, and
+// the cwd never carries that information. The source footage does — it is the
+// only thing that says which job this render belongs to, so it decides. Never
+// the cwd, and never a hardcoded drive.
+//
+// cwd remains the last resort for a reel with no usable source path, because a
+// relative name still resolves somewhere and Render() absolutises it.
 func defaultReelOutput(r edl.Reel) string {
 	name := strings.TrimSpace(r.Name)
 	if name == "" {
 		name = "becky"
 	}
-	return slug(name) + "_reel.mp4"
+	base := slug(name) + "_reel.mp4"
+	for _, c := range r.Clips {
+		dir := pathx.Dir(strings.TrimSpace(c.Source))
+		if dir == "" || dir == "." {
+			continue
+		}
+		// Already inside the render folder (Jordan often edits from a previous
+		// render) — stay put rather than nesting Rendered/Rendered.
+		if strings.EqualFold(pathx.Base(dir), RenderSubdir) {
+			return filepath.Join(dir, base)
+		}
+		return filepath.Join(dir, RenderSubdir, base)
+	}
+	return base
 }
 
 // fontFile resolves the forensic font: BECKY_REEL_FONT override, else default.

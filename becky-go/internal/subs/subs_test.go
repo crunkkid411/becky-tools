@@ -231,9 +231,15 @@ func TestBuildSilentSegmentAdvancesTimelineWithoutCue(t *testing.T) {
 	}
 }
 
-func TestBuildFloorsShortCue(t *testing.T) {
+func TestBuildFloorNeverOverlapsNextCue(t *testing.T) {
 	// Two chunks split by the char limit with almost no time between them: the
-	// gap-filled first cue would be 0.05s, under the 0.10s floor.
+	// gap-filled first cue is 0.05s, under the 0.10s floor.
+	//
+	// cli-cut floored it to 0.10s and let it run 0.05s PAST the next caption's
+	// start. That is where the doubled text on screen came from: libass renders
+	// both overlapping cues, stacked. MinDuration exists to stop a caption
+	// blinking OFF for a few frames — when the next caption is already arriving
+	// there is no blink to prevent, so the incoming caption wins.
 	words := []Word{
 		w("aaaaaaaaaaaaaaaaaaaaa", 0.00, 0.04), // 21 chars — next word must break
 		w("b", 0.05, 0.90),
@@ -243,8 +249,69 @@ func TestBuildFloorsShortCue(t *testing.T) {
 	if len(cues) != 2 {
 		t.Fatalf("cues = %d, want 2: %+v", len(cues), cues)
 	}
+	if cues[0].End > cues[1].Start+eps {
+		t.Errorf("cue 0 ends %.4f, cue 1 starts %.4f — captions must never overlap",
+			cues[0].End, cues[1].Start)
+	}
+}
+
+func TestBuildFloorsShortCueWhenThereIsRoom(t *testing.T) {
+	// The floor still does its job where it can: one cue, a 0.04s word, and a
+	// whole segment of room after it.
+	words := []Word{w("hi", 0.00, 0.04)}
+	segs := []Segment{{Start: 0.0, End: 1.0, Words: words}}
+	cues := Build(segs, DefaultOptions())
+	if len(cues) != 1 {
+		t.Fatalf("cues = %d, want 1: %+v", len(cues), cues)
+	}
 	if d := cues[0].End - cues[0].Start; d < 0.10-eps {
 		t.Errorf("cue 0 duration = %.4f, want >= 0.10 (flash floor)", d)
+	}
+}
+
+func TestWordStraddlingACutIsCaptionedOnce(t *testing.T) {
+	// The post_constantly bug: Jordan cuts on the frame he wants, which lands
+	// mid-word. "viral" spans 1.8-2.4 and the cut is at 2.0, so the word
+	// overlapped BOTH clips and was captioned twice ("...going viral" / "viral").
+	words := []Word{
+		w("going", 1.20, 1.75),
+		w("viral", 1.80, 2.40),
+		w("next", 2.50, 2.90),
+	}
+	segs := []Segment{
+		{Source: "a.mp4", Start: 1.0, End: 2.0, Words: words},
+		{Source: "a.mp4", Start: 2.0, End: 3.0, Words: words},
+	}
+	per := WordsPerSegment(segs)
+
+	count := 0
+	for _, seg := range per {
+		for _, got := range seg {
+			if got.Word == "viral" {
+				count++
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("\"viral\" appears in %d clips, want exactly 1", count)
+	}
+	// 0.2s of it is in clip 0, 0.4s in clip 1 — the clip holding more wins.
+	if len(per[1]) == 0 || per[1][0].Word != "viral" {
+		t.Errorf("clip 1 words = %v, want it to open on \"viral\" (it holds 0.4s vs 0.2s)", per[1])
+	}
+}
+
+func TestWordFullyInsideTwoClipsIsKeptTwice(t *testing.T) {
+	// A deliberately repeated moment must still caption twice — the de-dupe only
+	// settles words that STRADDLE a cut, never ones a clip fully contains.
+	words := []Word{w("again", 1.20, 1.40)}
+	segs := []Segment{
+		{Source: "a.mp4", Start: 1.0, End: 2.0, Words: words},
+		{Source: "a.mp4", Start: 1.0, End: 2.0, Words: words},
+	}
+	per := WordsPerSegment(segs)
+	if len(per[0]) != 1 || len(per[1]) != 1 {
+		t.Errorf("per-clip words = %v — a repeated clip must caption its words both times", per)
 	}
 }
 

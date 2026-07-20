@@ -43,9 +43,14 @@ type Word struct {
 // timings (also source-relative). The caller supplies them in output order; this
 // package lays them end to end to derive the output timeline.
 type Segment struct {
-	Start float64
-	End   float64
-	Words []Word
+	// Source identifies which media these words came from. Segments sharing a
+	// Source share a word list, so a word straddling a cut can be recognised as
+	// the SAME word in both clips and spoken only once. Segments from different
+	// sources never compete for a word.
+	Source string
+	Start  float64
+	End    float64
+	Words  []Word
 }
 
 // Dur is the segment's length in seconds, clamped to >= 0.
@@ -170,6 +175,75 @@ func WordsInRange(words []Word, start, end float64) []Word {
 	return out
 }
 
+// WordsPerSegment picks each segment's words, and — this is the point —
+// guarantees a word straddling a cut is spoken by exactly ONE clip.
+//
+// WordsInRange alone cannot do this. It keeps any word OVERLAPPING the clip, so
+// when a cut lands in the middle of a word (which it constantly does: Parakeet
+// gives a word a span, and Jordan cuts on the frame he wants, not on word
+// boundaries) the word overlaps the clip before the cut AND the clip after it,
+// and gets captioned twice. In his post_constantly edit that produced
+// "your odds of going viral" / "viral", "maybe" / "maybe", and
+// "should you" / "you eat a pound" — a stutter on screen at every such cut.
+//
+// The rule: a word wholly inside a clip always belongs to it (so a deliberately
+// repeated moment still captions twice). A word only PARTLY inside competes, and
+// the clip holding the largest share of it wins. Ties go to the earlier clip.
+func WordsPerSegment(segments []Segment) [][]Word {
+	type claim struct {
+		seg     int
+		overlap float64
+	}
+	// key = source + word index; the index is stable because every segment of a
+	// source shares that source's one word slice.
+	type key struct {
+		source string
+		idx    int
+	}
+	best := map[key]claim{}
+
+	type cand struct {
+		idx       int
+		word      Word
+		contained bool
+	}
+	cands := make([][]cand, len(segments))
+
+	for si, seg := range segments {
+		for wi, w := range seg.Words {
+			if w.End <= seg.Start || w.Start >= seg.End {
+				continue
+			}
+			if strings.TrimSpace(w.Word) == "" {
+				continue
+			}
+			contained := w.Start >= seg.Start && w.End <= seg.End
+			cands[si] = append(cands[si], cand{idx: wi, word: w, contained: contained})
+			if contained {
+				continue
+			}
+			ov := min(w.End, seg.End) - max(w.Start, seg.Start)
+			k := key{seg.Source, wi}
+			if b, ok := best[k]; !ok || ov > b.overlap {
+				best[k] = claim{seg: si, overlap: ov}
+			}
+		}
+	}
+
+	out := make([][]Word, len(segments))
+	for si := range segments {
+		kept := make([]Word, 0, len(cands[si]))
+		for _, c := range cands[si] {
+			if !c.contained && best[key{segments[si].Source, c.idx}].seg != si {
+				continue // a clip with more of this word says it
+			}
+			kept = append(kept, c.word)
+		}
+		out[si] = kept
+	}
+	return out
+}
+
 // ChunkWords is the deterministic pass-1 chunker: start a new caption when the
 // pause before a word exceeds gapSeconds, or when adding the word would push the
 // line past maxChars.
@@ -215,10 +289,11 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 // cue — silence stays silent, and the following segment still lands at the right
 // offset.
 func Build(segments []Segment, opt Options) []Cue {
+	perSeg := WordsPerSegment(segments)
 	chunks := make([][][]Word, len(segments))
-	for i, seg := range segments {
+	for i := range segments {
 		chunks[i] = RepairDangling(
-			ChunkWords(WordsInRange(seg.Words, seg.Start, seg.End), opt.MaxChars, opt.GapSeconds),
+			ChunkWords(perSeg[i], opt.MaxChars, opt.GapSeconds),
 			opt.MaxChars)
 	}
 	return BuildFromChunks(segments, chunks, opt)
@@ -320,7 +395,9 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 
 		out = append(out, cues...)
 	}
-	return QuantizeToFrames(out, opt.FPS)
+	// Clamp AFTER quantising: rounding two boundaries to frames can itself put a
+	// caption a frame past the next one's start.
+	return clampOverlaps(QuantizeToFrames(out, opt.FPS))
 }
 
 // QuantizeToFrames snaps every caption boundary to a whole frame at fps, and is
@@ -348,6 +425,22 @@ func QuantizeToFrames(cues []Cue, fps float64) []Cue {
 	}
 	for i := 0; i < len(cues)-1; i++ {
 		if cues[i].End < cues[i+1].Start {
+			cues[i].End = cues[i+1].Start
+		}
+	}
+	return cues
+}
+
+// clampOverlaps guarantees no two captions are on screen at once.
+//
+// The MinDuration floor runs after gap-filling and can push a caption's end PAST
+// the next caption's start; nothing downstream took it back, so the .srt shipped
+// overlapping cues and libass stacked two lines. MinDuration exists to stop a
+// caption BLINKING OFF for a few frames — when the next caption arrives sooner
+// than that, there is no blink to prevent, so the incoming caption wins.
+func clampOverlaps(cues []Cue) []Cue {
+	for i := 0; i < len(cues)-1; i++ {
+		if cues[i].End > cues[i+1].Start {
 			cues[i].End = cues[i+1].Start
 		}
 	}

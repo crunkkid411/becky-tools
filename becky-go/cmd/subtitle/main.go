@@ -306,7 +306,7 @@ func segmentsFor(reel edl.Reel, explicit string, autoTranscribe, verbose bool) (
 				cache[c.Source] = words
 			}
 		}
-		segs = append(segs, subs.Segment{Start: c.In, End: c.Out, Words: words})
+		segs = append(segs, subs.Segment{Source: c.Source, Start: c.In, End: c.Out, Words: words})
 	}
 	return segs, allWords, warnings
 }
