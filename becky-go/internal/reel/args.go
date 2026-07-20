@@ -2,6 +2,7 @@ package reel
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"becky-go/internal/edl"
@@ -49,24 +50,34 @@ func buildRenderArgs(r edl.Reel, opts resolvedOpts) ([]string, error) {
 
 	args := []string{"-y", "-hide_banner", "-loglevel", "error"}
 
-	// Per-clip inputs: input-seek + read-window (BOTH -ss and -t before -i).
+	// Per-clip inputs: input-seek + read-window (BOTH -ss and -t before -i). The
+	// read window is padded past the clip's exact duration (segmentReadPad) so the
+	// per-clip filter chain always has enough decoded frames on hand for the
+	// trim=end_frame step in buildFilterComplex to cut EXACTLY the target frame
+	// count — the padding itself is discarded by that trim, never visible in the
+	// output. Without it, -ss/-t's own sub-frame rounding could occasionally hand
+	// the fps filter one frame short (see framesFor's doc comment for the bug this
+	// fixes).
+	pad := segmentReadPad(opts.OutFPS)
 	for _, c := range r.Clips {
 		args = append(args,
 			"-ss", formatSeconds(c.In),
-			"-t", formatSeconds(c.Dur()),
+			"-t", formatSeconds(c.Dur()+pad),
 			"-i", c.Source,
 		)
 	}
 
 	// Silent fill-inputs for clips that have no audio stream (appended AFTER the N
 	// clip inputs, in clip order, so audioInputIndices' numbering lines up). Each is
-	// bounded to its clip's duration with -t before -i.
+	// bounded (with -t before -i) to the clip's QUANTIZED duration (framesFor/
+	// OutFPS) — the same target every clip's video AND real audio are trimmed to —
+	// so a silence-filled clip can't be a different length than its video.
 	if opts.Audio {
 		for i, c := range r.Clips {
 			if !(i < len(opts.ClipHasAudio) && opts.ClipHasAudio[i]) {
 				args = append(args,
 					"-f", "lavfi",
-					"-t", formatSeconds(c.Dur()),
+					"-t", formatSeconds(segmentDur(c, opts.OutFPS)),
 					"-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
 				)
 			}
@@ -141,9 +152,16 @@ func buildFilterComplex(r edl.Reel, opts resolvedOpts) (graph, vOut, aOut string
 		if lt := lowerThirdFilter(r.Overlay, c, opts.FontFile, fps, opts.Width, opts.Height); lt != "" {
 			steps = append(steps, lt)
 		}
+		// trim=end_frame right after the fps conversion forces this segment to emit
+		// EXACTLY framesFor(c, OutFPS) frames on the OUTPUT grid — see framesFor's
+		// doc comment for why: without it, N clips' worth of -ss/-t/fps rounding at
+		// each boundary accumulates into a render that's LONGER than the reel's own
+		// math, sliding burned captions out of sync by the end of the compilation
+		// (measured: +1.27s / 38 frames over an 88-clip reel).
 		steps = append(steps,
 			"setsar=1",
 			"fps="+formatRate(opts.OutFPS),
+			fmt.Sprintf("trim=end_frame=%d", framesFor(c, opts.OutFPS)),
 			"format=yuv420p",
 			"setpts=PTS-STARTPTS",
 		)
@@ -153,11 +171,13 @@ func buildFilterComplex(r edl.Reel, opts resolvedOpts) (graph, vOut, aOut string
 
 		if opts.Audio {
 			aLabel := fmt.Sprintf("[a%d]", i)
-			// Normalize every segment to a common rate/layout + reset PTS so concat
-			// joins cleanly regardless of the source's audio format.
+			// Normalize every segment to a common rate/layout, trim to the SAME
+			// quantized duration the video segment was frame-trimmed to (so a padded
+			// -t read window never bleeds audio into the next clip), then reset PTS
+			// so concat joins cleanly.
 			chains = append(chains, fmt.Sprintf(
-				"[%d:a]aresample=async=1,aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS%s",
-				aidx[i], aLabel))
+				"[%d:a]aresample=async=1,aformat=sample_rates=48000:channel_layouts=stereo,atrim=duration=%s,asetpts=PTS-STARTPTS%s",
+				aidx[i], formatSeconds(segmentDur(c, opts.OutFPS)), aLabel))
 			aLabels = append(aLabels, aLabel)
 		}
 	}
@@ -220,11 +240,68 @@ func codecQualityArgs(opts resolvedOpts) []string {
 	}
 }
 
-// formatSeconds renders a seconds value for ffmpeg -ss/-t with millisecond
+// framesFor is the render's contract with the reel's own math: the EDL (Clip.Dur,
+// Reel.Duration) treats a clip as exactly this many OUTPUT frames, so the render
+// must reproduce EXACTLY this many — no more, no less. buildFilterComplex's
+// trim=end_frame=N step enforces it.
+//
+// Why this exists: ffmpeg's per-clip -ss/-t are decimal-seconds input options, and
+// the fps= filter's own duplicate/drop rounding at each segment's boundary, don't
+// reliably land on a whole frame count on their own — measured on a real 88-clip
+// reel, the render came out 1.27s (38 frames, ~0.43 frames/clip) LONGER than the
+// reel's stated 150.183s, sliding burned captions (timed to the reel timeline)
+// increasingly out of sync with the picture by the end. Forcing every segment's
+// frame count here, independent of ffmpeg's own seek/rounding behavior, makes the
+// render's total length match the EDL exactly regardless of that behavior.
+func framesFor(c edl.Clip, outFPS float64) int {
+	if outFPS <= 0 {
+		outFPS = defaultOutFPS
+	}
+	n := int(math.Round(c.Dur() * outFPS))
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// segmentDur is the exact wall-clock length (seconds) of a clip's quantized
+// frame count at outFPS — what its trimmed VIDEO segment actually plays for, and
+// so also the target every parallel AUDIO segment (real or silent-filled) is
+// trimmed/bounded to, keeping picture and sound frame-locked per clip.
+func segmentDur(c edl.Clip, outFPS float64) float64 {
+	if outFPS <= 0 {
+		outFPS = defaultOutFPS
+	}
+	return float64(framesFor(c, outFPS)) / outFPS
+}
+
+// segmentReadPad is extra decode time added to each clip's ffmpeg input read
+// window (-t) so the per-clip filter chain always has enough source frames on
+// hand for framesFor's trim=end_frame step to cut EXACTLY the target count. The
+// padding is discarded by that trim and never reaches the output. 6 output-frame
+// periods is comfortable headroom over -ss/-t's own sub-frame rounding.
+func segmentReadPad(outFPS float64) float64 {
+	if outFPS <= 0 {
+		outFPS = defaultOutFPS
+	}
+	return 6.0 / outFPS
+}
+
+// formatSeconds renders a seconds value for ffmpeg -ss/-t with MICROSECOND
 // precision (no scientific notation). Negative input clamps to zero.
+//
+// Regression: this used to be millisecond precision (%.3f), which is coarse
+// enough to round a frame-exact timestamp PAST its true frame boundary — e.g.
+// frame 100 at true NTSC is 3.336666...s, which rounds UP to 3.337 at 3
+// decimals. ffmpeg's accurate -ss seek is "first frame whose PTS >= target";
+// once the target (3.337) exceeds the true frame's PTS (3.336667), that seek
+// skips the intended frame and lands one frame late. Measured: a synthetic
+// 3-clip/150-frame render came out 149 frames (1 short) from exactly this.
+// Microsecond precision is far finer than any real container's frame-time
+// tick (~33us at true NTSC), so it can no longer cross a frame boundary.
 func formatSeconds(sec float64) string {
 	if sec < 0 {
 		sec = 0
 	}
-	return fmt.Sprintf("%.3f", sec)
+	return fmt.Sprintf("%.6f", sec)
 }

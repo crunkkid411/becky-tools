@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,27 @@ func ffmpegPath() string {
 		return p
 	}
 	return ""
+}
+
+// ffprobePath returns an available ffprobe for gated exec tests, or "".
+func ffprobePath() string {
+	if p, err := exec.LookPath("ffprobe"); err == nil {
+		return p
+	}
+	return ""
+}
+
+// ffprobeFrameCount returns the EXACT decoded frame count of a video's first
+// stream (-count_frames actually decodes, rather than trusting a container's
+// possibly-approximate frame-count tag).
+func ffprobeFrameCount(ffprobe, path string) (int, error) {
+	out, err := exec.Command(ffprobe, "-v", "error", "-select_streams", "v:0",
+		"-count_frames", "-show_entries", "stream=nb_read_frames",
+		"-of", "default=nw=1:nk=1", path).Output()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(out)))
 }
 
 // resolveOptionsForTest defaults options against a fixed codec so the pure
@@ -128,10 +150,13 @@ func TestBuildRenderArgs_InputSeekAndDuration(t *testing.T) {
 
 	// Input-seek + read-window BOTH before -i (both are input options), per clip.
 	// -t must precede -i, else ffmpeg treats it as an output-duration limit and
-	// truncates the whole concat to the last clip (verified live).
+	// truncates the whole concat to the last clip (verified live). -t is the
+	// clip's exact 2.000s PLUS segmentReadPad (6 frames @30fps = 0.200s) — headroom
+	// for the per-clip trim=end_frame step (buildFilterComplex) to cut EXACTLY the
+	// target frame count; see framesFor's doc comment.
 	wantSeq := []string{
-		"-ss", "10.000", "-t", "2.000", "-i", `X:\case\A.mp4`,
-		"-ss", "3.000", "-t", "2.000", "-i", `X:\case\B.mp4`,
+		"-ss", "10.000000", "-t", "2.200000", "-i", `X:\case\A.mp4`,
+		"-ss", "3.000000", "-t", "2.200000", "-i", `X:\case\B.mp4`,
 	}
 	if !containsSubseq(args, wantSeq) {
 		t.Fatalf("expected per-clip input-seek+duration sequence, got:\n%v", args)
@@ -195,7 +220,7 @@ func TestBuildRenderArgs_AudioMapsAndSilenceFallback(t *testing.T) {
 		t.Fatalf("an audio render must NOT pass -an:\n%s", joined)
 	}
 	// The audioless clip (dur 2.000) gets a silent fill input, -t-bounded before -i.
-	if !containsSubseq(args, []string{"-f", "lavfi", "-t", "2.000", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"}) {
+	if !containsSubseq(args, []string{"-f", "lavfi", "-t", "2.000000", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"}) {
 		t.Fatalf("expected a -t-bounded silent fill input for the audioless clip:\n%v", args)
 	}
 }
@@ -228,6 +253,59 @@ func TestAudioInputIndices_SilenceNumbering(t *testing.T) {
 	idx := audioInputIndices(r, ro)
 	if len(idx) != 2 || idx[0] != 2 || idx[1] != 1 {
 		t.Fatalf("audioInputIndices = %v, want [2 1] (clip0->silent input #2, clip1->own [1:a])", idx)
+	}
+}
+
+// --- frame-exact render regression -----------------------------------------
+// Direct regression for a bug measured on a real 88-clip forensic reel: the
+// render came out 1.27s (38 frames) LONGER than the reel's own duration math,
+// sliding burned captions (timed to the reel timeline) increasingly out of sync
+// with the picture by the end of the compilation. Root cause: ffmpeg's per-clip
+// -ss/-t + the fps filter's own boundary rounding don't reliably land on a whole
+// frame count on their own. The fix force-trims every segment to
+// framesFor(clip, OutFPS) frames, independent of that internal rounding.
+
+// TestFramesFor_QuantizesToWholeFrames pins the exact rounding contract the
+// render owes the EDL: whatever ffmpeg's seek/fps rounding does internally, the
+// render's frame count for a clip must match this, exactly.
+func TestFramesFor_QuantizesToWholeFrames(t *testing.T) {
+	c := edl.Clip{In: 0, Out: 2.017} // 2.017*30 = 60.51 -> rounds to 61
+	if got := framesFor(c, 30); got != 61 {
+		t.Fatalf("framesFor = %d, want 61", got)
+	}
+	if got := segmentDur(c, 30); got < 2.0333 || got > 2.0334 {
+		t.Fatalf("segmentDur = %v, want ~2.0333 (61/30)", got)
+	}
+	// A degenerate zero/negative-duration clip must never trim to 0 frames — that
+	// would starve the concat filter of a segment.
+	if got := framesFor(edl.Clip{In: 5, Out: 5}, 30); got != 1 {
+		t.Fatalf("framesFor(zero-length clip) = %d, want the 1-frame floor", got)
+	}
+}
+
+// TestBuildFilterComplex_TrimsEachSegmentToExactFrameCount is the direct
+// regression: each clip's chain must force-trim to framesFor(c, OutFPS) frames,
+// after the fps filter, independent of ffmpeg's own rounding at that boundary.
+func TestBuildFilterComplex_TrimsEachSegmentToExactFrameCount(t *testing.T) {
+	r := twoClipReel() // both clips are exactly 2.0s @ OutFPS 30 -> 60 frames each
+	graph, _, _ := buildFilterComplex(r, resolveOptionsForTest(r))
+	if n := strings.Count(graph, "trim=end_frame=60"); n != 2 {
+		t.Fatalf("expected 2 occurrences of trim=end_frame=60 (one per clip), got %d:\n%s", n, graph)
+	}
+}
+
+// TestBuildFilterComplex_AudioTrimsToQuantizedDuration confirms the audio path
+// is bounded to the SAME quantized duration the video was frame-trimmed to, so
+// the padded -t read window (segmentReadPad) can never bleed a clip's audio into
+// the next one.
+func TestBuildFilterComplex_AudioTrimsToQuantizedDuration(t *testing.T) {
+	r := twoClipReel()
+	ro := resolveOptionsForTest(r)
+	ro.Audio = true
+	ro.ClipHasAudio = []bool{true, true}
+	graph, _, _ := buildFilterComplex(r, ro)
+	if n := strings.Count(graph, "atrim=duration=2.000"); n != 2 {
+		t.Fatalf("expected 2 occurrences of atrim=duration=2.000 (one per clip), got %d:\n%s", n, graph)
 	}
 }
 
@@ -489,6 +567,62 @@ func TestCodecQualityArgs(t *testing.T) {
 	}
 }
 
+// TestWriteFilterScriptIfNeeded is the regression for a real failure the
+// frame-quantization fix exposed: a real 88-clip forensic reel's assembled
+// ffmpeg command line came to 34,663 chars (each clip's lower-third + trim/
+// atrim filter chain adds up fast) — over Windows' ~32,767-char CreateProcess
+// limit, so ffmpeg never even launches ("The filename or extension is too
+// long"). A short command line must pass through untouched; a long one must
+// have "-filter_complex <graph>" swapped for "-filter_complex_script <file>"
+// whose contents are the exact same graph.
+func TestWriteFilterScriptIfNeeded(t *testing.T) {
+	t.Run("short command line untouched", func(t *testing.T) {
+		args := []string{"-y", "-filter_complex", "short graph", "-map", "[vout]", "out.mp4"}
+		got, cleanup, err := writeFilterScriptIfNeeded(args)
+		defer cleanup()
+		if err != nil {
+			t.Fatalf("writeFilterScriptIfNeeded: %v", err)
+		}
+		if strings.Join(got, "|") != strings.Join(args, "|") {
+			t.Fatalf("short args should pass through unchanged, got %v", got)
+		}
+	})
+
+	t.Run("long command line rewritten to a script file", func(t *testing.T) {
+		graph := strings.Repeat("[0:v]scale=1280:720,trim=end_frame=60[v0];", 1000)
+		args := []string{"-y", "-filter_complex", graph, "-map", "[vout]", "out.mp4"}
+		got, cleanup, err := writeFilterScriptIfNeeded(args)
+		defer cleanup()
+		if err != nil {
+			t.Fatalf("writeFilterScriptIfNeeded: %v", err)
+		}
+		if !containsSubseq(got, []string{"-filter_complex_script"}) {
+			t.Fatalf("expected -filter_complex_script in rewritten args: %v", got)
+		}
+		if strings.Contains(strings.Join(got, " "), graph) {
+			t.Fatal("the raw graph must NOT still be inline once rewritten")
+		}
+		idx := indexOf(got, "-filter_complex_script")
+		if idx < 0 || idx+1 >= len(got) {
+			t.Fatalf("-filter_complex_script missing its path arg: %v", got)
+		}
+		contents, err := os.ReadFile(got[idx+1])
+		if err != nil {
+			t.Fatalf("reading the script file: %v", err)
+		}
+		if string(contents) != graph {
+			t.Fatal("script file contents must be the EXACT same graph that was rewritten")
+		}
+		if _, statErr := os.Stat(got[idx+1]); statErr != nil {
+			t.Fatal("script file should still exist before cleanup runs")
+		}
+		cleanup()
+		if _, statErr := os.Stat(got[idx+1]); statErr == nil {
+			t.Fatal("cleanup should have removed the temp script file")
+		}
+	})
+}
+
 func TestShouldFallbackToLibx264(t *testing.T) {
 	if !shouldFallbackToLibx264("h264_nvenc") {
 		t.Fatal("nvenc should be eligible for libx264 fallback")
@@ -504,7 +638,7 @@ func TestShouldFallbackToLibx264(t *testing.T) {
 func TestGrabFrameArgs(t *testing.T) {
 	args := grabFrameArgs(`X:\c\v.mp4`, 14.567, `X:\out\still.png`)
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-ss 14.567", `-i X:\c\v.mp4`, "-frames:v 1", "-update 1", `X:\out\still.png`} {
+	for _, want := range []string{"-ss 14.567000", `-i X:\c\v.mp4`, "-frames:v 1", "-update 1", `X:\out\still.png`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("grabFrameArgs missing %q in:\n%s", want, joined)
 		}
@@ -517,7 +651,7 @@ func TestGrabFrameArgs(t *testing.T) {
 func TestGrabThumbArgs(t *testing.T) {
 	args := grabThumbArgs(`X:\c\v.mp4`, 8179.792, `X:\out\t.jpg`, 160)
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-noaccurate_seek", "-ss 8179.792", `-i X:\c\v.mp4`, "-frames:v 1", "scale=160:-2", "-q:v 6", `X:\out\t.jpg`} {
+	for _, want := range []string{"-noaccurate_seek", "-ss 8179.792000", `-i X:\c\v.mp4`, "-frames:v 1", "scale=160:-2", "-q:v 6", `X:\out\t.jpg`} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("grabThumbArgs missing %q in:\n%s", want, joined)
 		}
@@ -639,9 +773,9 @@ func TestScrubProxySegmentArgs(t *testing.T) {
 	args := scrubProxySegmentArgs(`X:\c\longgop.mp4`, `X:\out\longgop.12000-17500.scrub.mp4`, 12.0, 17.5)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
-		"-ss 12.000",
+		"-ss 12.000000",
 		"-i " + `X:\c\longgop.mp4`,
-		"-t 5.500",
+		"-t 5.500000",
 		"-g 1", "-keyint_min 1", "-sc_threshold 0", // intra-frame, same as scrubProxyArgs
 		"scale=-2:540,fps=30",
 		"-c:v libx264", "-crf 20", "-movflags +faststart", "-c:a aac",
@@ -696,12 +830,25 @@ func TestEscapeHelpers(t *testing.T) {
 	}
 }
 
-func TestFormatRate(t *testing.T) {
+// TestFormatRate_NTSCUsesExactRational is the regression for a real measured
+// bug: formatRate used to truncate the NTSC family to 3 decimals ("29.970" =
+// 2997/100 exactly), which is a DIFFERENT rate than true NTSC 30000/1001 — a
+// rendered file's own r_frame_rate came back 2997/100 because of this, silently
+// re-introducing the container-vs-edit grid mismatch edl.NormalizeRate exists to
+// remove. Any value within ntscTolerance of a family member (as NormalizeRate
+// itself would produce) must emit the exact fraction.
+func TestFormatRate_NTSCUsesExactRational(t *testing.T) {
 	tests := []struct {
 		in   float64
 		want string
 	}{
-		{30, "30"}, {25, "25"}, {29.97, "29.97"}, {23.976, "23.976"}, {60, "60"},
+		{30, "30"}, {25, "25"}, {60, "60"},
+		{24000.0 / 1001.0, "24000/1001"},
+		{30000.0 / 1001.0, "30000/1001"},
+		{60000.0 / 1001.0, "60000/1001"},
+		{29.97, "30000/1001"},  // decimal approximation of the same rate
+		{23.976, "24000/1001"}, // decimal approximation of the same rate
+		{24.5, "24.5"},         // genuinely not NTSC — stays a plain decimal
 	}
 	for _, tc := range tests {
 		if got := formatRate(tc.in); got != tc.want {
@@ -710,12 +857,24 @@ func TestFormatRate(t *testing.T) {
 	}
 }
 
-func TestFormatSeconds(t *testing.T) {
-	if got := formatSeconds(2); got != "2.000" {
+// TestFormatSeconds_MicrosecondPrecision is the regression for a real measured
+// bug: at millisecond precision, a true-NTSC frame boundary like 3.336666...s
+// (frame 100 @ 30000/1001) rounds UP to 3.337 — PAST the frame's actual PTS —
+// which makes ffmpeg's accurate -ss seek skip that frame and land one frame
+// late. Measured: a synthetic 150-frame/3-clip render came out 149 frames.
+// Microsecond precision (6 decimals) is far finer than any real container's
+// frame-time tick, so it can no longer cross a frame boundary.
+func TestFormatSeconds_MicrosecondPrecision(t *testing.T) {
+	if got := formatSeconds(2); got != "2.000000" {
 		t.Fatalf("formatSeconds(2) = %q", got)
 	}
-	if got := formatSeconds(-5); got != "0.000" {
-		t.Fatalf("negative seconds should clamp to 0.000, got %q", got)
+	if got := formatSeconds(-5); got != "0.000000" {
+		t.Fatalf("negative seconds should clamp to 0.000000, got %q", got)
+	}
+	// The actual regression case: frame 100 at true NTSC.
+	frame100 := 100.0 * 1001.0 / 30000.0
+	if got := formatSeconds(frame100); got != "3.336667" {
+		t.Fatalf("formatSeconds(frame 100 @ NTSC) = %q, want 3.336667 (rounds to the frame's OWN boundary, not past it)", got)
 	}
 }
 
@@ -733,6 +892,63 @@ func TestSlug(t *testing.T) {
 		if got := slug(tc.in); got != tc.want {
 			t.Fatalf("slug(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestRender_FrameCountMatchesReelExactly is the end-to-end regression for the
+// measured drift bug: it actually RENDERS a multi-clip reel through real ffmpeg
+// (skipped when ffmpeg isn't on this box — same gate as the tests below; CI's
+// free runners have no ffmpeg, this only runs locally) and asserts the output's
+// video stream has EXACTLY the frame count the clips' math says it should —
+// not "close enough". On a real 88-clip forensic reel this bug cost 38 frames
+// (1.27s) of drift, sliding burned captions out of sync with the picture.
+func TestRender_FrameCountMatchesReelExactly(t *testing.T) {
+	ffmpeg := ffmpegPath()
+	if ffmpeg == "" {
+		t.Skip("ffmpeg not on PATH; frame-accuracy is verified locally, not in CI")
+	}
+	ffprobe := ffprobePath()
+	if ffprobe == "" {
+		t.Skip("ffprobe not on PATH")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mp4")
+	const rate = 30000.0 / 1001.0 // true NTSC — the grid this whole fix is about
+	// A tiny synthetic source with an EXACT, known frame count (-frames:v pins it,
+	// sidestepping any ambiguity in how long a lavfi source "actually" runs).
+	genArgs := []string{"-y", "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "color=c=blue:s=64x64:rate=30000/1001",
+		"-frames:v", "150", "-pix_fmt", "yuv420p", src}
+	if out, err := exec.Command(ffmpeg, genArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("generating synthetic source: %v\n%s", err, out)
+	}
+
+	// Three clips cut from the SAME 150-frame source at frame-exact boundaries
+	// (0-50, 50-100, 100-150) — mirrors a real multi-cut reel's per-segment math.
+	frameTime := func(f int) float64 { return float64(f) * 1001.0 / 30000.0 }
+	r := edl.Reel{Version: "1", Name: "frame-exact-check", Clips: []edl.Clip{
+		{ID: "c1", Source: src, In: frameTime(0), Out: frameTime(50), Meta: edl.ClipMeta{SourceFPS: rate}},
+		{ID: "c2", Source: src, In: frameTime(50), Out: frameTime(100), Meta: edl.ClipMeta{SourceFPS: rate}},
+		{ID: "c3", Source: src, In: frameTime(100), Out: frameTime(150), Meta: edl.ClipMeta{SourceFPS: rate}},
+	}}
+
+	out := filepath.Join(dir, "out.mp4")
+	res, err := Render(r, Options{Output: out, Codec: "libx264", Width: 64, Height: 64, FPS: rate})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if res.Clips != 3 {
+		t.Fatalf("res.Clips = %d, want 3", res.Clips)
+	}
+
+	got, err := ffprobeFrameCount(ffprobe, out)
+	if err != nil {
+		t.Fatalf("ffprobe the render: %v", err)
+	}
+	const wantFrames = 150 // 50+50+50, exactly what the reel's own math says
+	if got != wantFrames {
+		t.Fatalf("rendered video has %d frames, want EXACTLY %d (reel duration=%.6fs, drift=%.6fs = %d frames)",
+			got, wantFrames, r.Duration(), float64(got-wantFrames)/rate, got-wantFrames)
 	}
 }
 
