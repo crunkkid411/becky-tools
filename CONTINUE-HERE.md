@@ -171,6 +171,19 @@ Every item below was verified by RUNNING it and looking, not by the tests passin
 above. Items it lists as ABSENT that are now done: 15, 36, 37, 48, 52, 109 (plus
 8). Re-audit before trusting its counts.
 
+## KNOWN LANDMINE — flagged, deliberately not defused
+
+`apply_proposal`'s async completion callback mutates `g_track` from inside
+`drainAsync()`, which runs inside `drawTimeline()`. Traced 2026-07-20: it does
+NOT crash today, because `drainAsync()` sits at the one point where the prior
+`g_track` read has completed and everything after it re-reads `.size()`
+bounds-checked. But it is a live hazard for whoever next touches that seam —
+add a read before that point and it becomes a use-after-invalidate.
+
+Fixing it properly means restructuring `drainAsync`, which every async caller
+now depends on. That was judged too risky to do blind at 4am. If you are working
+in `drainAsync` or the proposal path, fix this FIRST, with a test.
+
 ## What's left — in order
 
 1. **Caption wording — the last thing between him and posting without wincing.**
