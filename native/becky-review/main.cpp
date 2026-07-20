@@ -2773,7 +2773,18 @@ static void drawTimeline(double& curSec, bool& playing) {
             g_scrollSec = std::max(0.0, curSec - viewDur * 0.3);
     }
     double maxScroll = std::max(0.0, g_compDur - viewDur * 0.15);
-    g_scrollSec = std::min(g_scrollSec, maxScroll);
+    // A DELETE MUST NOT DRAG THE VIEW SIDEWAYS UNDER HIM (items 96/106, stated
+    // twice). This clamp used to run unconditionally every frame, so the moment
+    // an edit shortened the reel maxScroll dropped and the whole timeline slid
+    // left while he was working in it — he loses his place mid-edit, which for
+    // someone editing at speed is worse than the wasted pixels it was saving.
+    //
+    // Now it only intervenes when the view has scrolled past EVERYTHING and is
+    // showing nothing at all, and never mid-gesture. Sitting slightly past the
+    // end of a shortened reel is normal NLE behaviour; being teleported is not.
+    if (g_gest.kind == 0 && g_scrollSec > g_compDur) {
+        g_scrollSec = maxScroll;
+    }
 
     const double kThrFloorDb = -50.0;
     float thrLaneTop = aY + 1, thrLaneBot = aY + laneH - 1;
