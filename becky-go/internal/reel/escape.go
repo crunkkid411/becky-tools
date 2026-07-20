@@ -1,9 +1,30 @@
 package reel
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
+
+// ntscRationals maps the drop-frame NTSC family to its EXACT rational string.
+// A container/edit rate that lands within ntscTolerance of one of these is the
+// SAME rate edl.NormalizeRate already snapped it to (30000/1001, not the
+// rounded 2997/100 = 29.970000) — formatRate must emit that exact fraction, not
+// a 3-decimal truncation of it, or it reintroduces the very container-vs-edit
+// grid mismatch NormalizeRate exists to remove. Measured: emitting "29.970"
+// made a real render's own r_frame_rate come back as 2997/100 instead of
+// 30000/1001.
+var ntscRationals = []struct {
+	val      float64
+	fraction string
+}{
+	{24000.0 / 1001.0, "24000/1001"},
+	{30000.0 / 1001.0, "30000/1001"},
+	{60000.0 / 1001.0, "60000/1001"},
+	{120000.0 / 1001.0, "120000/1001"},
+}
+
+const ntscTolerance = 0.001
 
 // escape.go centralizes the ffmpeg filtergraph quoting that the lower-third
 // burn needs on Windows. The rules follow R-CUT §4a (proven live) and mirror
@@ -41,12 +62,20 @@ func escapeDrawtextText(s string) string {
 	return r.Replace(s)
 }
 
-// formatRate renders a frame rate for ffmpeg options (timecode_rate, fps).
-// Whole rates print as integers ("30"); fractional rates keep up to 3 decimals
-// trimmed of trailing zeros ("29.97").
+// formatRate renders a frame rate for ffmpeg options that accept a <rational>/
+// <video_rate> (timecode_rate, fps=). Whole rates print as integers ("30"); the
+// NTSC family prints as its EXACT fraction ("30000/1001") — both option types are
+// AVRational-parsed (av_parse_video_rate), so ffmpeg reads "30000/1001" as
+// precisely as it reads "30". Any other fractional rate keeps up to 3 decimals
+// trimmed of trailing zeros ("24.5").
 func formatRate(fps float64) string {
 	if fps == float64(int64(fps)) {
 		return strconv.FormatInt(int64(fps), 10)
+	}
+	for _, ntsc := range ntscRationals {
+		if math.Abs(fps-ntsc.val) < ntscTolerance {
+			return ntsc.fraction
+		}
 	}
 	s := strconv.FormatFloat(fps, 'f', 3, 64)
 	s = strings.TrimRight(s, "0")

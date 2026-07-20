@@ -419,9 +419,9 @@ func millis(sec float64) int64 {
 // brackets the start, a duration limit (-t after -i) bounds the end, then the
 // SAME scale/fps/codec recipe as scrubProxyArgs runs on just that span. Honors
 // the same BECKY_PROXY_CODEC / BECKY_PROXY_RES env overrides. Both -ss and -t
-// go through formatSeconds — a fixed "%.3f" (invariant-decimal, never
-// locale-dependent) — same as every other ffmpeg time arg in this package.
-// PURE (unit-tested).
+// go through formatSeconds — a fixed "%.6f" (invariant-decimal, never
+// locale-dependent, microsecond precision) — same as every other ffmpeg time
+// arg in this package. PURE (unit-tested).
 func scrubProxySegmentArgs(source, out string, inSec, outSec float64) []string {
 	c := scrubCodecFor(os.Getenv("BECKY_PROXY_CODEC"))
 	vf := fmt.Sprintf("scale=-2:%d,fps=30", scrubProxyHeight())

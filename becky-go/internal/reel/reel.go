@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"becky-go/internal/config"
@@ -128,7 +129,7 @@ func Render(r edl.Reel, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	runErr := runFFmpeg(cfg.FFmpeg, opts.Verbose, args)
+	runErr := runFFmpegSafe(cfg.FFmpeg, opts.Verbose, args)
 	if runErr != nil && shouldFallbackToLibx264(ropts.Codec) {
 		// Degrade-never-crash: nvenc failed (GPU-less box or init error). Retry
 		// with libx264 — identical correctness, ~20% slower (R-CUT §7).
@@ -136,7 +137,7 @@ func Render(r edl.Reel, opts Options) (Result, error) {
 		fallback.Codec = libx264
 		// Rebuild args so the quality flags match the new codec.
 		if a2, e2 := buildRenderArgs(r, fallback); e2 == nil {
-			if e3 := runFFmpeg(cfg.FFmpeg, opts.Verbose, a2); e3 == nil {
+			if e3 := runFFmpegSafe(cfg.FFmpeg, opts.Verbose, a2); e3 == nil {
 				ropts = fallback
 				note = fmt.Sprintf("h264_nvenc unavailable (%v); fell back to libx264", firstLine(runErr))
 				runErr = nil
@@ -159,13 +160,47 @@ func Render(r edl.Reel, opts Options) (Result, error) {
 	if fi, e := os.Stat(ropts.Output); e == nil {
 		res.OutputMB = round3(float64(fi.Size()) / (1024 * 1024))
 	}
-	// Prefer the probed duration of the real output when ffprobe is available.
+	// Prefer the probed duration of the real output when ffprobe is available —
+	// the VIDEO STREAM's own duration specifically, not the container "format"
+	// duration: an AAC audio track's encoder priming samples routinely make the
+	// muxer report a format duration a frame or so longer than the content
+	// actually is (measured: 150.216s container vs. 150.183367s video stream on
+	// an 88-clip render whose EDL says 150.183s) — an artifact of the audio
+	// container, not of what's on screen, and burned captions are synced to the
+	// VIDEO's frames. Falls back to the container duration if the stream-specific
+	// probe fails for any reason.
 	if cfg.FFprobe != "" && available(cfg.FFprobe) {
-		if info, e := mediainfo.Probe(cfg.FFprobe, ropts.Output); e == nil && info.Duration > 0 {
+		if d, ok := probeVideoDuration(cfg.FFprobe, ropts.Output); ok {
+			res.DurationSec = round3(d)
+		} else if info, e := mediainfo.Probe(cfg.FFprobe, ropts.Output); e == nil && info.Duration > 0 {
 			res.DurationSec = round3(info.Duration)
 		}
 	}
 	return res, nil
+}
+
+// probeVideoDuration asks ffprobe for the rendered file's own video STREAM
+// duration (see the comment at its call site for why this, not the container
+// duration, is the honest number). ok=false when ffprobe can't be run or the
+// value can't be parsed, so the caller falls back to mediainfo.Probe.
+func probeVideoDuration(ffprobe, path string) (float64, bool) {
+	cmd := exec.Command(ffprobe,
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=duration",
+		"-of", "default=nw=1:nk=1",
+		path,
+	)
+	proc.NoWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+	d, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
 }
 
 // firstClipProbe is the seam over "read the first clip's pixel dimensions + fps".
@@ -290,6 +325,68 @@ func fontFile() string {
 		return f
 	}
 	return defaultFont
+}
+
+// maxCommandLineChars is comfortably under Windows' ~32,767-char CreateProcess
+// command-line limit. A forensic reel can have dozens of clips, each
+// contributing a full drawtext lower-third + trim/atrim filter chain, so the
+// filter_complex graph ALONE can approach that limit — measured on a real
+// 88-clip reel: 34,663 chars, which fails to even launch ("The filename or
+// extension is too long"), not an ffmpeg error.
+const maxCommandLineChars = 28000
+
+// runFFmpegSafe execs ffmpeg, first rewriting an oversized "-filter_complex
+// <graph>" pair into "-filter_complex_script <tempfile>" (ffmpeg reads the
+// identical graph from a file) so a many-clip reel can't blow the OS
+// command-line limit. This is purely an exec-time adaptation — buildRenderArgs
+// itself stays pure/testable, always returning the graph inline.
+func runFFmpegSafe(ffmpeg string, verbose bool, args []string) error {
+	safeArgs, cleanup, err := writeFilterScriptIfNeeded(args)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	return runFFmpeg(ffmpeg, verbose, safeArgs)
+}
+
+// writeFilterScriptIfNeeded returns args unchanged when the assembled command
+// line is short enough; otherwise it writes the "-filter_complex" value to a
+// temp file and swaps in "-filter_complex_script <path>". The returned cleanup
+// func removes the temp file (a no-op when nothing was written) and is always
+// safe to call.
+func writeFilterScriptIfNeeded(args []string) ([]string, func(), error) {
+	noop := func() {}
+	total := 0
+	for _, a := range args {
+		total += len(a) + 1 // +1 for the separating space CreateProcess sees
+	}
+	if total < maxCommandLineChars {
+		return args, noop, nil
+	}
+	fcIdx := -1
+	for i, a := range args {
+		if a == "-filter_complex" {
+			fcIdx = i
+			break
+		}
+	}
+	if fcIdx < 0 || fcIdx+1 >= len(args) {
+		return args, noop, nil
+	}
+	f, err := os.CreateTemp("", "becky-reel-filter-*.txt")
+	if err != nil {
+		return nil, noop, fmt.Errorf("write filter_complex script: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(args[fcIdx+1]); err != nil {
+		os.Remove(f.Name())
+		return nil, noop, fmt.Errorf("write filter_complex script: %w", err)
+	}
+	out := make([]string, len(args))
+	copy(out, args)
+	out[fcIdx] = "-filter_complex_script"
+	out[fcIdx+1] = f.Name()
+	return out, func() { os.Remove(f.Name()) }, nil
 }
 
 // runFFmpeg execs ffmpeg with the given args, capturing stderr for diagnostics.
