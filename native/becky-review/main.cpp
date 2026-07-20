@@ -3535,6 +3535,52 @@ static uint32_t cardColorFor(const std::string& id) {
     g_cardColor[id] = c; return c;
 }
 
+// ---- ask-becky panel state (matches gui/BeckyReviewNative ui/index.html .chat) ----
+static char g_askBuf[512] = { 0 };   // was a function-static inside the frame; the chips
+                                     // and the Q&A cards both need to write it, so it is
+                                     // file scope now.
+static bool g_askFocus = false;      // "put the caret in the ask box next frame"
+static std::string g_askEcho;        // the question he last sent, echoed above the answer
+static std::string g_backendSummary; // engine `status` -> one plain sentence
+static bool g_backendOK = false;     // any backend live? drives the status card's colour
+static std::string g_answerCardID;   // non-empty => the ask box is answering THIS card
+static std::string g_answerCardQ;
+
+// Real prompts for a video editor reviewing his OWN footage. The reference's chips
+// ("find every threat to the host family") are forensic-case examples and read as
+// nonsense in an edit session. Each maps to a verb the engine actually has:
+// compile -> ask/apply_proposal, dead air -> autocut_silence, lower-third -> overlay.
+//
+// LABEL and PROMPT are separate on purpose. The panel is ~300px wide and this font
+// is ~9.45px/char at the 1.35 UI scale, so the label budget is about 26 characters -
+// "compile every take where I said the intro line" is 455px and would be CLIPPED at
+// every real window size. ImGui buttons do not wrap. Short label on the chip, full
+// wording into the box.
+static const char* kAskChipLabel[3] = { "compile my takes", "cut dead air", "lower-third on" };
+static const char* kAskChipPrompt[3] = {
+    "compile every take where I said the intro line",
+    "cut the dead air out of this reel",
+    "turn the lower-third on",
+};
+
+// A DRAWN robot, not a glyph. The merged icon font covers Segoe MDL2's private-use
+// range only, and CLAUDE.md bans non-ASCII bytes in this source, so the reference's
+// U+1F916 would render as a box or break the build. Six primitives, no atlas rebuild,
+// reads as a robot at a glance - which is the whole job of the mark.
+static void askBeckyMark(float h) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImU32 neon = kPalette[0];                       // #14FF39, palette slot 1
+    float w = h * 0.86f, x = p.x, y = p.y + h * 0.20f;
+    d->AddLine({ x + w * 0.5f, y }, { x + w * 0.5f, y - h * 0.14f }, neon, 2.0f);
+    d->AddCircleFilled({ x + w * 0.5f, y - h * 0.16f }, h * 0.08f, neon);
+    d->AddRect({ x, y }, { x + w, y + h * 0.62f }, neon, h * 0.15f, 0, 2.0f);
+    d->AddRectFilled({ x + w * 0.20f, y + h * 0.20f }, { x + w * 0.38f, y + h * 0.35f }, neon, 1.5f);
+    d->AddRectFilled({ x + w * 0.62f, y + h * 0.20f }, { x + w * 0.80f, y + h * 0.35f }, neon, 1.5f);
+    d->AddLine({ x + w * 0.28f, y + h * 0.48f }, { x + w * 0.72f, y + h * 0.48f }, neon, 2.0f);
+    ImGui::Dummy(ImVec2(w, h * 0.82f));
+}
+
 // ---- header: WHICH FOLDER IS OPEN, on WHICH DRIVE (safety, not decoration) ----
 //
 // Jordan works across two drives that must never be confused: X: is his own video
@@ -3947,11 +3993,9 @@ static void openTranscript(const std::string& fullVideoPath) {
 }
 
 // render Q&A cards from the engine `questions` verb (G-1).
-static void refreshCards() {
-    g_cardsErr.clear();
-    json r = engineCall("questions", {}, 8.0);
-    if (!r.value("ok", false)) { g_cardsErr = r.value("error", std::string("questions unavailable")); g_cards.clear(); return; }
-    const json& d = r.contains("data") ? r["data"] : r;
+// Parse split out of refreshCards so save_answer's reply (which carries the updated
+// list) can refresh the cards WITHOUT a second blocking round trip on the UI thread.
+static void cardsFromJSON(const json& d) {
     g_cards.clear();
     if (d.contains("questions") && d["questions"].is_array()) {
         for (auto& q : d["questions"]) {
@@ -3965,6 +4009,12 @@ static void refreshCards() {
             g_cards.push_back(card);
         }
     }
+}
+static void refreshCards() {
+    g_cardsErr.clear();
+    json r = engineCall("questions", {}, 8.0);
+    if (!r.value("ok", false)) { g_cardsErr = r.value("error", std::string("questions unavailable")); g_cards.clear(); return; }
+    cardsFromJSON(r.contains("data") ? r["data"] : r);
 }
 
 // parse one search reply (shared by keyword + qmd) into a flat Hit list.
@@ -4247,6 +4297,25 @@ int main(int argc, char** argv) {
             // Q&A cards via BECKY_REVIEW_QUESTIONS sidecar (G-1). The engine loads them
             // itself from that env at bridge boot; here we just pull the exposed list.
             if (const char* qp = getenv("BECKY_REVIEW_QUESTIONS")) { (void)qp; refreshCards(); }
+            // Which AI is actually powering the chat. Jordan's rule is anti-"are you
+            // lying to me": the panel SAYS the backend rather than implying one.
+            // Written here, before g_bootDone - the panel is not drawn until that
+            // flag is observed, so this is the file's single-writer-then-flag shape.
+            {
+                json st = engineCall("status", {}, 8.0);
+                if (st.value("ok", false)) {
+                    const json& sd = st.contains("data") ? st["data"] : st;
+                    g_backendSummary = sd.value("summary", std::string());
+                    g_backendOK = sd.value("claude_cli", false) || sd.value("api", false) || sd.value("local", false);
+                }
+            }
+        }
+        // A dead engine must SAY SO, not sit on "Checking which AI is connected..."
+        // forever - which is exactly the "are you lying to me" failure the status
+        // card exists to prevent.
+        if (g_backendSummary.empty()) {
+            g_backendSummary = "The becky engine is not answering - the chat is offline.";
+            g_backendOK = false;
         }
 
         if (g_track[0].empty()) {
@@ -5528,8 +5597,46 @@ int main(int argc, char** argv) {
         // ---- right panel: Q&A / ask-becky (G) ----
         ImGui::SetNextWindowPos({ libW + vidW, topY }); ImGui::SetNextWindowSize({ qaW, topH });
         if (ImGui::Begin("qa", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
-            ImGui::Text("Q&A / Ask-Becky");
+            const ImVec4 neonV = ImGui::ColorConvertU32ToFloat4(kPalette[0]);   // #14FF39
+            const ImVec4 warnV = ImVec4(0.95f, 0.85f, 0.45f, 1.0f);             // the work indicator's yellow
+
+            // ---- header: robot mark + "ask becky" (reference: .chathead/.chattitle) ----
+            askBeckyMark(ImGui::GetFontSize() * 1.25f);
+            ImGui::SameLine(0.0f, 9.0f);
+            ImGui::SetWindowFontScale(1.15f);
+            ImGui::TextColored(neonV, "ask becky");
+            ImGui::SetWindowFontScale(1.0f);
             ImGui::Separator();
+
+            // ---- status card (reference: .intro) ----
+            // Never blank and never optimistic: it names the backend the engine
+            // actually reported, or says the engine is not answering.
+            {
+                const char* txt = g_backendSummary.empty()
+                    ? "Checking which AI is connected..."
+                    : g_backendSummary.c_str();
+                ImVec4 edge = g_backendSummary.empty() ? ImVec4(0.5f, 0.5f, 0.5f, 1.0f)
+                                                       : (g_backendOK ? neonV : warnV);
+                float wrapW = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().WindowPadding.x * 2.0f;
+                float h = ImGui::CalcTextSize(txt, nullptr, false, wrapW).y + ImGui::GetStyle().WindowPadding.y * 2.0f;
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.05f, 0.07f, 0.05f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(edge.x * 0.6f, edge.y * 0.6f, edge.z * 0.6f, 1.0f));
+                ImGui::BeginChild("askstatus", ImVec2(0, h), ImGuiChildFlags_Border);
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(g_backendOK ? ImVec4(0.86f, 0.86f, 0.86f, 1.0f) : warnV, "%s", txt);
+                ImGui::PopTextWrapPos();
+                ImGui::EndChild();
+                ImGui::PopStyleColor(2);
+            }
+
+            // The chips + ask bar are PINNED to the foot of the panel, like the reference
+            // and like every chat app - a control that drifts vertically with the amount of
+            // content above it is a control he has to hunt for (same rule as fixedButton).
+            // Height is measured from last frame's layout: exact, and one frame of lag on a
+            // window resize is invisible.
+            static float s_qaBottomH = 0.0f;
+            float midH = -(s_qaBottomH > 0.0f ? s_qaBottomH : ImGui::GetFrameHeight() * 5.0f);
+            ImGui::BeginChild("qamid", ImVec2(0, midH), ImGuiChildFlags_None);
 
             // H-5: "what becky is doing", passively. No buttons, nothing to click,
             // nothing that can steal focus from the timeline - Jordan keeps editing
@@ -5545,6 +5652,10 @@ int main(int argc, char** argv) {
                 }
                 if (!recent.empty()) {
                     ImGui::TextDisabled("becky is working");
+                    // WRAP. This panel is ~300px and these lines echo his own prompt back
+                    // ("Thinking: compile every take where I said the intro line"), which
+                    // ran off the edge mid-word. Text he needs is never truncated.
+                    ImGui::PushTextWrapPos(0.0f);
                     for (auto it = recent.rbegin(); it != recent.rend(); ++it) {
                         // Colour carries the state so it reads at a glance without
                         // parsing words - "done" recedes, in-flight stands out.
@@ -5554,14 +5665,17 @@ int main(int argc, char** argv) {
                         if (ImGui::IsItemHovered() && !it->source.empty())
                             ImGui::SetTooltip("%s (%s)", it->source.c_str(), it->kind.c_str());
                     }
+                    ImGui::PopTextWrapPos();
                     ImGui::Separator();
                 }
             }
             if (!g_cardsErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cardsErr.c_str());
-            if (g_cards.empty()) {
-                ImGui::TextDisabled("no review questions loaded");
-            } else {
-                ImGui::BeginChild("cards", { 0, (float)g_H * 0.45f }, true);
+            // The old "no review questions loaded" line is deliberately gone: with no
+            // questions the panel now shows the status card, the chips and the ask bar -
+            // something he can USE - instead of one grey sentence about an absence.
+            if (!g_cards.empty()) {
+                float cardsH = (std::min)((float)g_H * 0.45f, ImGui::GetContentRegionAvail().y * 0.62f);
+                ImGui::BeginChild("cards", { 0, cardsH }, true);
                 for (size_t i = 0; i < g_cards.size(); i++) {
                     QACard& c = g_cards[i];
                     ImGui::PushID((int)i);
@@ -5595,46 +5709,31 @@ int main(int argc, char** argv) {
                             }
                         }
                         (void)haveClip;
+                        ImGui::SameLine();
+                        // CHECKLIST 25: "each clickable to type and submit an answer exactly
+                        // like sending a chat". This retargets the ONE ask box below rather
+                        // than growing a second input per card - one place the caret ever is.
+                        if (ImGui::SmallButton("Answer this")) {
+                            g_answerCardID = c.id; g_answerCardQ = c.question;
+                            g_askBuf[0] = 0; g_askFocus = true;
+                        }
                         if (!c.answer.empty()) ImGui::TextWrapped("answer: %s", c.answer.c_str());
                     }
                     ImGui::PopID();
                 }
                 ImGui::EndChild();
+                ImGui::Separator();
             }
-            ImGui::Separator();
-            static char askBuf[512] = { 0 };
-            if (ImGui::InputTextMultiline("##ask", askBuf, sizeof askBuf, { -1, (float)g_H * 0.15f }, ImGuiInputTextFlags_EnterReturnsTrue)) {
-                std::string q(askBuf);
-                if (!q.empty()) {
-                    json r = engineCall("ask", { {"utterance", q} }, 30.0);
-                    if (r.value("ok", false)) {
-                        json d = r["data"];
-                        g_askAnswer = d.value("preview_text", std::string());
-                        std::string note = d.value("note", std::string());
-                        if (g_askAnswer.empty()) g_askAnswer = note.empty() ? d.dump() : note;
-                        else if (!note.empty()) g_askAnswer += "\n(" + note + ")";
-                        // A mutating turn carries an id + at least one action - anything
-                        // else (a plain answer, a Tier-0 command that already ran) has
-                        // nothing to approve, so no card.
-                        std::string id = d.value("id", std::string());
-                        json actions = d.value("actions", json::array());
-                        if (!id.empty() && actions.is_array() && !actions.empty()) {
-                            g_proposalID = id;
-                            g_proposalPreview = d.value("preview_text", std::string("(edit proposed)"));
-                            g_proposalNote = note;
-                            g_proposalDiff = d.value("preview", json::array());
-                            g_proposalPending = true;
-                        } else {
-                            g_proposalPending = false;
-                        }
-                    } else {
-                        g_askAnswer = r.value("error", std::string("ask failed"));
-                        g_proposalPending = false;
-                    }
-                    askBuf[0] = 0;
-                }
+
+            // ---- the exchange (reference: .messages) ----
+            // Wrapped, not TextDisabled: TextDisabled does not wrap, and this is the
+            // question he just sent - clipping it at the panel edge hides what he asked.
+            if (!g_askEcho.empty()) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled], "you: %s", g_askEcho.c_str());
+                ImGui::PopTextWrapPos();
             }
-            ImGui::TextWrapped("%s", g_askAnswer.c_str());
+            if (!g_askAnswer.empty()) ImGui::TextWrapped("%s", g_askAnswer.c_str());
             if (g_proposalPending) {
                 ImGui::Separator();
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.25f, 1.0f));
@@ -5648,26 +5747,162 @@ int main(int argc, char** argv) {
                         ImGui::BulletText("%s: %s -> %s", label.c_str(), before.c_str(), after.c_str());
                     }
                 }
+                // ASYNC. apply_proposal re-cuts the timeline server-side and took up to
+                // 30s ON THE UI THREAD - the exact dead-window freeze engineCallAsync
+                // exists to kill. The card is dismissed immediately (he sees his click
+                // land) and the result arrives on the UI thread via drainAsync.
                 if (ImGui::Button("Apply##proposal")) {
-                    json ar = engineCall("apply_proposal", { {"id", g_proposalID} }, 30.0);
-                    if (ar.value("ok", false)) {
-                        json d = ar["data"];
-                        if (d.contains("timeline")) loadTimelineView(d["timeline"]);
-                        g_askAnswer = "Applied: " + g_proposalPreview + " (Ctrl+Z reverts the whole pass)";
-                    } else {
-                        g_askAnswer = "Apply failed: " + ar.value("error", std::string("?"));
-                    }
-                    g_proposalPending = false;
-                    g_proposalID.clear();
+                    std::string pid = g_proposalID, prev = g_proposalPreview;
+                    g_proposalPending = false; g_proposalID.clear();
+                    engineCallAsync("apply_proposal", { {"id", pid} }, 120.0, "Applying becky's edit...",
+                        [prev](const json& ar) {
+                            if (ar.value("ok", false)) {
+                                const json& d = ar.contains("data") ? ar["data"] : ar;
+                                if (d.contains("timeline")) loadTimelineView(d["timeline"]);
+                                g_askAnswer = "Applied: " + prev + " (Ctrl+Z reverts the whole pass)";
+                            } else {
+                                g_askAnswer = "Apply failed: " + ar.value("error", std::string("?"));
+                            }
+                        });
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Reject##proposal")) {
-                    engineCall("reject_proposal", { {"id", g_proposalID} }, 10.0);
+                    std::string pid = g_proposalID;
                     g_askAnswer = "Rejected: " + g_proposalPreview;
-                    g_proposalPending = false;
-                    g_proposalID.clear();
+                    g_proposalPending = false; g_proposalID.clear();
+                    // A REAL label, never "": beginWork is newest-wins, so an empty one
+                    // would blank the "becky is thinking..." text of an ask still in
+                    // flight and leave an empty floating box on screen.
+                    engineCallAsync("reject_proposal", { {"id", pid} }, 10.0,
+                                    "Discarding that edit...", [](const json&) {});
                 }
             }
+            ImGui::EndChild();   // qamid
+
+            // ================= pinned foot: chips + ask bar =================
+            float footY0 = ImGui::GetCursorPosY();
+            ImGui::Separator();
+
+            // ---- suggestion chips (reference: .chip - neon pill, transparent fill) ----
+            {
+                ImGuiStyle& stl = ImGui::GetStyle();
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ImGui::GetFrameHeight() * 0.5f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(neonV.x, neonV.y, neonV.z, 0.16f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(neonV.x, neonV.y, neonV.z, 0.30f));
+                ImGui::PushStyleColor(ImGuiCol_Text, neonV);
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(neonV.x * 0.45f, neonV.y * 0.45f, neonV.z * 0.45f, 1.0f));
+                float availW = ImGui::GetContentRegionAvail().x, used = 0.0f;
+                for (int i = 0; i < 3; i++) {
+                    float w = ImGui::CalcTextSize(kAskChipLabel[i]).x + stl.FramePadding.x * 2.0f;
+                    if (i > 0 && used + stl.ItemSpacing.x + w <= availW) { ImGui::SameLine(); used += stl.ItemSpacing.x + w; }
+                    else used = w;
+                    // A chip FILLS the box and focuses it, never sends - he edits the
+                    // wording before it costs a model turn. Short label on the chip so
+                    // it fits the panel; the FULL prompt is what lands in the box.
+                    if (ImGui::Button(kAskChipLabel[i])) {
+                        snprintf(g_askBuf, sizeof g_askBuf, "%s", kAskChipPrompt[i]);
+                        g_answerCardID.clear();
+                        g_askFocus = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kAskChipPrompt[i]);
+                }
+                ImGui::PopStyleColor(5);
+                ImGui::PopStyleVar(2);
+            }
+
+            // ---- ask bar: input + green send (reference: .askbar / .sendbtn) ----
+            if (!g_answerCardID.empty()) {
+                ImGui::TextColored(neonV, "answering:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", g_answerCardQ.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("cancel")) { g_answerCardID.clear(); g_answerCardQ.clear(); g_askBuf[0] = 0; }
+            }
+            {
+                // MULTI-LINE, on its own row, Send underneath. A chip drops a 46-character
+                // prompt in here; a single-line box ~209px wide would show under half of it
+                // with no wrapping, i.e. he cannot read what he is about to send. Never
+                // shrink a control on a user who cannot afford to squint at it.
+                float inW = ImGui::GetContentRegionAvail().x;
+                if (g_askFocus) { ImGui::SetKeyboardFocusHere(); g_askFocus = false; }
+                bool submit = ImGui::InputTextMultiline("##ask", g_askBuf, sizeof g_askBuf,
+                                                        ImVec2(inW, ImGui::GetFrameHeight() * 2.2f),
+                                                        ImGuiInputTextFlags_EnterReturnsTrue);
+                if (g_askBuf[0] == 0) {
+                    // Hint drawn by hand: InputTextMultiline has no WithHint variant.
+                    ImVec2 mn = ImGui::GetItemRectMin();
+                    ImGui::GetWindowDrawList()->AddText(
+                        ImVec2(mn.x + ImGui::GetStyle().FramePadding.x, mn.y + ImGui::GetStyle().FramePadding.y),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                        g_answerCardID.empty() ? "ask becky..." : "type your answer...");
+                }
+                float sendW = ImGui::CalcTextSize("Send").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::PushStyleColor(ImGuiCol_Button, neonV);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(neonV.x * 0.82f, neonV.y * 0.82f, neonV.z * 0.82f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(neonV.x * 0.66f, neonV.y * 0.66f, neonV.z * 0.66f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                if (ImGui::Button("Send", ImVec2(sendW, 0))) submit = true;
+                ImGui::PopStyleColor(4);
+
+                if (submit && g_askBuf[0]) {
+                    std::string q(g_askBuf);
+                    g_askBuf[0] = 0;
+                    if (!g_answerCardID.empty()) {
+                        // CHECKLIST 25: submitting an answer is the SAME gesture as sending a chat.
+                        std::string aid = g_answerCardID, aq = g_answerCardQ;
+                        g_answerCardID.clear(); g_answerCardQ.clear();
+                        g_askEcho = q;
+                        g_askAnswer = "Saving your answer...";
+                        engineCallAsync("save_answer", { {"id", aid}, {"question", aq}, {"answer", q} },
+                                        30.0, "Saving your answer...", [aq](const json& r) {
+                            if (r.value("ok", false)) {
+                                const json& d = r.contains("data") ? r["data"] : r;
+                                if (d.contains("questions")) cardsFromJSON(d);
+                                g_askAnswer = "Answer saved for: \"" + aq + "\". becky will route it into the wiki.";
+                            } else {
+                                g_askAnswer = "Could not save that answer: " + r.value("error", std::string("?"));
+                            }
+                        });
+                    } else {
+                        // ASYNC + 120s. This was engineCall("ask", ..., 30.0) straight on the UI
+                        // thread: a Claude Code turn regularly runs 10-40s, so the window was
+                        // dead (and often TIMED OUT at 30s on a good answer) every single ask.
+                        // Off-thread the long timeout costs nothing.
+                        g_askEcho = q;
+                        g_askAnswer = "thinking...";
+                        engineCallAsync("ask", { {"utterance", q} }, 120.0, "becky is thinking...",
+                            [](const json& r) {
+                                if (r.value("ok", false)) {
+                                    const json& d = r.contains("data") ? r["data"] : r;
+                                    g_askAnswer = d.value("preview_text", std::string());
+                                    std::string note = d.value("note", std::string());
+                                    if (g_askAnswer.empty()) g_askAnswer = note.empty() ? d.dump() : note;
+                                    else if (!note.empty()) g_askAnswer += "\n(" + note + ")";
+                                    // A mutating turn carries an id + at least one action - anything
+                                    // else (a plain answer, a Tier-0 command that already ran) has
+                                    // nothing to approve, so no card.
+                                    std::string id = d.value("id", std::string());
+                                    json actions = d.value("actions", json::array());
+                                    if (!id.empty() && actions.is_array() && !actions.empty()) {
+                                        g_proposalID = id;
+                                        g_proposalPreview = d.value("preview_text", std::string("(edit proposed)"));
+                                        g_proposalNote = note;
+                                        g_proposalDiff = d.value("preview", json::array());
+                                        g_proposalPending = true;
+                                    } else {
+                                        g_proposalPending = false;
+                                    }
+                                } else {
+                                    g_askAnswer = r.value("error", std::string("ask failed"));
+                                    g_proposalPending = false;
+                                }
+                            });
+                    }
+                }
+            }
+            s_qaBottomH = ImGui::GetCursorPosY() - footY0;
         }
         ImGui::End();
 
