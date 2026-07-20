@@ -35,6 +35,7 @@ public class GD{
  [DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")]public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);
+ [DllImport("user32.dll")]public static extern bool IsIconic(IntPtr h);
  public struct R{public int L,T,Rt,B;}
 }
 "@
@@ -92,7 +93,10 @@ foreach ($a in $apps) {
                              if (-not $_.HasExited) { $_.Kill() } }
     }
     Start-Sleep -Milliseconds 600
-    [void][GD]::ShowWindow($h, 9); [void][GD]::SetForegroundWindow($h)
+    # SW_SHOW(5) keeps a maximized window maximized; SW_RESTORE(9) would un-maximize it
+    # and capture a shrunk, falsely-"cramped" window. Only restore if actually minimized.
+    if ([GD]::IsIconic($h)) { [void][GD]::ShowWindow($h, 9) } else { [void][GD]::ShowWindow($h, 5) }
+    [void][GD]::SetForegroundWindow($h)
     Start-Sleep -Milliseconds 1200
 
     # Prove we actually got the foreground before trusting the pixels.
