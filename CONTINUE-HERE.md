@@ -1,0 +1,110 @@
+# Start here (read this first, every session)
+
+This file exists so you don't have to ask Jordan anything to pick up where the
+last agent stopped. Read it, then go straight to work — don't re-ask him what's
+already answered below.
+
+## The rules that keep getting broken (do not repeat them)
+
+1. **FREE OR OAUTH ONLY. NEVER A PAID API.** Jordan already pays for Claude Max —
+   Sonnet 5 / Opus / Haiku come free through the OAuth session (Agent tool with
+   model "sonnet", `claude --model sonnet`, or `fleet-run.ps1`). If you reach an
+   Anthropic model through a pay-per-token key instead, you are spending money he
+   already spent once. On OpenRouter, the only free model is `tencent/hy3:free`.
+   **`m3` / `minimax` is NOT free on OpenRouter** — it's free only through the
+   local router. He has corrected this twice. Don't ask him again; just follow it.
+   A hook (`~/.claude/hooks/block-paid-apis.ps1`) blocks paid calls automatically,
+   but don't rely on the hook as your only check — know the rule.
+2. **Prose is not protocol.** If a rule actually matters, it has to be a hook or a
+   code guard. Writing another paragraph into a `.md` file is not a fix — Jordan
+   considers that worse than doing nothing.
+3. **Never relay a subagent's "verified" as fact.** If a subagent says something
+   works, pull the actual frame/output yourself and look at it, or count it
+   yourself. Trusting a subagent's word here already cost two days.
+4. **Never make Jordan run a command or answer a technical question.** He is not
+   a developer. Decide things yourself from this file and the other handoff docs.
+5. Becky Review 3 was supposed to be grown from `native/becky-timeline`
+   (see `BUILD_1.md`, `COLLAB-PROTOCOL.md`) and mostly wasn't — prefer reusing
+   `becky-timeline` code over writing more C++ from scratch.
+6. **The point of Becky Review 3 is `BUILD_1.md` §4-H and §10. Read them before
+   you touch it.** The bug-fixing in `HANDOFF-BECKY-REVIEW-3.md` is maintenance,
+   not the product. See "The missing half" below — an agent that reads only the
+   handoff will rebuild a video player and think it finished.
+7. **Output goes with the footage that made it.** Never the cwd, never a
+   hardcoded drive. A render lands in a `Rendered/` subfolder of its source; a
+   proxy/still lands beside its source. This is enforced in
+   `internal/reel/reel_output_test.go` because as prose it silently drifted and
+   put Jordan's YouTube edits on E:\ — a removable forensic drive holding
+   evidence for a criminal case.
+
+## What's already done — verified, don't re-check it
+
+- Render is frame-exact: 4501 frames at 30000/1001.
+- Captions burn into the render — checked on an actual frame at 2:28 (t=148s).
+- Two different Vegas exports of the same edit produce identical cut points on
+  all 88 clips, to 0 microseconds.
+- Audio plays during playback.
+- The Becky Review 3 window opens in about 1 second.
+- Building captions takes about 12 seconds, costs nothing, and rotates across
+  free models automatically.
+- A scheduled Windows task ("BeckyModelHeartbeat") checks in on the free models
+  every 30 minutes and writes `X:\AI-2\fleet\model-heartbeat.json`.
+
+## The missing half — what Becky Review 3 is actually FOR
+
+Jordan caught this on 2026-07-20: *"i had fable 5 do a deep dive on
+HKUDS/VideoAgent and the features there. if the opencode model misses what we
+decided from that topic, then becky 3 is missing core features."* He was right.
+
+The decision is `BUILD_1.md` §10 (L578-621), from that deep dive. The finding:
+VideoAgent renders finished video directly and has **no editable intermediate
+representation** — so becky's job is to keep its intent→workflow brain and
+**replace its "render the video" terminal step with "emit becky engine verbs"**,
+so an AI edit lands on Jordan's timeline instead of rendering around him. His
+own words (`BUILD-INPUTS.md:13`): *"human review optional right on the timeline
+instead of burning it all together as an .mp4."*
+
+Status, checked 2026-07-20 — **the app half is mostly not built**:
+
+| | Requirement (`BUILD_1.md:477-484`) | State |
+|---|---|---|
+| H-4 | `apply_edit_batch` — a whole AI pass is ONE undo span | Go side built + tested (`cmd/clip/edit_batch.go`, `bridge.go:223`); **C++ side not wired** — `native/becky-review/main.cpp` mentions it once, in a comment at L3107 |
+| H-5 | `event` stream announcing AI activity **without blocking Jordan's editing** | not found |
+| H-6 | plain-language intent in chat → timeline edits he can see/adjust/undo, via the existing `ask`/`apply_proposal` seam (**never fork it**) | not found |
+| H-7 | forensic path in-app: query → qmd recall → becky-judge → becky-hits reel on the timeline | not found |
+
+Constraints that go with it: **no MCP server, no separate AI tool surface** —
+the AI uses the SAME shared-state JSON / engine-verb seam the human UI uses
+(`BUILD-INPUTS.md:18-22`). The Go engine is never forked; new capability is an
+additive verb (`BUILD_1.md:27-28`).
+
+Also missing: `BUILD-INPUTS.md:29` promised `research/videoagent-integration.md`
+(the intent→verb mapping). It was never written. `research/` has only
+`velo-logic-mining.md` from that batch.
+
+**Why this section exists:** `HANDOFF-BECKY-REVIEW-3.md` has ZERO mentions of
+VideoAgent, §10, or H-4..H-7. It is entirely render/audio/caption bug work. An
+agent working from that handoff alone would never learn the product spec exists
+— which is exactly what happened.
+
+## What's left — in order
+
+1. **The missing half above (H-4..H-7).** That is the product. Everything below
+   it is maintenance.
+2. **Caption wording.** Two real bugs are now fixed (a cut landing mid-word
+   captioned that word twice — "viral" / "viral", "maybe" / "maybe"; and the
+   min-duration floor let two captions overlap so libass stacked them). His real
+   edit went 202 cues -> 179. What remains is genuinely wording: some lines are a
+   single word and some breaks read awkwardly. The rule he cares about most holds
+   — a number never leaves its unit ("ten times a day" never splits into "ten" /
+   "times a day").
+3. **The branch `fix/becky-review-3-audio` is ahead of master and not merged.**
+4. **Re-check Becky Review 3 by actually driving it with a real mouse.** Several
+   agents edited `native/becky-review/main.cpp` overnight at the same time, so
+   confirm it still works end to end before trusting it.
+
+## Jordan's real footage to test with
+
+`X:\Videos\2025\11_November\Rendered\post_constantly.xml`
+`X:\Videos\2025\11_November\Rendered\post_constantly.mp4`
+`X:\Videos\2025\11_November\Rendered\post_constantly.srt`

@@ -3514,7 +3514,36 @@ int main(int argc, char** argv) {
     if (!mpvLaunch(hwnd)) crashLog("mpv: launch failed - video decode disabled, window still opening");
 
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::StyleColorsDark();
-    ImGui::GetIO().FontGlobalScale = 1.2f;
+
+    // ---- SIZED FOR JORDAN, not for a default ImGui demo ----
+    //
+    // He is sighted but vision-impaired, works by mouse and keyboard only, and
+    // reading costs him physical effort. Next to becky-review-native (the WPF
+    // app, whose sizing he has never complained about) this app's controls were
+    // visibly half the size: default 1.2x text with default 4x3px frame padding
+    // gave ~22px-tall buttons like "Play", "|<<", "2x". Small targets are not a
+    // taste question here - they are the difference between clicking a control
+    // and hunting for it.
+    //
+    // BECKY_UI_SCALE overrides it (e.g. "1.6") without a rebuild, because the
+    // right number is whatever he can actually read, not whatever I picked.
+    float uiScale = 1.35f;
+    if (const char* s = getenv("BECKY_UI_SCALE")) {
+        float v = (float)atof(s);
+        if (v >= 0.8f && v <= 3.0f) uiScale = v;
+    }
+    ImGui::GetIO().FontGlobalScale = uiScale;
+    {
+        ImGuiStyle& st = ImGui::GetStyle();
+        st.FramePadding = ImVec2(10, 7);   // bigger click targets
+        st.ItemSpacing = ImVec2(9, 7);     // room to tell controls apart
+        st.ScrollbarSize = 18.0f;          // grabbable without precision aiming
+        st.GrabMinSize = 14.0f;
+        st.FrameRounding = 4.0f;
+        st.WindowPadding = ImVec2(12, 10);
+        st.WindowBorderSize = 1.0f;        // a visible seam between the panels
+        st.SeparatorTextBorderSize = 2.0f;
+    }
     ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     // bootWork: engine start + reel/folder load, moved off the UI thread (see T-1 comment
@@ -4077,8 +4106,34 @@ int main(int argc, char** argv) {
             ImGui::EndMainMenuBar();
         }
 
+        // ---- LAYOUT: four panels that TILE, with no two claiming the same pixel.
+        //
+        // They used to be positioned independently and overlapped three ways at
+        // once (seen on screen 2026-07-20, next to becky-review-native):
+        //   * library and qa were FULL height while the timeline was FULL width,
+        //     so the timeline's ruler was drawn underneath both side panels;
+        //   * every panel started at y=0, which is UNDER the main menu bar, so
+        //     each panel's own heading was hidden behind the menu;
+        //   * the library was a flat 22% of the width - 281px at the default
+        //     1280 - which sliced its own filenames and buttons mid-character
+        //     ("2026-07-19_they_tried_t", "Smart (qmd)", "C").
+        // Jordan reads the screen with difficulty; clipped text is not a cosmetic
+        // problem for him, it is the difference between usable and not.
+        //
+        // One rect each, derived from one set of numbers, so they cannot drift
+        // apart again. Side panels get a PIXEL FLOOR as well as a percentage so
+        // they stay readable when the window is small.
+        const float menuH = ImGui::GetFrameHeight();          // main menu bar
+        const float availH = (float)g_H - menuH;
+        const float libW = (std::max)(320.0f, (float)g_W * 0.22f);
+        const float qaW = (std::max)(300.0f, (float)g_W * 0.22f);
+        const float timelineH = (std::max)(180.0f, availH * 0.26f);
+        const float topH = availH - timelineH;
+        const float vidW = (std::max)(240.0f, (float)g_W - libW - qaW);
+        const float topY = menuH;
+
         // ---- left panel: library / search / transcript (B, C) ----
-        ImGui::SetNextWindowPos({ 0, 0 }); ImGui::SetNextWindowSize({ (float)g_W * 0.22f, (float)g_H });
+        ImGui::SetNextWindowPos({ 0, topY }); ImGui::SetNextWindowSize({ libW, topH });
         if (ImGui::Begin("library", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool libFocusedNow = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGui::Text("Library / Search");
@@ -4200,7 +4255,7 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // ---- center video pane (D-1: mpv --wid child hwnd, not an ImGui image) ----
-        ImGui::SetNextWindowPos({ (float)g_W * 0.22f, 0 }); ImGui::SetNextWindowSize({ (float)g_W * 0.56f, (float)g_H * 0.78f });
+        ImGui::SetNextWindowPos({ libW, topY }); ImGui::SetNextWindowSize({ vidW, topH });
         if (ImGui::Begin("video", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool haveClip = !g_track[0].empty();
             if (g_mpvHwnd && g_mpvAvailable.load() && haveClip) {
@@ -4382,7 +4437,7 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // ---- right panel: Q&A / ask-becky (G) ----
-        ImGui::SetNextWindowPos({ (float)g_W * 0.78f, 0 }); ImGui::SetNextWindowSize({ (float)g_W * 0.22f, (float)g_H });
+        ImGui::SetNextWindowPos({ libW + vidW, topY }); ImGui::SetNextWindowSize({ qaW, topH });
         if (ImGui::Begin("qa", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             ImGui::Text("Q&A / Ask-Becky");
             ImGui::Separator();
@@ -4501,8 +4556,8 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // ---- bottom timeline ----
-        ImGui::SetNextWindowPos({ 0, (float)g_H * 0.78f });
-        ImGui::SetNextWindowSize({ (float)g_W, (float)g_H * 0.22f });
+        ImGui::SetNextWindowPos({ 0, topY + topH });
+        ImGui::SetNextWindowSize({ (float)g_W, timelineH });
         if (ImGui::Begin("timeline", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             drawTimeline(curSec, playing);
         }
