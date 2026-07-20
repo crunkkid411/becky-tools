@@ -416,6 +416,11 @@ static void editWorker() {
 // timeline, search all work) and the video pane shows a plain "video decode unavailable"
 // note instead of the whole app dying before CreateWindow ever runs.
 static std::atomic<bool> g_gstAvailable{ false };
+// T-1: set true (once, from bootWork's background thread, as its LAST write) once the
+// engine has started and the initial reel/folder load has finished. The render loop
+// gates all of g_track/g_folderView/etc. on this so a background thread can populate
+// them once, unlocked, with no reader until the flag flips - see main()'s "T-1 fix" comment.
+static std::atomic<bool> g_bootDone{ false };
 static int gstInitSEH(int argc, char** argv) {
     __try {
         gst_init(&argc, &argv);
@@ -1913,6 +1918,15 @@ static ThumbTex* getThumb(const std::string& source, double t) {
 struct PendingDrop { std::vector<std::string> paths; int clientX = 0, clientY = 0; };
 static std::vector<PendingDrop> g_pendingDrops;
 static void requestAddExternal(const std::string& path, int at); // defined below, near requestTranscribe
+static bool hasExtCI(const std::string& path, const char* ext);  // defined below, near pickOpenReelFile
+static std::string convertEditIfNeeded(const std::string& path); // defined below, near pickOpenReelFile
+
+// ---- render/export toolbar requests (done on engine, shown in-window) ----
+// Moved up from beside the library helpers (its original spot, further down) so the
+// caption-lane / edit-file drop handling in drawTimeline (which now also loads reels
+// dropped in as .txt/.xml/.json) can report progress/errors through it too.
+static std::string g_renderMsg;           // last render outcome (plain language)
+static double g_renderMsgAt = 0;
 
 // DragQueryFileW/DragQueryPoint/DragFinish are SHELL32 calls - live-tested this
 // session and a malformed/foreign drop payload faulted (0xc0000005) INSIDE
@@ -2142,9 +2156,17 @@ static void capTrimRight(std::string& s) {
     while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ' || s.back() == '\t')) s.pop_back();
 }
 
-// loadCaptions points the lane at "<reel stem>.srt". A missing file is NOT an error
-// (the reel simply has not been captioned yet) - the lane still appears and says so,
-// which is how Jordan finds out he needs to run becky-subtitle.
+// loadCaptions points the lane at "<reel stem>.srt". Both "<name>.json" and
+// "<name>.reel.json" are in circulation as reel files (Jordan's Vegas-import
+// reels are the latter) and becky-subtitle always writes plain "<name>.srt" -
+// so both stems are tried, same as the engine's reelCaptions() in
+// cmd/clip/export.go. Trying only the reel's own stem is the exact regression
+// that made a real, present .srt read as "no captions yet" for a *.reel.json
+// reel: stripping one extension off "post_constantly.reel.json" leaves
+// "post_constantly.reel", and "post_constantly.reel.srt" never existed - the
+// actual file beside it is "post_constantly.srt". A missing file is NOT an
+// error (the reel simply has not been captioned yet) - the lane still appears
+// and says so, which is how Jordan finds out he needs to run becky-subtitle.
 static void loadCapStyle();   // defined just below - needs g_capPath, which this sets
 static void loadCaptions(const std::string& reelPath) {
     g_caps.clear(); g_capErr.clear(); g_capPath.clear();
@@ -2153,7 +2175,17 @@ static void loadCaptions(const std::string& reelPath) {
     std::string p = reelPath; fwslash(p);
     size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
     if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p = p.substr(0, dot);
-    p += ".srt";
+    std::vector<std::string> stems = { p };
+    const std::string reelSuffix = ".reel";
+    if (p.size() > reelSuffix.size() && p.compare(p.size() - reelSuffix.size(), reelSuffix.size(), reelSuffix) == 0)
+        stems.push_back(p.substr(0, p.size() - reelSuffix.size()));
+    std::string p_found;
+    for (auto& s : stems) {
+        std::string cand = s + ".srt";
+        std::ifstream test(cand);
+        if (test.good()) { p_found = cand; break; }
+    }
+    p = p_found.empty() ? (stems[0] + ".srt") : p_found;
     g_capPath = p;
     loadCapStyle();                        // this reel's saved vertical placement
     std::ifstream f(p);
@@ -2348,6 +2380,32 @@ static void drawTimeline(double& curSec, bool& playing) {
         std::vector<PendingDrop> drops; drops.swap(g_pendingDrops);
         for (auto& d : drops) {
             if (d.clientY < aY || d.clientY > aY + laneH) continue;
+            // A reel (.json) or an edit export (.txt Vegas EDL / .xml Final Cut) dropped
+            // in loads as the WHOLE TIMELINE, same as the Load Reel button - same fix as
+            // that button's filter (Jordan drags his Vegas export straight in). Takes
+            // priority over the per-clip video-insert loop below and only the first such
+            // file in the drop is used, matching the WPF app's OnWebDrop.
+            bool loadedEdit = false;
+            for (auto& path : d.paths) {
+                if (!hasExtCI(path, ".json") && !hasExtCI(path, ".txt") && !hasExtCI(path, ".xml")) continue;
+                std::string rp = convertEditIfNeeded(path);
+                if (!rp.empty()) {
+                    json r = engineCall("load_reel", { {"path", rp} }, 30.0);
+                    if (r.value("ok", false)) {
+                        loadTimelineView(r.contains("data") ? r["data"] : r);
+                        // NB: no lastComposed reset here (unlike the Load Reel button) -
+                        // that variable is local to main()'s loop, out of scope in
+                        // drawTimeline; playing=false already makes main()'s own
+                        // "if (!playing) lastComposed = -1" catch it next frame.
+                        curSec = 0; playing = false; g_playingExt = false;
+                        loadCaptions(rp); g_renderMsg = "Loaded reel " + baseName(rp);
+                    } else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                }
+                loadedEdit = true;
+                break;
+            }
+            if (loadedEdit) continue;
             double dropSec = xToSec((float)d.clientX);
             int to = 0;
             for (auto& c : g_track[0]) if (c.compStart + (c.out - c.in) / 2 < dropSec) to++;
@@ -3069,10 +3127,6 @@ static uint32_t cardColorFor(const std::string& id) {
     g_cardColor[id] = c; return c;
 }
 
-// ---- render/export toolbar requests (done on engine, shown in-window) ----
-static std::string g_renderMsg;           // last render outcome (plain language)
-static double g_renderMsgAt = 0;
-
 // ---- library helpers ----
 // Sort g_videos in place per g_sortMode (B-3).
 static void sortLibrary() {
@@ -3151,21 +3205,80 @@ static std::string wideToUtf8(const std::wstring& w) {
     if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
     return s;
 }
-// Native Win32 "Open" dialog filtered to reel .json files first (F-2 Load dialog).
+// Native Win32 "Open" dialog. Jordan edits in Vegas and opens the EXPORT, not a
+// becky reel - "i STILL can't load .txt or .xml files with the load button (it
+// should be able to fucking convert them)". So the edit formats (Vegas EDL TXT,
+// Final Cut/Premiere XML) come FIRST in the filter list, same order the WPF app
+// (gui/BeckyReviewNative) already ships, and convertEditIfNeeded (below) converts
+// them transparently on the way in.
 static std::string pickOpenReelFile(HWND owner) {
     wchar_t file[MAX_PATH] = L"";
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof ofn;
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"Reel files (*.json)\0*.json\0All files\0*.*\0";
+    ofn.lpstrFilter =
+        L"Edits and reels (*.txt;*.xml;*.json)\0*.txt;*.xml;*.json\0"
+        L"Vegas EDL text (*.txt)\0*.txt\0"
+        L"Final Cut / Premiere XML (*.xml)\0*.xml\0"
+        L"Becky reel (*.json)\0*.json\0"
+        L"All files\0*.*\0";
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    ofn.lpstrTitle = L"Load Reel";
+    ofn.lpstrTitle = L"Load Reel (or a Vegas/Final Cut edit export)";
     if (!GetOpenFileNameW(&ofn)) return {};
     std::string s = wideToUtf8(file);
     fwslash(s);
     return s;
+}
+
+static bool hasExtCI(const std::string& path, const char* ext) {
+    size_t n = strlen(ext);
+    if (path.size() < n) return false;
+    std::string e = path.substr(path.size() - n);
+    std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return e == ext;
+}
+
+// A Vegas 'EDL TXT' (.txt) or Final Cut Pro 7 XML (.xml) export is an edit, not a
+// reel - converts it via becky-otio --import into "<stem>.reel.json" beside the
+// edit file and returns that path. A reel (.json) passes straight through. Runs
+// SYNCHRONOUSLY on the UI thread, same as the Load Reel button's own engineCall
+// below - the conversion is a fast, offline, deterministic Go pass (no model
+// call), matching the WPF app's ConvertEditIfNeededAsync. On failure this shows
+// why in the status line and returns "", so the caller loads nothing rather than
+// a broken reel.
+static std::string convertEditIfNeeded(const std::string& path) {
+    if (path.empty() || hasExtCI(path, ".json")) return path;
+    if (!hasExtCI(path, ".txt") && !hasExtCI(path, ".xml")) return path;
+
+    std::string exe = "X:/AI-2/becky-tools/becky-go/bin/becky-otio.exe";
+    if (!std::ifstream(exe)) {
+        g_renderMsg = "Could not read that edit: becky-otio.exe not found"; g_renderMsgAt = nowSec();
+        return "";
+    }
+    g_renderMsg = "Converting " + baseName(path) + "..."; g_renderMsgAt = nowSec();
+
+    std::string p = path; fwslash(p);
+    size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
+    std::string stem = (dot != std::string::npos && (slash == std::string::npos || dot > slash)) ? p.substr(0, dot) : p;
+    std::string outPath = stem + ".reel.json";
+
+    std::wstring wexe = utf8ToWide(exe), wpath = utf8ToWide(path), wout = utf8ToWide(outPath);
+    std::wstring cmd = L"\"" + wexe + L"\" --import \"" + wpath + L"\" --out \"" + wout + L"\"";
+    STARTUPINFOW si{ sizeof si }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        g_renderMsg = "Could not read that edit: could not launch becky-otio"; g_renderMsgAt = nowSec();
+        return "";
+    }
+    WaitForSingleObject(pi.hProcess, 30000);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    if (!std::ifstream(outPath).good()) {
+        g_renderMsg = "Could not read that edit: " + baseName(path) + " did not convert"; g_renderMsgAt = nowSec();
+        return "";
+    }
+    return outPath;
 }
 
 // seekToSpan puts ONE clip [a,b) of source on the (local) track and repositions
@@ -3365,53 +3478,18 @@ int main(int argc, char** argv) {
     std::thread(decodeWorker).detach();   // P1 fix: owns the mpv IPC dispatch, off the UI thread
     std::thread(editWorker).detach();     // A-4 fix: owns split/delete/trim/undo engine round-trips, off the UI thread
     std::thread(searchWorker).detach();   // I-* fix: owns search/qmd_search engine round-trips, off the UI thread
-    g_engine.lastError.clear();
-    bool engineOk = engineStart();
-    if (!engineOk) fprintf(stderr, "engine: %s\n", g_engine.lastError.c_str());
-    else {
-        std::thread(engineReader).detach();
-        // Pre-load a reel if the caller set BECKY_REVIEW_REEL (the "Open Forensic Hits" launcher).
-        if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
-            json r = engineCall("load_reel", { {"path", std::string(rp)} }, 30.0);
-            if (r.value("ok", false)) {
-                json tv = engineCall("timeline", {}, 10.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]);
-                loadCaptions(std::string(rp));   // "<reel stem>.srt" beside the reel
-            }
-        }
-        // Boot a default folder if supplied (env); else A-3: reopen whatever
-        // folder was open last session, so the app is never blank on relaunch.
-        if (const char* fp = getenv("BECKY_REVIEW_FOLDER")) {
-            loadFolder(std::string(fp));
-        } else {
-            std::string last = recallFolder();
-            if (!last.empty()) loadFolder(last);
-        }
-        if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
-            json tv = engineCall("timeline", {}, 10.0);
-            if (tv.value("ok", false)) loadTimelineView(tv["data"]);
-        }
-        // Q&A cards via BECKY_REVIEW_QUESTIONS sidecar (G-1). The engine loads them
-        // itself from that env at bridge boot; here we just pull the exposed list.
-        if (const char* qp = getenv("BECKY_REVIEW_QUESTIONS")) { (void)qp; refreshCards(); }
-    }
 
     double curSec = 0;
-    if (g_track[0].empty()) {
-        // demo reel so the window is never blank (proves the pipeline without a folder).
-        // Was pointed at "timeline-bench" (multi-GB source footage, never named proxyA.mp4
-        // there) - the real 120s bench proxy lives in "ges-bench". Guarded on existence so a
-        // missing file leaves the timeline empty (visibly "no reel loaded") instead of showing
-        // dead clips with no video/waveform.
-        const char* demoSrc = "X:/AI-2/becky-tools/native/ges-bench/proxyA.mp4";
-        std::ifstream demoCheck(demoSrc, std::ios::binary);
-        if (demoCheck.good()) {
-            struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
-            double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "clip", demoSrc, "" }); cs += s.out - s.in; }
-        }
-    }
-    recomputeDur(); relabel(0); relabel(1);
-    for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
 
+    // T-1 fix: CreateWindow/D3D/ImGui come up FIRST, before the engine start + reel/folder
+    // load - a cold index of a large real-world case folder is a multi-minute filesystem
+    // walk (see open_folder's 600s timeout above), and it used to run entirely before
+    // CreateWindow even existed. To Jordan that reads as "nothing happened" for up to 15s+
+    // on a double-click. Now the window is on screen almost immediately; the slow engine/
+    // reel/folder work moves to a background thread (bootWork below), same "blocking call
+    // off the UI thread, drained via a done-flag" shape already used for search (see I-*
+    // comment on g_searchDoneResult) - except here the loop simply doesn't touch g_track/
+    // g_folderView/curSec until g_bootDone is observed true, so there is nothing to drain.
     WNDCLASSEXW wc = { sizeof wc, CS_OWNDC, WndProc, 0, 0, GetModuleHandle(nullptr), nullptr, LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"beckyreview", nullptr };
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowW(wc.lpszClassName, L"Becky Review (native)", WS_OVERLAPPEDWINDOW, 80, 40, g_W, g_H, nullptr, nullptr, wc.hInstance, nullptr);
@@ -3439,6 +3517,61 @@ int main(int argc, char** argv) {
     ImGui::GetIO().FontGlobalScale = 1.2f;
     ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
+    // bootWork: engine start + reel/folder load, moved off the UI thread (see T-1 comment
+    // above). Sets g_bootDone LAST, after every write - the render loop below never reads
+    // g_track/g_folderView/etc. until it observes g_bootDone true, so there is no reader
+    // racing this writer despite no lock (same single-writer-then-flag shape, just without
+    // a done-struct to copy since the render loop simply waits instead of draining).
+    g_engine.lastError.clear();
+    std::thread([]() {
+        t_threadTag = "bootWork";
+        bool engineOk = engineStart();
+        if (!engineOk) fprintf(stderr, "engine: %s\n", g_engine.lastError.c_str());
+        else {
+            std::thread(engineReader).detach();
+            // Pre-load a reel if the caller set BECKY_REVIEW_REEL (the "Open Forensic Hits" launcher).
+            if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
+                json r = engineCall("load_reel", { {"path", std::string(rp)} }, 30.0);
+                if (r.value("ok", false)) {
+                    json tv = engineCall("timeline", {}, 10.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]);
+                    loadCaptions(std::string(rp));   // "<reel stem>.srt" beside the reel
+                }
+            }
+            // Boot a default folder if supplied (env); else A-3: reopen whatever
+            // folder was open last session, so the app is never blank on relaunch.
+            if (const char* fp = getenv("BECKY_REVIEW_FOLDER")) {
+                loadFolder(std::string(fp));
+            } else {
+                std::string last = recallFolder();
+                if (!last.empty()) loadFolder(last);
+            }
+            if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
+                json tv = engineCall("timeline", {}, 10.0);
+                if (tv.value("ok", false)) loadTimelineView(tv["data"]);
+            }
+            // Q&A cards via BECKY_REVIEW_QUESTIONS sidecar (G-1). The engine loads them
+            // itself from that env at bridge boot; here we just pull the exposed list.
+            if (const char* qp = getenv("BECKY_REVIEW_QUESTIONS")) { (void)qp; refreshCards(); }
+        }
+
+        if (g_track[0].empty()) {
+            // demo reel so the window is never blank (proves the pipeline without a folder).
+            // Was pointed at "timeline-bench" (multi-GB source footage, never named proxyA.mp4
+            // there) - the real 120s bench proxy lives in "ges-bench". Guarded on existence so a
+            // missing file leaves the timeline empty (visibly "no reel loaded") instead of showing
+            // dead clips with no video/waveform.
+            const char* demoSrc = "X:/AI-2/becky-tools/native/ges-bench/proxyA.mp4";
+            std::ifstream demoCheck(demoSrc, std::ios::binary);
+            if (demoCheck.good()) {
+                struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
+                double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "clip", demoSrc, "" }); cs += s.out - s.in; }
+            }
+        }
+        recomputeDur(); relabel(0); relabel(1);
+        for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+        g_bootDone.store(true);
+    }).detach();
+
     double lastComposed = -1; bool playing = false;
     bool mpvArmedOnce = false;   // forces one dispatch the instant mpv finishes its async connect (see below)
     bool wasComposeContinuous = false;   // I-5: was the PREVIOUS frame mid-churn (playing/dragging)?
@@ -3456,6 +3589,29 @@ int main(int argc, char** argv) {
         g_busyHint = playing || g_gest.kind != 0;
 
         if (!g_visible) { Sleep(30); continue; }
+
+        // T-1: bootWork (engine start + reel/folder load) is still running on its own
+        // thread - paint a plain "loading" frame instead of touching g_track/g_folderView/
+        // curSec, which bootWork owns exclusively until it flips g_bootDone. This is the
+        // whole fix for the ~15s blank-window boot: the window, D3D and message pump are
+        // already up (see main()'s "T-1 fix" comment), so Jordan sees it appear and say
+        // something immediately instead of nothing for 15 seconds.
+        if (!g_bootDone.load()) {
+            ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(24, 24));
+            ImGui::Begin("boot", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+            ImGui::Text("Loading Becky Review...");
+            ImGui::End();
+            ImGui::Render();
+            float clr[4] = { 0.06f, 0.07f, 0.09f, 1.0f };
+            g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
+            g_ctx->ClearRenderTargetView(g_rtv, clr);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            g_swap->Present(1, 0);
+            continue;
+        }
 
         // keyboard (standalone focus): play / split / delete / trim / group / seek.
         // Gated on !WantCaptureKeyboard so typing in the search/ask/within boxes
@@ -4139,11 +4295,20 @@ int main(int argc, char** argv) {
             // F-3/F-4: naming (clips_SOURCE_NNNN.mp4 / clips_compilation_NNNN.mp4,
             // never overwrites) is entirely engine-side (renderReel) - the button
             // just calls export with no output path and shows what came back.
+            // The captions are burned in by the ENGINE, in the render's own ffmpeg pass
+            // (cmd/clip export.go reelCaptions -> internal/reel burnCaptionsChain), so
+            // there is nothing to pass and nothing for Jordan to run by hand. What the
+            // button MUST do is say whether they actually landed: a render that silently
+            // dropped the captions is the bug that cost a whole day, and "Rendered
+            // <file>" alone reads identical in both cases.
             if (ImGui::Button("Render")) {
                 json r = engineCall("export", { {"output", ""} }, 300.0);
                 if (r.value("ok", false)) {
                     const json& d = r.contains("data") ? r["data"] : r;
-                    g_renderMsg = "Rendered " + d.value("mp4", std::string());
+                    std::string caps = d.value("captions", std::string());
+                    g_renderMsg = "Rendered " + d.value("mp4", std::string()) +
+                                  (caps.empty() ? "  - NO captions in this file"
+                                                : "  - captions burned in");
                     openInFileBrowser(d.value("mp4", std::string()));
                 } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
                 g_renderMsgAt = nowSec();
@@ -4156,7 +4321,14 @@ int main(int argc, char** argv) {
                 json r = engineCall("export_selection", { {"ids", ids}, {"output", ""} }, 300.0);
                 if (r.value("ok", false)) {
                     const json& d = r.contains("data") ? r["data"] : r;
-                    g_renderMsg = "Rendered " + d.value("mp4", std::string());
+                    // A selection render carries NO captions - the .srt is timed to the
+                    // whole reel, so on a subset every later cue would sit on the wrong
+                    // words. The engine says so in the note; surface it rather than let
+                    // "Rendered <file>" imply captions that are not there.
+                    std::string caps = d.value("captions", std::string());
+                    g_renderMsg = "Rendered " + d.value("mp4", std::string()) +
+                                  (caps.empty() ? "  - NO captions (use Render for a captioned file)"
+                                                : "  - captions burned in");
                     openInFileBrowser(d.value("mp4", std::string()));
                 } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
                 g_renderMsgAt = nowSec();
@@ -4187,12 +4359,15 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Load Reel")) {
-                std::string path = pickOpenReelFile(hwnd);
-                if (!path.empty()) {
-                    json r = engineCall("load_reel", { {"path", path} }, 30.0);
-                    if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
-                    else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
-                    g_renderMsgAt = nowSec();
+                std::string picked = pickOpenReelFile(hwnd);
+                if (!picked.empty()) {
+                    std::string path = convertEditIfNeeded(picked);   // .txt/.xml Vegas/FCP export -> reel .json
+                    if (!path.empty()) {
+                        json r = engineCall("load_reel", { {"path", path} }, 30.0);
+                        if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
+                        else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
+                        g_renderMsgAt = nowSec();
+                    }
                 }
             }
             ImGui::SameLine();
