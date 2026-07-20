@@ -4798,6 +4798,44 @@ int main(int argc, char** argv) {
                     setOverlayMode((g_ovMode + 1) % 3);
             }
             ImGui::SameLine();
+            // EXTEND THE SELECTED CLIP BY ONE FRAME (item 8). Jordan cuts to the
+            // frame - "a microsecond difference means you're cutting off
+            // consonants" - and dragging an edge with the mouse cannot reliably
+            // land on a single frame at any sane zoom. These two buttons move one
+            // edge by exactly one frame OF THAT CLIP'S OWN SOURCE RATE (29.97 is
+            // not 30; a 30fps assumption drifts a frame every 33 seconds).
+            //
+            // ONE set_trim per press = ONE Ctrl+Z per press, deliberately: the
+            // split+remove_clip approach costs two undos for one visible action,
+            // which is the "phantom moves" undo bug the spec names.
+            {
+                Clip* sc = nullptr;
+                for (auto& c : g_track[0]) if (g_sel.count(c.id)) { sc = &c; break; }
+                bool canTrim = sc && !sc->id.empty() && !g_editsInFlight.count(sc->id);
+                if (!canTrim) ImGui::BeginDisabled();
+                double fps = sc ? sourceFps(sc->source) : 30.0;
+                if (fps <= 0) fps = 30.0;
+                const double oneFrame = 1.0 / fps;
+                if (fixedButton("<+1f##extl", { "<+1f" }) && canTrim && sc->in > oneFrame) {
+                    EditReq req; req.verb = "set_trim";
+                    req.args = { {"id", sc->id}, {"in", sc->in - oneFrame}, {"out", sc->out} };
+                    req.kind = 2; req.t = curSec; req.group = g_group;
+                    g_editsInFlight.insert(sc->id);
+                    queueEdit(std::move(req));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame EARLIER (its own source rate)");
+                ImGui::SameLine();
+                if (fixedButton("+1f>##extr", { "+1f>" }) && canTrim) {
+                    EditReq req; req.verb = "set_trim";
+                    req.args = { {"id", sc->id}, {"in", sc->in}, {"out", sc->out + oneFrame} };
+                    req.kind = 2; req.t = curSec; req.group = g_group;
+                    g_editsInFlight.insert(sc->id);
+                    queueEdit(std::move(req));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame LATER (its own source rate)");
+                if (!canTrim) ImGui::EndDisabled();
+            }
+            ImGui::SameLine();
             // E-10 SKIP QUIET — the feature Jordan called "the single biggest
             // breakthrough" (feedback7): during playback, everything under the
             // loudness threshold is SKIPPED seamlessly instead of played, so
