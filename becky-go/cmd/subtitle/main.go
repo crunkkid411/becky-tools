@@ -75,7 +75,7 @@ func main() {
 	hold := fs.Float64("hold", 0.35, "carry the last caption across an inter-cut gap no longer than this")
 	lower := fs.Bool("lower", true, "lowercase the captions and drop trailing punctuation - the cli-cut look")
 	review := fs.Bool("review", true, "pass 2: have a model regroup the caption lines so they break on phrases instead of mid-thought. This is what stops captions reading as broken")
-	reviewModel := fs.String("review-model", "hy3", "model alias for the caption review pass")
+	reviewModel := fs.String("review-model", "hy3", "who regroups the caption lines. FREE OR OAUTH ONLY: hy3|nemotron|gemma|laguna are free OpenRouter ids; sonnet|opus|haiku go through your Claude Max session (also free, slower). A paid API id is refused")
 
 	font := fs.String("font", "ProximaNova-Semibold", "caption font FAMILY name (libass matches the family, not the filename)")
 	fontSize := fs.Int("font-size", 12, "caption font size")
@@ -166,16 +166,27 @@ func main() {
 	// Pass 1 breaks on pacing alone and cuts mid-phrase; pass 2 regroups the
 	// lines so they break on thoughts. Without it the captions read as broken
 	// even though every timing is frame-correct.
+	//
+	// FREE OR OAUTH, NEVER PAID. An Anthropic model comes from Jordan's Claude
+	// Max subscription (oauthModel); everything else must be a :free OpenRouter
+	// id, which openRouterOnce refuses to violate.
 	var model subs.ModelFunc
+	batchSize := subs.DefaultReviewBatch
 	if *review {
-		if haveReviewer() {
+		switch {
+		case isOAuthModel(*reviewModel):
+			model = oauthModel(*reviewModel, *verbose)
+			// One session per call costs ~a minute regardless of payload, so send
+			// the whole edit at once instead of paying that eleven times.
+			batchSize = len(segments)
+		case haveReviewer():
 			model = openRouterModel(*reviewModel, *verbose)
-		} else {
+		default:
 			noteReviewSkipped("OPENROUTER_API_KEY is not set")
 			warnings = append(warnings, "caption review skipped: OPENROUTER_API_KEY is not set")
 		}
 	}
-	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, subs.DefaultReviewBatch)
+	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, batchSize)
 	warnings = append(warnings, reviewWarnings...)
 
 	cues := subs.BuildFromChunks(segments, chunks, opt)
