@@ -177,6 +177,61 @@ func TestParseFCP7XMLNoSequenceIsAnError(t *testing.T) {
 	}
 }
 
+// TestNormalizeRatePullsContainerTagsOntoTrueNTSC guards the bug that made
+// Jordan's edit sound wrong: his media is TAGGED 2997/100 (29.970000) while the
+// Vegas edit that cut it uses true NTSC 30000/1001 (29.970030). Two grids that
+// agree at 0 and drift ~0.3ms apart by the end of a 5-minute file, landing cut
+// points between frames. "a microsecond difference means you're cutting off
+// consonants."
+func TestNormalizeRatePullsContainerTagsOntoTrueNTSC(t *testing.T) {
+	const ntsc = 30000.0 / 1001.0
+	cases := []struct {
+		in   float64
+		want float64
+		why  string
+	}{
+		{2997.0 / 100.0, ntsc, "a rounded 29.97 container tag IS true NTSC"},
+		{29.97, ntsc, "so is a decimal 29.97"},
+		{ntsc, ntsc, "true NTSC stays itself"},
+		{24000.0 / 1001.0, 24000.0 / 1001.0, "23.976 stays itself"},
+		{23.976, 24000.0 / 1001.0, "a rounded 23.976 snaps to the rational"},
+		{59.94, 60000.0 / 1001.0, "so does 59.94"},
+		{30, 30, "a true 30 is NOT NTSC and must not be moved"},
+		{25, 25, "PAL is left alone"},
+		{0, 0, "unknown stays unknown rather than inventing a rate"},
+	}
+	for _, c := range cases {
+		if got := normalizeRate(c.in); !impClose(got, c.want) {
+			t.Errorf("normalizeRate(%v) = %v, want %v - %s", c.in, got, c.want, c.why)
+		}
+	}
+}
+
+// TestSnapFrameRecoversTheEditedFrame covers the .txt path: Vegas states its
+// frame cuts as MILLISECONDS, which is a lossy view of a frame index. Snapping
+// back to the grid recovers the exact frame Jordan cut on.
+func TestSnapFrameRecoversTheEditedFrame(t *testing.T) {
+	const fps = 30000.0 / 1001.0
+	for _, frame := range []int{25, 274, 8996, 1} {
+		exact := float64(frame) / fps
+		// What Vegas writes: the same instant rounded to 0.1us in its ms column.
+		lossy := float64(int(exact*10000000+0.5)) / 10000000
+		got := snapFrame(lossy, fps)
+		if !impClose(got, exact) {
+			t.Errorf("frame %d: snapFrame(%.9f) = %.9f, want %.9f", frame, lossy, got, exact)
+		}
+		if back := got * fps; !impClose(back, float64(frame)) {
+			t.Errorf("frame %d did not round-trip: got %.6f frames", frame, back)
+		}
+	}
+}
+
+func TestSnapFrameLeavesTimesAloneWithoutARate(t *testing.T) {
+	if got := snapFrame(1.234567, 0); !impClose(got, 1.234567) {
+		t.Errorf("snapFrame with fps 0 = %v, want the input untouched", got)
+	}
+}
+
 func TestResolveFPS(t *testing.T) {
 	cases := []struct {
 		rate xRate

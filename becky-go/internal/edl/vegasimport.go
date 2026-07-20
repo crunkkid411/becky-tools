@@ -5,12 +5,16 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+
+	"becky-go/internal/config"
+	"becky-go/internal/mediainfo"
 )
 
 // Importing an already-cut timeline back INTO becky was originally a declared
@@ -52,10 +56,16 @@ func ImportTimeline(path string) (ImportResult, error) {
 	var clips []Clip
 	var fps float64
 	var format string
+	// The .txt states times in milliseconds (a lossy view of a frame index), so
+	// it needs snapping back onto the frame grid. The .xml already gives exact
+	// integer frames - snapping it would be a no-op at best and could only add
+	// error, so it is left alone.
+	var snapToFrames bool
 
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".txt":
 		format = "vegas-edl-txt"
+		snapToFrames = true
 		clips, fps, err = parseVegasTXT(f)
 	case ".xml":
 		format = "fcp7-xml"
@@ -89,6 +99,29 @@ func ImportTimeline(path string) (ImportResult, error) {
 		}
 	}
 
+	// The frame rate is NOT optional. Jordan edits frame by frame in Vegas and a
+	// single frame at 29.97 is 33ms - enough to clip a consonant off the front of
+	// a word. A reel with no rate makes every consumer fall back to a default 30,
+	// which mis-seeks EVERY cut on 29.97 media. Vegas EDL TXT carries no rate, so
+	// the media itself is probed; only if that fails is the reel left rateless.
+	if fps <= 0 {
+		fps = probeFPS(clips)
+	}
+	// One grid for everyone: the edit's stated rate and the media's container tag
+	// must resolve to the SAME rational or the two drift apart across the file.
+	fps = normalizeRate(fps)
+
+	// Vegas edited on FRAMES. The .txt expresses those frames as milliseconds,
+	// which is a lossy rendering of a frame index - snapping back to the nearest
+	// whole frame at the true rate RECOVERS the exact frame Jordan cut on, making
+	// the .txt as accurate as the .xml instead of ~0.3ms off.
+	if fps > 0 && snapToFrames {
+		for i := range clips {
+			clips[i].In = snapFrame(clips[i].In, fps)
+			clips[i].Out = snapFrame(clips[i].Out, fps)
+		}
+	}
+
 	for i := range clips {
 		clips[i].ID = fmt.Sprintf("c%d", i+1)
 		if fps > 0 {
@@ -107,6 +140,59 @@ func ImportTimeline(path string) (ImportResult, error) {
 		Format:     format,
 		Unresolved: unresolved,
 	}, nil
+}
+
+// normalizeRate pulls a frame rate onto the exact rational it is really meant to
+// be. Containers routinely store a ROUNDED tag - Jordan's source is tagged
+// 2997/100 (29.970000) while the edit that cut it uses true NTSC 30000/1001
+// (29.970030). Those are two different frame grids: they agree at the start and
+// drift ~0.3ms apart by the end of a 5-minute file, which lands cut points
+// between frames and clips consonants. Snapping the RATE makes every consumer
+// share one grid.
+func normalizeRate(fps float64) float64 {
+	if fps <= 0 {
+		return 0
+	}
+	for _, exact := range []float64{
+		24000.0 / 1001.0, // 23.976
+		30000.0 / 1001.0, // 29.97
+		60000.0 / 1001.0, // 59.94
+		120000.0 / 1001.0,
+		24, 25, 30, 50, 60, 120,
+	} {
+		if math.Abs(fps-exact) < 0.01 {
+			return exact
+		}
+	}
+	return fps
+}
+
+// snapFrame puts a time exactly on the frame grid at fps. Vegas cut on whole
+// frames; anything between them is rounding noise from the export format, not
+// an edit decision.
+func snapFrame(sec, fps float64) float64 {
+	if fps <= 0 {
+		return sec
+	}
+	return math.Round(sec*fps) / fps
+}
+
+// probeFPS asks the media what its real frame rate is, for edit formats that do
+// not state one. Returns 0 when the media cannot be read, so the caller can say
+// so rather than invent a rate.
+func probeFPS(clips []Clip) float64 {
+	cfg := config.Load()
+	seen := map[string]bool{}
+	for _, c := range clips {
+		if c.Source == "" || seen[c.Source] {
+			continue
+		}
+		seen[c.Source] = true
+		if info, err := mediainfo.Probe(cfg.FFprobe, c.Source); err == nil && info.FPS > 0 {
+			return info.FPS
+		}
+	}
+	return 0
 }
 
 // findBeside looks for name in the edit file's own folder, then in a sibling
