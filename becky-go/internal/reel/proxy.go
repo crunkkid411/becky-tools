@@ -45,7 +45,7 @@ func Proxy(source, outDir string) (string, error) {
 		return "", fmt.Errorf("ffmpeg not available (config FFmpeg=%q); cannot build proxy", cfg.FFmpeg)
 	}
 	if outDir == "" {
-		outDir = "."
+		outDir = proxyDirFor(source)
 	}
 	out := proxyPath(source, outDir)
 	args := proxyArgs(source, out)
@@ -113,7 +113,7 @@ func ScrubProxy(source, outDir string) (string, error) {
 		return "", fmt.Errorf("source not found: %s", source)
 	}
 	if outDir == "" {
-		outDir = "."
+		outDir = proxyDirFor(source)
 	}
 	out := scrubProxyPath(source, outDir)
 	if fi, e := os.Stat(out); e == nil && fi.Size() > 0 && !fi.ModTime().Before(si.ModTime()) {
@@ -231,7 +231,7 @@ func ScrubProxySegment(source string, inSec, outSec float64, outDir string) (str
 		return "", fmt.Errorf("source not found: %s", source)
 	}
 	if outDir == "" {
-		outDir = "."
+		outDir = proxyDirFor(source)
 	}
 	out := scrubProxySegmentPath(source, outDir, inSec, outSec)
 	if fi, e := os.Stat(out); e == nil && fi.Size() > 0 && !fi.ModTime().Before(si.ModTime()) {
@@ -356,7 +356,7 @@ func SegmentProxyPath(source, outDir string, inSec, outSec float64) string {
 		inSec = 0
 	}
 	if outDir == "" {
-		outDir = "."
+		outDir = proxyDirFor(source)
 	}
 	return scrubProxySegmentPath(source, outDir, inSec, outSec)
 }
@@ -468,4 +468,21 @@ func videoCodec(ffprobe, source string) (string, error) {
 		return "", fmt.Errorf("no video stream")
 	}
 	return strings.ToLower(parsed.Streams[0].CodecName), nil
+}
+
+// proxyDirFor picks where a proxy/still lands when the caller names no folder:
+// BESIDE ITS SOURCE, never the process's cwd.
+//
+// Same rule, and same reason, as defaultReelOutput: the cwd is wherever a
+// launcher happened to start, so cwd-relative output scattered files onto
+// whichever drive was current — including a removable forensic evidence drive.
+// The source path is the only thing that knows which job a file belongs to.
+//
+// Falls back to "." only for a source with no directory at all, which keeps the
+// old behaviour for a bare filename that is already cwd-relative anyway.
+func proxyDirFor(source string) string {
+	if dir := pathx.Dir(strings.TrimSpace(source)); dir != "" && dir != "." {
+		return dir
+	}
+	return "."
 }

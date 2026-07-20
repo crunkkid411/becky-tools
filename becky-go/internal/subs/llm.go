@@ -66,9 +66,8 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 
 	// Pass 1 first — it is both the input to the review and the fallback.
 	pass1 := make([][][]Word, len(segments))
-	inRange := make([][]Word, len(segments))
-	for i, seg := range segments {
-		inRange[i] = WordsInRange(seg.Words, seg.Start, seg.End)
+	inRange := WordsPerSegment(segments)
+	for i := range segments {
 		pass1[i] = RepairDangling(ChunkWords(inRange[i], opt.MaxChars, opt.GapSeconds), opt.MaxChars)
 	}
 	if model == nil {
