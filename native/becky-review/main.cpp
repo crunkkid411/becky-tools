@@ -904,6 +904,12 @@ static void endWork() {
 #define ICON_CAMERA "\xEE\x9C\xA2"   // U+E722 Camera
 #define ICON_SAVE   "\xEE\x9D\x8E"   // U+E74E Floppy disk
 #define ICON_OPEN   "\xEE\xB4\xA5"   // U+ED25 Open folder
+// U+E7A7 curls LEFT (undo), U+E7A6 curls RIGHT (redo) - verified by rendering
+// both from C:\Windows\Fonts\segmdl2.ttf at 96px and looking at them, against
+// the canonical U+E10E/U+E10D pair, which they match exactly. Getting these two
+// backwards would be worse than shipping no icon at all.
+#define ICON_UNDO   "\xEE\x9E\xA7"   // U+E7A7 Undo  (arrow curving back left)
+#define ICON_REDO   "\xEE\x9E\xA6"   // U+E7A6 Redo  (arrow curving forward right)
 
 // False until segmdl2.ttf is actually loaded. EVERY icon button below routes
 // its label through ico(), so if the font is missing the whole toolbar falls
@@ -1825,6 +1831,31 @@ static double g_lastRedoQueued = -1;   // redo debounce, same reason as undo's
 // Ctrl read from the SAME clock and BOTH bits as every other modifier here -
 // see the ctrlDown comment in the arrow handler for why that matters.
 static bool ctrlDownForRedo() { SHORT c = GetAsyncKeyState(VK_CONTROL); return (c & 0x8000) != 0 || (c & 1) != 0; }
+
+// ONE undo path and ONE redo path, shared by the keyboard chord and the toolbar
+// button. Written as functions rather than copied into the button handler on
+// purpose: the 250ms debounce below is load-bearing (an extra undo walks PAST
+// the intended edit and is destructive), and a second hand-copied call site is
+// exactly how a debounce gets left off one of them.
+static void queueUndo(double t) {
+    double n = nowSec();
+    if (n - g_lastUndoQueued <= 0.25) return;
+    g_lastUndoQueued = n;
+    editLog("EDGE UNDO");
+    // req.args MUST be json::object(), not {} - see the long note at the Ctrl+Z
+    // handler: an empty brace list picks the default ctor and yields JSON null,
+    // which threw in the drain and silently skipped the timeline refresh.
+    EditReq req; req.verb = "undo"; req.args = json::object(); req.kind = 4; req.t = t;
+    queueEdit(std::move(req));
+}
+static void queueRedo(double t) {
+    double n = nowSec();
+    if (n - g_lastRedoQueued <= 0.25) return;
+    g_lastRedoQueued = n;
+    editLog("EDGE REDO");
+    EditReq req; req.verb = "redo"; req.args = json::object(); req.kind = 4; req.t = t;
+    queueEdit(std::move(req));
+}
 
 static void emitScrub(double t, bool final_) {
     double n = nowSec();
@@ -4563,61 +4594,38 @@ int main(int argc, char** argv) {
                 curSec = std::min(curSec, g_compDur); if (!playing) lastComposed = -1;
             }
             if (GetAsyncKeyState('G') & 1) { g_group = !g_group; }
-            if (GetAsyncKeyState('Z') & 1) { if (GetAsyncKeyState(VK_CONTROL) & 0x8001) {
-                // Debounced: with the blocking engineCall() this replaced, a physical
-                // keypress could never queue a second "undo" before the first's round
-                // trip finished - the block was an accidental throttle. Non-blocking
-                // removes that throttle, and undo is the one edit where a spurious
-                // extra call is destructive (it walks past the intended edit into
-                // whatever came before it, observed live this session: a single split
-                // plus two Ctrl+Z presses emptied the whole demo reel, not just the
-                // split - see COULD NOT DO, not fully root-caused). 250ms is far under
-                // any real double-tap but absorbs a same/next-frame double edge.
-                double n = nowSec();
-                if (n - g_lastUndoQueued > 0.25) {
-                    g_lastUndoQueued = n;
-                    editLog("EDGE CTRLZ");
-                    // req.args MUST be json::object(), not {} - "json x = {}" prefers the
-                    // default ctor over the initializer-list ctor for an empty brace list,
-                    // producing JSON null. The drain loop below (~line 2280) unconditionally
-                    // calls res.req.args.value("id", ...) for every completed edit including
-                    // undo; a null args threw json::type_error.306 there on EVERY undo (caught,
-                    // logged, silently swallowed), which skipped the rest of that drain
-                    // iteration - including the loadTimelineView(__timeline) call - so undo's
-                    // engine round-trip succeeded but the visible timeline was NEVER refreshed
-                    // to match it. Found live via a 5-minute rapid split/undo stress drive
-                    // (BECKY_REVIEW_EDIT_LOG showed "EXCEPTION in UI drain: cannot use value()
-                    // with null" on every single Ctrl+Z) - this is almost certainly the real
-                    // cause of the earlier "two Ctrl+Z emptied the whole reel" oddity, not just
-                    // a walked-past-the-edit undo bug.
-                    EditReq req; req.verb = "undo"; req.args = json::object(); req.kind = 4; req.t = curSec;
-                    queueEdit(std::move(req));
-                }
-            } }
-            // REDO. The engine has implemented it all along (bridge.go:155) and the
-            // app had no way to reach it - zero occurrences of "redo" in this file
-            // before now. Undo without redo is a trap: one keypress too many and the
-            // only way back is to redo the edit by hand.
+            // UNDO / REDO chords. Both go through queueUndo/queueRedo, the same
+            // two functions the toolbar buttons call, so the 250ms debounce can
+            // never be present on one route and missing on the other.
+            //
+            // Debounce, and why it is load-bearing: with the blocking engineCall()
+            // this replaced, a physical keypress could never queue a second "undo"
+            // before the first's round trip finished - the block was an accidental
+            // throttle. Non-blocking removes it, and undo is the one edit where a
+            // spurious extra call is destructive (it walks PAST the intended edit
+            // into whatever came before it - a single split plus two Ctrl+Z presses
+            // emptied a whole demo reel). 250ms is far under any real double-tap
+            // but absorbs a same/next-frame double edge.
+            //
+            // READ EACH KEY'S EDGE EXACTLY ONCE, THEN DISPATCH ON THE MODIFIERS.
+            // GetAsyncKeyState's low bit means "pressed since the PREVIOUS call",
+            // so reading it CONSUMES it. The undo handler used to read 'Z' first
+            // and the redo chord tested 'Z' again below it - by then the edge was
+            // gone, so the Ctrl+Shift+Z branch could never be reached and the
+            // chord fell through to the undo above it. Ctrl+Shift+Z silently did
+            // an UNDO: the exact opposite of what it advertises, on the one pair
+            // of keys whose whole job is to be reversible. One read, one dispatch.
             //
             // Both Ctrl+Y and Ctrl+Shift+Z, because editors' muscle memory splits
-            // between them and guessing wrong costs him a lookup. Debounced on the
-            // same 250ms as undo and for the same reason: without the old blocking
-            // round-trip there is no accidental throttle, and a double-fire walks
-            // an extra step through the stack.
+            // between them and guessing wrong costs him a lookup.
             {
+                bool zEdge = (GetAsyncKeyState('Z') & 1) != 0;
+                bool yEdge = (GetAsyncKeyState('Y') & 1) != 0;
                 SHORT sh = GetAsyncKeyState(VK_SHIFT);
                 bool shiftDown = (sh & 0x8000) != 0 || (sh & 1) != 0;
-                bool redoChord = ((GetAsyncKeyState('Y') & 1) && ctrlDownForRedo()) ||
-                                 ((GetAsyncKeyState('Z') & 1) && ctrlDownForRedo() && shiftDown);
-                if (redoChord) {
-                    double n = nowSec();
-                    if (n - g_lastRedoQueued > 0.25) {
-                        g_lastRedoQueued = n;
-                        editLog("EDGE REDO");
-                        EditReq req; req.verb = "redo"; req.args = json::object(); req.kind = 4; req.t = curSec;
-                        queueEdit(std::move(req));
-                    }
-                }
+                bool ctrl = ctrlDownForRedo();
+                if (zEdge && ctrl) { if (shiftDown) queueRedo(curSec); else queueUndo(curSec); }
+                if (yEdge && ctrl) queueRedo(curSec);
             }
             // MODIFIERS MUST BE READ FROM THE SAME CLOCK AS THE KEYS.
             //
@@ -5509,6 +5517,32 @@ int main(int argc, char** argv) {
             // at the shipped 1.35 text scale, Play+|<<+2x+Overlay+<+1f++1f>+Skip
             // Quiet is ~758px against a ~620px pane - Skip Quiet was sliced
             // mid-word. Skip Quiet opens row 2 instead.
+            //
+            // ---- UNDO / REDO, VISIBLY (row 2 opens with them) ----
+            //
+            // The chords existed; the BUTTONS did not, and that is not a cosmetic
+            // gap. An editor who cannot SEE that redo exists edits defensively -
+            // he stops experimenting, because he is not sure he can get back. The
+            // way you make someone brave with a timeline is to show them the way
+            // back, not to document it.
+            //
+            // Leftmost on row 2 on purpose: row 2 is the only row with slack, and
+            // the leftmost slot is the one position nothing else can ever push
+            // off-screen as labels grow.
+            //
+            // ALWAYS ENABLED, deliberately. The engine owns both stacks and
+            // reports neither depth over the bridge, so "grey it out when empty"
+            // would mean GUESSING at emptiness - and a wrongly-greyed undo is a
+            // worse lie than an enabled one that turns out to be a no-op. If the
+            // bridge ever returns the depths, gate them here and nowhere else.
+            {
+                if (ImGui::Button(ico(ICON_UNDO "##undobtn", "Undo"))) queueUndo(curSec);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo the last edit  (Ctrl+Z)");
+                ImGui::SameLine();
+                if (ImGui::Button(ico(ICON_REDO "##redobtn", "Redo"))) queueRedo(curSec);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the edit you just undid  (Ctrl+Y or Ctrl+Shift+Z)");
+                ImGui::SameLine();
+            }
             // E-10 SKIP QUIET — the feature Jordan called "the single biggest
             // breakthrough" (feedback7): during playback, everything under the
             // loudness threshold is SKIPPED seamlessly instead of played, so
