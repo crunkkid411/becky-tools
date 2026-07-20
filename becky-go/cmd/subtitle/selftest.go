@@ -120,7 +120,7 @@ func runSelftest() {
 	// 8. The burn style is the shipped cli-cut look.
 	want := "FontName=ProximaNova-Semibold,FontSize=12,Bold=0," +
 		"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H00000000," +
-		"BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=90"
+		"BorderStyle=1,Outline=1,Shadow=0,Alignment=2,MarginV=90"
 	got := subs.DefaultStyle().ForceStyle()
 	check("default style is white text with a black outline", got == want,
 		fmt.Sprintf("got %s", got))
