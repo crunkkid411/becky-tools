@@ -1,0 +1,422 @@
+363545 engineCall(open_folder) enter
+363545 engineCall(open_folder) id=c1 about to write
+363545 engineCall(open_folder) id=c1 wrote, waiting for reply
+363549 engineCall(open_folder) id=c1 wait done seen=1 alive=1
+363549 PEAKS PUSH src=proxyA.mp4 aa=4.000000 b=30.000000 ready=0 dur=0.000000 jobsLeft=1 secFilledSz=0 filledSecs=0/0 trackClips=0
+363549 PEAKS PUSH src=proxyA.mp4 aa=39.000000 b=65.000000 ready=0 dur=0.000000 jobsLeft=2 secFilledSz=0 filledSecs=0/0 trackClips=0
+363549 PEAKS PUSH src=proxyA.mp4 aa=74.000000 b=100.000000 ready=0 dur=0.000000 jobsLeft=3 secFilledSz=0 filledSecs=0/0 trackClips=0
+363549 PEAKS PUSH src=proxyA.mp4 aa=99.000000 b=120.000000 ready=0 dur=0.000000 jobsLeft=4 secFilledSz=0 filledSecs=0/0 trackClips=0
+363549 engineCall(thumb) enter
+363549 engineCall(thumb) id=c2 about to write
+363549 engineCall(thumb) id=c2 wrote, waiting for reply
+363549 engineCall(thumb) enter
+363549 engineCall(thumb) id=c3 about to write
+363549 engineCall(thumb) id=c3 wrote, waiting for reply
+363549 engineCall(thumb) id=c2 wait done seen=1 alive=1
+363549 engineCall(thumb) id=c3 wait done seen=1 alive=1
+363568 engineCall(search) enter
+363568 engineCall(search) id=c4 about to write
+363568 engineCall(search) id=c4 wrote, waiting for reply
+363568 EDGE O clip= gated=0 (preview-only, no engine id)
+363575 engineCall(search) id=c4 wait done seen=1 alive=1
+363579 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=0 dur=0.000000 jobsLeft=1 secFilledSz=0 filledSecs=0/0 trackClips=0
+363579 engineCall(thumb) enter
+363579 engineCall(thumb) id=c5 about to write
+363579 engineCall(thumb) id=c5 wrote, waiting for reply
+363579 engineCall(thumb) id=c5 wait done seen=1 alive=1
+363579 engineCall(add_clip) enter
+363579 engineCall(add_clip) id=c6 about to write
+363579 engineCall(add_clip) id=c6 wrote, waiting for reply
+363579 engineCall(add_clip) id=c6 wait done seen=1 alive=1
+363579 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/14 trackClips=1
+363580 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/14 trackClips=1
+363581 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/14 trackClips=1
+363582 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/14 trackClips=1
+363583 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/14 trackClips=1
+363584 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1292.920000 b=1305.640000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/12 trackClips=1
+363584 engineCall(thumb) enter
+363584 engineCall(thumb) id=c7 about to write
+363584 engineCall(thumb) id=c7 wrote, waiting for reply
+363584 engineCall(thumb) id=c7 wait done seen=1 alive=1
+363584 engineCall(add_clip) enter
+363584 engineCall(add_clip) id=c8 about to write
+363584 engineCall(add_clip) id=c8 wrote, waiting for reply
+363584 engineCall(add_clip) id=c8 wait done seen=1 alive=1
+363584 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1093.880000 b=1108.360000 ready=1 dur=7209.169000 jobsLeft=1 secFilledSz=7211 filledSecs=0/14 trackClips=2
+363584 PEAKS PUSH src=2026-07-15_let_s_go_back_to_2010_PS3_Zombies_[Hekt7dtp1gU].mkv aa=1292.920000 b=1305.640000 ready=1 dur=7209.169000 jobsLeft=2 secFilledSz=7211 filledSecs=0/12 trackClips=2
+363703 engineCall(seek) enter
+363703 engineCall(seek) id=c9 about to write
+363703 engineCall(seek) id=c9 wrote, waiting for reply
+363703 engineCall(seek) id=c9 wait done seen=1 alive=1
+363703 engineCall(seek) enter
+363703 engineCall(seek) id=c10 about to write
+363703 engineCall(seek) id=c10 wrote, waiting for reply
+363703 engineCall(seek) id=c10 wait done seen=1 alive=1
+363727 EDGE S clip=c2 gated=0
+363727 QUEUE split id=c2
+363727 engineCall(split) enter
+363727 engineCall(split) id=c11 about to write
+363727 engineCall(split) id=c11 wrote, waiting for reply
+363727 engineCall(split) id=c11 wait done seen=1 alive=1
+363727 engineCall(timeline) enter
+363727 engineCall(timeline) id=c12 about to write
+363727 engineCall(timeline) id=c12 wrote, waiting for reply
+363727 engineCall(timeline) id=c12 wait done seen=1 alive=1
+363727 editWorker post-try, about to push_back verb=split
+363727 editWorker pushed_back, looping
+363727 UI drain: 1 replies to apply
+363727 drain loop entered, kind=0 ok=1
+363727 drain: gate released, building reply log line
+363727 drain: got id=c2
+363727 drain: got new_id=c3
+363727 REPLY verb=split ok=1 id=c2 new_id=c3
+363727 loadTimelineView done, 3 clips, peaksJobsEnqueued=13
+363727 drain loop iteration done
+363727 engineCall(set_select) enter
+363727 engineCall(set_select) id=c13 about to write
+363727 engineCall(set_select) id=c13 wrote, waiting for reply
+363727 engineCall(set_select) id=c13 wait done seen=1 alive=1
+363727 engineCall(thumb) enter
+363727 engineCall(thumb) id=c14 about to write
+363727 engineCall(thumb) id=c14 wrote, waiting for reply
+363728 engineCall(thumb) id=c14 wait done seen=1 alive=1
+363730 engineCall(probe) enter
+363730 engineCall(probe) id=c15 about to write
+363730 engineCall(probe) id=c15 wrote, waiting for reply
+363730 engineCall(probe) id=c15 wait done seen=1 alive=1
+363734 EDGE S clip=c3 gated=0
+363734 QUEUE split id=c3
+363734 engineCall(split) enter
+363734 engineCall(split) id=c16 about to write
+363734 engineCall(split) id=c16 wrote, waiting for reply
+363734 engineCall(split) id=c16 wait done seen=1 alive=1
+363734 editWorker post-try, about to push_back verb=split
+363734 editWorker pushed_back, looping
+363734 UI drain: 1 replies to apply
+363734 drain loop entered, kind=0 ok=0
+363734 drain: gate released, building reply log line
+363734 drain: got id=c3
+363734 drain: got new_id=
+363734 REPLY verb=split ok=0 id=c3 new_id=
+363741 EDGE S clip=c3 gated=0
+363741 QUEUE split id=c3
+363741 engineCall(split) enter
+363741 engineCall(split) id=c17 about to write
+363741 engineCall(split) id=c17 wrote, waiting for reply
+363741 engineCall(split) id=c17 wait done seen=1 alive=1
+363741 editWorker post-try, about to push_back verb=split
+363741 editWorker pushed_back, looping
+363741 UI drain: 1 replies to apply
+363741 drain loop entered, kind=0 ok=0
+363741 drain: gate released, building reply log line
+363741 drain: got id=c3
+363741 drain: got new_id=
+363741 REPLY verb=split ok=0 id=c3 new_id=
+363748 EDGE S clip=c3 gated=0
+363748 QUEUE split id=c3
+363748 engineCall(split) enter
+363748 engineCall(split) id=c18 about to write
+363748 engineCall(split) id=c18 wrote, waiting for reply
+363748 engineCall(split) id=c18 wait done seen=1 alive=1
+363748 editWorker post-try, about to push_back verb=split
+363748 editWorker pushed_back, looping
+363748 UI drain: 1 replies to apply
+363748 drain loop entered, kind=0 ok=0
+363748 drain: gate released, building reply log line
+363748 drain: got id=c3
+363748 drain: got new_id=
+363748 REPLY verb=split ok=0 id=c3 new_id=
+363755 EDGE S clip=c3 gated=0
+363755 QUEUE split id=c3
+363755 engineCall(split) enter
+363755 engineCall(split) id=c19 about to write
+363755 engineCall(split) id=c19 wrote, waiting for reply
+363755 engineCall(split) id=c19 wait done seen=1 alive=1
+363755 engineCall(timeline) enter
+363755 engineCall(timeline) id=c20 about to write
+363755 engineCall(timeline) id=c20 wrote, waiting for reply
+363755 engineCall(timeline) id=c20 wait done seen=1 alive=1
+363755 editWorker post-try, about to push_back verb=split
+363755 editWorker pushed_back, looping
+363755 UI drain: 1 replies to apply
+363755 drain loop entered, kind=0 ok=1
+363755 drain: gate released, building reply log line
+363755 drain: got id=c3
+363755 drain: got new_id=c4
+363755 REPLY verb=split ok=1 id=c3 new_id=c4
+363755 loadTimelineView done, 4 clips, peaksJobsEnqueued=13
+363755 drain loop iteration done
+363755 engineCall(set_select) enter
+363755 engineCall(set_select) id=c21 about to write
+363755 engineCall(set_select) id=c21 wrote, waiting for reply
+363755 engineCall(set_select) id=c21 wait done seen=1 alive=1
+363755 engineCall(thumb) enter
+363755 engineCall(thumb) id=c22 about to write
+363755 engineCall(thumb) id=c22 wrote, waiting for reply
+363755 engineCall(thumb) id=c22 wait done seen=1 alive=1
+363762 EDGE S clip=c4 gated=0
+363762 QUEUE split id=c4
+363762 engineCall(split) enter
+363762 engineCall(split) id=c23 about to write
+363762 engineCall(split) id=c23 wrote, waiting for reply
+363762 engineCall(split) id=c23 wait done seen=1 alive=1
+363762 editWorker post-try, about to push_back verb=split
+363762 editWorker pushed_back, looping
+363762 UI drain: 1 replies to apply
+363762 drain loop entered, kind=0 ok=0
+363762 drain: gate released, building reply log line
+363762 drain: got id=c4
+363762 drain: got new_id=
+363762 REPLY verb=split ok=0 id=c4 new_id=
+363769 EDGE S clip=c4 gated=0
+363769 QUEUE split id=c4
+363769 engineCall(split) enter
+363769 engineCall(split) id=c24 about to write
+363769 engineCall(split) id=c24 wrote, waiting for reply
+363769 engineCall(split) id=c24 wait done seen=1 alive=1
+363769 editWorker post-try, about to push_back verb=split
+363769 editWorker pushed_back, looping
+363769 UI drain: 1 replies to apply
+363769 drain loop entered, kind=0 ok=0
+363769 drain: gate released, building reply log line
+363769 drain: got id=c4
+363769 drain: got new_id=
+363769 REPLY verb=split ok=0 id=c4 new_id=
+363775 EDGE S clip=c4 gated=0
+363775 QUEUE split id=c4
+363775 engineCall(split) enter
+363775 engineCall(split) id=c25 about to write
+363775 engineCall(split) id=c25 wrote, waiting for reply
+363775 engineCall(split) id=c25 wait done seen=1 alive=1
+363775 engineCall(timeline) enter
+363775 engineCall(timeline) id=c26 about to write
+363775 engineCall(timeline) id=c26 wrote, waiting for reply
+363775 engineCall(timeline) id=c26 wait done seen=1 alive=1
+363775 editWorker post-try, about to push_back verb=split
+363775 editWorker pushed_back, looping
+363775 UI drain: 1 replies to apply
+363775 drain loop entered, kind=0 ok=1
+363775 drain: gate released, building reply log line
+363775 drain: got id=c4
+363775 drain: got new_id=c5
+363775 REPLY verb=split ok=1 id=c4 new_id=c5
+363775 loadTimelineView done, 5 clips, peaksJobsEnqueued=13
+363775 drain loop iteration done
+363776 engineCall(set_select) enter
+363776 engineCall(set_select) id=c27 about to write
+363776 engineCall(set_select) id=c27 wrote, waiting for reply
+363776 engineCall(thumb) enter
+363776 engineCall(thumb) id=c28 about to write
+363776 engineCall(thumb) id=c28 wrote, waiting for reply
+363776 engineCall(set_select) id=c27 wait done seen=1 alive=1
+363776 engineCall(thumb) id=c28 wait done seen=1 alive=1
+363783 EDGE S clip=c5 gated=0
+363783 QUEUE split id=c5
+363783 engineCall(split) enter
+363783 engineCall(split) id=c29 about to write
+363783 engineCall(split) id=c29 wrote, waiting for reply
+363783 engineCall(split) id=c29 wait done seen=1 alive=1
+363783 editWorker post-try, about to push_back verb=split
+363783 editWorker pushed_back, looping
+363783 UI drain: 1 replies to apply
+363783 drain loop entered, kind=0 ok=0
+363783 drain: gate released, building reply log line
+363783 drain: got id=c5
+363783 drain: got new_id=
+363783 REPLY verb=split ok=0 id=c5 new_id=
+363790 EDGE S clip=c5 gated=0
+363790 QUEUE split id=c5
+363790 engineCall(split) enter
+363790 engineCall(split) id=c30 about to write
+363790 engineCall(split) id=c30 wrote, waiting for reply
+363790 engineCall(split) id=c30 wait done seen=1 alive=1
+363790 editWorker post-try, about to push_back verb=split
+363790 editWorker pushed_back, looping
+363790 UI drain: 1 replies to apply
+363790 drain loop entered, kind=0 ok=0
+363790 drain: gate released, building reply log line
+363790 drain: got id=c5
+363790 drain: got new_id=
+363790 REPLY verb=split ok=0 id=c5 new_id=
+363798 EDGE S clip=c5 gated=0
+363798 QUEUE split id=c5
+363798 engineCall(split) enter
+363798 engineCall(split) id=c31 about to write
+363798 engineCall(split) id=c31 wrote, waiting for reply
+363798 engineCall(split) id=c31 wait done seen=1 alive=1
+363798 editWorker post-try, about to push_back verb=split
+363798 editWorker pushed_back, looping
+363798 UI drain: 1 replies to apply
+363798 drain loop entered, kind=0 ok=0
+363798 drain: gate released, building reply log line
+363798 drain: got id=c5
+363798 drain: got new_id=
+363798 REPLY verb=split ok=0 id=c5 new_id=
+363805 EDGE S clip=c5 gated=0
+363805 QUEUE split id=c5
+363805 engineCall(split) enter
+363805 engineCall(split) id=c32 about to write
+363805 engineCall(split) id=c32 wrote, waiting for reply
+363805 engineCall(split) id=c32 wait done seen=1 alive=1
+363805 engineCall(timeline) enter
+363805 engineCall(timeline) id=c33 about to write
+363805 engineCall(timeline) id=c33 wrote, waiting for reply
+363805 engineCall(timeline) id=c33 wait done seen=1 alive=1
+363805 editWorker post-try, about to push_back verb=split
+363805 editWorker pushed_back, looping
+363805 UI drain: 1 replies to apply
+363805 drain loop entered, kind=0 ok=1
+363805 drain: gate released, building reply log line
+363805 drain: got id=c5
+363805 drain: got new_id=c6
+363805 REPLY verb=split ok=1 id=c5 new_id=c6
+363805 loadTimelineView done, 6 clips, peaksJobsEnqueued=13
+363805 drain loop iteration done
+363805 engineCall(set_select) enter
+363805 engineCall(set_select) id=c34 about to write
+363805 engineCall(set_select) id=c34 wrote, waiting for reply
+363805 engineCall(set_select) id=c34 wait done seen=1 alive=1
+363805 engineCall(thumb) enter
+363805 engineCall(thumb) id=c35 about to write
+363805 engineCall(thumb) id=c35 wrote, waiting for reply
+363805 engineCall(thumb) id=c35 wait done seen=1 alive=1
+363813 EDGE S clip=c6 gated=0
+363813 QUEUE split id=c6
+363813 engineCall(split) enter
+363813 engineCall(split) id=c36 about to write
+363813 engineCall(split) id=c36 wrote, waiting for reply
+363813 engineCall(split) id=c36 wait done seen=1 alive=1
+363813 editWorker post-try, about to push_back verb=split
+363813 editWorker pushed_back, looping
+363813 UI drain: 1 replies to apply
+363813 drain loop entered, kind=0 ok=0
+363813 drain: gate released, building reply log line
+363813 drain: got id=c6
+363813 drain: got new_id=
+363813 REPLY verb=split ok=0 id=c6 new_id=
+363821 EDGE S clip=c6 gated=0
+363821 QUEUE split id=c6
+363821 engineCall(split) enter
+363821 engineCall(split) id=c37 about to write
+363821 engineCall(split) id=c37 wrote, waiting for reply
+363821 engineCall(split) id=c37 wait done seen=1 alive=1
+363821 editWorker post-try, about to push_back verb=split
+363821 editWorker pushed_back, looping
+363821 UI drain: 1 replies to apply
+363821 drain loop entered, kind=0 ok=0
+363821 drain: gate released, building reply log line
+363821 drain: got id=c6
+363821 drain: got new_id=
+363821 REPLY verb=split ok=0 id=c6 new_id=
+363829 EDGE S clip=c6 gated=0
+363829 QUEUE split id=c6
+363829 engineCall(split) enter
+363829 engineCall(split) id=c38 about to write
+363829 engineCall(split) id=c38 wrote, waiting for reply
+363829 engineCall(split) id=c38 wait done seen=1 alive=1
+363829 engineCall(timeline) enter
+363829 engineCall(timeline) id=c39 about to write
+363829 engineCall(timeline) id=c39 wrote, waiting for reply
+363829 engineCall(timeline) id=c39 wait done seen=1 alive=1
+363829 editWorker post-try, about to push_back verb=split
+363829 editWorker pushed_back, looping
+363829 UI drain: 1 replies to apply
+363829 drain loop entered, kind=0 ok=1
+363829 drain: gate released, building reply log line
+363829 drain: got id=c6
+363829 drain: got new_id=c7
+363829 REPLY verb=split ok=1 id=c6 new_id=c7
+363829 loadTimelineView done, 7 clips, peaksJobsEnqueued=13
+363829 drain loop iteration done
+363829 engineCall(set_select) enter
+363829 engineCall(set_select) id=c40 about to write
+363829 engineCall(set_select) id=c40 wrote, waiting for reply
+363829 engineCall(thumb) enter
+363829 engineCall(thumb) id=c41 about to write
+363829 engineCall(thumb) id=c41 wrote, waiting for reply
+363829 engineCall(set_select) id=c40 wait done seen=1 alive=1
+363829 engineCall(thumb) id=c41 wait done seen=1 alive=1
+363837 EDGE S clip=c7 gated=0
+363837 QUEUE split id=c7
+363837 engineCall(split) enter
+363837 engineCall(split) id=c42 about to write
+363837 engineCall(split) id=c42 wrote, waiting for reply
+363837 engineCall(split) id=c42 wait done seen=1 alive=1
+363837 editWorker post-try, about to push_back verb=split
+363837 editWorker pushed_back, looping
+363837 UI drain: 1 replies to apply
+363837 drain loop entered, kind=0 ok=0
+363837 drain: gate released, building reply log line
+363837 drain: got id=c7
+363837 drain: got new_id=
+363837 REPLY verb=split ok=0 id=c7 new_id=
+363845 EDGE S clip=c7 gated=0
+363845 QUEUE split id=c7
+363845 engineCall(split) enter
+363845 engineCall(split) id=c43 about to write
+363845 engineCall(split) id=c43 wrote, waiting for reply
+363845 engineCall(split) id=c43 wait done seen=1 alive=1
+363845 editWorker post-try, about to push_back verb=split
+363845 editWorker pushed_back, looping
+363845 UI drain: 1 replies to apply
+363845 drain loop entered, kind=0 ok=0
+363845 drain: gate released, building reply log line
+363845 drain: got id=c7
+363845 drain: got new_id=
+363845 REPLY verb=split ok=0 id=c7 new_id=
+363852 EDGE S clip=c7 gated=0
+363852 QUEUE split id=c7
+363852 engineCall(split) enter
+363852 engineCall(split) id=c44 about to write
+363852 engineCall(split) id=c44 wrote, waiting for reply
+363852 engineCall(split) id=c44 wait done seen=1 alive=1
+363852 editWorker post-try, about to push_back verb=split
+363852 editWorker pushed_back, looping
+363852 UI drain: 1 replies to apply
+363852 drain loop entered, kind=0 ok=0
+363852 drain: gate released, building reply log line
+363852 drain: got id=c7
+363852 drain: got new_id=
+363852 REPLY verb=split ok=0 id=c7 new_id=
+363860 EDGE S clip=c7 gated=0
+363860 QUEUE split id=c7
+363860 engineCall(split) enter
+363860 engineCall(split) id=c45 about to write
+363860 engineCall(split) id=c45 wrote, waiting for reply
+363860 engineCall(split) id=c45 wait done seen=1 alive=1
+363860 engineCall(timeline) enter
+363860 engineCall(timeline) id=c46 about to write
+363860 engineCall(timeline) id=c46 wrote, waiting for reply
+363860 engineCall(timeline) id=c46 wait done seen=1 alive=1
+363860 editWorker post-try, about to push_back verb=split
+363860 editWorker pushed_back, looping
+363860 UI drain: 1 replies to apply
+363860 drain loop entered, kind=0 ok=1
+363860 drain: gate released, building reply log line
+363860 drain: got id=c7
+363860 drain: got new_id=c8
+363860 REPLY verb=split ok=1 id=c7 new_id=c8
+363860 loadTimelineView done, 8 clips, peaksJobsEnqueued=13
+363860 drain loop iteration done
+363860 engineCall(set_select) enter
+363860 engineCall(set_select) id=c47 about to write
+363860 engineCall(set_select) id=c47 wrote, waiting for reply
+363860 engineCall(set_select) id=c47 wait done seen=1 alive=1
+363860 engineCall(thumb) enter
+363860 engineCall(thumb) id=c48 about to write
+363860 engineCall(thumb) id=c48 wrote, waiting for reply
+363861 engineCall(thumb) id=c48 wait done seen=1 alive=1
+363867 EDGE S clip=c8 gated=0
+363867 QUEUE split id=c8
+363867 engineCall(split) enter
+363867 engineCall(split) id=c49 about to write
+363867 engineCall(split) id=c49 wrote, waiting for reply
+363867 engineCall(split) id=c49 wait done seen=1 alive=1
+363867 editWorker post-try, about to push_back verb=split
+363867 editWorker pushed_back, looping
+363867 UI drain: 1 replies to apply
+363867 drain loop entered, kind=0 ok=0
+363867 drain: gate released, building reply log line
+363867 drain: got id=c8
+363867 drain: got new_id=
+363867 REPLY verb=split ok=0 id=c8 new_id=

@@ -878,6 +878,43 @@ static void endWork() {
 // click. He aims by muscle memory at speed; a control that moves under the
 // cursor is a control he mis-clicks.
 //
+// ---- REAL ICONS instead of words (Segoe MDL2 Assets) ----
+//
+// Jordan: "i'm bad at reading and THATS WHY we use meaningful icons for
+// buttons when they can replace text". He is sighted but vision-impaired and
+// reading costs him physical effort, so every word removed from a control he
+// already recognises is real effort saved.
+//
+// The rule cuts BOTH ways, and the second half matters as much as the first:
+// a control gets an icon ONLY if the glyph is self-evident on its own. A glyph
+// he has to decode is WORSE than the word. So Play/Pause/skip-to-start/
+// camera/floppy/folder/running-man go icon-only; Render, Render Selection (N),
+// the 3-state Overlay, 2x, the +-1f nudges and Export EDL keep their words -
+// no glyph conveys "three states" or "EDL", and the (N) count must stay
+// readable.
+//
+// Written as \x escapes, never literal UTF-8: non-ASCII bytes in this file
+// break the MSVC build (codepage assumption). Each escape ends at its closing
+// quote, so the "##id" suffix is concatenated as a separate literal and can
+// never be swallowed into the hex escape.
+#define ICON_PLAY   "\xEE\x9D\xA8"   // U+E768 Play
+#define ICON_PAUSE  "\xEE\x9D\xA9"   // U+E769 Pause
+#define ICON_START  "\xEE\xA2\x92"   // U+E892 Previous / back to start
+#define ICON_RUN    "\xEE\xA0\x85"   // U+E805 Walking figure
+#define ICON_CAMERA "\xEE\x9C\xA2"   // U+E722 Camera
+#define ICON_SAVE   "\xEE\x9D\x8E"   // U+E74E Floppy disk
+#define ICON_OPEN   "\xEE\xB4\xA5"   // U+ED25 Open folder
+
+// False until segmdl2.ttf is actually loaded. EVERY icon button below routes
+// its label through ico(), so if the font is missing the whole toolbar falls
+// back to the old text labels and still runs. A missing glyph renders as a
+// HOLLOW SQUARE - the documented "square play button" failure in this project -
+// and this flag is why that can never ship.
+static bool g_iconsOk = false;
+static const char* ico(const char* iconLabel, const char* textLabel) {
+    return g_iconsOk ? iconLabel : textLabel;
+}
+
 // fixedButton sizes to the WIDEST label the control can ever show, so its
 // footprint is constant whatever state it is in. Pass every variant.
 static bool fixedButton(const char* label, std::initializer_list<const char*> allStates) {
@@ -3894,6 +3931,54 @@ int main(int argc, char** argv) {
         st.WindowBorderSize = 1.0f;        // a visible seam between the panels
         st.SeparatorTextBorderSize = 2.0f;
     }
+
+    // ---- load the icon font (see the ICON_* block near fixedButton) ----
+    //
+    // Segoe MDL2 Assets ships with every Windows 10 install, so this adds no
+    // dependency to ship. It is MERGED into the default font at a deliberately
+    // larger pixel size than the 13px text: an icon he has to squint at defeats
+    // the whole point. 20px * the 1.35 UI scale = ~27px of glyph inside a ~32px
+    // button, which still clears the frame padding so nothing is clipped.
+    //
+    // The existence check is not paranoia. ImGui 1.90.9 calls
+    // IM_ASSERT_USER_ERROR on a font file it cannot read, and this binary is
+    // built with /O2 but WITHOUT NDEBUG - assert() is live, so handing
+    // AddFontFromFileTTF a missing path would pop an assert dialog instead of
+    // degrading. Checking first keeps the fallback silent and safe.
+    ImGui::GetIO().Fonts->AddFontDefault();
+    {
+        const char* iconPath = "C:\\Windows\\Fonts\\segmdl2.ttf";
+        // BECKY_ICONS=0 forces the text-label fallback. It exists so the
+        // fallback is PROVABLE: "it degrades safely if the font is missing" is
+        // otherwise an untestable claim on a machine where the font is always
+        // present, and this is the exact path that must never ship squares.
+        const char* iconsEnv = getenv("BECKY_ICONS");
+        bool wantIcons = !(iconsEnv && iconsEnv[0] == '0');
+        bool haveFile = false;
+        if (wantIcons) { if (FILE* f = fopen(iconPath, "rb")) { haveFile = true; fclose(f); } }
+        if (haveFile) {
+            // MUST be static: ImGui stores this pointer and only dereferences it
+            // later, when the atlas is built on the first NewFrame. A stack array
+            // here is a use-after-scope - the classic crash in this exact code.
+            static const ImWchar kIconRange[] = { 0xE700, 0xEDFF, 0 };
+            ImFontConfig cfg;
+            cfg.MergeMode = true;
+            cfg.PixelSnapH = true;
+            // MEASURED, not guessed. A merged font's glyphs are placed on the
+            // DESTINATION font's baseline, and a 20px icon has far more ascent
+            // than 13px ProggyClean - at offset 2 the tall glyphs (the runner,
+            // the camera) drew their heads ABOVE the button's blue rect, onto
+            // the background. Screenshotting at 8x put the runner at 719..744
+            // inside a 722..753 button; centring 25.5px of glyph in a 31px
+            // button needs 4.3 more units of drop, hence 6.
+            cfg.GlyphOffset = ImVec2(0.0f, 6.0f);
+            cfg.GlyphMinAdvanceX = 20.0f;          // uniform icon cells, so nothing jitters
+            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 20.0f, &cfg, kIconRange) != nullptr;
+        }
+        if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
+                                           : "icons: disabled by BECKY_ICONS=0 - toolbar using text labels");
+    }
+
     ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
     // bootWork: engine start + reel/folder load, moved off the UI thread (see T-1 comment
@@ -4779,9 +4864,14 @@ int main(int argc, char** argv) {
                 mpvClearCaptionOsd();
             }
             ImGui::Text("%.1f / %.1f s", curSec, g_compDur);
-            if (fixedButton(playing ? "Pause##play" : "Play##play", { "Pause", "Play" })) { playing = !playing; g_playingExt = playing; }
+            if (fixedButton(playing ? ico(ICON_PAUSE "##play", "Pause##play") : ico(ICON_PLAY "##play", "Play##play"),
+                            { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) { playing = !playing; g_playingExt = playing; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Pause" : "Play");
             ImGui::SameLine();
-            if (ImGui::Button("|<<")) { curSec = 0; g_playingExt = playing; }
+            // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
+            // says the same thing without being read.
+            if (ImGui::Button(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to start");
             ImGui::SameLine();
             if (g_playRate > 1.5) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1));
             if (ImGui::Button("2x")) g_playRate = (g_playRate > 1.5) ? 1.0 : 2.0;
@@ -4853,30 +4943,28 @@ int main(int argc, char** argv) {
             {
                 // THE ICON HE ASKED FOR. feedback7: "add a toggle button to the
                 // timeline toolbar (have it simply be an icon that looks like a
-                // person running)". It shipped as a text button; this is the
-                // button he actually specified.
+                // person running)".
                 //
-                // Drawn with ImDrawList primitives, NOT an icon font: no icon
-                // font is loaded here and a missing glyph renders as a hollow
-                // square, which is a documented past failure in this project
-                // (the "square play button"). Primitives cannot go missing.
+                // This was hand-drawn with ImDrawList lines and a circle,
+                // because no icon font was loaded and a missing glyph renders as
+                // a hollow square. Jordan's verdict: "your running man drawing
+                // looks more like a falling man who slipped on a banana peel -
+                // it looks like shit". He was right. The drawing is deleted; the
+                // font's own striding figure (U+E805) is a real, legible person.
                 //
-                // Colour carries the state as well as the fill, because at a
-                // glance he should not have to decode a shape: lit amber when
-                // skipping is ON, dim when off.
+                // Colour still carries the state as well as the shape, because
+                // at a glance he should not have to decode a silhouette: lit
+                // amber when skipping is ON, dim slate when off.
                 {
-                    const float h = ImGui::GetFrameHeight();
-                    ImVec2 p0 = ImGui::GetCursorScreenPos();
-                    bool pressed = ImGui::Button("##thr", ImVec2(h * 1.15f, h));
-                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                    ImU32 col = g_thrOn ? IM_COL32(242, 217, 115, 255) : IM_COL32(150, 160, 175, 210);
-                    float cx = p0.x + h * 0.575f, cy = p0.y + h * 0.5f, u = h * 0.085f;
-                    dl->AddCircleFilled(ImVec2(cx + u * 0.9f, cy - u * 2.6f), u * 0.95f, col, 10); // head
-                    dl->AddLine(ImVec2(cx + u * 0.7f, cy - u * 1.5f), ImVec2(cx - u * 0.6f, cy + u * 0.6f), col, 1.8f); // torso, leaning
-                    dl->AddLine(ImVec2(cx + u * 0.5f, cy - u * 1.0f), ImVec2(cx + u * 2.4f, cy - u * 0.2f), col, 1.6f); // forward arm
-                    dl->AddLine(ImVec2(cx + u * 0.5f, cy - u * 1.0f), ImVec2(cx - u * 1.6f, cy - u * 1.6f), col, 1.6f); // trailing arm
-                    dl->AddLine(ImVec2(cx - u * 0.6f, cy + u * 0.6f), ImVec2(cx + u * 1.5f, cy + u * 2.6f), col, 1.8f); // forward leg
-                    dl->AddLine(ImVec2(cx - u * 0.6f, cy + u * 0.6f), ImVec2(cx - u * 2.3f, cy + u * 2.2f), col, 1.8f); // trailing leg
+                    if (g_thrOn) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.32f, 0.06f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(1.00f, 0.86f, 0.42f, 1.0f));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0.59f, 0.63f, 0.69f, 1.0f));
+                    }
+                    bool pressed = fixedButton(ico(ICON_RUN "##thr", "Skip Quiet##thr"),
+                                               { ico(ICON_RUN, "Skip Quiet") });
+                    ImGui::PopStyleColor(g_thrOn ? 2 : 1);
                     if (pressed) {
                         g_thrOn = !g_thrOn;
                         g_quietDirty = true;      // force recomputeQuiet on the next frame
@@ -4911,9 +4999,14 @@ int main(int argc, char** argv) {
                 });
             }
             ImGui::SameLine();
-            char selLabel[40]; snprintf(selLabel, sizeof selLabel, "Render Selection (%d)", (int)g_sel.size());
+            // Keeps its WORDS on purpose - "render" has no self-evident glyph, and
+            // the (N) count is the whole point of the button. But the count made it
+            // a raw Button whose width JUMPED when the selection crossed 9 -> 10,
+            // shoving everything right of it sideways: the exact "buttons must never
+            // move" complaint fixedButton exists to prevent. Reserve three digits.
+            char selLabel[48]; snprintf(selLabel, sizeof selLabel, "Render Selection (%d)##rensel", (int)g_sel.size());
             if (g_sel.empty()) ImGui::BeginDisabled();
-            if (ImGui::Button(selLabel)) {
+            if (fixedButton(selLabel, { "Render Selection (000)" })) {
                 std::vector<std::string> ids(g_sel.begin(), g_sel.end());
                 json r = engineCall("export_selection", { {"ids", ids}, {"output", ""} }, 300.0);
                 if (r.value("ok", false)) {
@@ -4933,7 +5026,7 @@ int main(int argc, char** argv) {
             if (g_sel.empty()) ImGui::EndDisabled();
             // D-5/F-2/F-5: screenshot + save/load reel + EDL export. Engine verbs already
             // existed (grab_frame/save_reel/load_reel/write_edl); only the buttons were missing.
-            if (ImGui::Button("Screenshot")) {
+            if (ImGui::Button(ico(ICON_CAMERA "##shot", "Screenshot"))) {
                 Clip* cur = nullptr;
                 for (auto& c : g_track[0]) if (curSec >= c.compStart && curSec < c.compStart + (c.out - c.in)) { cur = &c; break; }
                 if (!cur && !g_track[0].empty()) cur = &g_track[0].back();
@@ -4948,15 +5041,17 @@ int main(int argc, char** argv) {
                 } else g_renderMsg = "Screenshot failed: no clip at playhead";
                 g_renderMsgAt = nowSec();
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screenshot the frame at the playhead");
             ImGui::SameLine();
-            if (ImGui::Button("Save Reel")) {
+            if (ImGui::Button(ico(ICON_SAVE "##savereel", "Save Reel"))) {
                 engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel...", [](const json& r) {
                     g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
                     g_renderMsgAt = nowSec();
                 });
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Reel");
             ImGui::SameLine();
-            if (ImGui::Button("Load Reel")) {
+            if (ImGui::Button(ico(ICON_OPEN "##loadreel", "Load Reel"))) {
                 std::string picked = pickOpenReelFile(hwnd);
                 if (!picked.empty()) {
                     std::string path = convertEditIfNeeded(picked);   // .txt/.xml Vegas/FCP export -> reel .json
@@ -4968,6 +5063,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Reel");
             ImGui::SameLine();
             if (ImGui::Button("Export EDL")) {
                 engineCallAsync("write_edl", { {"output", ""} }, 30.0, "Writing EDL...", [](const json& r) {

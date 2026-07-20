@@ -1,0 +1,21 @@
+364211 engineCall(open_folder) enter
+364211 engineCall(open_folder) id=c1 about to write
+364211 engineCall(open_folder) id=c1 wrote, waiting for reply
+364215 engineCall(open_folder) id=c1 wait done seen=1 alive=1
+364215 PEAKS PUSH src=proxyA.mp4 aa=4.000000 b=30.000000 ready=0 dur=0.000000 jobsLeft=1 secFilledSz=0 filledSecs=0/0 trackClips=0
+364215 PEAKS PUSH src=proxyA.mp4 aa=39.000000 b=65.000000 ready=0 dur=0.000000 jobsLeft=2 secFilledSz=0 filledSecs=0/0 trackClips=0
+364215 PEAKS PUSH src=proxyA.mp4 aa=74.000000 b=100.000000 ready=0 dur=0.000000 jobsLeft=3 secFilledSz=0 filledSecs=0/0 trackClips=0
+364215 PEAKS PUSH src=proxyA.mp4 aa=99.000000 b=120.000000 ready=0 dur=0.000000 jobsLeft=4 secFilledSz=0 filledSecs=0/0 trackClips=0
+364215 engineCall(thumb) enter
+364215 engineCall(thumb) enter
+364215 engineCall(thumb) id=c3 about to write
+364215 engineCall(thumb) id=c3 wrote, waiting for reply
+364215 engineCall(thumb) id=c2 about to write
+364215 engineCall(thumb) id=c2 wrote, waiting for reply
+364215 engineCall(thumb) id=c3 wait done seen=1 alive=1
+364215 engineCall(thumb) id=c2 wait done seen=1 alive=1
+364250 engineCall(search) enter
+364250 engineCall(search) id=c4 about to write
+364250 engineCall(search) id=c4 wrote, waiting for reply
+364250 EDGE O clip= gated=0 (preview-only, no engine id)
+364250 engineCall(search) id=c4 wait done seen=1 alive=1

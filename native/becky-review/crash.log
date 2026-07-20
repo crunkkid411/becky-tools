@@ -1,0 +1,53 @@
+418536 [tid 22436 main/ui] === becky-review starting ===
+418536 [tid 22436 main/ui] gst_init: OK, waveform decode available
+418536 [tid 176 mpvConnect] mpv: launched + IPC connected, video decode available
+418543 [tid 22436 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+418553 [tid 22436 main/ui] mpvrect: origin=(332,41) vp=(0,0) -> client=(332,41) size=(620x393)
+418739 [tid 19624 main/ui] === becky-review starting ===
+418739 [tid 19624 main/ui] gst_init: OK, waveform decode available
+418739 [tid 17836 mpvConnect] mpv: launched + IPC connected, video decode available
+418743 [tid 19624 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+418754 [tid 19624 main/ui] mpvrect: origin=(332,41) vp=(0,0) -> client=(332,41) size=(620x393)
+421650 [tid 19624 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+421824 [tid 17836 mpvReader] mpv: IPC pipe closed (mpv exited) - video decode disabled, window still open
+421904 [tid 20348 main/ui] === becky-review starting ===
+421904 [tid 20348 main/ui] gst_init: OK, waveform decode available
+421905 [tid 27292 mpvConnect] mpv: launched + IPC connected, video decode available
+421909 [tid 20348 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+421923 [tid 20348 main/ui] mpvrect: origin=(332,41) vp=(0,0) -> client=(332,41) size=(620x393)
+422321 [tid 2136 main/ui] === becky-review starting ===
+422321 [tid 2136 main/ui] gst_init: OK, waveform decode available
+422321 [tid 2032 mpvConnect] mpv: launched + IPC connected, video decode available
+422330 [tid 2136 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+422337 [tid 2136 main/ui] mpvrect: origin=(332,41) vp=(0,0) -> client=(332,41) size=(602x393)
+422415 [tid 26704 main/ui] === becky-review starting ===
+422415 [tid 26704 main/ui] gst_init: OK, waveform decode available
+422415 [tid 22644 mpvConnect] mpv: launched + IPC connected, video decode available
+422422 [tid 26704 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+422431 [tid 26704 main/ui] mpvrect: origin=(332,41) vp=(0,0) -> client=(332,41) size=(602x393)
+422799 [tid 13956 main/ui] === becky-review starting ===
+422799 [tid 13956 main/ui] gst_init: OK, waveform decode available
+422799 [tid 10528 mpvConnect] mpv: launched + IPC connected, video decode available
+422805 [tid 13956 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+422820 [tid 13956 main/ui] mpvrect: origin=(332,41) vp=(0,0) -> client=(332,41) size=(602x393)
+423455 [tid 25876 main/ui] === becky-review starting ===
+423455 [tid 25876 main/ui] gst_init: OK, waveform decode available
+423455 [tid 28908 mpvConnect] mpv: launched + IPC connected, video decode available
+423460 [tid 25876 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+423670 [tid 22072 main/ui] === becky-review starting ===
+423670 [tid 22072 main/ui] gst_init: OK, waveform decode available
+423670 [tid 11072 mpvConnect] mpv: launched + IPC connected, video decode available
+423675 [tid 22072 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+423742 [tid 16244 main/ui] === becky-review starting ===
+423742 [tid 16244 main/ui] gst_init: OK, waveform decode available
+423742 [tid 21612 mpvConnect] mpv: launched + IPC connected, video decode available
+423747 [tid 16244 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+423851 [tid 15288 main/ui] === becky-review starting ===
+423851 [tid 15288 main/ui] gst_init: OK, waveform decode available
+423851 [tid 15288 main/ui] icons: disabled by BECKY_ICONS=0 - toolbar using text labels
+423851 [tid 27876 mpvConnect] mpv: launched + IPC connected, video decode available
+423856 [tid 15288 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
+423897 [tid 18896 main/ui] === becky-review starting ===
+423897 [tid 18896 main/ui] gst_init: OK, waveform decode available
+423897 [tid 20040 mpvConnect] mpv: launched + IPC connected, video decode available
+423902 [tid 18896 main/ui] mpvrect: origin=(434,41) vp=(0,0) -> client=(434,41) size=(1051x583)
