@@ -1,0 +1,187 @@
+package subs
+
+import (
+	"strings"
+	"unicode"
+)
+
+// Deterministic phrase-integrity repair.
+//
+// Jordan's rule, in his words: `"can you post" / "ten times a day?" is correct
+// because "ten" clearly is part of the subphrase "ten times a day" - if it's too
+// many characters, then it should be; "can you post" / "ten times" / "a day?"`.
+//
+// A prompt asking a model to respect that is a hope, not a guarantee, and the
+// model proved inconsistent about it on the same construction inside one file
+// ("to post 10 times" / "a day" correct, "don't post 27" / "times a day" wrong).
+// So the rule is enforced here in code, after any chunking — pass 1 or model —
+// and the result is deterministic, which is what the rest of becky expects.
+//
+// The repair is one-directional and total: a line may never END on a word that
+// governs the next line's first word. Such a word is pushed forward.
+
+// danglingWords are function words that modify what FOLLOWS them, so a caption
+// line ending on one splits a phrase.
+//
+// Deliberately narrow: only words that essentially never END an utterance.
+// Verbs and pronouns were in this list once and it was wrong — "yeah you can"
+// and "what it does" are complete, and treating "can"/"does" as danglers merged
+// lines that read fine. When in doubt, leave a word out: a missed repair is a
+// slightly awkward break, a wrong repair destroys a good one.
+var danglingWords = map[string]bool{
+	// Determiners.
+	"a": true, "an": true, "the": true, "this": true, "these": true, "those": true,
+	"my": true, "your": true, "his": true, "her": true, "its": true, "our": true,
+	"their": true,
+	// Conjunctions.
+	"and": true, "or": true, "but": true, "if": true, "when": true, "while": true,
+	"because": true, "than": true,
+	// Prepositions.
+	"of": true, "to": true, "in": true, "on": true, "at": true, "for": true,
+	"with": true, "from": true, "by": true, "into": true, "onto": true, "about": true,
+	// Intensifiers and quantifiers that lead a noun phrase.
+	"very": true, "really": true, "more": true, "most": true, "less": true,
+	"least": true, "gotta": true, "gonna": true, "just": true, "every": true,
+	"some": true, "any": true, "each": true, "another": true, "such": true,
+}
+
+// numberWords are spelled-out numbers. A number belongs with the unit it counts
+// ("ten times", "twenty-seven times"), never stranded at the end of a line.
+var numberWords = map[string]bool{
+	"zero": true, "one": true, "two": true, "three": true, "four": true, "five": true,
+	"six": true, "seven": true, "eight": true, "nine": true, "ten": true,
+	"eleven": true, "twelve": true, "thirteen": true, "fourteen": true,
+	"fifteen": true, "sixteen": true, "seventeen": true, "eighteen": true,
+	"nineteen": true, "twenty": true, "thirty": true, "forty": true, "fifty": true,
+	"sixty": true, "seventy": true, "eighty": true, "ninety": true,
+	"hundred": true, "thousand": true, "million": true, "billion": true,
+}
+
+// isDangling reports whether a caption line ending on this word would split a
+// phrase.
+func isDangling(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	s = strings.TrimRight(s, ".,;:!?\"')")
+	s = strings.TrimLeft(s, "\"'(")
+	if s == "" {
+		return false
+	}
+	// Any word carrying a digit is a number: "27", "10x", "1st".
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			return true
+		}
+	}
+	// "twenty-seven" -> check the leading part too.
+	if i := strings.Index(s, "-"); i > 0 {
+		if numberWords[s[:i]] {
+			return true
+		}
+	}
+	return danglingWords[s] || numberWords[s]
+}
+
+// lineLen is the rendered length of a caption line.
+func lineLen(chunk []Word) int {
+	n := 0
+	for i, w := range chunk {
+		if i > 0 {
+			n++
+		}
+		n += len(strings.TrimSpace(w.Word))
+	}
+	return n
+}
+
+// overflowSlack is how far past MaxChars a line may go to keep a phrase whole.
+// Jordan: "A SHORTER line that is phrase-complete always beats a longer line
+// that splits a phrase" — but the line still has to fit on screen, so the give
+// is bounded to roughly one short word.
+//
+// ponytail: fixed slack, not a fitting algorithm. If captions start overflowing
+// visibly, make this a flag rather than growing a line-breaker here.
+const overflowSlack = 6
+
+// isNumber reports whether the word is a count. A number NEVER gets separated
+// from the unit it counts — that rule outranks the character cap, because
+// "don't post 27" / "times a day" is exactly the break Jordan called out.
+func isNumber(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	s = strings.TrimRight(s, ".,;:!?\"')")
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			return true
+		}
+	}
+	if i := strings.Index(s, "-"); i > 0 && numberWords[s[:i]] {
+		return true
+	}
+	return numberWords[s]
+}
+
+// isContentless reports whether the line is a LONE modifier — "a", "at",
+// "more" — which cannot be repaired by pushing (that would empty the line) and
+// so has to be folded into the next line instead.
+//
+// Deliberately restricted to a single word. Treating any all-function-word line
+// as contentless swallows real lines: "at least ten" is every-word-dangling but
+// the right fix is to push "ten" onto its unit, not to merge the whole line.
+func isContentless(chunk []Word) bool {
+	return len(chunk) == 1 && isDangling(chunk[0].Word)
+}
+
+// RepairDangling pushes any phrase-splitting trailing word onto the next line,
+// and merges away a line that is nothing but such words. It never changes word
+// order and never drops a word, so the result is still a strict in-order
+// partition of the input.
+//
+// The LAST line is left alone: it ends where the cut ends, so the phrase stops
+// there because the editor stopped it, not because the chunking was wrong.
+func RepairDangling(chunks [][]Word, maxChars int) [][]Word {
+	if len(chunks) < 2 {
+		return chunks
+	}
+	out := make([][]Word, 0, len(chunks))
+	for _, c := range chunks {
+		if len(c) > 0 {
+			out = append(out, c)
+		}
+	}
+
+	// mergeContentless folds a lone-modifier line into the line after it.
+	// Walking backwards settles a run like "a" | "of" | "sand" at once.
+	mergeContentless := func(in [][]Word) [][]Word {
+		for i := len(in) - 2; i >= 0; i-- {
+			if isContentless(in[i]) {
+				merged := append(append([]Word{}, in[i]...), in[i+1]...)
+				in = append(in[:i], in[i+1:]...)
+				in[i] = merged
+			}
+		}
+		return in
+	}
+
+	// pushTrailing moves a phrase-splitting last word onto the next line.
+	pushTrailing := func(in [][]Word) [][]Word {
+		for i := len(in) - 2; i >= 0; i-- {
+			for len(in[i]) > 1 && isDangling(in[i][len(in[i])-1].Word) {
+				word := in[i][len(in[i])-1]
+				// A number moves regardless of length; anything else yields to
+				// readability once the next line is already full.
+				if !isNumber(word.Word) &&
+					lineLen(in[i+1])+1+len(strings.TrimSpace(word.Word)) > maxChars+overflowSlack {
+					break
+				}
+				in[i] = in[i][:len(in[i])-1]
+				in[i+1] = append([]Word{word}, in[i+1]...)
+			}
+		}
+		return in
+	}
+
+	// Merge, push, merge: pushing can leave a line contentless ("the a" -> "the"),
+	// so one more merge settles it. Bounded and deterministic.
+	out = mergeContentless(out)
+	out = pushTrailing(out)
+	return mergeContentless(out)
+}

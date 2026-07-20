@@ -217,7 +217,9 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 func Build(segments []Segment, opt Options) []Cue {
 	chunks := make([][][]Word, len(segments))
 	for i, seg := range segments {
-		chunks[i] = ChunkWords(WordsInRange(seg.Words, seg.Start, seg.End), opt.MaxChars, opt.GapSeconds)
+		chunks[i] = RepairDangling(
+			ChunkWords(WordsInRange(seg.Words, seg.Start, seg.End), opt.MaxChars, opt.GapSeconds),
+			opt.MaxChars)
 	}
 	return BuildFromChunks(segments, chunks, opt)
 }
