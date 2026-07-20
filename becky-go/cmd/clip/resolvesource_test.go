@@ -13,7 +13,7 @@ import (
 // (footage on X:) was unresolvable while the library browsed E:, and Thumb()
 // bailed before extracting anything: every clip drew the black "no thumbnail"
 // placeholder permanently.
-func TestResolveSourceAcceptsFootageOutsideTheBrowsedFolder(t *testing.T) {
+func TestResolveSourceForReadAcceptsFootageOutsideTheBrowsedFolder(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(dir, "FLYV9992_convertedsnow2.mp4")
 	if err := os.WriteFile(outside, []byte("not really a video"), 0o644); err != nil {
@@ -23,9 +23,9 @@ func TestResolveSourceAcceptsFootageOutsideTheBrowsedFolder(t *testing.T) {
 	a := &App{}
 	a.folder = filepath.Join(dir, "some-other-browsed-folder") // index is empty on purpose
 
-	v, ok := a.resolveSource(outside)
+	v, ok := a.resolveSourceForRead(outside)
 	if !ok {
-		t.Fatalf("resolveSource(%q) = false; a file that exists on disk is a real source even when it is not in the browsed index", outside)
+		t.Fatalf("resolveSourceForRead(%q) = false; a file that exists on disk is a real source even when it is not in the browsed index", outside)
 	}
 	if filepath.Clean(v.Path) != filepath.Clean(outside) {
 		t.Errorf("resolved Path = %q, want %q", v.Path, outside)
@@ -35,9 +35,9 @@ func TestResolveSourceAcceptsFootageOutsideTheBrowsedFolder(t *testing.T) {
 	}
 }
 
-func TestResolveSourceStillRejectsAPathThatDoesNotExist(t *testing.T) {
+func TestResolveSourceForReadStillRejectsAPathThatDoesNotExist(t *testing.T) {
 	a := &App{}
-	if _, ok := a.resolveSource(filepath.Join(t.TempDir(), "no-such-file.mp4")); ok {
-		t.Error("resolveSource accepted a path that is not on disk and not in the index")
+	if _, ok := a.resolveSourceForRead(filepath.Join(t.TempDir(), "no-such-file.mp4")); ok {
+		t.Error("resolveSourceForRead accepted a path that is not on disk and not in the index")
 	}
 }

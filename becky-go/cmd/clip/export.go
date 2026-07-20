@@ -314,7 +314,10 @@ type ThumbResult struct {
 // is opened READ-ONLY. Degrade-never-crash: any failure (no ffmpeg, unresolved
 // source, read error) yields {data:""} so the timeline keeps working.
 func (a *App) Thumb(source string, t float64) ThumbResult {
-	v, ok := a.resolveSource(source)
+	// Read-only, so a reel's footage may live outside the browsed folder — see
+	// resolveSourceForRead. With the strict resolver every clip of a loaded Vegas
+	// edit drew the black "no thumbnail" placeholder forever.
+	v, ok := a.resolveSourceForRead(source)
 	if !ok {
 		return ThumbResult{}
 	}

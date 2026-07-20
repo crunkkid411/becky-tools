@@ -576,6 +576,13 @@ type ClipView struct {
 	Location  string  `json:"location,omitempty"`
 	Link      string  `json:"link,omitempty"`
 	SourceFPS float64 `json:"source_fps,omitempty"`
+	// Color is this clip's per-SOURCE colour, "#RRGGBB". The review app already
+	// parsed a "color" field and filled the whole clip body with it — but this
+	// field did not exist, so that parse always missed and EVERY clip rendered in
+	// the one default blue. Jordan's clip colours are an ACCESSIBILITY AID (he is
+	// vision-impaired and identifies a clip by its colour at a glance), so five
+	// separate requirements were all failing on this one absent field.
+	Color string `json:"color,omitempty"`
 }
 
 // MarkerView is a timeline marker (compilation-timeline position).
@@ -960,6 +967,7 @@ func (a *App) timelineLocked() TimelineView {
 			Location:  c.Meta.Location,
 			Link:      c.Meta.Link,
 			SourceFPS: c.Meta.SourceFPS,
+			Color:     clipColor(c.Source),
 		})
 		cursor += dur
 	}
@@ -1175,19 +1183,36 @@ func (a *App) resolveSource(source string) (footage.Video, bool) {
 			return v, true
 		}
 	}
-	// A REEL CAN REFERENCE FOOTAGE FROM ANYWHERE — that is the whole point of
-	// loading a Vegas EDL. Until this, resolveSource only accepted paths that
-	// were in the CURRENTLY BROWSED folder's index, so loading Jordan's
-	// post_constantly edit (clips on X:\Videos\...) while the library happened to
-	// be browsing E:\TakingBack2007 made every one of its 88 clips unresolvable.
-	// The visible symptom was that every clip on the timeline drew the black
-	// "no thumbnail" placeholder instead of a thumbnail, forever — Thumb() bails
-	// here before it ever reaches the extractor, so nothing was cached and
-	// nothing retried.
-	//
-	// If the file is really on disk, it is a real source. The index is a
-	// convenience for browsing, not the definition of what exists.
-	if fi, err := os.Stat(abs); err == nil && !fi.IsDir() {
+	return footage.Video{}, false
+}
+
+// resolveSourceForRead is resolveSource plus "and if the file is simply THERE on
+// disk, that counts too" — for READ-ONLY operations like extracting a thumbnail.
+//
+// resolveSource itself must stay strict: AddClip deliberately refuses a source
+// outside the open folder unless it was explicitly dragged in (a.extraFiles),
+// and two tests enforce that boundary. Loosening it there was tried and broke
+// them, correctly.
+//
+// But a REEL CAN REFERENCE FOOTAGE FROM ANYWHERE — that is the whole point of
+// loading a Vegas EDL. Loading Jordan's post_constantly edit (footage on
+// X:\Videos\...) while the library browsed E:\TakingBack2007 made all 88 clips
+// unresolvable, so Thumb() bailed before it ever reached the extractor: every
+// clip on the timeline drew the black "no thumbnail" placeholder, permanently,
+// with nothing cached and nothing retried.
+//
+// Reading a frame out of a file the user already has open in their own edit is
+// not a boundary worth defending; adding it to the reel is.
+func (a *App) resolveSourceForRead(source string) (footage.Video, bool) {
+	if v, ok := a.resolveSource(source); ok {
+		return v, true
+	}
+	abs, err := filepath.Abs(source)
+	if err != nil {
+		abs = source
+	}
+	abs = filepath.Clean(abs)
+	if fi, statErr := os.Stat(abs); statErr == nil && !fi.IsDir() {
 		return footage.Video{Path: abs, Name: baseName(abs)}, true
 	}
 	return footage.Video{}, false
