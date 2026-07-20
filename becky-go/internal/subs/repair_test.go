@@ -191,6 +191,107 @@ func TestRepairStrandsNoPrepositionWhenItsObjectIsPushedAway(t *testing.T) {
 	}
 }
 
+// TestRebalanceCapSplitsPicksNaturalPauseOverCapBoundary is the
+// post_constantly bug: ChunkWords packs greedily with no lookahead, so "to
+// grow on social" / "media" happens purely because the combined line is one
+// character over MaxChars - not because of anything the speaker did. "social"
+// is not dangling, so this is the plain re-split path: fold the pair back
+// together and let splitAtBiggestPause choose the real pause (biggest gap,
+// here before "social") instead of the cap boundary.
+func TestRebalanceCapSplitsPicksNaturalPauseOverCapBoundary(t *testing.T) {
+	in := [][]Word{
+		{w("to", 0.00, 0.10), w("grow", 0.12, 0.22), w("on", 0.24, 0.34), w("social", 0.64, 0.84)},
+		{w("media", 0.86, 0.96)},
+	}
+	got := render(rebalanceCapSplits(in, 22, 0.12))
+	want := []string{"to grow on", "social media"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestRebalanceCapSplitsLeavesRealPauseAlone covers "can" / "you post" on the
+// same edit: the words easily fit on one line together, so the break can only
+// be the speaker's own pause. Jordan's rule: "a one-word line is acceptable
+// when the word genuinely stands alone" - merging across a real pause trades
+// a cosmetic problem for a timing one.
+func TestRebalanceCapSplitsLeavesRealPauseAlone(t *testing.T) {
+	in := [][]Word{
+		{w("you", 0.00, 0.10), w("gotta", 0.12, 0.22), w("be", 0.24, 0.34)},
+		{w("posting", 1.50, 1.70)}, // 1.16s later - a real pause, not the cap
+	}
+	got := render(rebalanceCapSplits(in, 22, 0.12))
+	want := []string{"you gotta be", "posting"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestRebalanceCapSplitsFoldsNumberWhenPushWouldStrandItsNeighbor is "a
+// thousand" / "videos" from the real edit. "thousand" is a number and must
+// stay with its unit ("videos"), but RepairDangling's own guard refuses to
+// push it because that would strand "a" alone (below minPiece) - so the
+// number never reaches its unit and "videos" is left stranded instead. Since
+// the whole pair fits on one line anyway, folding it outright is not a split
+// decision (nothing to get wrong) and satisfies the number-stays-with-its-
+// unit rule with nothing left behind.
+func TestRebalanceCapSplitsFoldsNumberWhenPushWouldStrandItsNeighbor(t *testing.T) {
+	in := [][]Word{
+		{w("a", 0.00, 0.10), w("thousand", 0.12, 0.22)},
+		{w("videos", 0.24, 0.34)},
+	}
+	got := render(rebalanceCapSplits(in, 22, 0.12))
+	want := []string{"a thousand videos"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestRebalanceCapSplitsDefersToRepairDanglingWhenItWontStrand is "compares
+// it against" / "other". "against" is also dangling, but here pushing it
+// leaves "compares it" behind - well above minPiece, so RepairDangling's own
+// push succeeds on its own. rebalanceCapSplits must leave this pair alone:
+// re-splitting it here first (before RepairDangling runs) picked the pause
+// before "it" on real data and produced "compares" / "it against other" -
+// the SAME lone-word defect, just relocated to a different word.
+func TestRebalanceCapSplitsDefersToRepairDanglingWhenItWontStrand(t *testing.T) {
+	in := [][]Word{
+		{w("compares", 0.00, 0.10), w("it", 0.12, 0.22), w("against", 0.24, 0.34)},
+		{w("other", 0.36, 0.46)},
+	}
+	got := render(rebalanceCapSplits(in, 22, 0.12))
+	want := []string{"compares it against", "other"} // unchanged - RepairDangling's job
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+	// And RepairDangling does finish the job, as it already did before this
+	// change existed.
+	got2 := render(RepairDangling(in, 22))
+	want2 := []string{"compares it", "against other"}
+	if strings.Join(got2, " | ") != strings.Join(want2, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got2, " | "), strings.Join(want2, " | "))
+	}
+}
+
+// TestPass1ChunksEliminatesTheLoneWordEndToEnd is the full pipeline
+// (ChunkWords -> rebalanceCapSplits -> RepairDangling) on the same words as
+// TestRebalanceCapSplitsPicksNaturalPauseOverCapBoundary, proving ChunkWords'
+// own greedy pass actually produces that cap-driven split (not just the
+// hand-built input above) and that RepairDangling's existing dangling-push
+// still applies afterward: "on" trails the rebalanced first line and moves
+// forward onto "social media".
+func TestPass1ChunksEliminatesTheLoneWordEndToEnd(t *testing.T) {
+	words := []Word{
+		w("to", 0.00, 0.10), w("grow", 0.12, 0.22), w("on", 0.24, 0.34),
+		w("social", 0.64, 0.84), w("media", 0.86, 0.96),
+	}
+	got := render(Pass1Chunks(words, 22, 0.12))
+	want := []string{"to grow", "on social media"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
 func TestIsDangling(t *testing.T) {
 	dangling := []string{"the", "a", "and", "to", "of", "10", "27", "ten", "twenty-seven", "gotta", "your", "more", "against"}
 	for _, s := range dangling {

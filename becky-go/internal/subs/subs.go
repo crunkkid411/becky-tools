@@ -300,9 +300,7 @@ func Build(segments []Segment, opt Options) []Cue {
 	perSeg := WordsPerSegment(segments)
 	chunks := make([][][]Word, len(segments))
 	for i := range segments {
-		chunks[i] = RepairDangling(
-			ChunkWords(perSeg[i], opt.MaxChars, opt.GapSeconds),
-			opt.MaxChars)
+		chunks[i] = Pass1Chunks(perSeg[i], opt.MaxChars, opt.GapSeconds)
 	}
 	return BuildFromChunks(segments, chunks, opt)
 }

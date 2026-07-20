@@ -221,6 +221,107 @@ func abs(n int) int {
 	return n
 }
 
+// rebalanceCapSplits fixes ChunkWords' one blind spot: it packs greedily with
+// NO LOOKAHEAD, so the word that happens to land right after the cap is hit
+// becomes its own line even when nothing about the speech justifies a break
+// there. On Jordan's real edit this produced "to grow on social" / "media" -
+// the combined line ("to grow on social media") is a single character over
+// MaxChars, and the word left behind was never near a pause.
+//
+// Fix: whenever the line AFTER a cap-driven break (never a real pause - see
+// the gap check below) is exactly one word, recombine it with the line
+// before it. Two cases, both guarded so this can never make things worse:
+//
+//   - The line before does NOT end on a dangling word: an ordinary cap-driven
+//     break with nothing else going on, so hand the pair to
+//     splitAtBiggestPause, which picks a natural pause point instead of the
+//     greedy cap boundary. If the re-split can't do any better than the
+//     input - ANY piece still a lone word - the original chunks are kept.
+//   - The line before DOES end on a dangling word (usually a number: "a
+//     thousand" / "videos"): that is RepairDangling's case, and it already
+//     has a proven fix (push the word forward). Racing it here goes wrong on
+//     real data - re-splitting "compares it against" / "other" ahead of the
+//     dangling-push picked the pause before "it" and produced "compares" /
+//     "it against other", the SAME defect on a different word, when
+//     RepairDangling on its own turns that pair into "compares it" /
+//     "against other" correctly. So this case is left to RepairDangling
+//     UNLESS RepairDangling's own guard would decline to push at all because
+//     the leftover would itself be too short to stand ("a thousand" / "videos"
+//     -> pushing "thousand" strands "a", so RepairDangling refuses and the
+//     number never reaches its unit). Only then is the pair folded into one
+//     line outright - not a split decision, so there is nothing to get wrong,
+//     and it is exactly the number-stays-with-its-unit rule with nothing left
+//     to strand.
+//
+// A break caused by an actual pause (gap > gapSeconds) is left untouched in
+// both cases - that word "genuinely stands alone" (Jordan's rule) and merging
+// across a real pause would trade a cosmetic problem for a timing one, which
+// is worse.
+func rebalanceCapSplits(chunks [][]Word, maxChars int, gapSeconds float64) [][]Word {
+	if maxChars <= 0 || len(chunks) < 2 {
+		return chunks
+	}
+	out := make([][]Word, 0, len(chunks))
+	for i := 0; i < len(chunks); i++ {
+		cur := chunks[i]
+		if i+1 < len(chunks) && len(chunks[i+1]) == 1 && len(cur) >= 2 {
+			next := chunks[i+1][0]
+			last := strings.TrimSpace(cur[len(cur)-1].Word)
+			gap := next.Start - cur[len(cur)-1].End
+			if gap < 0 {
+				gap = 0
+			}
+			switch {
+			case gap > gapSeconds:
+				// A real pause - not this bug, leave it.
+			case isDangling(last):
+				if lineLen(cur)-len(last)-1 < minPiece(maxChars) {
+					// RepairDangling's own push-guard will decline (the
+					// leftover would be too short to stand alone), so fold
+					// the whole pair into one line.
+					if merged := append(append([]Word{}, cur...), next); lineLen(merged) <= maxChars+overflowSlack {
+						out = append(out, merged)
+						i++
+						continue
+					}
+				}
+				// Otherwise RepairDangling handles this pair better than a
+				// blind re-split would - leave it for that pass.
+			default:
+				combined := append(append([]Word{}, cur...), next)
+				if pieces := splitAtBiggestPause(combined, maxChars); len(pieces) >= 2 && noLonePiece(pieces) {
+					out = append(out, pieces...)
+					i++ // the lone chunk was folded into pieces above
+					continue
+				}
+			}
+		}
+		out = append(out, cur)
+	}
+	return out
+}
+
+// noLonePiece reports whether every piece has more than one word. A split
+// that merely relocates the lone-word problem to a different word is not an
+// improvement.
+func noLonePiece(pieces [][]Word) bool {
+	for _, p := range pieces {
+		if len(p) < 2 {
+			return false
+		}
+	}
+	return true
+}
+
+// Pass1Chunks is the deterministic recipe used everywhere pass-1 chunks are
+// produced (Build's own chunking, and PlanChunks' pass-1/fallback): pace-
+// driven chunking, the cap-split rebalance above, then the phrase-integrity
+// repairs. Centralised so the two call sites can't drift apart.
+func Pass1Chunks(words []Word, maxChars int, gapSeconds float64) [][]Word {
+	raw := rebalanceCapSplits(ChunkWords(words, maxChars, gapSeconds), maxChars, gapSeconds)
+	return RepairDangling(raw, maxChars)
+}
+
 // RepairDangling pushes any phrase-splitting trailing word onto the next line,
 // and merges away a line that is nothing but such words. It never changes word
 // order and never drops a word, so the result is still a strict in-order

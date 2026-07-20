@@ -68,7 +68,7 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 	pass1 := make([][][]Word, len(segments))
 	inRange := WordsPerSegment(segments)
 	for i := range segments {
-		pass1[i] = RepairDangling(ChunkWords(inRange[i], opt.MaxChars, opt.GapSeconds), opt.MaxChars)
+		pass1[i] = Pass1Chunks(inRange[i], opt.MaxChars, opt.GapSeconds)
 	}
 	if model == nil {
 		return pass1, nil
