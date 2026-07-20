@@ -32,6 +32,7 @@ Add-Type @"
 using System;using System.Runtime.InteropServices;
 public class GD{
  [DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out R r);
+ [DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")]public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);
  public struct R{public int L,T,Rt,B;}
@@ -80,8 +81,24 @@ foreach ($a in $apps) {
     if (-not $p) { Write-Host "not running: $($a.Name)"; continue }
 
     $h = $p.MainWindowHandle
+
+    # CLOSE every other becky window before shooting this one. CopyFromScreen
+    # grabs whatever is on the glass, so another app on top silently produces a
+    # screenshot of the WRONG APP under the right filename.
+    foreach ($other in $apps) {
+        if ($other.Proc -eq $a.Proc) { continue }
+        Get-Process -Name $other.Proc -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 400
+                             if (-not $_.HasExited) { $_.Kill() } }
+    }
+    Start-Sleep -Milliseconds 600
     [void][GD]::ShowWindow($h, 9); [void][GD]::SetForegroundWindow($h)
     Start-Sleep -Milliseconds 1200
+
+    # Prove we actually got the foreground before trusting the pixels.
+    if ([GD]::GetForegroundWindow() -ne $h) {
+        Write-Host "WARNING: $($a.Name) did not reach the foreground - its shot may show another window" -ForegroundColor Yellow
+    }
 
     $r = New-Object GD+R; [void][GD]::GetWindowRect($h, [ref]$r)
     $w = $r.Rt - $r.L; $ht = $r.B - $r.T

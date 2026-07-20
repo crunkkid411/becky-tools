@@ -4835,7 +4835,10 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame LATER (its own source rate)");
                 if (!canTrim) ImGui::EndDisabled();
             }
-            ImGui::SameLine();
+            // ROW 1 ENDS HERE (transport: things that move the playhead). Measured
+            // at the shipped 1.35 text scale, Play+|<<+2x+Overlay+<+1f++1f>+Skip
+            // Quiet is ~758px against a ~620px pane - Skip Quiet was sliced
+            // mid-word. Skip Quiet opens row 2 instead.
             // E-10 SKIP QUIET — the feature Jordan called "the single biggest
             // breakthrough" (feedback7): during playback, everything under the
             // loudness threshold is SKIPPED seamlessly instead of played, so
