@@ -1,7 +1,9 @@
 package subs
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -55,6 +57,33 @@ func (s Style) ForceStyle() string {
 // is single-quoted.
 func (s Style) SubtitlesFilter(srtPath string) string {
 	return fmt.Sprintf("subtitles=%s:force_style='%s'", EscapeFilterPath(srtPath), s.ForceStyle())
+}
+
+// capStyle is the per-reel caption placement both review apps write when Jordan
+// drags a caption up or down. It lives beside the .srt as "<stem>.capstyle.json"
+// — a contract the GUIs, becky-subtitle's burn, and the reel render all share, so
+// the height he set on screen survives into whatever produces the final file.
+type capStyle struct {
+	MarginV int `json:"margin_v"`
+}
+
+// CapStylePath is the placement sidecar for a given .srt.
+func CapStylePath(srt string) string {
+	return strings.TrimSuffix(srt, filepath.Ext(srt)) + ".capstyle.json"
+}
+
+// LoadMarginV returns the caption height saved by the review apps for this .srt,
+// or 0 when there is none (meaning: use DefaultStyle's MarginV).
+func LoadMarginV(srt string) int {
+	b, err := os.ReadFile(CapStylePath(srt))
+	if err != nil {
+		return 0
+	}
+	var cs capStyle
+	if json.Unmarshal(b, &cs) != nil || cs.MarginV <= 0 {
+		return 0
+	}
+	return cs.MarginV
 }
 
 // EscapeFilterPath converts a path into the form ffmpeg's subtitles filter

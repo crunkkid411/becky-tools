@@ -75,7 +75,7 @@ func main() {
 	hold := fs.Float64("hold", 0.35, "carry the last caption across an inter-cut gap no longer than this")
 	lower := fs.Bool("lower", true, "lowercase the captions and drop trailing punctuation - the cli-cut look")
 	review := fs.Bool("review", true, "pass 2: have a model regroup the caption lines so they break on phrases instead of mid-thought. This is what stops captions reading as broken")
-	reviewModel := fs.String("review-model", "sonnet", "model alias for the caption review pass")
+	reviewModel := fs.String("review-model", "hy3", "model alias for the caption review pass")
 
 	font := fs.String("font", "ProximaNova-Semibold", "caption font FAMILY name (libass matches the family, not the filename)")
 	fontSize := fs.Int("font-size", 12, "caption font size")
@@ -168,14 +168,14 @@ func main() {
 	// even though every timing is frame-correct.
 	var model subs.ModelFunc
 	if *review {
-		if _, err := os.Stat(fleetRunnerPath()); err == nil {
-			model = fleetModel(*reviewModel, *verbose)
+		if haveReviewer() {
+			model = openRouterModel(*reviewModel, *verbose)
 		} else {
-			noteReviewSkipped("the fleet runner was not found at " + fleetRunnerPath())
-			warnings = append(warnings, "caption review skipped: fleet runner not found")
+			noteReviewSkipped("OPENROUTER_API_KEY is not set")
+			warnings = append(warnings, "caption review skipped: OPENROUTER_API_KEY is not set")
 		}
 	}
-	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, 24)
+	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, subs.DefaultReviewBatch)
 	warnings = append(warnings, reviewWarnings...)
 
 	cues := subs.BuildFromChunks(segments, chunks, opt)
