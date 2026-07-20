@@ -37,10 +37,28 @@ already answered below.
    put Jordan's YouTube edits on E:\ — a removable forensic drive holding
    evidence for a criminal case.
 
-## What's already done — verified, don't re-check it
+## What's already done — MEASURED. Read the scope line first.
 
-- Render is frame-exact: 4501 frames at 30000/1001.
-- Captions burn into the render — checked on an actual frame at 2:28 (t=148s).
+**Scope, so this list is not read as more than it is:** everything below is the
+RENDER/CAPTION/PLAYBACK pipeline plus timeline input. It is NOT the product.
+The product is §"The missing half" (H-4..H-7) and the 120-item
+`GUI-ACCEPTANCE-CHECKLIST.md`, and most of that is still unbuilt. An adversarial
+audit on 2026-07-20 flagged this exact section for reading like "the app is
+done" — it is not, it is the plumbing under the app.
+
+- **There is a finished, postable video.** `X:\Videos\2025\11_November\Rendered\
+  post_constantly.captioned.mp4` — 269MB, 4500 frames at 30000/1001, audio
+  present (aac 48kHz stereo, 150.144s). Built 2026-07-20 00:57 from his real
+  Vegas `.xml`.
+- Captions burn in. EVIDENCE, not a relayed claim: the frame at t=130s was
+  extracted with ffmpeg and looked at directly — it reads "27 times a day",
+  white bold, black outline, low-centred, and the number stayed with its unit
+  (his rule). Re-extract any frame yourself if you doubt it; do not take this
+  line's word for it either.
+- Render is frame-exact. The reel computes to 150.183s = 4501 frames; the output
+  is 4500 because **Jordan's own Vegas render is 4500 frames** — the burn is
+  frame-for-frame identical to its input, and audio is `-c:a copy` so it is
+  bit-identical. The one-frame delta is in Vegas's render, not in ours.
 - Two different Vegas exports of the same edit produce identical cut points on
   all 88 clips, to 0 microseconds.
 - Audio plays during playback.

@@ -59,7 +59,9 @@ missing. Prefer reusing becky-timeline over writing more.
   oddly. The rule Jordan cares most about holds (a number never leaves its unit:
   "ten times a day", never "ten" / "times a day").
 - `cmd/tts` test fails — pre-existing/environmental, not ours.
-- Not merged to master; branch is 19 commits ahead.
+- Not merged to master. DO NOT quote a commit count here - the last one went
+  stale within hours and an audit caught it (doc said 19, reality was 26).
+  Run `git rev-list --count master..HEAD` instead.
 
 ## HOW JORDAN MAKES A VIDEO
 Open **Becky Review 3**, Load his `.xml` (the dialog now accepts `.txt`/`.xml`/`.json` and
