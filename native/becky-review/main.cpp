@@ -4369,7 +4369,29 @@ int main(int argc, char** argv) {
     // built with /O2 but WITHOUT NDEBUG - assert() is live, so handing
     // AddFontFromFileTTF a missing path would pop an assert dialog instead of
     // degrading. Checking first keeps the fallback silent and safe.
-    ImGui::GetIO().Fonts->AddFontDefault();
+    //
+    // BASE UI FONT: real proportional Segoe UI - the SAME family the reference
+    // WPF app uses - not ImGui's 13px ProggyClean bitmap. ProggyClean read as a
+    // "DOS terminal" and was the #1 thing two independent eyes (Jordan, and a
+    // free vision model comparing the two apps) called out as making Review 3
+    // look unpolished. Rasterized at the SAME 13px base ProggyClean used, so
+    // every FontGlobalScale-based layout measurement downstream is byte-for-byte
+    // unchanged; oversampled 3x3 so the 1.35 UI-scale upscale stays crisp. Falls
+    // back to the bitmap default if the file is somehow missing (never assert -
+    // the same degrade-don't-crash rule as the icon load below).
+    {
+        const char* uiFontPath = "C:\\Windows\\Fonts\\segoeui.ttf";
+        bool baseLoaded = false;
+        if (FILE* f = fopen(uiFontPath, "rb")) {
+            fclose(f);
+            ImFontConfig uiCfg;
+            uiCfg.OversampleH = 3;
+            uiCfg.OversampleV = 3;
+            uiCfg.PixelSnapH  = false;
+            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 13.0f, &uiCfg) != nullptr;
+        }
+        if (!baseLoaded) ImGui::GetIO().Fonts->AddFontDefault();
+    }
     {
         const char* iconPath = "C:\\Windows\\Fonts\\segmdl2.ttf";
         // BECKY_ICONS=0 forces the text-label fallback. It exists so the
