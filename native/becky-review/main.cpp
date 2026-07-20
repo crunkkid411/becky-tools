@@ -1784,6 +1784,10 @@ struct Gesture {
 static Gesture g_gest;
 static double g_lastScrubEmit = 0, g_lastViewEmit = 0;
 static double g_lastUndoQueued = -1;
+static double g_lastRedoQueued = -1;   // redo debounce, same reason as undo's
+// Ctrl read from the SAME clock and BOTH bits as every other modifier here -
+// see the ctrlDown comment in the arrow handler for why that matters.
+static bool ctrlDownForRedo() { SHORT c = GetAsyncKeyState(VK_CONTROL); return (c & 0x8000) != 0 || (c & 1) != 0; }
 
 static void emitScrub(double t, bool final_) {
     double n = nowSec();
@@ -4145,6 +4149,31 @@ int main(int argc, char** argv) {
                     queueEdit(std::move(req));
                 }
             } }
+            // REDO. The engine has implemented it all along (bridge.go:155) and the
+            // app had no way to reach it - zero occurrences of "redo" in this file
+            // before now. Undo without redo is a trap: one keypress too many and the
+            // only way back is to redo the edit by hand.
+            //
+            // Both Ctrl+Y and Ctrl+Shift+Z, because editors' muscle memory splits
+            // between them and guessing wrong costs him a lookup. Debounced on the
+            // same 250ms as undo and for the same reason: without the old blocking
+            // round-trip there is no accidental throttle, and a double-fire walks
+            // an extra step through the stack.
+            {
+                SHORT sh = GetAsyncKeyState(VK_SHIFT);
+                bool shiftDown = (sh & 0x8000) != 0 || (sh & 1) != 0;
+                bool redoChord = ((GetAsyncKeyState('Y') & 1) && ctrlDownForRedo()) ||
+                                 ((GetAsyncKeyState('Z') & 1) && ctrlDownForRedo() && shiftDown);
+                if (redoChord) {
+                    double n = nowSec();
+                    if (n - g_lastRedoQueued > 0.25) {
+                        g_lastRedoQueued = n;
+                        editLog("EDGE REDO");
+                        EditReq req; req.verb = "redo"; req.args = json::object(); req.kind = 4; req.t = curSec;
+                        queueEdit(std::move(req));
+                    }
+                }
+            }
             // MODIFIERS MUST BE READ FROM THE SAME CLOCK AS THE KEYS.
             //
             // The arrow keys above are polled with GetAsyncKeyState - real-time
