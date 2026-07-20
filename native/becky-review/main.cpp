@@ -3569,6 +3569,10 @@ struct Hit {
     bool transcriptOnly = false;
 };
 static std::vector<Hit> g_hits;
+// Which hit row the keyboard is on (items 68/76). Mirrors g_libSel for the video
+// rows, including the "scroll it into view after an arrow key" flag.
+static int g_hitSel = -1;
+static bool g_hitScrollPending = false;
 static std::string g_searchMode;         // "" | "keyword" | "qmd"
 static std::string g_searchNote;         // qmd note / degradation note
 static std::string g_searchErr;
@@ -4533,7 +4537,13 @@ int main(int argc, char** argv) {
             //
             // Gated with every other key here on !WantCaptureKeyboard, so Enter in
             // the search / ask / caption boxes still belongs to the text box.
-            if ((GetAsyncKeyState(VK_RETURN) & 1) && playing) stopPlayback(curSec, playing, false);
+            //
+            // !g_libFocused because the left panel owns Enter when it has focus
+            // (submit a search / add the selected hit / open a transcript). Without
+            // it, Enter on a search hit would ALSO stop playback - one key, two
+            // owners. g_libFocused is last frame's value, which is what the other
+            // cross-panel guard in this loop already uses.
+            if ((GetAsyncKeyState(VK_RETURN) & 1) && playing && !g_libFocused) stopPlayback(curSec, playing, false);
             // NOTE (fixes the "split-brain edit model" the adversarial review flagged as
             // priority #1): track 0 is no longer mutated locally by these handlers. The
             // engine's reel is the ONE model - every S/Del/O/I keypress calls a REAL verb
@@ -4752,6 +4762,11 @@ int main(int argc, char** argv) {
                 char msMsg[64]; snprintf(msMsg, sizeof(msMsg), " (%.0fms)", done.elapsedMs);
                 if (!done.ok) { g_searchErr = (done.err.empty() ? "search failed" : done.err) + msMsg; g_searchMode.clear(); g_hits.clear(); }
                 else { g_searchErr.clear(); g_searchMode = done.mode; g_searchNote = done.note + msMsg; g_hits = std::move(done.hits); }
+                // A new result set means the old row index points at a different
+                // quote - park the keyboard on the first hit, never on whatever
+                // happened to be at that index before.
+                g_hitSel = g_hits.empty() ? -1 : 0;
+                g_hitScrollPending = false;
             }
         }
 
@@ -5244,6 +5259,30 @@ int main(int argc, char** argv) {
                     g_searchMode == "qmd" ? " (smart)" : "");
                 if (!g_searchNote.empty()) ImGui::TextDisabled("%s", g_searchNote.c_str());
                 ImGui::Separator();
+                // ---- KEYBOARD REACH ON HITS (items 68/76) ----
+                // A hit row was mouse-only: no way to copy a filename, open its
+                // folder, or add the clip without a double-click, every single
+                // time. The video rows below have had all three for a while - hits
+                // just never got the same treatment.
+                //
+                // Up/Down move g_hitSel and Enter does what double-click does.
+                // The selection is DRAWN (Selectable's `selected`), not merely
+                // tracked: an invisible focus is useless to him - he has to be
+                // able to see which row Enter is about to act on.
+                //
+                // Same guard the library rows use and for the same reason: the
+                // search box lives in this panel, so IsWindowFocused stays true
+                // while typing in it. Without !WantTextInput, pressing Enter to
+                // SUBMIT a search would also fire "add the selected hit".
+                if (libFocusedNow && !ImGui::GetIO().WantTextInput && !g_hits.empty()) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+                        { g_hitSel = std::min((int)g_hits.size() - 1, g_hitSel + 1); g_hitScrollPending = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+                        { g_hitSel = std::max(0, g_hitSel - 1); g_hitScrollPending = true; }
+                    if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
+                        g_hitSel >= 0 && g_hitSel < (int)g_hits.size() && !g_hits[g_hitSel].transcriptOnly)
+                        addHitToTimeline(g_hits[g_hitSel]);
+                }
                 ImGui::BeginChild("hits", { 0, 0 }, false);
                 for (size_t i = 0; i < g_hits.size(); i++) {
                     Hit& h = g_hits[i];
@@ -5253,10 +5292,34 @@ int main(int argc, char** argv) {
                         ImGui::TextDisabled("%s", line.c_str());
                     } else {
                         // click plays at the verbatim timestamp (C-4); double-click adds to timeline.
-                        if (ImGui::Selectable(line.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick)) {
+                            g_hitSel = (int)i;
                             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h);
                             else seekToSpan(h.source, h.start, h.end, true, curSec, playing, lastComposed);
                         }
+                        // Right-click = the video rows' menu, on a hit. Right-click
+                        // also MOVES the selection first, so the menu and the row
+                        // Enter would act on can never be two different rows.
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { g_hitSel = (int)i; ImGui::OpenPopup("hitctx"); }
+                        if (ImGui::BeginPopup("hitctx")) {
+                            // The popup is only as wide as its widest MENU ITEM, so a
+                            // raw filename header just ran off the edge and got clipped
+                            // - the head is the date he scans by and the tail is what
+                            // tells near-duplicates apart, so a hard cut throws away
+                            // the half that identifies the file. Middle-ellipsis to the
+                            // menu's own width, full name on the tooltip.
+                            std::string full = baseName(h.source);
+                            ImGui::TextDisabled("%s", midEllipsis(full, ImGui::CalcTextSize("Open in File Browser").x).c_str());
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
+                            ImGui::Separator();
+                            if (ImGui::MenuItem("Add to Timeline")) addHitToTimeline(h);
+                            if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
+                            if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
+                            if (ImGui::MenuItem("Copy Quote")) ImGui::SetClipboardText(h.text.c_str());
+                            if (ImGui::MenuItem("Transcribe")) requestTranscribe(h.source, baseName(h.source));
+                            ImGui::EndPopup();
+                        }
+                        if (g_hitSel == (int)i && g_hitScrollPending) { ImGui::SetScrollHereY(0.5f); g_hitScrollPending = false; }
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", h.name.c_str(), h.date.c_str());
                     }
                     ImGui::PopID();
