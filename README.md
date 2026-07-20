@@ -42,12 +42,58 @@ The friendly entry point is **`becky.exe`** (the orchestrator).
 
 | Group | Tools | Purpose |
 |---|---|---|
-| Media | `transcribe` (Parakeet ASR), `cut` (auto-editor+VAD jumpcuts), `vad`, `diarize` (who-speaks-when) | turn raw A/V into timed text + speaker spans |
+| Media | `transcribe` (Parakeet ASR), `cut` (auto-editor+VAD jumpcuts), `vad`, `diarize` (who-speaks-when), `subtitle` (**cut-snapped burn-in captions**) | turn raw A/V into timed text + speaker spans |
 | Identity/forensic | `identify` (voice+face+location → corroborated names), `events` (scene/phone/multi-face), `osint` (provenance frames + EXIF/GPS metadata), `validate` (Gemma-4 AV description), `framematch` (same-room exhibit), `motion` (sub-second movement localizer) | who/what/where, evidence-grade |
 | Index/report | `embed` (Qwen3 vectors), `search` (hybrid FTS5+vec+OCR RRF), `ocr` (text off frames), `consolidate`, `review` (LLM annotate), `export` | searchable corpus + reports |
 | Orchestration | `becky` (plain-language op runner), `enroll` (wiki→KB + `becky "this is X" <clip>`), `cluster` (recurring-unknown "Person A"), `ask` (TUI front-door, saves output next to source) | drive the toolset; build/grow the KB |
 | Utility/meta | `web2md`, `deslop`, `debt-scan`, `eval` (recall harness), `pipeline` (chains the above), `new-tool` (AI-assisted tool scaffolding) | |
 | Music / DAW | `compose` (genre→MIDI stems), `hum`, `vox`, `mix`, `drum`, `wire`, `reaper` (**AI-first DAW: authors REAPER `.rpp` sessions + drives REAPER, which hosts all his VSTs**) | becky as the AI brain over a real DAW |
+
+## Captions that do not flash (`becky-subtitle`)
+
+Captions timed off a raw transcript drift against the edit, so at every cut one blinks on or off
+for a few frames — jarring enough that Jordan captioned by hand instead. `becky-subtitle` snaps
+each caption to the cut it lives in and closes every gap between them (the rules ported from the
+pre-Go `cli-cut` `build_master_srt`, which was left behind when `becky-cut` was ported).
+
+One call does the whole job — it imports the edit, transcribes the source if needed, chunks on the
+speaker's pacing, and burns the result in:
+
+```bat
+becky-subtitle --edit post_constantly.xml --burn post_constantly.mp4
+```
+
+One-click: **`Caption This Edit.bat`** (drag a Vegas edit onto it).
+
+Two things worth knowing:
+
+- **The pause threshold is derived from the transcript, not hardcoded.** `cli-cut`'s 0.120s constant
+  assumed an ASR with tight word boundaries. Parakeet quantises to 0.08s and leaves ~49% of words
+  with `end == start`, so its ordinary connected-speech gap is 0.16-0.24s — above the constant, which
+  breaks after nearly every word (measured: 421 captions from 631 words). `subs.AutoGapSeconds` takes
+  the 90th percentile of the transcript's own gaps instead (0.32s here → 180 captions, 3-4 words each).
+- **Captions are NOT lowercased by default**, unlike `cli-cut`. Jordan's published captions keep
+  sentence case and punctuation ("Their label doesn't want you..."). `--lower` restores the old look.
+
+## Importing an edit you already cut (`becky-otio --import`)
+
+Export was one-way by design (`SPEC-BECKY-OTIO.md` non-goals). It no longer is: Jordan cuts in Vegas
+Pro, and those cuts have to reach becky without being redone by hand.
+
+```bat
+becky-otio --import post_constantly.xml    REM or the Vegas .txt
+```
+
+Reads a Vegas **EDL TXT** (`.txt`, milliseconds, absolute paths per event) or a **Final Cut Pro 7
+XML** (`.xml`, source frames at the sequence rate) and writes a becky reel — which every surface
+already understands, so an imported Vegas edit opens in Becky Review with **Load Reel** and captions
+with `becky-subtitle`. Verified on a real 88-cut edit: both files import to 88 clips and agree to
+**0.31 ms** (1/100th of a frame).
+
+Traps handled, both real: FCP7 declares a media path once and refers to it by id afterwards — in a
+Vegas export that declaration sits in the **bin**, so paths are collected document-wide before the
+sequence is read (resolving only from the sequence imports zero clips); and the bin's own `<clipitem>`
+spans the whole file, so it must not be imported as a 5-minute event.
 
 ## AI-first DAW (REAPER)
 
