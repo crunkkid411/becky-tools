@@ -458,6 +458,27 @@ static HANDLE g_mpvPipeRead = INVALID_HANDLE_VALUE;   // read side (mpvReaderThr
 static std::string g_mpvPipeName;
 static std::mutex g_mpvWriteMx;
 static std::string g_mpvLoadedSource;   // which source file mpv currently has open (fwslash'd)
+// D-9: g_mpvLoadedSource is written by the decode thread (mpvSeekExact) AND by the
+// UI thread when it hands mpv the whole-reel EDL (mpvEdlEnter) - guard it.
+static std::mutex g_mpvSrcMx;
+
+// --------------- D-9: mpv actually PLAYS (this is where the audio was missing) ---------------
+// The bug Jordan hit: mpv was launched --pause=yes and NOTHING ever unpaused it, so it
+// was only ever a frame SCRUBBER - the app simulated playback itself (curSec += dt) and
+// commanded a per-frame hr-seek. A paused mpv decodes stills and emits NO AUDIO, which is
+// the entire "Becky Review 3 has no audio" report. Fix (mirroring becky-timeline's split,
+// where mpv is the preview and genuinely plays): hand mpv the whole reel as an EDL and let
+// it PLAY, then sync the app clock FROM mpv's time-pos instead of commanding it. A/V sync
+// and the source's true rate (29.97 = 30000/1001) then come from mpv's own clock for free.
+// g_edlActive lives up here (not with the EDL code below, which needs g_track) so
+// mpvSeekExact can cheaply refuse to fight playback with scrub seeks.
+static std::atomic<bool> g_edlActive{ false };
+static std::atomic<double> g_mpvTimePos{ -1.0 };
+static const int kObsTimePos = 77;   // observe_property id for time-pos
+// D-4's 2x playback rate. Moved up here from the view/gesture block (it used to sit next
+// to g_playingExt) purely so the EDL playback code below can pass it to mpv as "speed" -
+// same variable, same meaning, just declared before its first use now.
+static double g_playRate = 1.0;
 
 // I-5/I-8 root cause (found live this session via BECKY_REVIEW_SCRUB_LOG): this
 // used to be a plain synchronous WriteFile with no timeout. mpv's named pipe has
@@ -503,6 +524,36 @@ static bool mpvCommand(const json& cmdArr) {
     json j; j["command"] = cmdArr;
     return mpvWriteLine(j.dump());
 }
+// D-9: mpv's own playback clock. time-pos arrives as an unsolicited "property-change"
+// event on whichever connection issued the observe_property - that is g_mpvPipe
+// (everything goes out through mpvWriteLine), so mpvWriteSideDrainThread is what
+// actually feeds this; mpvReaderThread feeds it too, harmlessly, so neither drain
+// thread has to care which one mpv picked.
+static void mpvHandleIpcLine(const std::string& line) {
+    if (line.find("time-pos") == std::string::npos) return;   // cheap reject - most lines are command acks
+    try {
+        json j = json::parse(line);
+        if (j.value("event", std::string()) != "property-change") return;
+        if (j.value("name", std::string()) != "time-pos") return;
+        auto it = j.find("data");
+        if (it != j.end() && it->is_number()) g_mpvTimePos.store(it->get<double>());
+    } catch (...) {
+        // Garbage/partial line - ignore. A drain thread must never throw: it is the
+        // thread that detects mpv dying, and losing it silently freezes the pane.
+    }
+}
+// Splits a raw pipe chunk into whole lines, carrying the partial tail to the next read
+// (IPC replies are newline-delimited but arrive chunked, so a naive per-chunk parse
+// would drop or corrupt roughly every event that straddles a boundary).
+static void mpvFeedIpcChunk(std::string& acc, const char* buf, size_t n) {
+    acc.append(buf, n);
+    size_t pos;
+    while ((pos = acc.find('\n')) != std::string::npos) {
+        mpvHandleIpcLine(acc.substr(0, pos));
+        acc.erase(0, pos + 1);
+    }
+    if (acc.size() > (1u << 20)) acc.clear();   // runaway guard - never grow unbounded
+}
 // Reader thread: drains mpv's IPC replies/events (we don't need to correlate
 // request ids - every command here is fire-and-forget). Its real job is
 // detecting mpv exiting/crashing so the video pane degrades visibly instead of
@@ -516,9 +567,11 @@ static bool mpvCommand(const json& cmdArr) {
 static void mpvReaderThread() {
     t_threadTag = "mpvReader";
     char buf[8192];
+    std::string acc;
     for (;;) {
         DWORD n = 0;
         if (!ReadFile(g_mpvPipeRead, buf, sizeof buf, &n, nullptr) || n == 0) break;
+        mpvFeedIpcChunk(acc, buf, n);
     }
     crashLog("mpv: IPC pipe closed (mpv exited) - video decode disabled, window still open");
     g_mpvAvailable.store(false);
@@ -542,6 +595,7 @@ static void mpvReaderThread() {
 static void mpvWriteSideDrainThread() {
     t_threadTag = "mpvWriteDrain";
     char buf[8192];
+    std::string acc;
     OVERLAPPED ov{}; ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!ov.hEvent) return;
     for (;;) {
@@ -552,6 +606,7 @@ static void mpvWriteSideDrainThread() {
             if (!GetOverlappedResult(g_mpvPipe, &ov, &n, TRUE)) break;
         }
         if (n == 0) break;
+        mpvFeedIpcChunk(acc, buf, n);   // D-9: this is the connection time-pos arrives on
         ResetEvent(ov.hEvent);
     }
     CloseHandle(ov.hEvent);
@@ -666,10 +721,21 @@ static bool mpvLaunch(HWND parent) {
 // contract lines that flood curSec continuously, not just the literal drag.
 static void mpvSeekExact(const std::string& source, double srcSec, bool exact) {
     if (!g_mpvAvailable.load()) return;
+    // D-9: while mpv is PLAYING the reel EDL it owns the position - a scrub seek here
+    // would yank playback backwards every frame and re-create exactly the IPC flood
+    // I-5 root-caused. main() also gates compose dispatch on this; belt and braces.
+    if (g_edlActive.load()) return;
     std::string src = source; fwslash(src);
+    std::lock_guard<std::mutex> lk(g_mpvSrcMx);
     if (src != g_mpvLoadedSource) {
-        char startOpt[64]; snprintf(startOpt, sizeof startOpt, "start=%.6f", srcSec);
+        // pause=yes is NOT redundant with the launch flag (D-9): once playback has
+        // genuinely unpaused mpv for the reel EDL, a later scrub loadfile comes back
+        // PLAYING unless it says otherwise - observed live (paused app, mpv happily
+        // rolling on through the raw source with audio). Scrubbing is by definition a
+        // paused, frame-exact operation, so pin it here rather than relying on state.
+        char startOpt[64]; snprintf(startOpt, sizeof startOpt, "start=%.6f,pause=yes", srcSec);
         mpvCommand(json::array({ "loadfile", src, "replace", 0, std::string(startOpt) }));
+        mpvCommand(json::array({ "set_property", "pause", true }));
         g_mpvLoadedSource = src;
     } else {
         mpvCommand(json::array({ "seek", srcSec, "absolute", exact ? "exact" : "keyframes" }));
@@ -1417,6 +1483,113 @@ static void requestCompose(double t, bool exact) {
     g_decReqCv.notify_one();
 }
 
+// --------------- D-9: REAL playback with AUDIO - the reel handed to mpv as an EDL ---------------
+// Why an EDL and not 88 hand-driven seeks: mpv natively supports an EDL (a playlist of
+// in/out segments across files) as a single virtual file. Writing the reel as one lets
+// mpv play the WHOLE edit seamlessly, with audio and correct A/V sync, and makes EDL time
+// identical to composition time - so curSec maps 1:1 onto mpv's time-pos with no mapping
+// layer. Verified against runtime/mpv/mpv.exe (v0.41.0) on the 88-cut post_constantly reel
+// before this was written: duration 150s (matches the summed clip lengths), audio track
+// present, and the per-process Windows peak meter reads real signal.
+//
+// SCOPE, deliberately: the EDL is used for PLAYBACK ONLY. Paused scrubbing keeps the
+// existing per-clip atomic loadfile+start= path untouched, because that is what makes
+// frame-exact editing and cut-point snapping work today and it is not worth risking.
+// Entering/leaving playback is the only thing that reloads.
+static std::string g_edlPath;
+static uint64_t g_edlSigLoaded = 0;
+static double g_edlSeekTarget = -1;   // >=0 while a seek is issued but mpv hasn't reported it yet
+static double g_edlSeekAt = 0;
+static double g_edlSpeedSet = -1;
+
+// FNV-1a over (source, in, out) of every clip: detects a mid-playback edit so the EDL can
+// be rebuilt. A hash, not a string, because this runs every frame during playback.
+static uint64_t edlTrackSig() {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const void* p, size_t n) {
+        const unsigned char* b = (const unsigned char*)p;
+        for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; }
+    };
+    for (auto& c : g_track[0]) { mix(c.source.data(), c.source.size()); mix(&c.in, sizeof c.in); mix(&c.out, sizeof c.out); }
+    return h;
+}
+
+static bool edlWrite(std::string& outPath) {
+    if (g_track[0].empty()) return false;
+    if (g_edlPath.empty()) {
+        char tmp[MAX_PATH]; DWORD n = GetTempPathA(MAX_PATH, tmp);
+        std::string dir = (n > 0 && n < MAX_PATH) ? std::string(tmp, n) : std::string(".\\");
+        g_edlPath = dir + "becky-review-" + std::to_string((unsigned long)GetCurrentProcessId()) + ".edl";
+    }
+    std::string body = "# mpv EDL v0\n";
+    char b[64];
+    for (auto& c : g_track[0]) {
+        double len = c.out - c.in;
+        if (len <= 0) continue;
+        std::string src = c.source; fwslash(src);
+        // %<byteLen>%<path> is mpv's EDL quoting - mandatory here because Windows paths
+        // can contain the ',' that otherwise separates the fields.
+        snprintf(b, sizeof b, "%%%d%%", (int)src.size());
+        body += b; body += src;
+        snprintf(b, sizeof b, ",%.6f,%.6f\n", c.in, len);
+        body += b;
+    }
+    // BINARY on purpose. A text-mode ofstream writes CRLF on Windows, and mpv's EDL
+    // header match then fails outright - "Failed to recognize file format", reproduced
+    // directly against runtime/mpv/mpv.exe before this was written. Do not "clean this up".
+    std::ofstream f(g_edlPath, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f.write(body.data(), (std::streamsize)body.size());
+    f.close();
+    outPath = g_edlPath;
+    return true;
+}
+
+// Hands mpv the current reel and starts it PLAYING at compT. Also used to re-enter after a
+// mid-playback edit (rebuild + resume at the same spot). Degrades silently if mpv is down
+// or the EDL can't be written - main() then falls back to the old simulated tick.
+static void mpvEdlEnter(double compT) {
+    if (!g_mpvAvailable.load() || g_track[0].empty()) return;
+    std::string path;
+    if (!edlWrite(path)) { crashLog("mpv: EDL write failed - falling back to simulated playback (no audio)"); return; }
+    fwslash(path);
+    static bool s_observed = false;
+    if (!s_observed) { mpvCommand(json::array({ "observe_property", kObsTimePos, "time-pos" })); s_observed = true; }
+    if (compT < 0) compT = 0;
+    char opt[160];
+    snprintf(opt, sizeof opt, "start=%.6f,pause=no,speed=%.4f", compT, g_playRate);
+    {
+        std::lock_guard<std::mutex> lk(g_mpvSrcMx);
+        // Leave the EDL path here so that on exit the next scrub compose sees a DIFFERENT
+        // source and does its normal atomic loadfile+start= back onto the real clip - the
+        // frame-exact paused path needs no special-casing at all.
+        g_mpvLoadedSource = path;
+    }
+    mpvCommand(json::array({ "loadfile", path, "replace", 0, std::string(opt) }));
+    mpvCommand(json::array({ "set_property", "pause", false }));   // belt and braces vs. the per-file option
+    g_edlSigLoaded = edlTrackSig();
+    g_edlSpeedSet = g_playRate;
+    g_mpvTimePos.store(-1.0);
+    g_edlSeekTarget = compT; g_edlSeekAt = nowSec();
+    g_edlActive.store(true);
+}
+
+static void mpvEdlExit() {
+    if (!g_edlActive.load()) return;
+    g_edlActive.store(false);
+    mpvCommand(json::array({ "set_property", "pause", true }));
+    g_mpvTimePos.store(-1.0);
+    g_edlSigLoaded = 0;
+    g_edlSeekTarget = -1;
+}
+
+static void mpvEdlSeek(double compT) {
+    if (!g_edlActive.load()) return;
+    mpvCommand(json::array({ "seek", compT, "absolute", "exact" }));
+    g_edlSeekTarget = compT; g_edlSeekAt = nowSec();
+    g_mpvTimePos.store(-1.0);
+}
+
 // --------------- NDJSON out to the engine is over the subprocess; UI sends via engineCall ---------------
 // --------------- view + gesture state ---------------
 static HWND g_hwnd = nullptr;
@@ -1424,7 +1597,7 @@ static double g_pps = 60;
 static double g_scrollSec = 0;
 static bool g_visible = true;
 static bool g_playingExt = false;
-static double g_playRate = 1.0;   // D-4: 2x playback (button + Shift+Space)
+// (g_playRate - D-4's 2x playback - now lives up with the mpv globals; see D-9.)
 static double g_stockSec = -1;
 static bool g_stockFlash = false;
 static double g_lastUserScroll = 0;
@@ -3585,12 +3758,72 @@ int main(int argc, char** argv) {
             }
         }
 
+        // D-9: PLAYBACK. This used to be the whole of "playing": a simulated clock
+        // (curSec += dt) driving per-frame hr-seeks into a permanently paused mpv - which
+        // is precisely why there was no audio. Now mpv genuinely plays the reel (EDL) and
+        // this block FOLLOWS mpv's clock instead of commanding it, so audio exists and A/V
+        // sync + the source's true frame rate come from mpv rather than a wall clock.
         if (playing && !g_track[0].empty()) {
-            curSec += dt * g_playRate;
+            if (!g_edlActive.load()) {
+                mpvEdlEnter(curSec);
+                // mpv drops OSD overlays when a new file is loaded, but the caption code
+                // skips its IPC push while it believes the same text is already up - so
+                // the caption would silently vanish for the rest of the cue. Forget that
+                // belief across every (re)load so the next frame re-pushes it.
+                g_capOsdShowing = false;
+            } else {
+                // An edit landed mid-playback (split/trim/delete/reorder, or the G-1 tied
+                // preview swapping the reel out): the EDL mpv holds is stale, so rebuild
+                // and resume at the same spot. curSec has already been ripple-compensated
+                // by the edit drain above, so re-entering here stays on the right frame.
+                if (edlTrackSig() != g_edlSigLoaded) { mpvEdlEnter(curSec); g_capOsdShowing = false; }
+                else if (g_playRate != g_edlSpeedSet) {
+                    mpvCommand(json::array({ "set_property", "speed", g_playRate }));
+                    g_edlSpeedSet = g_playRate;
+                }
+            }
+
+            if (g_edlActive.load()) {
+                double tp = g_mpvTimePos.load();
+                // Right after a seek/load, mpv keeps reporting the OLD position for a few
+                // frames. Hold the requested spot until its clock catches up (or 500ms
+                // passes) so the playhead never visibly snaps backwards then forwards.
+                bool seekPending = g_edlSeekTarget >= 0 &&
+                    (tp < 0 || (std::abs(tp - g_edlSeekTarget) > 1.0 && nowSec() - g_edlSeekAt < 0.5));
+                if (seekPending) curSec = g_edlSeekTarget;
+                else {
+                    g_edlSeekTarget = -1;
+                    if (tp >= 0) {
+                        // mpv pushes time-pos on its own cadence (measured ~0.15s), so taking
+                        // it raw makes the playhead visibly trail the picture and step rather
+                        // than glide. mpv stays the authority - every new value re-anchors -
+                        // and dt only smooths BETWEEN its updates. Clamped so that if mpv
+                        // stops reporting (stall/EOF) the playhead can't run away from it.
+                        static double s_lastTp = -1, s_tpAt = 0;
+                        if (tp != s_lastTp) { s_lastTp = tp; s_tpAt = nowSec(); }
+                        double ext = (nowSec() - s_tpAt) * g_playRate;
+                        if (ext > 0.5) ext = 0.5;
+                        curSec = tp + ext;
+                    } else curSec += dt * g_playRate;   // mpv hasn't reported yet - keep moving
+                }
+            } else {
+                curSec += dt * g_playRate;   // mpv down / EDL unwritable: degrade to the old tick
+            }
+
             // E-10: below-threshold ranges are SKIPPED seamlessly during playback,
             // never just dimmed-and-played (FB7: "the single biggest breakthrough").
-            if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; break; }
-            if (curSec >= g_compDur) curSec = 0;
+            // Now that mpv owns the position, the skip has to move MPV, not just curSec.
+            if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; mpvEdlSeek(curSec); break; }
+            if (curSec >= g_compDur) {
+                curSec = 0; mpvEdlSeek(0);
+                // --keep-open=yes pauses mpv at EOF, so looping has to un-pause it too.
+                if (g_edlActive.load()) mpvCommand(json::array({ "set_property", "pause", false }));
+            }
+        } else if (g_edlActive.load()) {
+            // Stopped playing: hand the picture back to the frame-exact paused scrub path.
+            mpvEdlExit();
+            lastComposed = -1;      // force one exact recompose so the parked frame is frame-exact
+            g_capOsdShowing = false; // the recompose reloads the real clip - re-push the caption
         }
 
         // G-1 "Play tied clips" preview ends the instant playback stops (pause, arrow
@@ -3640,7 +3873,12 @@ int main(int argc, char** argv) {
         // ~60/sec - matching emitScrub's existing precedent for the exact same
         // "engine seek" flood - caps the request rate at what mpv can actually keep
         // up with; a settle/final dispatch (composeSettling) is never throttled.
-        if (composeContinuous && !composeSettling && nowSec() - lastComposeContinuousEmit < 0.016) {
+        if (g_edlActive.load()) {
+            // D-9: mpv is PLAYING the reel itself - it owns the position and paints its own
+            // frames. Dispatching scrub seeks here would drag playback backwards every frame
+            // and re-create the I-5 IPC flood. lastComposed is reset on exit (see above), so
+            // the first paused frame still gets its exact recompose.
+        } else if (composeContinuous && !composeSettling && nowSec() - lastComposeContinuousEmit < 0.016) {
             // skip this frame's dispatch - too soon since the last one
         } else if (!g_track[0].empty() && (curSec != lastComposed || (mpvReadyNow && !mpvArmedOnce) || composeSettling)) {
             requestCompose(curSec, composeExact); lastComposed = curSec;
