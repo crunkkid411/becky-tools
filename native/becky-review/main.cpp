@@ -1804,6 +1804,18 @@ static bool g_playingExt = false;
 // (g_playRate - D-4's 2x playback - now lives up with the mpv globals; see D-9.)
 static double g_stockSec = -1;
 static bool g_stockFlash = false;
+// Where the CURRENT run of playback began (item 59: "press 'pause' and playhead
+// should return back to where it was at the start of playback"). -1 = not
+// playing / nothing to return to.
+//
+// RELATED TO g_stockSec BUT NOT THE SAME THING, and the difference is the whole
+// design. The STOCK is an EXPLICIT choice he made mid-playback by clicking a
+// clip - his words: "that placement is where the playhead will return when the
+// user pauses playback". The PLAY-START is the DEFAULT return point for when he
+// chose nothing. So on pause the stock wins if one is set; otherwise the
+// playhead goes back to where he pressed play. The stock also still decides
+// where edit keys apply during playback (E-6) - untouched.
+static double g_playStartSec = -1;
 static double g_lastUserScroll = 0;
 static std::set<std::string> g_sel;
 static std::string g_selAnchor;
@@ -1855,6 +1867,32 @@ static void queueRedo(double t) {
     editLog("EDGE REDO");
     EditReq req; req.verb = "redo"; req.args = json::object(); req.kind = 4; req.t = t;
     queueEdit(std::move(req));
+}
+
+// The TWO ways playback ends on purpose, item 59, in one place so they can never
+// drift apart:
+//
+//   returnToStart = true   PAUSE (Space / the Pause button). "press 'pause' and
+//                          playhead should return back to where it was at the
+//                          start of playback." Auditioning a passage should not
+//                          cost him the spot he was working at - which is the
+//                          same complaint as clicking a clip moving the playhead.
+//   returnToStart = false  ENTER. "press 'enter' and playhead stops where it is."
+//                          A deliberate STOP HERE: he heard the thing he was
+//                          listening for and wants to work at THAT frame.
+//
+// Deliberately NOT wired into the other places that set playing=false (arrow-key
+// stepping, boundary jumps, the tied-clip preview teardown). Those are not the
+// user asking to stop - yanking the playhead backwards there would be the exact
+// lost-my-place bug this is meant to cure.
+static void stopPlayback(double& curSec, bool& playing, bool returnToStart) {
+    playing = false; g_playingExt = false;
+    if (returnToStart) {
+        if (g_stockSec >= 0)            curSec = g_stockSec;
+        else if (g_playStartSec >= 0)   curSec = g_playStartSec;
+    }
+    if (curSec < 0) curSec = 0;
+    g_stockSec = -1; g_stockFlash = false; g_playStartSec = -1;
 }
 
 static void emitScrub(double t, bool final_) {
@@ -4485,10 +4523,17 @@ int main(int argc, char** argv) {
                     // D-4: Shift+Space toggles 2x playback rate (not play state).
                     g_playRate = (g_playRate > 1.5) ? 1.0 : 2.0;
                 } else {
-                    playing = !playing; g_playingExt = playing;
-                    if (!playing && g_stockSec >= 0) { curSec = g_stockSec; g_stockSec = -1; g_stockFlash = false; }
+                    if (playing) stopPlayback(curSec, playing, true);   // pause = go back where he started
+                    else { playing = true; g_playingExt = true; }
                 }
             }
+            // ENTER = STOP WHERE IT IS (item 59). The counterpart to pause: pause
+            // gives him his place back, Enter keeps the frame he just heard. Both
+            // go through stopPlayback so "stop" can only ever mean one thing.
+            //
+            // Gated with every other key here on !WantCaptureKeyboard, so Enter in
+            // the search / ask / caption boxes still belongs to the text box.
+            if ((GetAsyncKeyState(VK_RETURN) & 1) && playing) stopPlayback(curSec, playing, false);
             // NOTE (fixes the "split-brain edit model" the adversarial review flagged as
             // priority #1): track 0 is no longer mutated locally by these handlers. The
             // engine's reel is the ONE model - every S/Del/O/I keypress calls a REAL verb
@@ -4829,6 +4874,18 @@ int main(int argc, char** argv) {
         // finished with their Clip* pointers, and every panel below re-reads
         // g_track from scratch.
         drainAsync();
+
+        // WHERE THIS RUN OF PLAYBACK BEGAN (item 59). Detected centrally, as a
+        // false->true transition, rather than assigned at each of the four places
+        // that start playback (Space, the Play button, seekToSpan, playWholeVideo)
+        // - a fifth one added later gets this for free instead of silently not
+        // recording a start point. Read BEFORE the block below advances curSec, so
+        // it is the frame he actually pressed play on and not one tick later.
+        {
+            static bool s_wasPlaying = false;
+            if (playing && !s_wasPlaying) g_playStartSec = curSec;
+            s_wasPlaying = playing;
+        }
 
         // D-9: PLAYBACK. This used to be the whole of "playing": a simulated clock
         // (curSec += dt) driving per-frame hr-seeks into a permanently paused mpv - which
@@ -5453,7 +5510,15 @@ int main(int argc, char** argv) {
             }
             ImGui::Text("%.1f / %.1f s", curSec, g_compDur);
             if (fixedButton(playing ? ico(ICON_PAUSE "##play", "Pause##play") : ico(ICON_PLAY "##play", "Play##play"),
-                            { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) { playing = !playing; g_playingExt = playing; }
+                            { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) {
+                // Same rule as Space, via the same helper. This button used to
+                // just flip the flag, so the stock return (E-6) - and now the
+                // play-start return - happened on the KEY but not on the BUTTON.
+                // Two controls with one label behaving differently is the kind of
+                // thing he has to test to trust, which is why they share code now.
+                if (playing) stopPlayback(curSec, playing, true);
+                else { playing = true; g_playingExt = true; }
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Pause" : "Play");
             ImGui::SameLine();
             // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
