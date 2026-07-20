@@ -39,6 +39,7 @@ var danglingWords = map[string]bool{
 	// Prepositions.
 	"of": true, "to": true, "in": true, "on": true, "at": true, "for": true,
 	"with": true, "from": true, "by": true, "into": true, "onto": true, "about": true,
+	"against": true,
 	// Intensifiers and quantifiers that lead a noun phrase.
 	"very": true, "really": true, "more": true, "most": true, "less": true,
 	"least": true, "gotta": true, "gonna": true, "just": true, "every": true,

@@ -149,6 +149,74 @@ func TestBuildQuantisesWhenFPSSet(t *testing.T) {
 	}
 }
 
+// TestBuildSpansCutWhenSpeechIsContinuous is the post_constantly bug: a clip
+// holding just "can" was captioned alone because BuildFromChunks chunked each
+// clip independently, even though the next clip opens on "you post" with
+// almost no silence trimmed at the join — the cut removed dead air, not a
+// beat in the sentence. The caption must span the cut into one line instead
+// of stranding "can" by itself.
+func TestBuildSpansCutWhenSpeechIsContinuous(t *testing.T) {
+	opt := Options{MaxChars: 22, GapSeconds: 0.25, Lowercase: true}
+	segs := []Segment{
+		{Start: 0, End: 0.5, Words: []Word{w("can", 0.05, 0.35)}},                        // 0.15s trimmed after "can"
+		{Start: 0, End: 0.6, Words: []Word{w("you", 0.05, 0.35), w("post", 0.45, 0.55)}}, // 0.05s trimmed before "you"
+	}
+	cues := Build(segs, opt)
+	if len(cues) != 1 {
+		t.Fatalf("cues = %d, want 1 (the cut should be spanned): %+v", len(cues), cues)
+	}
+	if cues[0].Text != "can you post" {
+		t.Errorf("text = %q, want %q", cues[0].Text, "can you post")
+	}
+	if !closeTo(cues[0].Start, 0) || !closeTo(cues[0].End, 1.1) {
+		t.Errorf("cue = {%.4f %.4f}, want {0.0000 1.1000} (still anchored to the outer cut points)",
+			cues[0].Start, cues[0].End)
+	}
+}
+
+// TestBuildDoesNotSpanCutOnARealPause is the counterpart: when the silence
+// trimmed around a cut is longer than the pause threshold, that IS a real
+// break in the speech (the same measure ChunkWords already uses to break
+// WITHIN a segment), so the cut must stay a hard caption boundary.
+func TestBuildDoesNotSpanCutOnARealPause(t *testing.T) {
+	opt := Options{MaxChars: 22, GapSeconds: 0.12, Lowercase: true}
+	segs := []Segment{
+		{Start: 0, End: 0.5, Words: []Word{w("can", 0.05, 0.35)}},                        // 0.15s trimmed after "can"
+		{Start: 0, End: 0.6, Words: []Word{w("you", 0.05, 0.35), w("post", 0.45, 0.55)}}, // 0.05s trimmed before "you"
+	}
+	cues := Build(segs, opt)
+	if len(cues) != 2 {
+		t.Fatalf("cues = %d, want 2 (0.20s trimmed silence exceeds the 0.12s threshold): %+v", len(cues), cues)
+	}
+	if cues[0].Text != "can" || cues[1].Text != "you post" {
+		t.Errorf("texts = %q / %q, want %q / %q", cues[0].Text, cues[1].Text, "can", "you post")
+	}
+}
+
+// TestBuildDoesNotSpanCutPastMaxChars guards the other direction: two clips
+// can be speech-continuous and still not worth spanning if doing so would
+// blow the line out past what fits on screen. Bounded by the same
+// MaxChars+overflowSlack give repair.go uses to keep a pushed phrase
+// readable, not unlimited.
+func TestBuildDoesNotSpanCutPastMaxChars(t *testing.T) {
+	opt := Options{MaxChars: 22, GapSeconds: 0.25, Lowercase: true}
+	segs := []Segment{
+		{Start: 0, End: 1.0, Words: []Word{
+			w("seriously", 0.05, 0.35), w("though", 0.45, 0.65), w("man", 0.75, 0.85),
+		}}, // 0.15s trimmed after "man"
+		{Start: 0, End: 1.0, Words: []Word{
+			w("totally", 0.05, 0.35), w("awesome", 0.45, 0.75), w("dude", 0.85, 0.95),
+		}}, // 0.05s trimmed before "totally"
+	}
+	cues := Build(segs, opt)
+	if len(cues) != 2 {
+		t.Fatalf("cues = %d, want 2 (merged text is 43 chars, past MaxChars+slack): %+v", len(cues), cues)
+	}
+	if cues[0].Text != "seriously though man" || cues[1].Text != "totally awesome dude" {
+		t.Errorf("texts = %q / %q, want the two clips left unmerged", cues[0].Text, cues[1].Text)
+	}
+}
+
 func TestWordsInRangeKeepsStraddlingWords(t *testing.T) {
 	words := []Word{
 		w("before", 1.0, 1.5), // fully before
