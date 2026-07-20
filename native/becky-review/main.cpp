@@ -4273,7 +4273,25 @@ int main(int argc, char** argv) {
                 // readout, which is exactly why B-2 could never be confirmed complete on screen.
                 float ctrlH = ImGui::GetTextLineHeightWithSpacing() * 2 + ImGui::GetFrameHeightWithSpacing() * 2;
                 float videoH = std::max(0.0f, avail.y - ctrlH);
-                POINT pt{ (LONG)origin.x, (LONG)origin.y }; ScreenToClient(g_hwnd, &pt);
+                // The mpv child is positioned in CLIENT coordinates. ImGui's
+                // "screen" coordinates are the main viewport's, which with the
+                // plain Win32/DX11 backend (no multi-viewport) is the client
+                // area itself - so ScreenToClient here subtracts the client
+                // origin a SECOND time and shoves the video up and to the left,
+                // over the library panel. Convert through the viewport instead,
+                // which is correct whether or not viewports are ever enabled.
+                ImVec2 vp = ImGui::GetMainViewport()->Pos;
+                POINT pt{ (LONG)(origin.x - vp.x), (LONG)(origin.y - vp.y) };
+                {
+                    static POINT last{ -99999, -99999 };
+                    if (pt.x != last.x || pt.y != last.y) {
+                        last = pt;
+                        char b[256];
+                        snprintf(b, sizeof b, "mpvrect: origin=(%.0f,%.0f) vp=(%.0f,%.0f) -> client=(%ld,%ld) size=(%.0fx%.0f)",
+                                 origin.x, origin.y, vp.x, vp.y, pt.x, pt.y, avail.x, videoH);
+                        crashLog(b);
+                    }
+                }
                 MoveWindow(g_mpvHwnd, pt.x, pt.y, (int)avail.x, (int)videoH, TRUE);
                 ShowWindow(g_mpvHwnd, SW_SHOWNA);
                 ImGui::Dummy({ avail.x, videoH });

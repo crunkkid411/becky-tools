@@ -50,6 +50,30 @@ already answered below.
 - A scheduled Windows task ("BeckyModelHeartbeat") checks in on the free models
   every 30 minutes and writes `X:\AI-2\fleet\model-heartbeat.json`.
 
+## SETTLED 2026-07-20: native wins. Stop re-opening this.
+
+Jordan, in his own words, going to bed on 2026-07-20:
+
+> "NATIVE MATTERS - WPF and Shotcut literally could not keep up with how fast i
+> work the time line (i'm one of the fastest video editors in the world)... the
+> becky-review-native app FROZE when i tried touching it (cuz i'm too fast - i
+> wasn't even trying; literally my muscle memory broke the entire goddamn
+> thing). you gotta make it work, and make it as snappy as Vegas Pro timeline
+> (or faster)"
+
+So:
+
+- **`native/becky-review` (C++/ImGui) is the app.** WPF froze under his real
+  input rate. That is disqualifying and no amount of layout polish fixes it.
+- **`gui/BeckyReviewNative` (WPF) is the REFERENCE for LAYOUT AND FEATURES ONLY** —
+  ten rounds of his feedback live in its design. Copy what it looks like and
+  what it does. Never copy how it is built.
+- **Responsiveness IS correctness here.** He is a professional editor whose
+  muscle memory outruns the app. A feature that is right but janky has failed.
+  The bar is Vegas Pro's timeline or faster.
+- He also said the choice of timeline was the agent's call. This is the call.
+  Do not spend another night re-deciding it.
+
 ## The missing half — what Becky Review 3 is actually FOR
 
 Jordan caught this on 2026-07-20: *"i had fable 5 do a deep dive on
