@@ -176,8 +176,23 @@ func TestRepairIsAPartition(t *testing.T) {
 	}
 }
 
+// TestRepairStrandsNoPrepositionWhenItsObjectIsPushedAway is the
+// post_constantly bug: "against another" / "creator" pushes the dangling
+// quantifier "another" onto the next line (correct), which then strands
+// "against" alone unless "against" is ALSO recognised as a preposition that
+// governs what follows — it belongs in the same class as "with"/"about"/
+// "onto", already in danglingWords, and was just missing.
+func TestRepairStrandsNoPrepositionWhenItsObjectIsPushedAway(t *testing.T) {
+	in := [][]Word{chunkOf("against another"), chunkOf("creator")}
+	got := render(RepairDangling(in, 22))
+	want := []string{"against another creator"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
 func TestIsDangling(t *testing.T) {
-	dangling := []string{"the", "a", "and", "to", "of", "10", "27", "ten", "twenty-seven", "gotta", "your", "more"}
+	dangling := []string{"the", "a", "and", "to", "of", "10", "27", "ten", "twenty-seven", "gotta", "your", "more", "against"}
 	for _, s := range dangling {
 		if !isDangling(s) {
 			t.Errorf("isDangling(%q) = false, want true", s)

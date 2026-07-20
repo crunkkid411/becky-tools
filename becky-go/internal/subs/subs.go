@@ -13,6 +13,14 @@
 //     can blink off for a frame between two captions.
 //   - A caption shorter than MinDuration is floored so it is never a flash.
 //   - A short gap BETWEEN cuts is held through by the previous caption.
+//   - A caption MAY span a cut when the speech is continuous across it
+//     (continuesAcrossCut): the cut removed dead air, not a beat in the
+//     sentence, so forcing a break there produces a stranded one- or two-word
+//     fragment ("can" | "you post") instead of the phrase it actually is. The
+//     two invariants above still hold for the SPANNING caption as a whole —
+//     it starts where its first clip's cut starts and ends where its last
+//     clip's cut ends — the boundary in between is simply covered, not left
+//     unclaimed.
 //
 // Chunking is pace-driven, not fixed word counts: break the word stream when the
 // speaker pauses (GapSeconds) or the line would get too long (MaxChars). Those
@@ -299,6 +307,45 @@ func Build(segments []Segment, opt Options) []Cue {
 	return BuildFromChunks(segments, chunks, opt)
 }
 
+// continuesAcrossCut reports whether the speech closing one clip runs straight
+// into the speech opening the next, so a caption for it should not be forced
+// to fracture at the cut.
+//
+// BuildFromChunks chunks each segment independently, so a clip that holds only
+// one or two words — because Jordan's cut landed a beat after the word instead
+// of a clause later — gets its own one-word caption: "can" | "you post" from a
+// clip boundary that split "can you post". The words are still adjacent in the
+// OUTPUT audio (the cut removed dead air, not a pause in the sentence), so the
+// caption can safely span the cut instead of fracturing there.
+//
+// Segments are always laid end to end on the output timeline (see the package
+// doc), so the OUTPUT-time pause across a cut is exactly the silence trimmed
+// off the end of the outgoing clip (after its last word) plus the silence
+// trimmed off the start of the incoming one (before its first word) — no
+// offset arithmetic needed, both halves are local to their own segment. This
+// is the same pause measure ChunkWords already uses to break WITHIN a
+// segment, so a cut is treated as no different from any other pause once its
+// two sides are known.
+func continuesAcrossCut(prevSeg Segment, prevChunks [][]Word, nextSeg Segment, nextChunks [][]Word, gapSeconds float64) bool {
+	if len(prevChunks) == 0 || len(nextChunks) == 0 {
+		return false // one side is silence (or filtered to nothing) — a real break, not a mid-phrase cut
+	}
+	last := prevChunks[len(prevChunks)-1]
+	first := nextChunks[0]
+	if len(last) == 0 || len(first) == 0 {
+		return false
+	}
+	trailing := prevSeg.End - last[len(last)-1].End
+	leading := first[0].Start - nextSeg.Start
+	if trailing < 0 {
+		trailing = 0
+	}
+	if leading < 0 {
+		leading = 0
+	}
+	return trailing+leading <= gapSeconds
+}
+
 // BuildFromChunks is Build with the word grouping already decided — used when
 // the LLM review pass (see llm.go) has regrouped the pass-1 chunks. The timing
 // rules are identical; only where the lines break differs.
@@ -390,6 +437,22 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 			gap := prepared[i+1].offset - (b.offset + b.dur)
 			if gap > 0 && gap <= opt.PostSpeechHold {
 				cues[len(cues)-1].End = prepared[i+1].offset
+			}
+		}
+
+		// Span the cut into the previous caption when the speech is continuous
+		// across it (continuesAcrossCut) — fold this segment's first cue into
+		// the last cue already in out rather than starting a new, often
+		// one-word, caption. Guarded by the same MaxChars+overflowSlack give
+		// repair.go uses for phrase integrity: a merge that would blow the line
+		// out is skipped, not forced.
+		if i > 0 && len(out) > 0 && i-1 < len(chunksPerSeg) && i < len(chunksPerSeg) &&
+			continuesAcrossCut(segments[i-1], chunksPerSeg[i-1], segments[i], chunksPerSeg[i], opt.GapSeconds) {
+			joined := normalize(out[len(out)-1].Text+" "+cues[0].Text, opt.Lowercase)
+			if opt.MaxChars <= 0 || len(joined) <= opt.MaxChars+overflowSlack {
+				out[len(out)-1].End = cues[0].End
+				out[len(out)-1].Text = joined
+				cues = cues[1:]
 			}
 		}
 
