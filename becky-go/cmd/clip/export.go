@@ -135,7 +135,7 @@ func (a *App) ExportSelection(ids []string, outPath string) (ExportResult, error
 // pass — the rendered file is the product, so preview-only captions are a bug.
 func (a *App) renderReel(r edl.Reel, outPath, suffix, capSRT string, capMarginV int) (ExportResult, error) {
 	if strings.TrimSpace(outPath) == "" {
-		dir, err := a.renderDir()
+		dir, err := a.renderDir(reel.ClipSources(r.Clips)...)
 		if err != nil {
 			return ExportResult{}, err
 		}
@@ -233,7 +233,7 @@ func (a *App) WriteEDLOnly(outPath string) (string, error) {
 		return "", fmt.Errorf("the timeline is empty")
 	}
 	if strings.TrimSpace(outPath) == "" {
-		dir, err := a.renderDir()
+		dir, err := a.renderDir(reel.ClipSources(r.Clips)...)
 		if err != nil {
 			return "", err
 		}
@@ -258,7 +258,7 @@ func (a *App) WriteSRTOnly(outPath string) (string, error) {
 		return "", fmt.Errorf("the timeline is empty")
 	}
 	if strings.TrimSpace(outPath) == "" {
-		dir, err := a.renderDir()
+		dir, err := a.renderDir(reel.ClipSources(r.Clips)...)
 		if err != nil {
 			return "", err
 		}
@@ -281,7 +281,7 @@ func (a *App) GrabFrame(source string, t float64) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("frame source is not in the open folder: %s", source)
 	}
-	dir, err := a.renderDir()
+	dir, err := a.renderDir(v.Path)
 	if err != nil {
 		return "", err
 	}
@@ -318,7 +318,7 @@ func (a *App) Thumb(source string, t float64) ThumbResult {
 	if !ok {
 		return ThumbResult{}
 	}
-	dir, err := a.thumbDir()
+	dir, err := a.thumbDir(v.Path)
 	if err != nil {
 		return ThumbResult{}
 	}
@@ -490,18 +490,13 @@ func writeTextFile(path string, fn func(*bufio.Writer) error) error {
 	return w.Flush()
 }
 
-// renderDir is where HUMAN-FACING outputs go: a "render" subfolder of the OPEN
-// case folder. This is the Becky Tools protocol — save next to the originals, where
-// a human can find them, NEVER in a hidden AppData/temp dir. It is created on
-// demand. Writing a NEW file into a NEW subfolder never modifies an original (the
-// forensic invariant holds). Only when no folder is open (e.g. a headless call with
-// an explicit timeline) does it fall back to the becky work dir so a render still
-// has somewhere to land.
 // thumbDir is a dedicated subfolder of the render dir for the timeline's clip
-// thumbnails, so those many tiny jpegs don't clutter render/ beside the actual
-// rendered compilations (Jordan's ask). Created on demand.
-func (a *App) thumbDir() (string, error) {
-	base, err := a.renderDir()
+// thumbnails, so those many tiny jpegs don't clutter the render folder beside the
+// actual rendered compilations (Jordan's ask). Created on demand. It takes the
+// same sources as renderDir for the same reason — thumbnails of X:\ footage
+// belong with that footage, not on whatever drive the library is browsing.
+func (a *App) thumbDir(sources ...string) (string, error) {
+	base, err := a.renderDir(sources...)
 	if err != nil {
 		return "", err
 	}
@@ -512,14 +507,34 @@ func (a *App) thumbDir() (string, error) {
 	return dir, nil
 }
 
-func (a *App) renderDir() (string, error) {
-	a.mu.Lock()
-	folder := a.folder
-	work := a.workDir
-	a.mu.Unlock()
-	dir := work
-	if strings.TrimSpace(folder) != "" {
-		dir = filepath.Join(folder, "render")
+// renderDir is where HUMAN-FACING outputs go: a Rendered/ subfolder OF THE RAW
+// FOOTAGE the render is made from — reel.RenderDirFor decides, from the given
+// clip sources. Save next to the originals, where a human can find them, NEVER in
+// a hidden AppData/temp dir. Created on demand; writing a NEW file into a NEW
+// subfolder never modifies an original (the forensic invariant holds).
+//
+// It used to be a "render" subfolder of the OPEN CASE FOLDER — whatever the
+// library happened to be browsing. That is the bug: browsing E:\TakingBack2007 (a
+// REMOVABLE FORENSIC DRIVE holding evidence for a live criminal case) while the
+// timeline held footage from X:\Videos put eight renders of Jordan's personal
+// YouTube skits onto the evidence volume. The browsed folder answers "what am I
+// looking at", not "what is this render made of" — only the clip sources answer
+// that, so only they may choose the destination.
+//
+// The browsed folder is the FALLBACK, used only when no clip source is available
+// (a headless call, an empty timeline), and the work dir when there is no folder
+// either — a render still needs somewhere to land.
+func (a *App) renderDir(sources ...string) (string, error) {
+	dir := reel.RenderDirFor(sources...)
+	if dir == "" {
+		a.mu.Lock()
+		folder := a.folder
+		work := a.workDir
+		a.mu.Unlock()
+		dir = work
+		if strings.TrimSpace(folder) != "" {
+			dir = filepath.Join(folder, reel.RenderSubdir)
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create render dir %q: %w", dir, err)
