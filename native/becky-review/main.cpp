@@ -92,6 +92,26 @@ struct Engine {
 };
 static Engine g_engine;
 
+// H-5: what becky has been doing, so Jordan can see it WITHOUT being interrupted.
+//
+// BUILD_1.md §4-H's H-5 requires the engine to announce agent activity "so the
+// right panel shows what the AI is doing without blocking Jordan's own editing".
+// The contract is in HANDOFF-VIDEOAGENT-SEAM.md: the engine pushes
+// {"event":{"kind","source","text"}} lines down the SAME NDJSON stdio bridge as
+// replies, distinguished by having no "id".
+//
+// Written only by the engine reader thread, read only by the UI thread, both
+// under g_activityMx - and neither ever waits on the other, because the entire
+// point is that an AI pass narrating itself must never cost him a frame.
+struct Activity {
+    std::string kind;    // "started" | "progress" | "done"
+    std::string source;  // which verb produced it, e.g. "ask", "apply_edit_batch"
+    std::string text;    // one line of plain language, already human-readable
+    double at = 0;
+};
+static std::deque<Activity> g_activityLog;
+static std::mutex g_activityMx;
+
 static bool engineStart() {
     std::lock_guard<std::mutex> lk(g_engine.mx);
     if (g_engine.alive) return true;
@@ -159,6 +179,35 @@ static void engineReader() {
                     g_engine.replies[id] = j["reply"];
                     g_engine.seen[id] = true;
                     g_engine.cv.notify_all();
+                } else if (j.contains("event") && j["event"].is_object()) {
+                    // H-5: the engine's AI-activity stream. These lines carry NO
+                    // "id" - they are pushed, not requested - so they must be
+                    // handled here rather than by the reply router above.
+                    //
+                    // The point of H-5 is that Jordan can SEE what becky is doing
+                    // without it blocking him. This branch therefore only appends
+                    // to a small deque; it never touches the timeline, never waits,
+                    // and never notifies the edit path. His editing cannot be
+                    // slowed down by the AI narrating itself.
+                    //
+                    // H-2: every field is read with a defaulting accessor rather
+                    // than operator[]. This runs on the reader thread that also
+                    // delivers every engine REPLY - a throw here from one malformed
+                    // event would take the whole app's engine communication down
+                    // with it. A bad event is dropped, never fatal.
+                    const json& ev = j["event"];
+                    Activity a;
+                    a.kind = ev.value("kind", std::string());
+                    a.source = ev.value("source", std::string());
+                    a.text = ev.value("text", std::string());
+                    a.at = nowSec();
+                    if (!a.text.empty()) {
+                        std::lock_guard<std::mutex> lk(g_activityMx);
+                        g_activityLog.push_back(std::move(a));
+                        // A status feed, not a database. Oldest falls off so a long
+                        // session cannot grow this without bound.
+                        while (g_activityLog.size() > 50) g_activityLog.pop_front();
+                    }
                 }
             } catch (...) {}
         }
@@ -4657,6 +4706,33 @@ int main(int argc, char** argv) {
         if (ImGui::Begin("qa", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             ImGui::Text("Q&A / Ask-Becky");
             ImGui::Separator();
+
+            // H-5: "what becky is doing", passively. No buttons, nothing to click,
+            // nothing that can steal focus from the timeline - Jordan keeps editing
+            // while this fills in behind him. Hidden entirely when idle so it never
+            // costs him vertical space (or reading effort) for nothing.
+            {
+                std::vector<Activity> recent;
+                {
+                    std::lock_guard<std::mutex> lk(g_activityMx);
+                    size_t n = g_activityLog.size();
+                    size_t from = n > 6 ? n - 6 : 0;   // newest few; the deque keeps 50
+                    recent.assign(g_activityLog.begin() + (long)from, g_activityLog.end());
+                }
+                if (!recent.empty()) {
+                    ImGui::TextDisabled("becky is working");
+                    for (auto it = recent.rbegin(); it != recent.rend(); ++it) {
+                        // Colour carries the state so it reads at a glance without
+                        // parsing words - "done" recedes, in-flight stands out.
+                        ImVec4 col = (it->kind == "done") ? ImVec4(0.55f, 0.75f, 0.55f, 1.0f)
+                                                          : ImVec4(0.95f, 0.85f, 0.45f, 1.0f);
+                        ImGui::TextColored(col, "%s", it->text.c_str());
+                        if (ImGui::IsItemHovered() && !it->source.empty())
+                            ImGui::SetTooltip("%s (%s)", it->source.c_str(), it->kind.c_str());
+                    }
+                    ImGui::Separator();
+                }
+            }
             if (!g_cardsErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cardsErr.c_str());
             if (g_cards.empty()) {
                 ImGui::TextDisabled("no review questions loaded");
