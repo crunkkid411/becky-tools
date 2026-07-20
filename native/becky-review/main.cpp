@@ -2495,6 +2495,12 @@ static void drawTimeline(double& curSec, bool& playing) {
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("tl", ImVec2(tlW, bot - p.y));
     bool hovered = ImGui::IsItemHovered();
+    // I-BEAM over the timeline, not the hand. Jordan asked for this directly
+    // (feedback1). The hand cursor reads as "grab and drag the surface", which is
+    // wrong here: the timeline's primary gesture is placing the playhead at an
+    // exact instant, and an I-beam has a defined single-pixel hotspot he can aim
+    // with. On a 150s reel a few pixels is several frames.
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
     bool pressed = ImGui::IsItemActivated();
     bool active = ImGui::IsItemActive();
     bool released = ImGui::IsItemDeactivated();
@@ -4769,6 +4775,23 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowPos({ 0, topY + topH });
         ImGui::SetNextWindowSize({ (float)g_W, timelineH });
         if (ImGui::Begin("timeline", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+            // CLICKING THE TIMELINE GIVES THE KEYBOARD BACK TO THE TIMELINE.
+            //
+            // Jordan reported this three separate times (feedback4, feedback6,
+            // user-lag) and it was still broken. Type in the search box, click the
+            // timeline, and every edit key was dead: an active InputText keeps
+            // ImGui's WantCaptureKeyboard TRUE, and the whole timeline key block is
+            // - correctly - gated on that, so typing can never split a clip. The
+            // gate was right; nothing ever RELEASED it. He would click the timeline,
+            // press S or Delete, and nothing happened, with no visible reason why.
+            //
+            // A click anywhere in this panel now moves window focus here, which
+            // deactivates the InputText and drops WantCaptureKeyboard on the next
+            // frame. Focus follows the click, the way it does in every NLE.
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+                ImGui::SetWindowFocus();
+            }
             drawTimeline(curSec, playing);
         }
         ImGui::End();
