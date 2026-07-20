@@ -210,6 +210,17 @@ func main() {
 		Warnings: warnings,
 	}
 
+	// Honour the height Jordan set by dragging a caption in either review app,
+	// unless he passed --margin-v explicitly on this run. Without this the burn
+	// would ignore the placement he just chose on screen.
+	if !flagWasSet(fs, "margin-v") {
+		if mv := loadMarginV(srtPath); mv > 0 {
+			style.MarginV = mv
+			beckyio.Logf(*verbose, "using the caption height you set in the review app (margin %d)", mv)
+		}
+	}
+	rep.Style = style.ForceStyle()
+
 	if *burn != "" {
 		dst := *burnOut
 		if dst == "" {
@@ -404,6 +415,18 @@ func burnIn(video, srt, dst string, style subs.Style, vcodec, crf string, verbos
 		return fmt.Errorf("ffmpeg produced no output at %s", dst)
 	}
 	return nil
+}
+
+// flagWasSet reports whether the user actually passed a flag, so a saved
+// setting can fill in without overriding an explicit choice.
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	seen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			seen = true
+		}
+	})
+	return seen
 }
 
 func mustAbs(p string) string {

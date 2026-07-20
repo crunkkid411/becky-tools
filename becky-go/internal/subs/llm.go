@@ -57,7 +57,7 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 	inRange := make([][]Word, len(segments))
 	for i, seg := range segments {
 		inRange[i] = WordsInRange(seg.Words, seg.Start, seg.End)
-		pass1[i] = ChunkWords(inRange[i], opt.MaxChars, opt.GapSeconds)
+		pass1[i] = RepairDangling(ChunkWords(inRange[i], opt.MaxChars, opt.GapSeconds), opt.MaxChars)
 	}
 	if model == nil {
 		return pass1, nil
@@ -98,7 +98,9 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 				warnings = append(warnings, fmt.Sprintf("cut %d fell back to pacing-only: %v", r.Index+1, err))
 				continue
 			}
-			out[r.Index] = groups
+			// The model is asked for phrase integrity but is not consistent about
+			// it, so the rule is enforced deterministically on its output too.
+			out[r.Index] = RepairDangling(groups, opt.MaxChars)
 		}
 	}
 	return out, warnings
@@ -157,16 +159,33 @@ const reviewSystem = `You group words into short burned-in video captions (TikTo
 You are given segments. Each segment is one CUT of an edit, with its words in
 order and the pause in milliseconds before each word.
 
-Regroup each segment's words into caption lines:
-- MERGE fragments that are syntactically incomplete on their own. A line must
-  never end on a dangling "that", "and", "the", "of", "to", "a", "is", "it",
-  "you", "but", "so", "in", "on", "my", "we", "i".
-- SPLIT at strong clause boundaries (after a complete thought, before a
-  conjunction starting a new clause, at a question mark) even when the pause
-  there is short.
-- Prefer breaking where the speaker actually paused (large pause_ms_before).
+THE ONE RULE THAT MATTERS: never break a phrase in the middle. A line that ends
+on a word belonging to the next line's phrase is WRONG, even if it fits.
+
+  RIGHT:  "can you post" | "ten times a day?"
+  RIGHT:  "can you post" | "ten times" | "a day?"     (when it must be shorter)
+  WRONG:  "can you post ten" | "times a day?"         ("ten" belongs with "times")
+
+A number stays with its unit: "ten times", "27 times", "twenty-seven times" -
+NEVER "...27" | "times...". The same holds for an article, adjective,
+preposition or auxiliary and the word it governs: "a day", "the platforms",
+"more successful", "to grow".
+
+A SHORTER line that is phrase-complete always beats a longer line that splits a
+phrase. Do NOT pad a line toward the character cap.
+
+Also:
+- A line must never END on: a number, "that", "and", "the", "of", "to", "a",
+  "an", "is", "it", "you", "but", "so", "in", "on", "my", "we", "i", "for",
+  "with", "at", "your", "this", "very", "really", "just", "more", "most".
+- SPLIT at clause boundaries (after a complete thought, before a conjunction
+  starting a new clause, after a question mark) even when the pause is short.
+- Prefer breaking where the speaker actually paused (large pause_ms_before) -
+  the lines should follow their cadence.
 - HARD CAP: %d characters per line, counting the spaces between words.
-- Keep every word, in the original order. Never edit, add, drop or reorder words.
+- Keep every word EXACTLY as given, in the original order. Never edit, add, drop,
+  reorder or re-punctuate. Question marks and exclamation marks are part of the
+  word and stay.
 
 Return ONLY a JSON array, no prose, no markdown fence:
 [{"segment":0,"groups":[[0,1,2],[3,4]]},{"segment":1,"groups":[[0,1]]}]

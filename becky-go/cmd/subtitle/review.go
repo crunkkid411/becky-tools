@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"becky-go/internal/proc"
 	"becky-go/internal/subs"
@@ -21,6 +23,12 @@ import (
 // heavy Claude Code install boots its whole MCP ecosystem per call, or the model
 // burns its single turn trying to use tools and returns no text.
 const claudeBin = "claude"
+
+// reviewCallTimeout bounds ONE review call. The CLI normally answers a batch in
+// well under a minute; anything past this is a stall (a busy machine, a
+// rate-limit wait, another agent holding the CLI) and the deterministic
+// chunking is a perfectly good answer, so we take it rather than hang.
+const reviewCallTimeout = 100 * time.Second
 
 // claudeModel returns a subs.ModelFunc backed by `claude -p`.
 func claudeModel(model string, verbose bool) subs.ModelFunc {
@@ -37,6 +45,12 @@ func claudeModel(model string, verbose bool) subs.ModelFunc {
 			"--tools", "",
 			"--max-turns", "1",
 		}
+		// Bound every call. Without this a stalled CLI hangs the whole run with
+		// no output — observed live at >10 minutes. Degrade-never-crash: on
+		// timeout the batch falls back to the deterministic chunking.
+		ctx, cancel := context.WithTimeout(ctx, reviewCallTimeout)
+		defer cancel()
+
 		cmd := exec.CommandContext(ctx, claudeBin, args...)
 		proc.NoWindow(cmd)
 		cmd.Stdin = strings.NewReader(prompt)
@@ -73,6 +87,33 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// capStyle is the per-reel caption style both review apps write when Jordan
+// drags a caption up or down. It lives beside the .srt as "<stem>.capstyle.json"
+// — a contract the two GUIs already share, so the burn must honour it or the
+// height he set on screen would not survive into the render.
+type capStyle struct {
+	MarginV int `json:"margin_v"`
+}
+
+// capStylePath is the sidecar for a given .srt.
+func capStylePath(srt string) string {
+	return strings.TrimSuffix(srt, filepath.Ext(srt)) + ".capstyle.json"
+}
+
+// loadMarginV returns the vertical placement saved by the review apps, or 0 when
+// there is none.
+func loadMarginV(srt string) int {
+	b, err := os.ReadFile(capStylePath(srt))
+	if err != nil {
+		return 0
+	}
+	var cs capStyle
+	if json.Unmarshal(b, &cs) != nil || cs.MarginV <= 0 {
+		return 0
+	}
+	return cs.MarginV
 }
 
 // haveClaude reports whether the `claude` CLI is reachable, so --review can
