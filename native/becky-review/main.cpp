@@ -3137,9 +3137,16 @@ static void drawTimeline(double& curSec, bool& playing) {
     dl->AddRectFilled(ImVec2(tlX, aY), ImVec2(tlX + tlW, aY + laneH), COL_LANE, 3);
 
     if (g_track[0].empty()) {
-        const char* msg = "timeline empty - load a reel from the engine";
+        // Name the gesture that actually fills it. Double-clicking a search hit
+        // adds that clip to the timeline (addHitToTimeline) - that is how the reel
+        // gets BUILT, and "load a reel from the engine" told him about the other
+        // path only. Wording follows the reference's .tlempty hint.
+        const char* msg = "timeline empty - double-click a quote in the search results to add clips, or use Load Reel";
         ImVec2 ts = ImGui::CalcTextSize(msg);
-        dl->AddText(ImVec2(tlX + (tlW - ts.x) / 2, aY + (laneH - ts.y) / 2), IM_COL32(120, 128, 140, 255), msg);
+        // Brightened from (120,128,140) - 4.3:1 on the near-black lane - to about
+        // 8:1. It is the ONLY message on screen when nothing else is, so it is the
+        // one that must not need effort to read.
+        dl->AddText(ImVec2(tlX + (tlW - ts.x) / 2, aY + (laneH - ts.y) / 2), IM_COL32(178, 186, 200, 255), msg);
     }
 
     for (size_t i = 0; i < g_track[0].size(); i++) {
@@ -4817,7 +4824,13 @@ int main(int argc, char** argv) {
         const float availH = (float)g_H - menuH;
         const float libW = (std::max)(320.0f, (float)g_W * 0.22f);
         const float qaW = (std::max)(300.0f, (float)g_W * 0.22f);
-        const float timelineH = (std::max)(180.0f, availH * 0.26f);
+        // Floor raised by the ~30px header row added below (clip count + zoom
+        // readout) so the lane keeps the same usable height it had before it:
+        // laneH must clear 70 for thumbnails and lanesH must clear 90 for the
+        // caption lane, both of which the row would otherwise push under at the
+        // old 180 floor. Bites below a ~847px window height - including the
+        // default 800px window - where the video pane loses about 12px.
+        const float timelineH = (std::max)(212.0f, availH * 0.26f);
         const float topH = availH - timelineH;
         const float vidW = (std::max)(240.0f, (float)g_W - libW - qaW);
         const float topY = menuH;
@@ -5587,6 +5600,61 @@ int main(int argc, char** argv) {
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
                 (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
                 ImGui::SetWindowFocus();
+            }
+            // ---- timeline header row (the reference app's .tlhead) ----
+            // Left: "N clips - M:SS". Right of it at a FIXED x: the zoom readout.
+            // Both existed in the WPF reference (#tlCount / #tZoom) and were the
+            // only way to know at a glance that a reel actually loaded and how
+            // deep the current zoom is.
+            //
+            // Compact FramePadding for this row only: at the default (10,7) the row
+            // costs ~38px, which at the minimum timeline height drops lanesH under
+            // 90 and silently switches the caption lane OFF. At (8,3) it costs ~30px.
+            {
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 3));
+
+                char durb[24]; fmtTime(g_compDur, durb, sizeof durb, false);
+                size_t nclips = g_track[0].size();
+                // NEON GREEN IS AN ACCESSIBILITY AID, not decoration - it is the
+                // reference's --neon (#39ff14) and it is the one number he glances
+                // at to confirm the reel is really loaded. Do not tone it down.
+                ImGui::TextColored(ImVec4(0.224f, 1.0f, 0.078f, 1.0f), "%d clip%s - %s",
+                                   (int)nclips, nclips == 1 ? "" : "s", durb);
+
+                // THE ZOOM GROUP SITS AT A FIXED X, never SameLine() after the
+                // variable-width count: "9 clips" vs "128 clips" would slide the
+                // -/+ buttons sideways under his cursor between edits. Same
+                // never-move rule fixedButton() exists for; fixedButton itself
+                // cannot help here because the thing that changes width is the
+                // TEXT BEFORE the buttons, not their labels.
+                const float zoomX = ImGui::CalcTextSize("8888 clips - 88:88:88").x + 28.0f;
+                const float bw = ImGui::GetFrameHeight();   // square, so both match
+
+                ImGui::SameLine(zoomX);
+                // -/+ do NOT do their own zoom math. They post the SAME request the
+                // Up/Down keys post; drawTimeline drains it a few lines below via
+                // applyWheel(), which is also the wheel's path. One zoom
+                // implementation, three ways in.
+                if (ImGui::Button("-##zoomout", ImVec2(bw, 0))) g_zoomReq = -1;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Zoom the timeline out (also: Down arrow, or the wheel over the timeline)");
+
+                ImGui::SameLine();
+                char zb[24]; snprintf(zb, sizeof zb, "%.4g px/s", g_pps);
+                ImGui::TextColored(ImVec4(0.78f, 0.81f, 0.85f, 1.0f), "%s", zb);
+
+                // Slot sized for the WIDEST string %.4g can produce: 4 significant
+                // digits plus a decimal point, e.g. "0.6613 px/s" at the 0.5 clamp.
+                // "2000 px/s" is NOT the widest - every ordinary zoom step ("79.35",
+                // "104.9", "183.5") is longer than it, and the button's opaque frame
+                // would print over the last character of the number.
+                ImGui::SameLine(zoomX + bw + ImGui::CalcTextSize("888888 px/s").x
+                                + ImGui::GetStyle().ItemSpacing.x * 2.0f);
+                if (ImGui::Button("+##zoomin", ImVec2(bw, 0))) g_zoomReq = 1;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Zoom the timeline in (also: Up arrow, or the wheel over the timeline)");
+
+                ImGui::PopStyleVar();
             }
             drawTimeline(curSec, playing);
         }
