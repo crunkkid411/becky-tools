@@ -327,17 +327,42 @@ func checkSourcesReadable(r edl.Reel) error {
 // confused with, or overwrite, the untouched originals.
 const RenderSubdir = "Rendered"
 
+// RenderDirFor returns the Rendered/ folder belonging to the FIRST usable source
+// path given — i.e. where output for that footage goes. "" when no source has a
+// usable directory, so the caller picks its own last resort.
+//
+// The destination must be derived from THE FOOTAGE, never from ambient state.
+// Twice now, ambient state has written Jordan's personal YouTube skits onto E:\,
+// a REMOVABLE FORENSIC DRIVE holding evidence for a live criminal case: once
+// from the process cwd (a test run had left it there), and once from the folder
+// the review app's LIBRARY happened to be browsing while the timeline held
+// footage from X:\. Different drives are different jobs. A rendered skit has no
+// business on an evidence volume, and neither the cwd nor the browsed folder
+// carries the information that would prevent it. The source footage does — it is
+// the only thing that says which job this render belongs to, so it decides.
+// Never the cwd, never the browsed folder, never a hardcoded drive.
+//
+// This is exported so cmd/clip (the review app's render + thumbnail paths) uses
+// the SAME rule as Render(). It was duplicated prose in two packages, and the
+// copy that was only prose is the one that drifted.
+func RenderDirFor(sources ...string) string {
+	for _, s := range sources {
+		dir := pathx.Dir(strings.TrimSpace(s))
+		if dir == "" || dir == "." {
+			continue
+		}
+		// Already inside the render folder (Jordan often edits from a previous
+		// render) — stay put rather than nesting Rendered/Rendered.
+		if strings.EqualFold(pathx.Base(dir), RenderSubdir) {
+			return dir
+		}
+		return filepath.Join(dir, RenderSubdir)
+	}
+	return ""
+}
+
 // defaultReelOutput builds "<reel-name>_reel.mp4" (slugified) in a Rendered/
 // subfolder OF THE RAW FOOTAGE — the directory of the reel's first clip.
-//
-// It used to land in the process's cwd, which is not a location anyone chose:
-// it is wherever the launcher happened to start. That put Jordan's own YouTube
-// edits onto E:\, a REMOVABLE FORENSIC DRIVE holding evidence for a criminal
-// case, purely because a test run had left the cwd there. Different drives are
-// different jobs; a rendered skit has no business on an evidence volume, and
-// the cwd never carries that information. The source footage does — it is the
-// only thing that says which job this render belongs to, so it decides. Never
-// the cwd, and never a hardcoded drive.
 //
 // cwd remains the last resort for a reel with no usable source path, because a
 // relative name still resolves somewhere and Render() absolutises it.
@@ -347,19 +372,20 @@ func defaultReelOutput(r edl.Reel) string {
 		name = "becky"
 	}
 	base := slug(name) + "_reel.mp4"
-	for _, c := range r.Clips {
-		dir := pathx.Dir(strings.TrimSpace(c.Source))
-		if dir == "" || dir == "." {
-			continue
-		}
-		// Already inside the render folder (Jordan often edits from a previous
-		// render) — stay put rather than nesting Rendered/Rendered.
-		if strings.EqualFold(pathx.Base(dir), RenderSubdir) {
-			return filepath.Join(dir, base)
-		}
-		return filepath.Join(dir, RenderSubdir, base)
+	if dir := RenderDirFor(ClipSources(r.Clips)...); dir != "" {
+		return filepath.Join(dir, base)
 	}
 	return base
+}
+
+// ClipSources pulls the source paths out of a reel's clips, in timeline order,
+// so callers can hand them to RenderDirFor.
+func ClipSources(clips []edl.Clip) []string {
+	out := make([]string, 0, len(clips))
+	for _, c := range clips {
+		out = append(out, c.Source)
+	}
+	return out
 }
 
 // fontFile resolves the forensic font: BECKY_REEL_FONT override, else default.
