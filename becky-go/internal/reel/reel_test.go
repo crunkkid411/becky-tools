@@ -776,3 +776,72 @@ func containsSubseq(s, want []string) bool {
 	}
 	return false
 }
+
+// --- caption burn-in -------------------------------------------------------
+// Regression guard for the bug that cost Jordan a whole day: captions showed in
+// the preview but the RENDERED file had none, because the render never saw the
+// .srt. If the burn ever falls out of the graph again, these fail.
+
+func TestBuildFilterComplex_BurnsCaptionsAfterConcat(t *testing.T) {
+	r := twoClipReel()
+	opts := resolveOptions(r, Options{SubtitleSRT: `X:\case\reel.srt`, SubtitleMarginV: 72},
+		config.Config{Codec: "h264_nvenc"})
+	graph, vOut, _ := buildFilterComplex(r, opts)
+
+	if vOut != "[vsub]" {
+		t.Fatalf("video output label = %q, want [vsub] (the render must -map the CAPTIONED video)", vOut)
+	}
+	// The burn hangs off the concat's output, not off a clip.
+	if !strings.Contains(graph, "[vout]subtitles=") {
+		t.Fatalf("captions not burned onto the concat output:\n%s", graph)
+	}
+	if !strings.Contains(graph, "reel.srt") {
+		t.Fatalf("the .srt is not in the filter graph:\n%s", graph)
+	}
+	// The height Jordan dragged to must survive into the burn.
+	if !strings.Contains(graph, "MarginV=72") {
+		t.Fatalf("MarginV=72 (the placement set in the review app) missing:\n%s", graph)
+	}
+	if !strings.HasSuffix(graph, "[vsub]") {
+		t.Fatalf("burn chain must be last and end at [vsub]:\n%s", graph)
+	}
+}
+
+func TestBuildRenderArgs_MapsCaptionedVideo(t *testing.T) {
+	r := twoClipReel()
+	opts := resolveOptions(r, Options{SubtitleSRT: `X:\case\reel.srt`},
+		config.Config{Codec: "h264_nvenc"})
+	opts.Audio = true
+	opts.ClipHasAudio = []bool{true, true}
+	args, err := buildRenderArgs(r, opts)
+	if err != nil {
+		t.Fatalf("buildRenderArgs: %v", err)
+	}
+	// -map must point at the captioned label; mapping [vout] would ship an
+	// uncaptioned render with the burn silently unused.
+	var mapped []string
+	for i, a := range args {
+		if a == "-map" && i+1 < len(args) {
+			mapped = append(mapped, args[i+1])
+		}
+	}
+	if len(mapped) != 2 || mapped[0] != "[vsub]" {
+		t.Fatalf("-map targets = %v, want [vsub] first", mapped)
+	}
+	if opts.SubtitleMarginV != 0 {
+		t.Fatalf("unset MarginV must stay 0 so DefaultStyle applies, got %d", opts.SubtitleMarginV)
+	}
+}
+
+// No .srt must leave the graph EXACTLY as it was — the burn is opt-in.
+func TestBuildFilterComplex_NoCaptionsLeavesGraphUnchanged(t *testing.T) {
+	r := twoClipReel()
+	opts := resolveOptionsForTest(r)
+	graph, vOut, _ := buildFilterComplex(r, opts)
+	if vOut != "[vout]" {
+		t.Fatalf("video output label = %q, want [vout]", vOut)
+	}
+	if strings.Contains(graph, "subtitles=") {
+		t.Fatalf("no .srt was given but a subtitles filter appeared:\n%s", graph)
+	}
+}
