@@ -143,21 +143,48 @@ VideoAgent, §10, or H-4..H-7. It is entirely render/audio/caption bug work. An
 agent working from that handoff alone would never learn the product spec exists
 — which is exactly what happened.
 
+## Night of 2026-07-19/20 — what actually changed, and how it was proved
+
+Every item below was verified by RUNNING it and looking, not by the tests passing.
+
+| Fix | Evidence |
+|---|---|
+| **The freeze.** Render/Save/Export EDL called the engine on the UI thread with timeouts up to 300s — the window was dead, not slow | Clicked Render, then pressed Ctrl+Right twice mid-render: playhead moved 0.0→10.3s, frame changed, work counter advanced |
+| **Ctrl+arrow "sticks at the clip edge."** The modifier was being dropped — arrows read a LATCHED bit, Ctrl read an INSTANTANEOUS one, and a fast chord kept the arrow and lost the modifier | Same 4 presses: 0.1s before, **14.5s** after |
+| **Every clip drew a black thumbnail placeholder.** `resolveSource` only accepted footage inside the browsed folder | Thumb cache 0 → 10 files; chips visible on every clip |
+| **Every clip was the same blue.** `ClipView` had no `Color` field so the app's parse always missed | Timeline now violet (`#8A2BE2`, this source's permanent colour) |
+| **`becky-review-engine.exe` was 3 hours STALE** — build-all-tools only built `becky-clip.exe`, so a night of engine fixes was invisible while every test passed | Rebuilt; the two fixes above only appeared after this |
+| **Skip Quiet was unreachable.** `g_thrOn` declared false, never assigned — 6 reads, 0 writes | Clicked the new toggle: threshold bar appears (`-17 dB`), quiet regions dim |
+| **Panels overlapped 3 ways; headings hidden under the menu bar; filenames sliced** | Screenshot diff vs becky-review-native |
+| **~50ms of input lag** — DXGI queued 3 frames, Present blocked after rendering | Waitable swap chain, MaximumFrameLatency(1), wait moved to top of loop |
+| Escape deletes · timeline click restores keyboard · I-beam cursor · opaque selection (no white ring) · Up/Down zoom · >1s work indicator | Each driven and screenshotted |
+| **Renders no longer land on E:** (his criminal-case evidence drive) — the destination came from the browsed folder, not the footage | Test fails if any path starts with `E:`; all 5 export call sites fixed |
+| Captions: 202 cues/34 one-word/7 stutters → **150/8/1** | Counted independently, twice |
+
 ## What's left — in order
 
-1. **The missing half above (H-4..H-7).** That is the product. Everything below
-   it is maintenance.
-2. **Caption wording.** Two real bugs are now fixed (a cut landing mid-word
-   captioned that word twice — "viral" / "viral", "maybe" / "maybe"; and the
-   min-duration floor let two captions overlap so libass stacked them). His real
-   edit went 202 cues -> 179. What remains is genuinely wording: some lines are a
-   single word and some breaks read awkwardly. The rule he cares about most holds
-   — a number never leaves its unit ("ten times a day" never splits into "ten" /
-   "times a day").
-3. **The branch `fix/becky-review-3-audio` is ahead of master and not merged.**
-4. **Re-check Becky Review 3 by actually driving it with a real mouse.** Several
-   agents edited `native/becky-review/main.cpp` overnight at the same time, so
-   confirm it still works end to end before trusting it.
+1. **Caption wording — the last thing between him and posting without wincing.**
+   8 single-word lines remain (`media, can, have, posting, videos, actually, i,
+   fundamentals`). Root cause is NOT the cut-spanning that was fixed: it is
+   `ChunkWords`' greedy char-limit packing having no lookahead, so a line that
+   hits the 22-char cap leaves the remainder stranded. That means changing a
+   foundational, heavily-tested function — do it deliberately, with the existing
+   tests as the guard.
+2. **H-6/H-7 are the product.** H-4 (`apply_edit_batch`) and H-6 (`ask` ->
+   proposal -> apply) are BUILT and wired both sides. H-5 (activity stream)
+   landed tonight. **H-7 is the gap**: the forensic path works but is only
+   reachable via `BECKY_REVIEW_REEL` before launch, not as an in-app action.
+   Spec: `HANDOFF-VIDEOAGENT-SEAM.md`.
+3. **`GUI-CHECKLIST-STATUS.md`** has all 120 acceptance items audited against the
+   code — 69 DONE / 31 PARTIAL / 11 ABSENT / 9 needing a human eye — with a
+   ranked top-10 and the exact function each change belongs in. Items 1, 2, 3 and
+   5 of that top-10 are now done; **#4 (ruler drag = pan, click = playhead+stock)
+   is the next one.**
+4. Known-but-unfixed, from the audit: Play/Pause and the 3-state Overlay button
+   change label WIDTH, so every button right of them shifts on each click (he
+   stated "buttons must never move" twice). Redo exists in the engine but has no
+   key or button in the app. `g_scrollSec` is clamped every frame, so a delete
+   that shrinks the reel can drag the view sideways.
 
 ## Jordan's real footage to test with
 
