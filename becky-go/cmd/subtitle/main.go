@@ -21,6 +21,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -72,13 +73,16 @@ func main() {
 	gap := fs.Float64("gap", -1, "break a caption when the speaker pauses longer than this (seconds). -1 = derive it from the transcript's own timing, which is what you want unless you are matching an old render")
 	minDur := fs.Float64("min-dur", 0.10, "minimum seconds a caption stays on screen")
 	hold := fs.Float64("hold", 0.35, "carry the last caption across an inter-cut gap no longer than this")
-	lower := fs.Bool("lower", false, "lowercase the captions and drop trailing punctuation (the old cli-cut look). Default keeps sentence case, matching the captions you actually publish")
+	lower := fs.Bool("lower", true, "lowercase the captions and drop trailing punctuation - the cli-cut look")
+	review := fs.Bool("review", true, "pass 2: have a model regroup the caption lines so they break on phrases instead of mid-thought. This is what stops captions reading as broken")
+	reviewModel := fs.String("review-model", "sonnet", "model alias for the caption review pass")
 
 	font := fs.String("font", "ProximaNova-Semibold", "caption font FAMILY name (libass matches the family, not the filename)")
 	fontSize := fs.Int("font-size", 12, "caption font size")
 	bold := fs.Int("bold", 0, "1 to force bold")
 	marginV := fs.Int("margin-v", 90, "how far the captions sit above the bottom edge")
-	outline := fs.Int("outline", 2, "black outline thickness")
+	outline := fs.Int("outline", 1, "black outline thickness")
+	fpsFlag := fs.Float64("fps", 0, "snap caption boundaries to whole frames at this rate (0 = take the real rate from the edit, e.g. 29.97). Use the TRUE rate, not the rounded one")
 
 	verbose := fs.Bool("verbose", false, "log progress to stderr")
 	selftest := fs.Bool("selftest", false, "run the offline self-test (no files needed) and exit")
@@ -119,7 +123,26 @@ func main() {
 		beckyio.Fatalf("edit has no clips: %s", basePath)
 	}
 
+	// Frame rate comes from the edit itself (the importer reads it off the
+	// sequence), never a guess. Captions are then snapped to whole frames at the
+	// media's REAL rate, so the timeline and the .srt agree exactly.
+	fps := *fpsFlag
+	if fps <= 0 {
+		for _, c := range reel.Clips {
+			if c.Meta.SourceFPS > 0 {
+				fps = c.Meta.SourceFPS
+				break
+			}
+		}
+	}
+	if fps > 0 {
+		beckyio.Logf(*verbose, "snapping captions to whole frames at %.4f fps", fps)
+	} else {
+		preWarnings = append(preWarnings, "no frame rate known for this edit - captions are not frame-snapped; pass --fps")
+	}
+
 	opt := subs.Options{
+		FPS:            fps,
 		MaxChars:       *maxChars,
 		GapSeconds:     *gap,
 		MinDuration:    *minDur,
@@ -140,7 +163,23 @@ func main() {
 		opt.GapSeconds = subs.AutoGapSeconds(allWords)
 		beckyio.Logf(*verbose, "auto pause threshold: %.3fs (from %d words)", opt.GapSeconds, len(allWords))
 	}
-	cues := subs.Build(segments, opt)
+	// Pass 1 breaks on pacing alone and cuts mid-phrase; pass 2 regroups the
+	// lines so they break on thoughts. Without it the captions read as broken
+	// even though every timing is frame-correct.
+	var model subs.ModelFunc
+	if *review {
+		if haveClaude() {
+			model = claudeModel(*reviewModel, *verbose)
+			beckyio.Logf(*verbose, "reviewing caption grouping with %s...", *reviewModel)
+		} else {
+			noteReviewSkipped("the claude CLI is not on PATH")
+			warnings = append(warnings, "caption review skipped: the claude CLI is not on PATH")
+		}
+	}
+	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, 24)
+	warnings = append(warnings, reviewWarnings...)
+
+	cues := subs.BuildFromChunks(segments, chunks, opt)
 	if len(cues) == 0 {
 		warnings = append(warnings, "no captions produced — check that the transcript covers this edit's source ranges")
 	}

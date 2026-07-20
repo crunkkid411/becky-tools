@@ -21,14 +21,15 @@ type Style struct {
 	Outline  int
 }
 
-// DefaultStyle is the shipped cli-cut caption style.
+// DefaultStyle is the shipped cli-cut caption style, with the outline taken
+// down from cli-cut's 2 — Jordan judged 2 slightly too heavy on screen.
 func DefaultStyle() Style {
 	return Style{
 		FontName: "ProximaNova-Semibold",
 		FontSize: 12,
 		Bold:     0,
 		MarginV:  90,
-		Outline:  2,
+		Outline:  1,
 	}
 }
 

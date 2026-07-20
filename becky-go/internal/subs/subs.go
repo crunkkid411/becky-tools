@@ -81,11 +81,18 @@ type Options struct {
 	// end to end) cuts never have gaps, so this is a no-op there; it exists for
 	// edit lists that do leave holes.
 	PostSpeechHold float64
-	// Lowercase lowercases caption text and strips trailing .,;: — the old
-	// cli-cut look. OFF by default: Jordan's own published captions
-	// ("And if you've never", "Their label doesn't want you...") keep sentence
-	// case and punctuation, so lowercasing would not match what he ships.
+	// Lowercase lowercases caption text and strips trailing .,;: — the cli-cut
+	// look. ON by default: cli-cut is Jordan's actual working tool and its
+	// defaults are the reference. Do not deviate from it without being asked.
 	Lowercase bool
+	// FPS, when > 0, snaps every caption boundary to a whole frame at that rate.
+	// Use the media's REAL rate (29.97 = 30000/1001, not 30). A frame at 29.97 is
+	// 33.3667ms, which is not a whole number of milliseconds, so anything that
+	// stops at millisecond precision drifts — over a 90-cut edit that becomes
+	// visible. Quantising here means the .srt every downstream surface loads is
+	// already frame-aligned, and a timeline working in frames can snap to it
+	// exactly.
+	FPS float64
 }
 
 // DefaultOptions is the cli-cut-proven timing configuration. The timing numbers
@@ -99,7 +106,7 @@ func DefaultOptions() Options {
 		GapSeconds:     minAutoGap,
 		MinDuration:    0.10,
 		PostSpeechHold: 0.35,
-		Lowercase:      false,
+		Lowercase:      true,
 	}
 }
 
@@ -208,6 +215,17 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 // cue — silence stays silent, and the following segment still lands at the right
 // offset.
 func Build(segments []Segment, opt Options) []Cue {
+	chunks := make([][][]Word, len(segments))
+	for i, seg := range segments {
+		chunks[i] = ChunkWords(WordsInRange(seg.Words, seg.Start, seg.End), opt.MaxChars, opt.GapSeconds)
+	}
+	return BuildFromChunks(segments, chunks, opt)
+}
+
+// BuildFromChunks is Build with the word grouping already decided — used when
+// the LLM review pass (see llm.go) has regrouped the pass-1 chunks. The timing
+// rules are identical; only where the lines break differs.
+func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) []Cue {
 	// Phase 1: per segment, chunk its words into caption-local times.
 	type built struct {
 		offset float64
@@ -217,11 +235,18 @@ func Build(segments []Segment, opt Options) []Cue {
 	prepared := make([]built, 0, len(segments))
 
 	var offset float64
-	for _, seg := range segments {
+	for si, seg := range segments {
 		dur := seg.Dur()
 		b := built{offset: offset, dur: dur}
 
-		for _, chunk := range ChunkWords(WordsInRange(seg.Words, seg.Start, seg.End), opt.MaxChars, opt.GapSeconds) {
+		var segChunks [][]Word
+		if si < len(chunksPerSeg) {
+			segChunks = chunksPerSeg[si]
+		}
+		for _, chunk := range segChunks {
+			if len(chunk) == 0 {
+				continue
+			}
 			localStart := chunk[0].Start - seg.Start
 			localEnd := chunk[len(chunk)-1].End - seg.Start
 			if localStart < 0 {
@@ -293,7 +318,38 @@ func Build(segments []Segment, opt Options) []Cue {
 
 		out = append(out, cues...)
 	}
-	return out
+	return QuantizeToFrames(out, opt.FPS)
+}
+
+// QuantizeToFrames snaps every caption boundary to a whole frame at fps, and is
+// a no-op when fps <= 0. The cut points these captions are timed against are
+// themselves whole frames (that is what the NLE exported), so this makes the
+// captions exactly as frame-accurate as the edit — and lets a timeline that
+// works in frames snap to them without re-rounding.
+//
+// The gap-free invariant survives: two boundaries that were equal round to the
+// same frame, and any adjacency broken by the one-frame minimum is restored.
+func QuantizeToFrames(cues []Cue, fps float64) []Cue {
+	if fps <= 0 || len(cues) == 0 {
+		return cues
+	}
+	frameOf := func(t float64) int64 { return int64(t*fps + 0.5) }
+
+	for i := range cues {
+		s := frameOf(cues[i].Start)
+		e := frameOf(cues[i].End)
+		if e <= s {
+			e = s + 1 // never shorter than a single frame
+		}
+		cues[i].Start = float64(s) / fps
+		cues[i].End = float64(e) / fps
+	}
+	for i := 0; i < len(cues)-1; i++ {
+		if cues[i].End < cues[i+1].Start {
+			cues[i].End = cues[i+1].Start
+		}
+	}
+	return cues
 }
 
 // normalize applies the cli-cut caption look: collapse whitespace, drop trailing

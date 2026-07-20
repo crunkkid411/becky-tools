@@ -87,6 +87,68 @@ func TestAutoGapSecondsAdaptsToTheASR(t *testing.T) {
 	}
 }
 
+func TestQuantizeToFramesIsExactAt2997(t *testing.T) {
+	const fps = 30000.0 / 1001.0 // true NTSC, one frame = 33.3667ms
+	cues := []Cue{
+		{Start: 0, End: 2.2, Text: "a"},
+		{Start: 2.2, End: 3.0, Text: "b"},
+		{Start: 3.0, End: 5.0, Text: "c"},
+	}
+	got := QuantizeToFrames(cues, fps)
+
+	// Every boundary must land on a whole frame.
+	for i, c := range got {
+		for _, edge := range []struct {
+			name string
+			t    float64
+		}{{"start", c.Start}, {"end", c.End}} {
+			f := c.Start * fps
+			if edge.name == "end" {
+				f = c.End * fps
+			}
+			if d := f - float64(int64(f+0.5)); d > 1e-6 || d < -1e-6 {
+				t.Errorf("cue %d %s = %.6fs = %.4f frames, want a whole frame", i, edge.name, edge.t, f)
+			}
+		}
+	}
+	// The gap-free invariant must survive quantisation - that is the whole point.
+	for i := 0; i < len(got)-1; i++ {
+		if got[i].End < got[i+1].Start-1e-9 {
+			t.Errorf("quantising opened a gap between cue %d (ends %.6f) and %d (starts %.6f)",
+				i, got[i].End, i+1, got[i+1].Start)
+		}
+	}
+	// And nothing collapsed to zero length.
+	for i, c := range got {
+		if c.End <= c.Start {
+			t.Errorf("cue %d collapsed to %.6f..%.6f", i, c.Start, c.End)
+		}
+	}
+}
+
+func TestQuantizeToFramesNoOpWithoutRate(t *testing.T) {
+	in := []Cue{{Start: 0.123456, End: 1.234567, Text: "a"}}
+	got := QuantizeToFrames(in, 0)
+	if !closeTo(got[0].Start, 0.123456) || !closeTo(got[0].End, 1.234567) {
+		t.Errorf("fps 0 must leave times untouched, got %.6f..%.6f", got[0].Start, got[0].End)
+	}
+}
+
+func TestBuildQuantisesWhenFPSSet(t *testing.T) {
+	const fps = 30000.0 / 1001.0
+	opt := DefaultOptions()
+	opt.FPS = fps
+	segs := []Segment{{Start: 0, End: 1.0, Words: []Word{w("one", 0.137, 0.611)}}}
+	cues := Build(segs, opt)
+	if len(cues) != 1 {
+		t.Fatalf("cues = %d, want 1", len(cues))
+	}
+	f := cues[0].End * fps
+	if d := f - float64(int64(f+0.5)); d > 1e-6 || d < -1e-6 {
+		t.Errorf("Build did not frame-snap the cue end: %.6fs = %.4f frames", cues[0].End, f)
+	}
+}
+
 func TestWordsInRangeKeepsStraddlingWords(t *testing.T) {
 	words := []Word{
 		w("before", 1.0, 1.5), // fully before
@@ -258,11 +320,12 @@ func TestWriteSRT(t *testing.T) {
 }
 
 func TestDefaultStyleForceStyle(t *testing.T) {
-	// The exact string cli-cut rendered with. White fill, black outline, no
-	// shadow, bottom-centre, lifted 90 off the bottom.
+	// cli-cut's style, with the outline at 1 instead of its 2 — Jordan judged 2
+	// slightly too heavy on screen. White fill, black outline, no shadow,
+	// bottom-centre, lifted 90 off the bottom.
 	want := "FontName=ProximaNova-Semibold,FontSize=12,Bold=0," +
 		"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H00000000," +
-		"BorderStyle=1,Outline=2,Shadow=0," +
+		"BorderStyle=1,Outline=1,Shadow=0," +
 		"Alignment=2,MarginV=90"
 	if got := DefaultStyle().ForceStyle(); got != want {
 		t.Errorf("ForceStyle() =\n%s\nwant\n%s", got, want)
