@@ -29,6 +29,7 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <d3d11.h>
+#include <dxgi1_3.h>   // IDXGISwapChain2 - the frame-latency waitable object (see CreateD3D)
 #include <wincodec.h> // E-11: WIC decodes the thumb verb's JPEG - native platform feature, no image lib dependency
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -1765,22 +1766,104 @@ static void createRTV() {
     g_swap->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
     if (bb) { g_dev->CreateRenderTargetView(bb, nullptr, &g_rtv); bb->Release(); }
 }
+// ---- INPUT LATENCY: the reason this app could not keep up with Jordan's hands ----
+//
+// He is a professional editor - "one of the fastest video editors in the world" -
+// and said the previous (WPF) build "FROZE when i tried touching it... literally
+// my muscle memory broke the entire goddamn thing", with the bar set at "as snappy
+// as Vegas Pro timeline (or faster)".
+//
+// The default presentation path was costing ~50ms of input-to-screen delay before
+// a single line of this app's code ran:
+//   * DXGI's default MaximumFrameLatency is THREE. The app is allowed to run up to
+//     three frames ahead of what the display is showing, so a click was rendered
+//     into a frame the user would not see for ~3 refreshes.
+//   * Present(1,0) then blocked at the END of the frame. Blocking after rendering
+//     is backwards: input sampled at the top of the frame is already one whole
+//     frame stale by the time it is presented.
+//
+// The fix is the standard low-latency desktop pattern, and it needs a swap chain
+// created through IDXGIFactory2 (D3D11CreateDeviceAndSwapChain cannot request it):
+//   * FRAME_LATENCY_WAITABLE_OBJECT + SetMaximumFrameLatency(1) - at most one frame
+//     in flight instead of three.
+//   * Wait on that object at the TOP of the frame (see the render loop). The thread
+//     sleeps until the GPU is actually ready for a new frame, and input is sampled
+//     immediately AFTER the wait - as late as possible before rendering, which is
+//     what makes a scrub feel attached to the mouse.
+//
+// vsync is deliberately KEPT (Present(1,0)): this window also hosts video playback,
+// and tearing on playback would be a worse defect than the latency this removes.
+// g_frameWait is null on a machine where the waitable path is unavailable, and every
+// use is null-guarded, so this degrades to the old behaviour rather than failing.
+static HANDLE g_frameWait = nullptr;
+
 static bool CreateD3D(HWND h) {
-    DXGI_SWAP_CHAIN_DESC sd = {};
-    sd.BufferCount = 2; sd.BufferDesc.Width = g_W; sd.BufferDesc.Height = g_H;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = h;
-    sd.SampleDesc.Count = 1; sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
-        D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, nullptr, &g_ctx))) return false;
+    UINT flags = 0;
+#ifdef _DEBUG
+    flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0,
+        D3D11_SDK_VERSION, &g_dev, nullptr, &g_ctx))) return false;
+
+    IDXGIDevice1* dxgiDev = nullptr;
+    if (SUCCEEDED(g_dev->QueryInterface(__uuidof(IDXGIDevice1), (void**)&dxgiDev)) && dxgiDev) {
+        IDXGIAdapter* adapter = nullptr;
+        if (SUCCEEDED(dxgiDev->GetAdapter(&adapter)) && adapter) {
+            IDXGIFactory2* factory = nullptr;
+            if (SUCCEEDED(adapter->GetParent(__uuidof(IDXGIFactory2), (void**)&factory)) && factory) {
+                DXGI_SWAP_CHAIN_DESC1 sd = {};
+                sd.Width = g_W; sd.Height = g_H;
+                sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+                sd.BufferCount = 2;
+                sd.SampleDesc.Count = 1;
+                sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+                sd.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+                IDXGISwapChain1* sc1 = nullptr;
+                if (SUCCEEDED(factory->CreateSwapChainForHwnd(g_dev, h, &sd, nullptr, nullptr, &sc1)) && sc1) {
+                    sc1->QueryInterface(__uuidof(IDXGISwapChain), (void**)&g_swap);
+                    IDXGISwapChain2* sc2 = nullptr;
+                    if (SUCCEEDED(sc1->QueryInterface(__uuidof(IDXGISwapChain2), (void**)&sc2)) && sc2) {
+                        sc2->SetMaximumFrameLatency(1);
+                        g_frameWait = sc2->GetFrameLatencyWaitableObject();
+                        sc2->Release();
+                    }
+                    sc1->Release();
+                }
+                factory->Release();
+            }
+            adapter->Release();
+        }
+        dxgiDev->Release();
+    }
+
+    if (!g_swap) {
+        // Waitable path unavailable - fall back to the plain swap chain rather than
+        // refusing to open a window. Latency is worse; the app still works.
+        DXGI_SWAP_CHAIN_DESC sd = {};
+        sd.BufferCount = 2; sd.BufferDesc.Width = g_W; sd.BufferDesc.Height = g_H;
+        sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = h;
+        sd.SampleDesc.Count = 1; sd.Windowed = TRUE;
+        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        if (g_dev) { g_dev->Release(); g_dev = nullptr; }
+        if (g_ctx) { g_ctx->Release(); g_ctx = nullptr; }
+        if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+            D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, nullptr, &g_ctx))) return false;
+    }
     createRTV();
     return true;
 }
 static void resizeD3D() {
     if (!g_swap || !g_ctx) return;
     if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
-    g_swap->ResizeBuffers(0, g_W, g_H, DXGI_FORMAT_UNKNOWN, 0);
+    // The flags argument MUST repeat FRAME_LATENCY_WAITABLE_OBJECT. Passing 0 here
+    // silently drops it, and the waitable handle obtained at creation stops being
+    // signalled - the render loop would then block a full second per frame on its
+    // wait. Resizing must not quietly undo the low-latency setup.
+    g_swap->ResizeBuffers(0, g_W, g_H, DXGI_FORMAT_UNKNOWN,
+                          g_frameWait ? DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT : 0);
     createRTV();
 }
 
@@ -2777,15 +2860,23 @@ static void drawTimeline(double& curSec, bool& playing) {
         if (x1 < tlX - 4 || x0 > tlX + tlW + 4) continue;
         bool selected = g_sel.count(c.id) != 0;
         bool inDrag = g_gest.kind == 3 && std::find(g_gest.group.begin(), g_gest.group.end(), (int)i) != g_gest.group.end();
-        ImU32 fill = IM_COL32(c.r, c.g, c.b, selected ? 232 : 62);
+        // SELECTION = OPAQUE FILL, NEVER AN OUTLINE. Jordan, verbatim: "Pleae
+        // remove the yellow outline around the selected clip" [feedback2], and
+        // a clip's border must match its own colour [feedback4]. The clip
+        // colours are his ACCESSIBILITY AID - he identifies a clip by its
+        // colour at a glance - so selection has to read THROUGH that colour by
+        // going solid, not by drawing a different colour on top of it.
+        ImU32 fill = IM_COL32(c.r, c.g, c.b, selected ? 255 : 62);
         if (inDrag) fill = (fill & 0x00FFFFFF) | 0x60000000;
         dl->AddRectFilled(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), fill, 3);
         float vx0 = std::max(x0 + 1, tlX), vx1 = std::min(x1 - 1, tlX + tlW);
         if (vx1 > vx0 && wy1 - wy0 > 6)
             drawWave(dl, c.source, cin, cout, x0, vx0, vx1, wy0, wy1, g_pps,
                      inDrag ? COL_WAVEDIM : (selected ? IM_COL32(255, 255, 255, 190) : COL_WAVE));
-        ImU32 brd = selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(c.r, c.g, c.b, 242);
-        dl->AddRect(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), brd, 3, 0, selected ? 2.0f : 1.0f);
+        // The border ALWAYS matches the clip's own colour - no white ring on the
+        // selected clip. The opaque fill above is what says "selected".
+        ImU32 brd = IM_COL32(c.r, c.g, c.b, 242);
+        dl->AddRect(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), brd, 3, 0, 1.0f);
         if (clipPreparing(c)) {
             ImVec2 pr0(std::max(x0 + 1, tlX), aY + 1), pr1(std::min(x1 - 1, tlX + tlW), aY + laneH - 1);
             if (pr1.x > pr0.x) {
@@ -3609,6 +3700,20 @@ int main(int argc, char** argv) {
     bool run = true;
     long frameIdx = 0; double traceT0 = nowSec();
     while (run) {
+        // Block HERE, before input is read, not at Present() after rendering.
+        //
+        // This is the whole point of the waitable swap chain (see CreateD3D): the
+        // thread sleeps until the GPU is actually ready for the next frame, and the
+        // messages drained immediately below are therefore the FRESHEST possible
+        // when they get rendered. Waiting after rendering instead - which is what
+        // Present(1,0) alone does - guarantees every frame shows input that is at
+        // least one refresh stale, which is precisely the lag a fast editor feels
+        // as the app not keeping up with their hands.
+        //
+        // The 100ms cap means a lost/never-signalled handle costs a few dropped
+        // frames rather than hanging the window forever.
+        if (g_frameWait) WaitForSingleObjectEx(g_frameWait, 100, TRUE);
+
         MSG msg; while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); if (msg.message == WM_QUIT) run = false; }
         if (!run) break;
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
@@ -3698,7 +3803,12 @@ int main(int argc, char** argv) {
                 }
                 if (!playing) lastComposed = -1;
             }
-            if (GetAsyncKeyState(VK_DELETE) & 1) {
+            // Delete OR Escape. Jordan asked for Escape to delete the selected clip
+            // too ("esc should also delete the selected clip", feedback4/lag) - on a
+            // full-size keyboard Delete is a reach, and his hand is already near Esc
+            // between takes. Same edit, same undo span; Esc is purely a second key
+            // onto the identical path so the two can never drift apart.
+            if ((GetAsyncKeyState(VK_DELETE) & 1) || (GetAsyncKeyState(VK_ESCAPE) & 1)) {
                 double t = editT();
                 Clip* c = clipAtComp(0, t);
                 bool noId = c && c->id.empty();
