@@ -71,7 +71,26 @@ func (a *App) ApplyEditBatch(ops []EditOp) (TimelineView, []EditOpResult, error)
 	for _, op := range ops {
 		results = append(results, a.applyOneOpLocked(op, resolved))
 	}
+	a.emitEvent("done", "apply_edit_batch", batchSummary(results))
 	return a.timelineLocked(), results, nil
+}
+
+// batchSummary is the H-5 one-line "what the AI just did" text for a finished
+// batch — e.g. "Applied 3 edit(s)." or "Applied 2 edit(s), 1 failed." Never
+// empty (emitEvent would otherwise treat that as no-event), so a same-length
+// all-fail batch still tells Jordan something happened.
+func batchSummary(results []EditOpResult) string {
+	ok := 0
+	for _, r := range results {
+		if r.OK {
+			ok++
+		}
+	}
+	failed := len(results) - ok
+	if failed == 0 {
+		return fmt.Sprintf("Applied %d edit(s).", ok)
+	}
+	return fmt.Sprintf("Applied %d edit(s), %d failed.", ok, failed)
 }
 
 // resolvedSource is one add_clip source's pre-locked lookup result (path +

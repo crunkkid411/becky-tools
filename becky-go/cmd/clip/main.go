@@ -135,6 +135,18 @@ func cmdCall(argv []string) {
 // replies are tagged by id and may return out of order, and stdout writes are
 // serialized. Diagnostics still go to stderr. Matches the GUI bridge's async model
 // (window_gui.go) so App.Call concurrency behaves identically.
+//
+// H-5: a SECOND, unsolicited line shape shares this same stdout stream — the
+// GUI-RULES.md §2 "event" kind, an async engine→front-end push with no
+// matching stdin request:
+//
+//	stdout:  {"event":{"kind":"started","source":"ask","text":"Thinking: ..."}}
+//
+// It is distinguished from a reply line by having an "event" key instead of
+// "id"/"reply" — a client that only understands request/reply can safely
+// ignore any line without "id" (H-2's type-guard-every-field rule applied to
+// the client side). No request ever gets an "event" line as ITS reply; App.Call
+// still always replies via the id/reply shape above.
 func cmdBridge() {
 	app := NewApp()
 
@@ -173,6 +185,24 @@ func cmdBridge() {
 			out.WriteString(`{"ok":false,"error":"bad envelope"}`)
 		}
 		out.WriteString("}\n")
+		_ = out.Flush()
+	}
+
+	// H-5: the AI-activity push. Shares outMu/out with write() (one stdout, one
+	// writer at a time) but a distinct top-level shape ("event", no "id"/"reply")
+	// so a reader can tell the two apart on sight. Marshal failure is dropped,
+	// never surfaced — a lost status line must not be treated like a lost reply.
+	app.emit = func(kind, source, text string) {
+		line, err := json.Marshal(map[string]any{
+			"event": map[string]string{"kind": kind, "source": source, "text": text},
+		})
+		if err != nil {
+			return
+		}
+		outMu.Lock()
+		defer outMu.Unlock()
+		out.Write(line)
+		out.WriteString("\n")
 		_ = out.Flush()
 	}
 

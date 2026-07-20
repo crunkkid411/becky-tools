@@ -76,6 +76,57 @@ func TestApplyEditBatchBadOpIsSkippedNotFatal(t *testing.T) {
 	}
 }
 
+// TestApplyEditBatchEmitsDoneEvent is the H-5 regression for the raw batch
+// verb (as opposed to the ask/apply_proposal path covered by
+// TestAskEmitsStartedAndDoneEvents in app_test.go): every apply_edit_batch
+// call — including ones a future scripted planner (P-AI-2) fires directly,
+// with no chat turn wrapping it — must still announce itself so the batch
+// isn't silently invisible to the right panel.
+func TestApplyEditBatchEmitsDoneEvent(t *testing.T) {
+	app, dir := openFixture(t)
+	ring := filepath.Join(dir, "ring.mp4")
+
+	type evt struct{ kind, source, text string }
+	var got []evt
+	app.emit = func(kind, source, text string) {
+		got = append(got, evt{kind, source, text})
+	}
+
+	if _, _, err := app.ApplyEditBatch([]EditOp{
+		{Verb: "add_clip", Args: map[string]any{"source": ring, "in": 1.0, "out": 3.0}},
+		{Verb: "remove_clip", Args: map[string]any{"id": "no-such-clip"}}, // forces one failure into the summary
+	}); err != nil {
+		t.Fatalf("ApplyEditBatch: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 done event, got %d: %+v", len(got), got)
+	}
+	if got[0].kind != "done" || got[0].source != "apply_edit_batch" {
+		t.Fatalf("event kind/source wrong: %+v", got[0])
+	}
+	if got[0].text != "Applied 1 edit(s), 1 failed." {
+		t.Errorf("event text = %q, want the batch's ok/fail counts", got[0].text)
+	}
+}
+
+// TestApplyEditBatchEmptyBatchSkipsEvent proves the rejected-empty-batch path
+// (no undo entry pushed, per TestApplyEditBatchEmptyIsRejectedNoUndoEntry)
+// also announces nothing — there's no AI activity to report when the call
+// never got past validation.
+func TestApplyEditBatchEmptyBatchSkipsEvent(t *testing.T) {
+	app, _ := openFixture(t)
+	fired := false
+	app.emit = func(kind, source, text string) { fired = true }
+
+	if _, _, err := app.ApplyEditBatch(nil); err == nil {
+		t.Fatal("an empty batch should still error")
+	}
+	if fired {
+		t.Error("an empty (rejected) batch must not emit a done event")
+	}
+}
+
 func TestApplyEditBatchViaBridgeVerb(t *testing.T) {
 	app, dir := openFixture(t)
 	ring := filepath.Join(dir, "ring.mp4")

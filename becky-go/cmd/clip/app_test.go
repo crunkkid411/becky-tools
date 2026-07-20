@@ -226,6 +226,49 @@ func TestAskAddClipListIsOneUndoableEdit(t *testing.T) {
 	}
 }
 
+// TestAskEmitsStartedAndDoneEvents is the H-5 regression: a chat turn must
+// bracket itself with "started"/"done" AI-activity events on whatever
+// EventEmitter is wired up (in production, cmdBridge's NDJSON {"event":...}
+// push — see main.go), so the right panel can show what becky is doing for
+// the whole span of a turn, not just its final reply. Uses the same Tier-0
+// "add clip 1" command as TestAskAddClipByHitUsesLastSearch so this runs
+// offline with no model.
+func TestAskEmitsStartedAndDoneEvents(t *testing.T) {
+	app, _ := openFixture(t)
+	app.Search("money for the cat") // populate lastSearchHits for "add clip 1"
+
+	type evt struct{ kind, source, text string }
+	var got []evt
+	app.emit = func(kind, source, text string) {
+		got = append(got, evt{kind, source, text})
+	}
+
+	if _, err := app.Ask(context.Background(), "add clip 1"); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("want exactly 2 events (started, done), got %d: %+v", len(got), got)
+	}
+	if got[0].kind != "started" || got[0].source != "ask" || got[0].text == "" {
+		t.Errorf("first event should be a non-empty ask/started, got %+v", got[0])
+	}
+	if got[1].kind != "done" || got[1].source != "ask" || got[1].text == "" {
+		t.Errorf("second event should be a non-empty ask/done, got %+v", got[1])
+	}
+}
+
+// TestAskWithNoEmitterStillWorks proves a.emit == nil (every path with no
+// listener: tests, WebView2, headless `call`) is a true no-op, not a nil-panic
+// — emitEvent must never be the thing that breaks Ask().
+func TestAskWithNoEmitterStillWorks(t *testing.T) {
+	app, _ := openFixture(t)
+	app.Search("money for the cat")
+	if _, err := app.Ask(context.Background(), "add clip 1"); err != nil {
+		t.Fatalf("Ask with no emitter wired up: %v", err)
+	}
+}
+
 func TestAddRemoveReorderClip(t *testing.T) {
 	app, dir := openFixture(t)
 	ring := filepath.Join(dir, "ring.mp4")

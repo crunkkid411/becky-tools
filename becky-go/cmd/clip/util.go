@@ -168,6 +168,21 @@ func isWindows() bool {
 	return runtime.GOOS == "windows"
 }
 
+// truncateText clips s to at most max runes, appending "…" when it had to cut —
+// used for the H-5 event stream's one-line activity text, so a long chat
+// utterance or error can't blow up the right panel's status line. max<=0
+// disables truncation (returns s unchanged).
+func truncateText(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
 // truthy reports whether a string value means "on" (true/1/yes/on). Anything
 // else (incl. empty) is false — so an unspecified overlay value reads as off.
 func truthy(s string) bool {

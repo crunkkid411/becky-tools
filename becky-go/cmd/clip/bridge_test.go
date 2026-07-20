@@ -216,6 +216,21 @@ func TestMmssAndSlug(t *testing.T) {
 	}
 }
 
+func TestTruncateText(t *testing.T) {
+	if got := truncateText("short", 80); got != "short" {
+		t.Errorf("short string should pass through unchanged, got %q", got)
+	}
+	if got := truncateText("abcdef", 3); got != "abc…" {
+		t.Errorf("truncateText(6 runes, max 3) = %q, want %q", got, "abc…")
+	}
+	if got := truncateText("abc", 3); got != "abc" {
+		t.Errorf("exact-length input must not gain an ellipsis, got %q", got)
+	}
+	if got := truncateText("abcdef", 0); got != "abcdef" {
+		t.Errorf("max<=0 should disable truncation, got %q", got)
+	}
+}
+
 func TestTruthy(t *testing.T) {
 	for _, s := range []string{"true", "1", "yes", "on", "Y"} {
 		if !truthy(s) {
