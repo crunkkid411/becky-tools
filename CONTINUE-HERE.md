@@ -46,6 +46,15 @@ The product is §"The missing half" (H-4..H-7) and the 120-item
 audit on 2026-07-20 flagged this exact section for reading like "the app is
 done" — it is not, it is the plumbing under the app.
 
+- **A real edit session was driven with mouse + keyboard and passed, 2026-07-20
+  ~01:50.** Not a smoke test, not a fixture — his actual 88-clip
+  `post_constantly` reel, driven with Win32 mouse clicks and keystrokes, with a
+  screenshot examined at every step (kept in the session scratchpad `e2e/`):
+  click a clip → selects; `S` → splits at 4.7s; `Ctrl+Z` → **one press** reverses
+  the whole split; `Space` → plays, `Space` → pauses; `Ctrl+Right` ×3 → 4.7s to
+  13.2s across three edit points. App still alive afterwards, `crash.log` clean
+  (0 errors), captions rendering throughout. This is the `CANVAS-NORTH-STAR.md`
+  DoD (exercised by mouse + keyboard), actually met.
 - **There is a finished, postable video.** `X:\Videos\2025\11_November\Rendered\
   post_constantly.captioned.mp4` — 269MB, 4500 frames at 30000/1001, audio
   present (aac 48kHz stereo, 150.144s). Built 2026-07-20 00:57 from his real
