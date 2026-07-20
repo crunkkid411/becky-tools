@@ -322,6 +322,25 @@ func Pass1Chunks(words []Word, maxChars int, gapSeconds float64) [][]Word {
 	return RepairDangling(raw, maxChars)
 }
 
+// RepairModelGroups is Pass1Chunks' counterpart for the LLM review pass: the
+// SAME deterministic repairs, applied to whatever grouping the model returned.
+//
+// This exists because the two paths had already drifted, with a measurable cost.
+// The model path ran only RepairDangling + EnforceMaxChars, so when
+// rebalanceCapSplits was added it improved pass-1 and left the reviewed output
+// untouched. Measured on Jordan's real edit: deterministic-only gave 4 one-word
+// lines, the LLM-reviewed run gave 8 — and reintroduced "that in" / "order to
+// grow", the exact break he complained about in the first place. A model that
+// makes the output worse than no model is the worst of both.
+//
+// ORDER MATTERS. EnforceMaxChars splits on the character cap, and a cap split is
+// the very thing that strands a lone word, so the rebalance has to run AFTER it —
+// running it first would repair groups that EnforceMaxChars then re-breaks.
+func RepairModelGroups(groups [][]Word, maxChars int, gapSeconds float64) [][]Word {
+	capped := EnforceMaxChars(RepairDangling(groups, maxChars), maxChars)
+	return RepairDangling(rebalanceCapSplits(capped, maxChars, gapSeconds), maxChars)
+}
+
 // RepairDangling pushes any phrase-splitting trailing word onto the next line,
 // and merges away a line that is nothing but such words. It never changes word
 // order and never drops a word, so the result is still a strict in-order

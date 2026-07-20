@@ -129,7 +129,7 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 				// The model is asked for phrase integrity but is not consistent
 				// about it, so the rule is enforced deterministically on its
 				// output too.
-				out[r.Index] = EnforceMaxChars(RepairDangling(groups, opt.MaxChars), opt.MaxChars)
+				out[r.Index] = RepairModelGroups(groups, opt.MaxChars, opt.GapSeconds)
 			}
 		}(start, end, plans)
 	}
