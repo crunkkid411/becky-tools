@@ -2989,8 +2989,14 @@ static void drawTimeline(double& curSec, bool& playing) {
             nOut = std::max(nOut, c.in + 0.05);
             g_gest.gIn = c.in; g_gest.gOut = nOut;
         } else if (g_gest.kind == 8 && std::abs(mx - g_gest.pressX) > 4) {
-            g_gest.kind = 11; g_gest.dragged = true;   // body press became a MOVE
-        } else if (g_gest.kind == 11) {
+            // 12, NOT 11. Dragging a caption used to promote the gesture to kind
+            // 11 - which is ALSO the ruler-pan kind added later in the file's
+            // life. Because the pan branch is tested FIRST in this chain, the
+            // caption-move branch below became unreachable: dragging a caption
+            // PANNED THE TIMELINE and the cue never moved. Two features, one
+            // number; the newer one silently ate the older one.
+            g_gest.kind = 12; g_gest.dragged = true;   // body press became a MOVE
+        } else if (g_gest.kind == 12) {
             // Move: duration is preserved, so gOut-gIn is still the cue's length.
             // Snap the START to a cut; if that finds nothing, try snapping the END
             // so a caption can be parked flush against the cut on either side.
@@ -3094,7 +3100,7 @@ static void drawTimeline(double& curSec, bool& playing) {
             std::string t = g_caps[g.idx].text;
             for (auto& ch : t) if (ch == '\n' || ch == '\r') ch = ' ';
             snprintf(g_capEditBuf, sizeof g_capEditBuf, "%s", t.c_str());
-        } else if ((g.kind == 9 || g.kind == 10 || g.kind == 11) && g.idx >= 0 && g.idx < (int)g_caps.size()) {
+        } else if ((g.kind == 9 || g.kind == 10 || g.kind == 12) && g.idx >= 0 && g.idx < (int)g_caps.size()) {
             Caption& cp = g_caps[g.idx];
             if (std::abs(g.gIn - cp.start) > 0.001 || std::abs(g.gOut - cp.end) > 0.001) {
                 // Measure, don't claim (same reason I-2/I-5 log their timings): one line
@@ -3245,7 +3251,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         }
         for (size_t i = 0; i < g_caps.size(); i++) {
             double s = g_caps[i].start, e = g_caps[i].end;
-            bool ghost = (g_gest.kind == 9 || g_gest.kind == 10 || g_gest.kind == 11) && (int)i == g_gest.idx;
+            bool ghost = (g_gest.kind == 9 || g_gest.kind == 10 || g_gest.kind == 12) && (int)i == g_gest.idx;
             if (ghost) { s = g_gest.gIn; e = g_gest.gOut; }
             float x0 = secToX(s), x1 = secToX(e);
             if (x1 < tlX - 4 || x0 > tlX + tlW + 4) continue;
