@@ -48,6 +48,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>   // engineCallAsync completion callbacks
 #include <map>
 #include <memory>
 #include <mutex>
@@ -868,6 +869,60 @@ static void endWork() {
     std::lock_guard<std::mutex> lk(g_workMx);
     if (g_workCount > 0) g_workCount--;
     if (g_workCount == 0) g_workLabel.clear();
+}
+
+// ---- run an engine verb WITHOUT freezing the window ----
+//
+// THIS IS THE FREEZE. Jordan: "the becky-review-native app FROZE when i tried
+// touching it (cuz i'm too fast - i wasn't even trying; literally my muscle
+// memory broke the entire goddamn thing)."
+//
+// Render, Save Reel, Load Reel, Export EDL, Screenshot, ask and apply_proposal
+// all called engineCall() straight from the button handler - i.e. on the UI
+// thread, inside the frame - with timeouts from 10 up to 300 SECONDS. For that
+// entire span the message pump never runs: no repaint, no input, Windows greys
+// the title bar and offers to kill it. The app is not slow during a render, it
+// is DEAD, and there is no way for him to tell that apart from a crash.
+//
+// The app already had the right shape for this everywhere else (transcribe,
+// thumbnails and edits all hand off to a worker and drain per frame). These
+// call sites simply never got converted. engineCallAsync is that shape, once,
+// so no future call site has to reinvent it: the verb runs on its own thread,
+// the work indicator shows automatically, and the completion callback is
+// delivered on the UI THREAD by drainAsync() - so callbacks can touch UI state
+// (g_renderMsg, the timeline, curSec) exactly as the old inline code did.
+struct AsyncReply {
+    json r;
+    std::function<void(const json&)> cb;
+};
+static std::mutex g_asyncMx;
+static std::deque<AsyncReply> g_asyncQ;
+
+static void engineCallAsync(const std::string& verb, json args, double timeoutSec,
+                            const std::string& label, std::function<void(const json&)> cb) {
+    beginWork(label);
+    std::thread([verb, args, timeoutSec, cb]() {
+        t_threadTag = "asyncVerb";
+        json r;
+        try {
+            r = engineCall(verb, args, timeoutSec);
+        } catch (...) {
+            r = json{ {"ok", false}, {"error", "the engine call failed"} };
+        }
+        endWork();
+        std::lock_guard<std::mutex> lk(g_asyncMx);
+        g_asyncQ.push_back(AsyncReply{ r, cb });
+    }).detach();
+}
+
+// Delivers finished async verbs on the UI thread. Called once per frame.
+static void drainAsync() {
+    std::deque<AsyncReply> q;
+    { std::lock_guard<std::mutex> lk(g_asyncMx); q.swap(g_asyncQ); }
+    for (auto& a : q) {
+        if (!a.cb) continue;
+        try { a.cb(a.r); } catch (...) {}   // a bad callback must not kill the frame
+    }
 }
 // E-18/I-6 instrumentation: counts every job actually PUSHED onto a Peaks.jobs
 // deque (peaksRequest below) - not decode work, the enqueue itself. BUILD_1.md's
@@ -2654,6 +2709,7 @@ static void drawTimeline(double& curSec, bool& playing) {
     float wy0 = aY + 2 + headerH, wy1 = aY + laneH - 2;
     float waveMid = (wy0 + wy1) * 0.5f, waveHalf = (wy1 - wy0) * 0.5f - 1.0f;
     drainThumbs(); // cheap (swaps a small deque under a lock) even when nothing finished this frame
+    drainAsync();  // deliver finished engine verbs (Render/Save/Export) on the UI thread
 
     auto zoomTo = [&](double newPps, float anchorX) {
         double anchor = xToSec(anchorX);
@@ -4656,7 +4712,7 @@ int main(int argc, char** argv) {
             // dropped the captions is the bug that cost a whole day, and "Rendered
             // <file>" alone reads identical in both cases.
             if (ImGui::Button("Render")) {
-                json r = engineCall("export", { {"output", ""} }, 300.0);
+                engineCallAsync("export", { {"output", ""} }, 300.0, "Rendering video...", [](const json& r) {
                 if (r.value("ok", false)) {
                     const json& d = r.contains("data") ? r["data"] : r;
                     std::string caps = d.value("captions", std::string());
@@ -4666,6 +4722,7 @@ int main(int argc, char** argv) {
                     openInFileBrowser(d.value("mp4", std::string()));
                 } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
                 g_renderMsgAt = nowSec();
+                });
             }
             ImGui::SameLine();
             char selLabel[40]; snprintf(selLabel, sizeof selLabel, "Render Selection (%d)", (int)g_sel.size());
@@ -4707,9 +4764,10 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Save Reel")) {
-                json r = engineCall("save_reel", { {"path", ""} }, 20.0);
-                g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
-                g_renderMsgAt = nowSec();
+                engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel...", [](const json& r) {
+                    g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                });
             }
             ImGui::SameLine();
             if (ImGui::Button("Load Reel")) {
@@ -4726,10 +4784,11 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Export EDL")) {
-                json r = engineCall("write_edl", { {"output", ""} }, 30.0);
-                if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
-                else g_renderMsg = "Export EDL failed: " + r.value("error", std::string("?"));
-                g_renderMsgAt = nowSec();
+                engineCallAsync("write_edl", { {"output", ""} }, 30.0, "Writing EDL...", [](const json& r) {
+                    if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
+                    else g_renderMsg = "Export EDL failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                });
             }
             if (!g_renderMsg.empty() && nowSec() - g_renderMsgAt < 8.0) ImGui::TextDisabled("%s", g_renderMsg.c_str());
         }

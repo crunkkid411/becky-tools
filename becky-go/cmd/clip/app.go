@@ -1175,6 +1175,21 @@ func (a *App) resolveSource(source string) (footage.Video, bool) {
 			return v, true
 		}
 	}
+	// A REEL CAN REFERENCE FOOTAGE FROM ANYWHERE — that is the whole point of
+	// loading a Vegas EDL. Until this, resolveSource only accepted paths that
+	// were in the CURRENTLY BROWSED folder's index, so loading Jordan's
+	// post_constantly edit (clips on X:\Videos\...) while the library happened to
+	// be browsing E:\TakingBack2007 made every one of its 88 clips unresolvable.
+	// The visible symptom was that every clip on the timeline drew the black
+	// "no thumbnail" placeholder instead of a thumbnail, forever — Thumb() bails
+	// here before it ever reaches the extractor, so nothing was cached and
+	// nothing retried.
+	//
+	// If the file is really on disk, it is a real source. The index is a
+	// convenience for browsing, not the definition of what exists.
+	if fi, err := os.Stat(abs); err == nil && !fi.IsDir() {
+		return footage.Video{Path: abs, Name: baseName(abs)}, true
+	}
 	return footage.Video{}, false
 }
 
