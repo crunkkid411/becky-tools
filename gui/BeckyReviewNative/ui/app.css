@@ -712,3 +712,109 @@ body {
   font-size: 14px; padding: 8px 12px; cursor: pointer; white-space: nowrap;
 }
 .ctxmenu button:hover { background: var(--neon-soft); color: var(--neon); }
+
+/* =============================================================================
+   CAPTION LANE (#captions) - the .srt cues under the clip track.
+   Laid out in COMPILATION time with the SAME clip geometry the playhead uses
+   (app.js compToPixel), so a caption block sits exactly under the words it
+   covers. Two edit gestures, mirroring the clips above: click the text to
+   retype it, drag the block (or its edges) to retime it.
+
+   The green/amber edge is the point of the whole lane: GREEN = this caption
+   starts on a cut, AMBER = it doesn't (the drifting-caption flash Jordan calls
+   visually fatiguing). High contrast on black is an accessibility AID - keep it.
+   ========================================================================== */
+/* The lane's VIEWPORT. It sits below .tlbody (never inside it — the native timeline is a
+   child window covering .tlbody's whole rect), so it does its own horizontal scrolling:
+   the inner .captions strip is translated to match whichever timeline is drawing above,
+   the native pane's echoed view or the DOM body's scrollLeft. */
+.capslane {
+  position: relative; overflow: hidden;
+  height: 46px; flex: none;
+  border-top: 1px solid var(--line);
+  background: #070707;
+  touch-action: none;
+}
+.capslane[hidden] { display: none; }
+
+.captions {
+  position: absolute; left: 0; top: 0;
+  height: 100%; min-width: 100%;
+  padding: 6px 0;
+  will-change: transform;
+}
+
+/* a cut point, drawn THROUGH the lane so misalignment is visible at a glance */
+.capcut {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: rgba(255, 255, 255, 0.45);
+  pointer-events: none; z-index: 0;
+}
+
+/* one caption cue */
+.cap {
+  position: absolute; top: 6px; height: 34px;
+  display: flex; align-items: stretch;
+  background: rgba(0, 174, 239, 0.20);          /* blue: not a clip, not the playhead */
+  border: 1px solid var(--blue);
+  border-left-width: 3px;                        /* the start edge carries the on-cut cue */
+  border-radius: 5px;
+  overflow: hidden; cursor: grab;
+  z-index: 1;
+  transition: box-shadow .12s, background .12s;
+}
+.cap:hover { background: rgba(0, 174, 239, 0.34); box-shadow: 0 0 6px rgba(255, 255, 255, .35); }
+.cap.oncut  { border-left-color: var(--neon); }   /* starts exactly on a cut - good */
+.cap.offcut { border-left-color: var(--yellow); } /* drifts off the cut - fix me */
+.cap.dragging { cursor: grabbing; opacity: .75; z-index: 4; }
+.cap.selected { background: rgba(0, 174, 239, 0.45); border-color: #ffffff; }
+
+/* the words. No wrap + ellipsis so a narrow block stays one readable line. */
+.cap .captext {
+  flex: 1; min-width: 0;
+  padding: 0 8px; line-height: 32px;
+  font-size: 14px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;                          /* the block owns the gesture */
+  user-select: none;
+}
+
+/* the in/out drag edges - same idea as a clip's .rh trim handles */
+.cap .caph {
+  position: absolute; top: 0; bottom: 0; width: 7px; z-index: 2;
+  cursor: ew-resize; touch-action: none;
+  background: var(--blue); opacity: .45;
+}
+.cap .caph-l { left: 0; }
+.cap .caph-r { right: 0; }
+.cap .caph:hover { opacity: 1; background: #ffffff; }
+
+/* the in-place editor: same box, now typable. Enter commits, Escape cancels. */
+.cap .capedit {
+  flex: 1; min-width: 0;
+  margin: 3px 6px; padding: 0 6px;
+  font-family: inherit; font-size: 14px;
+  color: #000000; background: var(--yellow);
+  border: 2px solid #ffffff; border-radius: 3px;
+  outline: none;
+}
+
+/* While TYPING, the editor floats OVER the lane at a fixed readable width instead of
+   being squeezed into the caption's real width. A 0.6s caption at the default zoom is
+   ~5px wide - unreadable and untypable - but widening the BLOCK would lie about the
+   caption's duration. So the block keeps its true geometry and only the input escapes it. */
+.cap.editing { overflow: visible; z-index: 6; }
+.cap.editing .capedit {
+  position: absolute; left: 0; top: 2px;
+  width: 260px; height: 28px; margin: 0;
+}
+
+/* the caption lane's OWN playhead. #playhead lives inside #track and stops at the
+   track's bottom edge, so it never reaches down here - without this line you cannot
+   tell which caption is on screen right now. */
+.capph {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #000000; box-shadow: 0 0 0 1px rgba(255,255,255,.55);
+  pointer-events: none; z-index: 3;
+  display: none;
+}

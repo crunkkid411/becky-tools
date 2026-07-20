@@ -80,6 +80,20 @@
     overlayShowName: true, // the overlay's filename line is optional (Date/TC/link always shown)
     pxPerSec: DEFAULT_PXPS, // timeline zoom: px per second (clamped ZOOM_MIN..ZOOM_MAX)
 
+    // CAPTION LANE — the .srt becky-subtitle wrote for this edit, shown as a lane of
+    // blocks under the clips and editable in place (retype the words, drag to retime).
+    // caps hold the cues in the SAME seconds the playhead uses, so a block sits under
+    // the words it covers. capMarginV is ONE vertical placement for the WHOLE reel
+    // (Jordan: "dragging a caption up or down should affect all captions") expressed as
+    // ASS MarginV in the 384x288 script box ffmpeg's srt->ass conversion uses — 90 of
+    // 288 = ~31% up from the bottom, which is becky-subtitle's default. Horizontal
+    // stays centred; there is deliberately no horizontal control.
+    capsOn: false,         // lane + on-video caption preview shown
+    caps: [],              // [{start,end,text}] in playhead seconds, sorted by start
+    capPath: '',           // the .srt these came from ('' = none loaded)
+    capMarginV: 90,        // global vertical placement, ASS MarginV units (0..CAP_MARGIN_MAX)
+    reelPath: '',          // last saved/loaded .reel.json — names the caption sidecar
+
     activeSource: null,    // path currently loaded in mpv (a single source for preview, OR the timeline EDL)
     activeClipId: null,    // timeline clip under the playhead (for the playhead + overlay)
     playing: false,        // mpv's real play state (mirrors the host's {t:"play"} reports)
@@ -253,6 +267,7 @@
         case 'externalDrop': onExternalDrop(m.paths); break;   // OS files dropped onto the window (item 21)
         case 'tlEvent': onTlEvent(m.json); break;   // becky-timeline gesture events (scrub/select/edit/view)
         case 'tlDead': onTlDead(); break;           // the native timeline process died -> DOM fallback
+        case 'capMargin': onCapMargin(m.v); break;  // captions dragged UP/DOWN on the video -> global placement
       }
     });
   }
@@ -383,6 +398,9 @@
       var pv = state.nativeView || {};
       state.nativeView = { pps: o.pxPerSec > 0 ? o.pxPerSec : (pv.pps || 0),
                            scroll: (typeof o.scroll === 'number') ? o.scroll : (pv.scroll || 0) };
+      // The caption lane sits UNDER the native pane and must ride its zoom + scroll, or a
+      // caption would no longer line up with the words it covers.
+      if (o.pxPerSec > 0) { renderCaptions(); } else { updateCapScroll(); }
       clearTimeout(nativeViewTimer);
       nativeViewTimer = setTimeout(function () { applyProxies(); }, 250);
       return;
@@ -489,7 +507,12 @@
   if (tlNativeBtn) { tlNativeBtn.addEventListener('click', function () { setNativeTL(!nativeTL); }); }
   window.addEventListener('resize', reportTimelineRect);
   if (window.ResizeObserver && tlBodyEl) { try { new ResizeObserver(reportTimelineRect).observe(tlBodyEl); } catch (_) {} }
-  if (tlBodyEl) { tlBodyEl.addEventListener('scroll', function () { if (nativeTL) { pushTimelineReel(); } }); }
+  if (tlBodyEl) {
+    tlBodyEl.addEventListener('scroll', function () {
+      if (nativeTL) { pushTimelineReel(); }
+      updateCapScroll();   // the caption lane scrolls with the DOM timeline it sits under
+    });
+  }
 
   // Feed the native pane without editing renderTimeline/updatePlayhead directly: wrap them
   // (both are hoisted function declarations in this IIFE, so reassigning the name routes
@@ -943,6 +966,8 @@
     state.activeClipId = null;
     updatePlayhead();
     mpvPlay(v.path, 0);
+    ensureSourceDuration(v.path);   // warms this source's TRUE frame rate for the caption lane
+    refreshCaptions();              // a different video -> a different .srt beside it
 
     var rep = await beckyCall('transcript', { name: name });
     var cues = (rep.ok && Array.isArray(rep.data)) ? rep.data : [];
@@ -1613,7 +1638,10 @@
   // click/drag still works beneath them.
   function renderRulerTicks() {
     var clips = state.timeline.clips || [];
-    var total = state.timeline.duration_sec || sumDur(clips);
+    // capsSpan() is the fallback for reviewing a RENDERED video's captions with no reel
+    // loaded (the common case: open post_constantly.mp4, fix its .srt). Without it the
+    // ruler is blank and the caption lane floats with no timecode to read it against.
+    var total = state.timeline.duration_sec || sumDur(clips) || capsSpan();
     if (!total || total <= 0) { rulerEl.innerHTML = ''; return; }
     var step = niceRulerStep(state.pxPerSec);
     var useH = total >= 3600;
@@ -2861,10 +2889,15 @@
      the probe verb and cached per source path, so the bound is ready on the next
      drag. Unknown/0 duration -> a generous ceiling, never a neighbour. */
   var sourceDur = new Map();    // source path -> duration (sec); 0 = unknown / not probe-able
+  var sourceFps = new Map();    // source path -> TRUE frame rate (ffprobe r_frame_rate as a rational)
   var sourceDurPending = {};    // source path -> true while a probe is in flight
   function knownSourceDuration(source) {
     var d = source ? sourceDur.get(source) : 0;
     return (typeof d === 'number' && d > 0) ? d : 0;
+  }
+  function knownSourceFps(source) {
+    var f = source ? sourceFps.get(source) : 0;
+    return (typeof f === 'number' && f > 0) ? f : 0;
   }
   async function ensureSourceDuration(source) {
     if (!source || sourceDur.has(source) || sourceDurPending[source]) { return; }
@@ -2873,6 +2906,12 @@
     delete sourceDurPending[source];
     var d = (rep && rep.ok && rep.data && typeof rep.data.duration === 'number') ? rep.data.duration : 0;
     sourceDur.set(source, d > 0 ? d : 0);
+    // The SAME probe already carries the true frame rate (ffprobe r_frame_rate parsed as
+    // a rational, so NTSC arrives as 30000/1001, not a rounded 29.97). Keep it: the
+    // caption lane quantises every drag to a whole frame at this rate, and a guessed 30
+    // would drift a whole frame every ~9 minutes on Jordan's footage.
+    var f = (rep && rep.ok && rep.data && typeof rep.data.fps === 'number') ? rep.data.fps : 0;
+    if (f > 0) { sourceFps.set(source, f); }
   }
   function prefetchSourceDurations() {
     var clips = state.timeline.clips || [];
@@ -3491,7 +3530,11 @@
     var dlg = await beckyCall('save_dialog', { default: state.folder ? (state.folder + '\\reel.reel.json') : 'reel.reel.json' });
     if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
     var rep = await beckyCall('save_reel', { path: dlg.data.path });
-    if (rep.ok) { toast('Saved ' + ((rep.data && rep.data.path) || dlg.data.path)); }
+    if (rep.ok) {
+      state.reelPath = (rep.data && rep.data.path) || dlg.data.path;   // names the caption sidecar
+      refreshCaptions();
+      toast('Saved ' + state.reelPath);
+    }
     else { toast('Save failed' + (rep.error ? ': ' + rep.error : '')); }
   });
 
@@ -3499,7 +3542,10 @@
     var dlg = await beckyCall('load_dialog', { default: state.folder || '' });
     if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
     var rep = await beckyCall('load_reel', { path: dlg.data.path });
-    if (rep.ok && rep.data) { resetSourceColors(); applyTimeline(rep.data); toast('Loaded reel'); }
+    if (rep.ok && rep.data) {
+      state.reelPath = dlg.data.path;   // names the caption sidecar (<reel>.srt)
+      resetSourceColors(); applyTimeline(rep.data); refreshCaptions(); toast('Loaded reel');
+    }
     else { toast('Load failed' + (rep.error ? ': ' + rep.error : '')); }
   });
 
@@ -3825,6 +3871,552 @@
     }
   }
 
+  /* =============================================================================
+     CAPTION LANE — review and FIX the .srt becky-subtitle wrote for this edit.
+
+     Two repairs, the two things that are actually ever wrong with a caption:
+       1. the WORDS  — click a caption, type over it.
+       2. the TIMING — drag the caption (or either edge) along the lane.
+     Plus one global control: dragging a caption UP or DOWN on the VIDEO moves EVERY
+     caption's vertical placement together (one MarginV for the whole reel). Horizontal
+     is centred and deliberately has no control.
+
+     FRAMES, NOT FLOAT SECONDS. Jordan's footage is true NTSC 29.97 (30000/1001), where
+     one frame is 33.3667ms — NOT a whole number of milliseconds. So every dragged edge
+     is quantised to a whole FRAME at the SOURCE's real rate (from ffprobe's rational
+     r_frame_rate, never a guessed 30). Where the reel gives real CUT POINTS those win
+     outright: they are the ground truth Jordan exported the .xml for, so a drag lands
+     exactly on a cut before it ever considers the frame grid.
+
+     The .srt on disk stores milliseconds, and that round-trip is safe: the worst ms
+     rounding error is 0.5ms = 0.015 of a 29.97 frame, so re-reading and re-quantising
+     always returns the same frame. Drift comes from GUESSING the rate, not from the ms.
+     ========================================================================== */
+  var capsLaneEl = document.getElementById('capsLane');   // the lane's viewport (clips + scrolls)
+  var capsEl     = document.getElementById('captions');   // the strip of blocks, translated inside it
+  var $tCaptions = document.getElementById('tCaptions');
+
+  var CAP_MIN        = 0.10;  // shortest caption, seconds (becky-subtitle's --min-dur)
+  var CAP_SNAP_PX    = 9;     // snap radius in PIXELS, so it feels identical at any zoom
+  var ASS_RES_Y      = 288;   // ffmpeg's srt->ass script height; MarginV/FontSize live in it
+  var CAP_MARGIN_MAX = 240;   // 240/288 = ~83% up the frame; past this the words leave the picture
+  var CAP_SAVE_MS    = 400;   // debounce before writing the .srt back
+
+  // The NTSC rationals. A rate that arrives PRE-ROUNDED (a hand-typed "29.97" in a meta
+  // sidecar) is snapped back to the exact value: 29.97 vs 30000/1001 is a whole frame of
+  // drift every ~9 minutes, which is precisely the bug this lane exists to fix.
+  var NTSC_RATES = [24000 / 1001, 30000 / 1001, 60000 / 1001, 120000 / 1001];
+  function normalizeFps(f) {
+    if (!(f > 0)) { return 0; }
+    for (var i = 0; i < NTSC_RATES.length; i++) {
+      if (Math.abs(f - NTSC_RATES[i]) < 0.01) { return NTSC_RATES[i]; }
+    }
+    return f;
+  }
+
+  /** The REAL frame rate of the media these captions belong to, or 0 if not known yet.
+      Never defaults to 30 — inventing a grid is what makes captions drift. */
+  function capFps() {
+    var clips = state.timeline.clips || [];
+    var c = clipById(state.activeClipId) || clips[0];
+    if (c) {
+      var cf = c.source_fps || (c.meta && c.meta.source_fps) || 0;
+      if (cf > 0) { return normalizeFps(cf); }
+      var pf = knownSourceFps(c.source);
+      if (pf > 0) { return normalizeFps(pf); }
+    }
+    var src = capSource();
+    if (src) {
+      var sf = knownSourceFps(src);
+      if (sf > 0) { return normalizeFps(sf); }
+    }
+    var m = activeMeta();
+    return (m && m.fps > 0) ? normalizeFps(m.fps) : 0;
+  }
+
+  /** Round a time to the nearest whole frame. A pass-through when the rate is unknown. */
+  function capFrameSnap(t) {
+    var fps = capFps();
+    if (!(fps > 0)) { return Math.max(0, t); }
+    return Math.max(0, Math.round(t * fps) / fps);
+  }
+
+  /* ---- .srt <-> cues -------------------------------------------------------- */
+
+  function parseSrt(text) {
+    var out = [];
+    if (!text) { return out; }
+    var blocks = String(text).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split(/\n{2,}/);
+    for (var i = 0; i < blocks.length; i++) {
+      var lines = blocks[i].split('\n');
+      var li = 0;
+      if (li < lines.length && /^\d+$/.test(lines[li].trim())) { li++; }   // the optional cue number
+      if (li >= lines.length) { continue; }
+      var m = lines[li].match(
+        /(\d+):(\d\d):(\d\d)[,.](\d{1,3})\s*-->\s*(\d+):(\d\d):(\d\d)[,.](\d{1,3})/);
+      if (!m) { continue; }
+      // Pad the fraction so a 2-digit ".56" reads as 560ms, not 56ms.
+      var ms1 = +((m[4] + '00').slice(0, 3)), ms2 = +((m[8] + '00').slice(0, 3));
+      var st = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + ms1 / 1000;
+      var en = (+m[5]) * 3600 + (+m[6]) * 60 + (+m[7]) + ms2 / 1000;
+      var body = lines.slice(li + 1).join('\n').trim();
+      out.push({ start: st, end: en < st ? st : en, text: body });
+    }
+    out.sort(function (a, b) { return a.start - b.start; });
+    return out;
+  }
+
+  // Integer-millisecond arithmetic so a 59.9996s never formats as ":60".
+  function srtStamp(sec) {
+    var ms = Math.max(0, Math.round((sec || 0) * 1000));
+    var h = Math.floor(ms / 3600000); ms -= h * 3600000;
+    var mi = Math.floor(ms / 60000);  ms -= mi * 60000;
+    var se = Math.floor(ms / 1000);   ms -= se * 1000;
+    var p = function (n, w) { return String(n).padStart(w, '0'); };
+    return p(h, 2) + ':' + p(mi, 2) + ':' + p(se, 2) + ',' + p(ms, 3);
+  }
+
+  function formatSrt(cues) {
+    var out = [];
+    for (var i = 0; i < cues.length; i++) {
+      out.push(String(i + 1));
+      out.push(srtStamp(cues[i].start) + ' --> ' + srtStamp(cues[i].end));
+      out.push(String(cues[i].text == null ? '' : cues[i].text));
+      out.push('');
+    }
+    return out.join('\r\n');
+  }
+
+  /* ---- which .srt belongs to what is loaded --------------------------------- */
+
+  /** The media the captions belong to: a reel's first clip, else the previewed video.
+      Never the EDL temp file (that is a generated playback artefact, not a source). */
+  function capSource() {
+    var clips = state.timeline.clips || [];
+    if (clips.length) { return clips[0].source || ''; }
+    var s = state.activeSource || '';
+    if (!s || (state.edlPath && s === state.edlPath)) { return ''; }
+    return s;
+  }
+  function capBasePath() {
+    if (state.reelPath) { return String(state.reelPath).replace(/\.reel\.json$/i, '').replace(/\.json$/i, ''); }
+    var src = capSource();
+    return src ? String(src).replace(/\.[^.\\/]+$/, '') : '';
+  }
+  function capSrtPath()   { var b = capBasePath(); return b ? b + '.srt' : ''; }
+  // The one global vertical placement, beside the .srt so it travels with the reel and
+  // a re-render can pick it up (becky-subtitle takes it as --margin-v).
+  function capStylePath() { var b = capBasePath(); return b ? b + '.capstyle.json' : ''; }
+
+  /** Total span the captions cover — the ruler's fallback when no reel is loaded. */
+  function capsSpan() {
+    var c = state.caps || [];
+    return c.length ? (c[c.length - 1].end || 0) : 0;
+  }
+
+  /* ---- load / save ---------------------------------------------------------- */
+
+  async function loadCaptions() {
+    var p = capSrtPath();
+    state.capPath = p;
+    state.caps = [];
+    if (!p) { return false; }
+    var rep = await beckyCall('read_srt', { path: p });
+    if (rep.ok && rep.data && rep.data.exists) { state.caps = parseSrt(rep.data.text || ''); }
+    var sr = await beckyCall('read_srt', { path: capStylePath() });
+    if (sr.ok && sr.data && sr.data.exists) {
+      try {
+        var v = JSON.parse(sr.data.text || '{}').margin_v;
+        if (typeof v === 'number' && v >= 0) { state.capMarginV = Math.min(CAP_MARGIN_MAX, Math.round(v)); }
+      } catch (_) { /* a corrupt sidecar just means the default placement */ }
+    }
+    return state.caps.length > 0;
+  }
+
+  var capSaveTimer = null;
+  function saveCaptionsSoon() {
+    clearTimeout(capSaveTimer);
+    capSaveTimer = setTimeout(function () {
+      if (!state.capPath || !state.caps.length) { return; }
+      beckyCall('write_srt_file', { path: state.capPath, text: formatSrt(state.caps) });
+    }, CAP_SAVE_MS);
+  }
+  function saveCapStyle() {
+    var p = capStylePath();
+    if (!p) { return; }
+    beckyCall('write_srt_file', { path: p, text: JSON.stringify({ margin_v: state.capMarginV }) + '\n' });
+  }
+
+  /* ---- snapping: cut points first, then the frame grid ---------------------- */
+
+  /** Every boundary a drag may land on: the reel's real CUT POINTS (ground truth from
+      the exported edit) plus the neighbouring captions' own edges. skipIdx omits the
+      caption being dragged so it cannot snap to itself. */
+  function capSnapPoints(skipIdx) {
+    var pts = [], clips = state.timeline.clips || [], i;
+    for (i = 0; i < clips.length; i++) {
+      var s = clips[i].start_sec || 0;
+      pts.push(s);
+      pts.push(s + clipDur(clips[i]));
+    }
+    for (i = 0; i < state.caps.length; i++) {
+      if (i === skipIdx) { continue; }
+      pts.push(state.caps[i].start);
+      pts.push(state.caps[i].end);
+    }
+    return pts;
+  }
+
+  /** Snap a dragged time. A cut point inside the radius WINS (it is the source of
+      truth); otherwise the value lands on a whole frame. Alt (free) skips the cut
+      points but still lands on a frame — free means "off the cuts", never "off-grid".
+      ponytail: the radius converts px->sec linearly; with clips loaded the lane's
+      geometry is per-clip, so this is approximate at the edges. Fine for a snap feel. */
+  function capSnap(t, skipIdx, free) {
+    if (!free) {
+      var tol = CAP_SNAP_PX / Math.max(1, state.pxPerSec);
+      var pts = capSnapPoints(skipIdx), best = null, bd = tol;
+      for (var i = 0; i < pts.length; i++) {
+        var d = Math.abs(pts[i] - t);
+        if (d < bd) { bd = d; best = pts[i]; }
+      }
+      if (best !== null) { return Math.max(0, best); }
+    }
+    return capFrameSnap(t);
+  }
+
+  /* ---- layout --------------------------------------------------------------- */
+
+  // Time -> x inside the lane strip. The NATIVE pane lays its clips out linearly at
+  // pxPerSec (that is exactly what pushTimelineReel hands it), so match that while it is
+  // drawing; in the DOM fallback follow the real clip geometry the playhead uses, so a
+  // caption stays under its words even where a very short clip hits the min-width floor.
+  function capX(t) { return nativeTL ? (t * state.pxPerSec) : compToPixel(t); }
+
+  /** How far the timeline ABOVE is scrolled, in px — the native pane echoes its own view
+      (scroll in SECONDS) while it runs; otherwise it is the DOM body's scrollLeft. */
+  function capScrollPx() {
+    if (nativeTL) {
+      var v = state.nativeView || {};
+      return Math.max(0, (v.scroll || 0) * (state.pxPerSec || 1));
+    }
+    return tlBodyEl ? tlBodyEl.scrollLeft : 0;
+  }
+
+  /** Slide the lane strip so a caption stays under the moment it covers. */
+  function updateCapScroll() {
+    if (!capsEl) { return; }
+    capsEl.style.transform = 'translateX(' + (-Math.round(capScrollPx())) + 'px)';
+  }
+
+  function layoutCapBlock(block, cue) {
+    var x0 = capX(cue.start), x1 = capX(cue.end);
+    block.style.left = Math.round(x0) + 'px';
+    block.style.width = Math.max(4, Math.round(x1 - x0)) + 'px';
+  }
+
+  /** Does this caption start on a real cut? Green edge = yes, amber = it drifted.
+      With NO reel loaded there is nothing to compare against, so nothing is painted
+      amber — a lane of 180 amber blocks is just visual noise. */
+  function capOnCut(t) {
+    var clips = state.timeline.clips || [];
+    if (!clips.length) { return true; }
+    var fps = capFps();
+    var eps = fps > 0 ? (0.75 / fps) : 0.02;   // within a frame of the cut counts as ON it
+    for (var i = 0; i < clips.length; i++) {
+      var s = clips[i].start_sec || 0;
+      if (Math.abs(s - t) <= eps || Math.abs(s + clipDur(clips[i]) - t) <= eps) { return true; }
+    }
+    return false;
+  }
+
+  var capPlayheadEl = document.createElement('div');
+  capPlayheadEl.className = 'capph';
+
+  function renderCaptions() {
+    if (!capsEl || !capsLaneEl) { return; }
+    if (!state.capsOn || !state.caps.length) {
+      capsLaneEl.hidden = true;      // give the row's height back to the video when off
+      capsEl.innerHTML = '';
+      capsEl.style.width = '';
+      reportTimelineRect();          // the native pane re-fits the rect the lane just freed
+      return;
+    }
+    capsLaneEl.hidden = false;
+    var fps = capFps(), clips = state.timeline.clips || [], html = '', i;
+    for (i = 0; i < clips.length; i++) {
+      html += '<div class="capcut" style="left:' + Math.round(capX(clips[i].start_sec || 0)) + 'px"></div>';
+    }
+    var maxX = 0;
+    for (i = 0; i < state.caps.length; i++) {
+      var c = state.caps[i];
+      var x0 = capX(c.start), w = Math.max(4, capX(c.end) - x0);
+      if (x0 + w > maxX) { maxX = x0 + w; }
+      var tip = smpte(c.start, fps) + ' → ' + smpte(c.end, fps) +
+                '  (' + (c.end - c.start).toFixed(2) + 's)' +
+                '\nclick to retype · drag to move · drag an edge to retime';
+      html += '<div class="cap ' + (capOnCut(c.start) ? 'oncut' : 'offcut') + '" data-i="' + i +
+              '" style="left:' + Math.round(x0) + 'px;width:' + Math.round(w) + 'px" title="' + attr(tip) + '">' +
+              '<div class="caph caph-l" data-edge="l"></div>' +
+              '<div class="captext">' + escapeHtml(String(c.text || '').replace(/\n/g, ' ')) + '</div>' +
+              '<div class="caph caph-r" data-edge="r"></div>' +
+              '</div>';
+    }
+    capsEl.innerHTML = html;
+    // An explicit width so the strip spans the whole reel even when there are no clips
+    // to give it one (reviewing a single rendered video's captions).
+    capsEl.style.width = Math.ceil(maxX + 80) + 'px';
+    capsEl.appendChild(capPlayheadEl);
+    updateCapScroll();
+    updateCapPlayhead();
+    reportTimelineRect();   // the lane just took height off the row — re-fit the native pane
+  }
+
+  function updateCapPlayhead() {
+    if (!capsEl || !state.capsOn || !state.caps.length) { return; }
+    var comp = isTimelineLoaded() ? (state.playheadComp || 0) : (state.pos || 0);
+    capPlayheadEl.style.left = Math.round(capX(comp)) + 'px';
+    capPlayheadEl.style.display = 'block';
+  }
+
+  /* ---- 1. THE WORDS: click a caption, type over it --------------------------- */
+
+  var capEditing = null;   // {idx, input, block} while an editor is open
+
+  function endCapEdit(commit) {
+    var ed = capEditing;
+    if (!ed) { return; }
+    capEditing = null;
+    var text = ed.input.value;
+    if (ed.input.parentNode) { ed.input.parentNode.removeChild(ed.input); }
+    ed.block.classList.remove('editing');
+    var cue = state.caps[ed.idx];
+    if (commit && cue && text !== cue.text) {
+      cue.text = text;
+      saveCaptionsSoon();
+      pushCaptions();       // the on-video preview shows the new words immediately
+    }
+    renderCaptions();
+  }
+
+  function beginCapEdit(idx) {
+    endCapEdit(true);
+    var cue = state.caps[idx];
+    var block = capsEl.querySelector('.cap[data-i="' + idx + '"]');
+    if (!cue || !block) { return; }
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'capedit';
+    input.value = String(cue.text || '').replace(/\n/g, ' ');
+    input.setAttribute('aria-label', 'caption text');
+    block.classList.add('editing');
+    block.appendChild(input);
+    capEditing = { idx: idx, input: input, block: block };
+    input.focus();
+    input.select();
+    input.addEventListener('keydown', function (e) {
+      e.stopPropagation();                       // never let a caption's letters hit the timeline shortcuts
+      if (e.key === 'Enter') { e.preventDefault(); endCapEdit(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); endCapEdit(false); }
+    });
+    // Clicking away commits rather than silently discarding what was just typed.
+    input.addEventListener('blur', function () { endCapEdit(true); });
+  }
+
+  /* ---- 2. THE TIMING: drag the caption, or either edge ----------------------- */
+
+  var capDrag = null;
+
+  capsEl.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0 || !state.capsOn) { return; }
+    var block = e.target.closest ? e.target.closest('.cap') : null;
+    if (!block || block.classList.contains('editing')) { return; }
+    var idx = +block.dataset.i;
+    var cue = state.caps[idx];
+    if (!cue) { return; }
+    e.preventDefault();
+    e.stopPropagation();
+    var handle = e.target.closest ? e.target.closest('.caph') : null;
+    var prev = state.caps[idx - 1], next = state.caps[idx + 1];
+    capDrag = {
+      idx: idx, block: block, edge: handle ? handle.dataset.edge : '',
+      startX: e.clientX, moved: false,
+      origStart: cue.start, origEnd: cue.end,
+      // Captions from becky-subtitle are butt-joined. When they are, moving a boundary
+      // must carry the NEIGHBOUR with it — otherwise the drag is pinned between its
+      // neighbours and nothing can move at all (and a gap or an overlap in an .srt is a
+      // real defect: two captions on screen at once, or a blank flash between them).
+      joinPrev: !!prev && Math.abs(prev.end - cue.start) < 0.002,
+      joinNext: !!next && Math.abs(next.start - cue.end) < 0.002,
+      prevStart: prev ? prev.start : 0, nextEnd: next ? next.end : 0
+    };
+    try { capsEl.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+
+  capsEl.addEventListener('pointermove', function (e) {
+    if (!capDrag) { return; }
+    if (!capDrag.moved) {
+      if (Math.abs(e.clientX - capDrag.startX) <= DRAG_PX) { return; }   // still a click
+      capDrag.moved = true;
+      capDrag.block.classList.add('dragging');
+    }
+    applyCapDrag(e);
+  });
+
+  function applyCapDrag(e) {
+    var d = capDrag, free = !!e.altKey;
+    var dSec = (e.clientX - d.startX) / Math.max(1, state.pxPerSec);
+    var cue = state.caps[d.idx];
+    var prev = state.caps[d.idx - 1], next = state.caps[d.idx + 1];
+    if (!cue) { return; }
+
+    if (d.edge === 'l') {
+      var lo = d.joinPrev ? (d.prevStart + CAP_MIN) : (prev ? prev.end : 0);
+      var s = capSnap(d.origStart + dSec, d.idx, free);
+      s = Math.max(lo, Math.min(s, cue.end - CAP_MIN));
+      cue.start = s;
+      if (d.joinPrev && prev) { prev.end = s; }
+    } else if (d.edge === 'r') {
+      var hi = d.joinNext ? (d.nextEnd - CAP_MIN) : (next ? next.start : Infinity);
+      var en = capSnap(d.origEnd + dSec, d.idx, free);
+      en = Math.min(hi, Math.max(en, cue.start + CAP_MIN));
+      cue.end = en;
+      if (d.joinNext && next) { next.start = en; }
+    } else {
+      var dur = d.origEnd - d.origStart;
+      var ns = capSnap(d.origStart + dSec, d.idx, free);
+      var lo2 = d.joinPrev ? (d.prevStart + CAP_MIN) : (prev ? prev.end : 0);
+      var hi2 = d.joinNext ? (d.nextEnd - CAP_MIN - dur) : (next ? (next.start - dur) : Infinity);
+      ns = Math.max(0, Math.max(lo2, Math.min(ns, hi2)));
+      cue.start = ns;
+      cue.end = ns + dur;
+      if (d.joinPrev && prev) { prev.end = ns; }
+      if (d.joinNext && next) { next.start = ns + dur; }
+    }
+
+    layoutCapBlock(d.block, cue);
+    if (prev) { relayoutCap(d.idx - 1); }
+    if (next) { relayoutCap(d.idx + 1); }
+  }
+
+  function relayoutCap(i) {
+    var b = capsEl.querySelector('.cap[data-i="' + i + '"]');
+    if (b && state.caps[i]) { layoutCapBlock(b, state.caps[i]); }
+  }
+
+  function endCapDrag() {
+    if (!capDrag) { return; }
+    var d = capDrag; capDrag = null;
+    d.block.classList.remove('dragging');
+    if (!d.moved) { beginCapEdit(d.idx); return; }   // a CLICK (never travelled) = retype it
+    var cue = state.caps[d.idx];
+    if (cue && (Math.abs(cue.start - d.origStart) > 1e-6 || Math.abs(cue.end - d.origEnd) > 1e-6)) {
+      state.caps.sort(function (a, b) { return a.start - b.start; });
+      saveCaptionsSoon();
+      pushCaptions();
+    }
+    renderCaptions();
+  }
+  capsEl.addEventListener('pointerup', endCapDrag);
+  capsEl.addEventListener('pointercancel', endCapDrag);
+
+  /* ---- 3. THE PLACEMENT: dragged on the VIDEO, applies to EVERY caption ------ */
+
+  /** The host reports a finished up/down drag on the video pane (the video is a native
+      window ON TOP of this page, so the page never sees those mouse events itself). */
+  var capStyleSaveTimer = null;
+  function onCapMargin(v) {
+    var nv = Math.max(0, Math.min(CAP_MARGIN_MAX, Math.round(+v || 0)));
+    if (nv === state.capMarginV) { return; }
+    state.capMarginV = nv;
+    // The host reports continuously while the hand is moving, so settle before writing
+    // the sidecar or announcing it — one disk write and one message per adjustment.
+    clearTimeout(capStyleSaveTimer);
+    capStyleSaveTimer = setTimeout(function () {
+      saveCapStyle();
+      toast('Captions ' + Math.round(state.capMarginV / ASS_RES_Y * 100) + '% up from the bottom (all captions)');
+    }, 350);
+  }
+
+  /** Push the cues + the global placement to the host, which draws the caption over the
+      video with mpv's ASS overlay — matching the burned-in render's style. */
+  function pushCaptions() {
+    var cues = [];
+    if (state.capsOn) {
+      for (var i = 0; i < state.caps.length; i++) {
+        cues.push({ s: state.caps[i].start, e: state.caps[i].end, t: state.caps[i].text || '' });
+      }
+    }
+    post({ t: 'captions', on: !!state.capsOn, marginV: state.capMarginV, cues: cues });
+  }
+
+  /* ---- wiring --------------------------------------------------------------- */
+
+  /** Reload the lane when what is loaded changes (a different video, or a reel). */
+  var capRefreshing = false;
+  async function refreshCaptions() {
+    if (!state.capsOn || capRefreshing) { return; }
+    var want = capSrtPath();
+    if (!want || want === state.capPath) { renderCaptions(); return; }
+    capRefreshing = true;
+    try { await loadCaptions(); } finally { capRefreshing = false; }
+    renderCaptions();
+    pushCaptions();
+  }
+
+  function updateCaptionsBtn() {
+    if (!$tCaptions) { return; }
+    $tCaptions.classList.toggle('on', !!state.capsOn);
+    var fps = capFps();
+    $tCaptions.title = 'caption lane ' + (state.capsOn ? 'ON' : 'off') +
+      ' — click a caption to fix the words, drag it (or its edges) to fix the timing.' +
+      ' Drags land on the cut points and on whole frames' +
+      (fps > 0 ? ' at ' + (Math.round(fps * 1000) / 1000) + ' fps' : '') +
+      '; hold Alt to ignore the cuts. Drag a caption UP or DOWN on the video to move' +
+      ' every caption’s height.';
+  }
+
+  if ($tCaptions) {
+    $tCaptions.addEventListener('click', async function () {
+      state.capsOn = !state.capsOn;
+      updateCaptionsBtn();
+      if (state.capsOn) {
+        var src = capSource();
+        if (src) { await ensureSourceDuration(src); }   // the TRUE fps before any drag can happen
+        state.capPath = '';                             // force the (re)load
+        var found = await loadCaptions();
+        updateCaptionsBtn();
+        if (!found) {
+          toast(capSrtPath() ? ('No captions found: ' + baseName(capSrtPath())) : 'Open a video or a reel first.');
+        } else {
+          toast(state.caps.length + ' captions · click to retype, drag to retime');
+          // No reel loaded (reviewing a rendered video's own captions): fit the whole
+          // caption track on screen, or the default zoom leaves you looking at the first
+          // 10 of 180 captions with no idea the rest are there.
+          if (!(state.timeline.clips || []).length) { fitTimelineZoom(Math.max(10, capsSpan())); }
+        }
+      }
+      renderTimeline();   // not just renderCaptions: the ruler's timecode comes from here
+      pushCaptions();
+    });
+  }
+
+  // Keep the lane in step with the timeline it sits under: any re-render (zoom, edit,
+  // load) re-lays the caption blocks, and every playhead tick moves the lane's own
+  // playhead. Same wrapping the native-timeline push uses.
+  var _origRenderTimelineCaps = renderTimeline;
+  renderTimeline = function () {
+    var r = _origRenderTimelineCaps.apply(this, arguments);
+    renderCaptions();
+    return r;
+  };
+  var _origUpdatePlayheadCaps = updatePlayhead;
+  updatePlayhead = function () {
+    var r = _origUpdatePlayheadCaps.apply(this, arguments);
+    updateCapPlayhead();
+    return r;
+  };
+
   // Expose a tiny surface for the CDP self-verify loop (Step 7 of the handoff).
   window.beckyReview = {
     applyTimeline: applyTimeline,
@@ -3848,6 +4440,18 @@
     quietIntervals: quietIntervals,
     renderTimeline: renderTimeline,
     peakData: peakData,
+    // caption lane (exposed for the CDP self-verify loop)
+    loadCaptions: loadCaptions,
+    renderCaptions: renderCaptions,
+    parseSrt: parseSrt,
+    formatSrt: formatSrt,
+    capFps: capFps,
+    capFrameSnap: capFrameSnap,
+    capSnap: capSnap,
+    capSrtPath: capSrtPath,
+    beginCapEdit: beginCapEdit,
+    endCapEdit: endCapEdit,
+    onCapMargin: onCapMargin,
     state: state
   };
 

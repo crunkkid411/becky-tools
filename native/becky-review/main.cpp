@@ -265,6 +265,23 @@ static void editLog(const std::string& line) {
     g_editLog << nowSec() << " " << line << "\n"; g_editLog.flush();
 }
 
+// I-5 evidence trail, OPT-IN via BECKY_REVIEW_SCRUB_LOG=<path> (unset = zero
+// overhead, no file touched). Logs every requestCompose() call (UI thread, one
+// per frame whose curSec changed) and every composeOnDecodeThread() completion
+// (decode thread, the actual mpv seek) with wall-clock timestamps, so "a new
+// frame per mouse event during scrub" is a grepped, correlated timestamp series
+// - request cadence vs. decode-thread completion cadence - not a claim.
+static std::ofstream g_scrubLog;
+static std::mutex g_scrubLogMx;
+static void scrubLogInit() {
+    if (const char* p = getenv("BECKY_REVIEW_SCRUB_LOG")) g_scrubLog.open(p, std::ios::app);
+}
+static void scrubLog(const std::string& line) {
+    if (!g_scrubLog.is_open()) return;
+    std::lock_guard<std::mutex> lk(g_scrubLogMx);
+    g_scrubLog << nowSec() << " " << line << "\n"; g_scrubLog.flush();
+}
+
 // I-9 evidence trail, OPT-IN via BECKY_REVIEW_FRAME_TRACE=<path> (unset = zero
 // overhead, no file touched). Every prior cycle's I-9/I-7 claim was a spot-check
 // or a log-timestamp inference; this is a per-frame wall-clock CSV so "no >100ms
@@ -442,12 +459,45 @@ static std::string g_mpvPipeName;
 static std::mutex g_mpvWriteMx;
 static std::string g_mpvLoadedSource;   // which source file mpv currently has open (fwslash'd)
 
+// I-5/I-8 root cause (found live this session via BECKY_REVIEW_SCRUB_LOG): this
+// used to be a plain synchronous WriteFile with no timeout. mpv's named pipe has
+// a finite kernel buffer; if mpv falls behind draining it (a burst of seek
+// commands, or the whole app doing 200+ requestCompose dispatches/sec on an
+// uncapped render loop), the buffer fills and WriteFile blocks FOREVER once it
+// does. decodeWorker is the ONLY thread that ever calls this, so one blocked
+// write wedges it permanently: curSec/the UI keep working, but the video pane
+// silently freezes on its last frame for the rest of the session - no crash, no
+// error, reproduced live twice (once after ~2s of simulated playback, again
+// after ~150 keyframe seeks even with the I-5 throttle in main() already in
+// place). g_mpvPipe is opened FILE_FLAG_OVERLAPPED (mpvConnectOne) specifically
+// so this can bound the wait: a write that doesn't land within 250ms is
+// cancelled and dropped rather than blocking - safe because requestCompose
+// always posts the LATEST wanted position (P1/P5 coalescing), so a dropped
+// stale command is harmless; the next successful write catches up.
 static bool mpvWriteLine(const std::string& line) {
     if (g_mpvPipe == INVALID_HANDLE_VALUE) return false;
     std::lock_guard<std::mutex> lk(g_mpvWriteMx);
     std::string s = line; s += "\n";
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) return false;
     DWORD written = 0;
-    return WriteFile(g_mpvPipe, s.data(), (DWORD)s.size(), &written, nullptr) != 0;
+    bool ok = WriteFile(g_mpvPipe, s.data(), (DWORD)s.size(), &written, &ov) != 0;
+    if (!ok) {
+        if (GetLastError() == ERROR_IO_PENDING) {
+            DWORD w = WaitForSingleObject(ov.hEvent, 250);
+            if (w == WAIT_OBJECT_0) {
+                ok = GetOverlappedResult(g_mpvPipe, &ov, &written, FALSE) != 0;
+            } else {
+                CancelIoEx(g_mpvPipe, &ov);
+                crashLog("mpv: IPC write timed out (250ms) - command dropped, not blocking decodeWorker forever");
+            }
+        } else {
+            ok = false;
+        }
+    }
+    CloseHandle(ov.hEvent);
+    return ok;
 }
 static bool mpvCommand(const json& cmdArr) {
     json j; j["command"] = cmdArr;
@@ -473,10 +523,44 @@ static void mpvReaderThread() {
     crashLog("mpv: IPC pipe closed (mpv exited) - video decode disabled, window still open");
     g_mpvAvailable.store(false);
 }
-static HANDLE mpvConnectOne() {
+// I-5/I-8 root cause, part 2 (found live re-testing the WriteFile-timeout fix
+// above: EVERY write still timed out at exactly the 250ms bound, not just under
+// a torture-test burst - too consistent to be mpv genuinely slow). mpv's JSON IPC
+// sends a reply for every command back on the SAME connection that sent it -
+// g_mpvPipe (the write connection) and g_mpvPipeRead (the read connection,
+// mpvReaderThread above) are two SEPARATE client connections (see
+// mpvConnectThread's comment), so a reply to a "seek"/"loadfile" sent on
+// g_mpvPipe comes back on g_mpvPipe, not g_mpvPipeRead - and nothing was ever
+// draining it. Hundreds of unread replies fill that connection's own pipe
+// buffer; once full, mpv's write-the-reply-back call blocks, which (mpv
+// handles one client connection on one thread) stops it from ever reading our
+// NEXT command - the real reason mpvWriteLine's WriteFile stopped landing.
+// This mirrors mpvReaderThread exactly, just on the write connection, using an
+// OVERLAPPED read since g_mpvPipe was opened FILE_FLAG_OVERLAPPED for the
+// timeout fix (a plain synchronous ReadFile on an overlapped handle with no
+// OVERLAPPED struct fails immediately, it does not block).
+static void mpvWriteSideDrainThread() {
+    t_threadTag = "mpvWriteDrain";
+    char buf[8192];
+    OVERLAPPED ov{}; ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) return;
+    for (;;) {
+        DWORD n = 0;
+        BOOL ok = ReadFile(g_mpvPipe, buf, sizeof buf, &n, &ov);
+        if (!ok) {
+            if (GetLastError() != ERROR_IO_PENDING) break;
+            if (!GetOverlappedResult(g_mpvPipe, &ov, &n, TRUE)) break;
+        }
+        if (n == 0) break;
+        ResetEvent(ov.hEvent);
+    }
+    CloseHandle(ov.hEvent);
+}
+static HANDLE mpvConnectOne(bool overlapped) {
     HANDLE h = INVALID_HANDLE_VALUE;
+    DWORD flags = overlapped ? FILE_FLAG_OVERLAPPED : 0;
     for (int attempt = 0; attempt < 50 && h == INVALID_HANDLE_VALUE; attempt++) {
-        h = CreateFileA(g_mpvPipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        h = CreateFileA(g_mpvPipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, flags, nullptr);
         if (h == INVALID_HANDLE_VALUE) Sleep(100);
     }
     return h;
@@ -493,12 +577,14 @@ static HANDLE mpvConnectOne() {
 // was stuck. On success, becomes the reader thread.
 static void mpvConnectThread() {
     t_threadTag = "mpvConnect";
-    g_mpvPipeRead = mpvConnectOne();
+    g_mpvPipeRead = mpvConnectOne(false);
     if (g_mpvPipeRead == INVALID_HANDLE_VALUE) {
         crashLog("mpv: IPC read-pipe connect failed after 5s - video decode disabled, window still open");
         return;
     }
-    g_mpvPipe = mpvConnectOne();
+    // I-5/I-8 fix: OVERLAPPED so mpvWriteLine can bound its wait instead of a
+    // synchronous WriteFile blocking forever when mpv falls behind (see its comment).
+    g_mpvPipe = mpvConnectOne(true);
     if (g_mpvPipe == INVALID_HANDLE_VALUE) {
         crashLog("mpv: IPC write-pipe connect failed after 5s - video decode disabled, window still open");
         CloseHandle(g_mpvPipeRead); g_mpvPipeRead = INVALID_HANDLE_VALUE;
@@ -506,6 +592,7 @@ static void mpvConnectThread() {
     }
     g_mpvAvailable.store(true);
     crashLog("mpv: launched + IPC connected, video decode available");
+    std::thread(mpvWriteSideDrainThread).detach();
     mpvReaderThread();
 }
 static bool mpvLaunch(HWND parent) {
@@ -535,6 +622,11 @@ static bool mpvLaunch(HWND parent) {
         L" --hr-seek=yes --hwdec=auto-safe --keep-open=yes --idle=yes"
         L" --force-window=yes --no-osc --osc=no --sub-auto=no --sid=no"
         L" --no-config --pause=yes --no-terminal --really-quiet"
+        // mpv must ignore the mouse entirely: the app drives it over IPC only, and
+        // the caption placement drag happens ON TOP of this window (see the video
+        // pane block). Without this, mpv's own default bindings would react to the
+        // very clicks that drag is made of.
+        L" --input-cursor=no --input-vo-keyboard=no"
         L" --cache=yes --demuxer-readahead-secs=20";
 
     STARTUPINFOW si{ sizeof si }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
@@ -551,7 +643,28 @@ static bool mpvLaunch(HWND parent) {
 // load-then-seek - the exact race this file already root-caused once for
 // search-hit clicks); a plain exact seek when only the position moved within
 // the already-loaded source (the common case during scrub/playhead-tick).
-static void mpvSeekExact(const std::string& source, double srcSec) {
+// I-5 fix (root-caused live this session via BECKY_REVIEW_SCRUB_LOG): mpv's
+// "exact" seek flag is a real decode-forward-from-keyframe operation, not a
+// cheap pointer move - sending one every frame during a scrub-drag or the
+// app's own simulated playback (curSec += dt each frame, see main()'s
+// "playing" tick) floods mpv's IPC command queue faster than it can decode
+// them. mpvWriteLine's WriteFile is a plain synchronous named-pipe write with
+// no timeout, held under g_mpvWriteMx - once that pipe's kernel buffer fills
+// because mpv is still busy on an earlier "exact" seek, WriteFile blocks
+// FOREVER, wedging decodeWorker (and, via the shared mutex, any other mpv
+// command) permanently: curSec/the UI keep working, but the video pane freezes
+// on its last frame for the rest of the session, silently, with no crash and
+// no log - live-reproduced by a 25-step scrub-drag after ~2s of playback
+// (BECKY_REVIEW_FRAME_TRACE showed the UI thread never stalled; the DECODE
+// side of BECKY_REVIEW_SCRUB_LOG simply stopped appearing forever). BUILD_1.md
+// I-5 already specifies the fix: "keyframe seek while dragging, exact on
+// release" - cheap keyframe seeks can't back up mpv's queue the way exact
+// seeks can. main() now passes exact=false for every continuous churn
+// (playing, or an active scrub-drag) and exact=true only once things settle
+// (paused, single click-to-seek, frame-step, or the frame right after a drag
+// releases/playback stops) - the same distinction generalized to both
+// contract lines that flood curSec continuously, not just the literal drag.
+static void mpvSeekExact(const std::string& source, double srcSec, bool exact) {
     if (!g_mpvAvailable.load()) return;
     std::string src = source; fwslash(src);
     if (src != g_mpvLoadedSource) {
@@ -559,7 +672,7 @@ static void mpvSeekExact(const std::string& source, double srcSec) {
         mpvCommand(json::array({ "loadfile", src, "replace", 0, std::string(startOpt) }));
         g_mpvLoadedSource = src;
     } else {
-        mpvCommand(json::array({ "seek", srcSec, "absolute", "exact" }));
+        mpvCommand(json::array({ "seek", srcSec, "absolute", exact ? "exact" : "keyframes" }));
     }
 }
 
@@ -995,6 +1108,10 @@ struct Clip {
     // third uses (internal/reel/drawtext.go), so the preview overlay can show
     // IDENTICAL text without a second source of truth.
     std::string date, person, location, link;
+    // The EDIT's own frame rate (ClipView.source_fps), carried from the Vegas/FCP7
+    // import - 30000/1001 for Jordan's NTSC footage, not 30. 0 = the reel did not
+    // carry one, in which case reelFps() falls back to the async ffprobe.
+    double srcFps = 0;
 };
 static std::vector<Clip> g_track[2];
 static double g_compDur = 0;
@@ -1252,25 +1369,29 @@ static std::mutex g_decReqMx;
 static std::condition_variable g_decReqCv;
 static std::string g_decReqSource;
 static double g_decReqSrcSec = 0, g_decReqCompT = -1;
+static bool g_decReqExact = true;
 static bool g_decReqPending = false;
 static bool g_decQuit = false;
 
-static void composeOnDecodeThread(const std::string& source, double srcSec, double /*compT*/) {
-    mpvSeekExact(source, srcSec);
+static void composeOnDecodeThread(const std::string& source, double srcSec, double compT, bool exact) {
+    double t0 = nowSec();
+    mpvSeekExact(source, srcSec, exact);
+    scrubLog("DECODE compT=" + std::to_string(compT) + " srcSec=" + std::to_string(srcSec) +
+        " exact=" + (exact ? "1" : "0") + " seekMs=" + std::to_string((nowSec() - t0) * 1000.0));
 }
 static void decodeWorker() {
     t_threadTag = "decodeWorker";
     for (;;) {
-        std::string source; double srcSec, compT;
+        std::string source; double srcSec, compT; bool exact;
         {
             std::unique_lock<std::mutex> lk(g_decReqMx);
             g_decReqCv.wait(lk, [] { return g_decQuit || g_decReqPending; });
             if (g_decQuit) return;
-            source = g_decReqSource; srcSec = g_decReqSrcSec; compT = g_decReqCompT;
+            source = g_decReqSource; srcSec = g_decReqSrcSec; compT = g_decReqCompT; exact = g_decReqExact;
             g_decReqPending = false;
         }
         try {
-            composeOnDecodeThread(source, srcSec, compT);
+            composeOnDecodeThread(source, srcSec, compT, exact);
         } catch (const std::exception& e) {
             crashLog(std::string("decodeWorker: caught ") + e.what() + " source=" + source + " - degrading, not crashing");
         } catch (...) {
@@ -1280,15 +1401,18 @@ static void decodeWorker() {
 }
 // UI-thread entry point: NON-BLOCKING. Resolves which clip/source-time t maps to (a cheap
 // array scan over g_track[0], no I/O) and hands it to the decode thread; never touches
-// mpv's pipe directly from the UI thread.
-static void requestCompose(double t) {
+// mpv's pipe directly from the UI thread. `exact` is false for continuous churn (playing,
+// or an active scrub-drag) and true once it settles - see mpvSeekExact's comment for why
+// this distinction is load-bearing, not cosmetic (I-5).
+static void requestCompose(double t, bool exact) {
     Clip* ca = nullptr;
     for (auto& c : g_track[0]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) { ca = &c; break; } }
     if (!ca && !g_track[0].empty()) ca = &g_track[0].back();
     if (!ca) return;
     double srcSec = ca->in + (t > ca->compStart ? t - ca->compStart : 0); if (srcSec > ca->out) srcSec = ca->out;
+    scrubLog("REQUEST compT=" + std::to_string(t) + " exact=" + (exact ? "1" : "0"));
     std::lock_guard<std::mutex> lk(g_decReqMx);
-    g_decReqSource = ca->source; g_decReqSrcSec = srcSec; g_decReqCompT = t;
+    g_decReqSource = ca->source; g_decReqSrcSec = srcSec; g_decReqCompT = t; g_decReqExact = exact;
     g_decReqPending = true;
     g_decReqCv.notify_one();
 }
@@ -1423,6 +1547,7 @@ static void loadTimelineView(const json& tv) {
             cl.person = c.value("person", std::string());
             cl.location = c.value("location", std::string());
             cl.link = c.value("link", std::string());
+            cl.srcFps = c.value("source_fps", 0.0);
             g_track[0].push_back(cl);
         }
     }
@@ -1680,6 +1805,14 @@ static const ImU32 COL_DROPMARK = IM_COL32(255, 210, 0, 255);
 static const ImU32 COL_LABEL    = IM_COL32(235, 238, 245, 235);
 static const ImU32 COL_PIP      = IM_COL32(0, 160, 96, 255);
 static const ImU32 COL_THRBAR   = IM_COL32(255, 120, 70, 235);
+// Caption lane - deliberately AMBER so it reads as a different kind of thing from
+// the blue clip lane at a glance. High contrast on purpose (accessibility aid).
+static const ImU32 COL_CAPLANE  = IM_COL32(28, 24, 18, 255);
+static const ImU32 COL_CAP      = IM_COL32(96, 68, 16, 255);
+static const ImU32 COL_CAPSEL   = IM_COL32(168, 118, 20, 255);
+static const ImU32 COL_CAPBRD   = IM_COL32(255, 190, 60, 255);
+static const ImU32 COL_CAPTX    = IM_COL32(255, 240, 208, 255);
+static const ImU32 COL_CAPCUT   = IM_COL32(255, 255, 255, 46);
 static const ImU32 COL_QUIETDIM = IM_COL32(0, 0, 0, 110);
 
 static void fmtTime(double s, char* out, size_t n, bool subSec) {
@@ -1759,6 +1892,233 @@ static double snapComp(double t, double pps, double curSec, int exclIdx, float p
     return best;
 }
 
+// --------------- the reel's FRAME GRID ---------------
+// Every caption edge this lane writes lands on a whole FRAME at the reel's real
+// rate. That is not pedantry: Jordan's footage is true NTSC, 30000/1001 =
+// 29.97002997 fps, so a frame is 33.3667ms - NOT a whole number of milliseconds.
+// Anything that quietly assumes 30, or rounds to the millisecond, drifts off the
+// cut points the captions were snapped to, and the drift compounds along a
+// 150-second reel. The cut points from the Vegas/FCP7 edit are ground truth; a
+// caption edge sitting between two frames cannot be rendered, so we never make one.
+//
+// The rate comes from the EDIT itself (ClipView.source_fps, set by the importer
+// from the edit's own <rate>), and only falls back to the async ffprobe - never
+// to a hardcoded constant.
+static double reelFps() {
+    for (auto& c : g_track[0]) if (c.srcFps > 1.0) return c.srcFps;
+    if (!g_track[0].empty()) return sourceFps(g_track[0][0].source);
+    return 30.0;
+}
+static double quantToFrame(double t) {
+    if (t < 0) return 0;
+    double fps = reelFps();
+    if (fps <= 1.0) return t;
+    return (double)std::llround(t * fps) / fps;
+}
+
+// --------------- CAPTION TRACK: the .srt sitting beside the loaded reel ---------------
+// becky-subtitle (becky-go/cmd/subtitle) writes "<reel name>.srt" next to the reel
+// with every caption snapped to the edit's cut points. This lane loads THAT file so
+// a wrong word can be retyped and a late caption dragged back onto its cut, then
+// writes it straight back.
+//
+// SRT is parsed/written here rather than through an engine verb on purpose: the
+// engine's write_srt REGENERATES captions from the clip transcripts (app.go
+// WriteSRTOnly -> edl.WriteSRT), so routing a hand edit through it would throw the
+// edit away. The format is four lines per cue - nothing here needs the engine.
+struct Caption { double start = 0, end = 0; std::string text; };
+static std::vector<Caption> g_caps;
+static std::string g_capPath;        // the .srt on disk; "" = no reel loaded, lane hidden
+static std::string g_capErr;         // plain-language load/save problem, shown in the lane
+static int  g_capSel = -1;           // selected caption (white border)
+static int  g_capEdit = -1;          // caption whose text is being typed, -1 = none
+static char g_capEditBuf[1024] = { 0 };
+static bool g_capEditFocus = false;  // one-shot: put the keyboard in the box next frame
+
+// ONE vertical placement for the whole reel - Jordan: "Simply dragging a caption up
+// or down should affect all captions vertical placement. horzontal placement is fine
+// how it is (centered)". So: no per-caption position, and no horizontal control at all.
+//
+// The number is becky-subtitle's MarginV (internal/subs/style.go) - the distance up
+// from the bottom edge, in the 384x288 canvas ffmpeg's SRT-to-ASS conversion uses.
+// 90 of 288 is the shipped default, i.e. about 30% up from the bottom.
+static const int  CAP_ASS_H = 288;         // ff_ass_subtitle_header_default PlayResY
+static const int  CAP_ASS_W = 384;         // ...and PlayResX
+static int    g_capMarginV = 90;           // subs.DefaultStyle().MarginV
+static bool   g_capMarginDrag = false;     // a vertical drag is live over the video pane
+static int    g_capMarginAtGrab = 90;
+static double g_capMarginGrabY = 0;
+static double g_capMarginUnitsPerPx = 1.0; // screen pixels -> MarginV units, set at grab
+
+// "00:01:02,500" (or with a '.') -> 62.5 seconds. Returns -1 if it is not a timestamp.
+static double srtTimeToSec(std::string s) {
+    for (auto& ch : s) if (ch == ',') ch = '.';
+    int h = 0, m = 0, sec = 0, ms = 0;
+    if (sscanf(s.c_str(), "%d:%d:%d.%d", &h, &m, &sec, &ms) < 3) return -1;
+    return h * 3600.0 + m * 60.0 + sec + ms / 1000.0;
+}
+static std::string secToSrtTime(double t) {
+    if (t < 0) t = 0;
+    long long ms = (long long)(t * 1000.0 + 0.5);
+    char b[32];
+    snprintf(b, sizeof b, "%02lld:%02lld:%02lld,%03lld",
+             ms / 3600000, (ms / 60000) % 60, (ms / 1000) % 60, ms % 1000);
+    return b;
+}
+static void capTrimRight(std::string& s) {
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ' || s.back() == '\t')) s.pop_back();
+}
+
+// loadCaptions points the lane at "<reel stem>.srt". A missing file is NOT an error
+// (the reel simply has not been captioned yet) - the lane still appears and says so,
+// which is how Jordan finds out he needs to run becky-subtitle.
+static void loadCapStyle();   // defined just below - needs g_capPath, which this sets
+static void loadCaptions(const std::string& reelPath) {
+    g_caps.clear(); g_capErr.clear(); g_capPath.clear();
+    g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
+    if (reelPath.empty()) return;
+    std::string p = reelPath; fwslash(p);
+    size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p = p.substr(0, dot);
+    p += ".srt";
+    g_capPath = p;
+    loadCapStyle();                        // this reel's saved vertical placement
+    std::ifstream f(p);
+    if (!f.good()) { g_capErr = "no captions yet - run becky-subtitle on this reel"; return; }
+    Caption cur; bool haveTime = false;
+    auto flush = [&]() {
+        capTrimRight(cur.text);
+        if (haveTime && cur.end > cur.start) g_caps.push_back(cur);
+        cur = Caption{}; haveTime = false;
+    };
+    std::string line;
+    while (std::getline(f, line)) {
+        capTrimRight(line);
+        size_t arrow = line.find("-->");
+        if (arrow != std::string::npos) {
+            flush();
+            double a = srtTimeToSec(line.substr(0, arrow));
+            double b = srtTimeToSec(line.substr(arrow + 3));
+            if (a >= 0 && b > a) { cur.start = a; cur.end = b; haveTime = true; }
+        } else if (line.empty()) {
+            flush();                       // blank line closes the cue
+        } else if (haveTime) {
+            if (!cur.text.empty()) cur.text += "\n";
+            cur.text += line;              // keep the wrap; only an EDITED cue collapses to one line
+        }
+        // a line before any "-->" is the cue number - ignored on purpose
+    }
+    flush();                               // a file with no trailing blank line still yields its last cue
+}
+
+// The vertical placement is PER REEL, and deliberately so - Jordan: "the default
+// setting is correct MOST of the time...but it depends on how the speaker is
+// sitting". It lives beside the .srt as "<stem>.capstyle.json" so the burn-in can
+// be handed the SAME number the reviewer set (becky-subtitle --margin-v N).
+static std::string capStylePath() {
+    if (g_capPath.empty()) return "";
+    std::string p = g_capPath;
+    size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p = p.substr(0, dot);
+    return p + ".capstyle.json";
+}
+static void loadCapStyle() {
+    g_capMarginV = 90;
+    std::string p = capStylePath();
+    if (p.empty()) return;
+    std::ifstream f(p);
+    if (!f.good()) return;                 // never set = the shipped default, not an error
+    try {
+        json j; f >> j;
+        int m = j.value("margin_v", 90);
+        if (m >= 0 && m <= CAP_ASS_H - 20) g_capMarginV = m;
+    } catch (...) { /* a corrupt sidecar just means the default placement */ }
+}
+static void saveCapStyle() {
+    std::string p = capStylePath();
+    if (p.empty()) return;
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    if (!f.good()) { g_capErr = "could not save caption placement to " + p; return; }
+    f << "{\"margin_v\": " << g_capMarginV << "}\n";
+}
+
+// saveCaptions rewrites the whole .srt in time order after any edit. SRT is
+// conventionally time-ordered and a drag can reorder cues, so it sorts - and then
+// repairs g_capSel so the white border stays on the caption the user is holding.
+static void saveCaptions() {
+    if (g_capPath.empty()) return;
+    Caption keep; bool haveKeep = false;
+    if (g_capSel >= 0 && g_capSel < (int)g_caps.size()) { keep = g_caps[g_capSel]; haveKeep = true; }
+    std::sort(g_caps.begin(), g_caps.end(),
+              [](const Caption& a, const Caption& b) { return a.start < b.start; });
+    if (haveKeep) {
+        g_capSel = -1;
+        for (size_t i = 0; i < g_caps.size(); i++)
+            if (g_caps[i].start == keep.start && g_caps[i].end == keep.end && g_caps[i].text == keep.text) { g_capSel = (int)i; break; }
+    }
+    std::ofstream f(g_capPath, std::ios::binary | std::ios::trunc);
+    if (!f.good()) { g_capErr = "could not save captions to " + g_capPath; return; }
+    for (size_t i = 0; i < g_caps.size(); i++)
+        f << (i + 1) << "\r\n"
+          << secToSrtTime(g_caps[i].start) << " --> " << secToSrtTime(g_caps[i].end) << "\r\n"
+          << g_caps[i].text << "\r\n\r\n";
+    g_capErr.clear();
+}
+
+// The caption under the playhead, drawn ON the video at the placement the burn-in
+// will use - so the thing Jordan drags is the thing he gets. mpv owns the video
+// surface (its --wid child hwnd paints independently of our D3D11/ImGui surface),
+// so an ImGui overlay physically cannot appear over the frame; osd-overlay is the
+// only route, exactly as the provenance overlay already does. That one is id 9001,
+// this is 9002, so the two never clobber each other.
+//
+// The ASS canvas is declared 384x288 because that is the PlayRes ffmpeg's SRT-to-ASS
+// conversion uses (ff_ass_subtitle_header_default) - which makes MarginV, FontSize
+// and Outline mean the SAME thing here as in becky-subtitle's force_style, rather
+// than an eyeballed lookalike. mpv fits that canvas to the pane, so for footage that
+// fills the pane vertically (portrait clips in this wide pane - the normal case) the
+// preview height is exact. Letterboxed footage (source WIDER than the pane) would sit
+// slightly low, since the canvas then spans the black bars too.
+static bool g_capOsdShowing = false;
+static void mpvClearCaptionOsd() {
+    if (!g_capOsdShowing) return;
+    mpvCommand(json::array({ "osd-overlay", 9002, "none", "", 0, 0, 0 }));
+    g_capOsdShowing = false;
+}
+static void mpvUpdateCaptionOsd(double t) {
+    static std::string s_lastAss;
+    if (g_capPath.empty() || g_caps.empty() || !g_mpvAvailable.load()) { mpvClearCaptionOsd(); return; }
+    const Caption* cur = nullptr;
+    for (auto& c : g_caps) if (t >= c.start && t < c.end) { cur = &c; break; }
+    // Mid-drag there must always be a caption on screen to judge the placement by,
+    // even when the playhead has landed in a gap between two cues.
+    if (!cur && g_capMarginDrag) {
+        double best = 1e18;
+        for (auto& c : g_caps) {
+            double d = t < c.start ? c.start - t : (t > c.end ? t - c.end : 0);
+            if (d < best) { best = d; cur = &c; }
+        }
+    }
+    if (!cur) { mpvClearCaptionOsd(); s_lastAss.clear(); return; }
+    std::string body;
+    { // keep a wrapped cue's own line break; \N is the ASS hard break
+        std::string line;
+        for (char ch : cur->text) {
+            if (ch == '\n') { body += assEscape(line) + "\\N"; line.clear(); }
+            else if (ch != '\r') line += ch;
+        }
+        body += assEscape(line);
+    }
+    char hdr[128];
+    snprintf(hdr, sizeof hdr, "{\\an2\\pos(%d,%d)\\fs12\\bord1\\shad0\\1c&HFFFFFF&\\3c&H000000&}",
+             CAP_ASS_W / 2, CAP_ASS_H - g_capMarginV);
+    std::string ass = std::string(hdr) + body;
+    if (ass == s_lastAss && g_capOsdShowing) return;   // unchanged - skip the IPC round trip
+    s_lastAss = ass;
+    mpvCommand(json::array({ "osd-overlay", 9002, "ass-events", ass, CAP_ASS_W, CAP_ASS_H, 0 }));
+    g_capOsdShowing = true;
+}
+
 // Forward decls (defined later, with the library/panel state they need) so the
 // timeline's right-click clip menu (E-14) can reach them.
 static void openInFileBrowser(const std::string& path);
@@ -1774,10 +2134,18 @@ static void drawTimeline(double& curSec, bool& playing) {
     float rulerH = 22, sbH = 12, gap = 4;
     int lanes = 1;
     float lanesH = availH - rulerH - sbH - gap * 2;
-    float laneH = lanesH;
+    // The caption lane sits directly UNDER the clip lane and inside the same
+    // InvisibleButton below, so one gesture handler drives both. With no reel
+    // loaded (g_capPath empty) capH/capGap are 0 and the layout is byte-identical
+    // to the pre-caption one.
+    bool showCaps = !g_capPath.empty() && lanesH > 90;
+    float capH = showCaps ? 36.0f : 0.0f;
+    float capGap = showCaps ? 4.0f : 0.0f;
+    float laneH = lanesH - capH - capGap;
     if (laneH < 24) laneH = 24;
     float aY = p.y + rulerH + gap;
-    float bot = aY + laneH;
+    float capY = aY + laneH + capGap;
+    float bot = capY + capH;
     float sbY = bot + gap;
 
     dl->AddRectFilled(p, ImVec2(p.x + tlW, sbY + sbH), COL_BG);
@@ -1898,6 +2266,36 @@ static void drawTimeline(double& curSec, bool& playing) {
         return false;
     };
 
+    // Caption hit test - the same shape as clipHit above so captions behave like
+    // clips: a body grab moves the whole cue, an edge grab retimes just that edge.
+    // zone doubles as the gesture kind (8 body / 9 start edge / 10 end edge).
+    auto capHit = [&](float x, float y, int& idx, int& zone) {
+        idx = -1; zone = 0;
+        if (!showCaps || y < capY || y > capY + capH) return false;
+        for (size_t i = 0; i < g_caps.size(); i++) {
+            float x0 = secToX(g_caps[i].start), x1 = secToX(g_caps[i].end);
+            if (x < x0 || x > x1) continue;
+            idx = (int)i;
+            float hw = std::min(8.0f, (x1 - x0) / 4);
+            if ((x1 - x0) > 18 && x - x0 <= hw) zone = 9;
+            else if ((x1 - x0) > 18 && x1 - x <= hw) zone = 10;
+            else zone = 8;
+            return true;
+        }
+        return false;
+    };
+    // Captions snap to the reel's CUT POINTS by default (that is the whole reason
+    // this lane exists - a caption that drifts off its cut is what made the old
+    // burned-in output unreadable). Alt held = free positioning. snapComp already
+    // walks every clip's start/end plus the playhead; -1 excludes no clip.
+    //
+    // The cut points come from the Vegas/FCP7 edit and are ground truth - already on
+    // a frame - so quantToFrame is a no-op when a snap lands, and only bites in the
+    // Alt/free case. Either way no caption edge is ever written between two frames.
+    auto capSnapCut = [&](double t) {
+        return io.KeyAlt ? t : snapComp(t, g_pps, curSec, -1, 12.0f);
+    };
+
     // E-14: right-click a clip -> Open in File Browser / Copy File Name / Open transcript.
     static int s_ctxIdx = -1;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -1933,6 +2331,12 @@ static void drawTimeline(double& curSec, bool& playing) {
                     for (size_t i = 0; i < g_track[0].size(); i++)
                         if (g_sel.count(g_track[0][i].id)) g_gest.group.push_back((int)i);
             }
+        } else if (capHit(mx, my, idx, zone)) {
+            g_gest.idx = idx; g_gest.kind = zone;            // 8 body / 9 start edge / 10 end edge
+            g_gest.gIn = g_caps[idx].start; g_gest.gOut = g_caps[idx].end;
+            g_gest.grabOff = xToSec(mx) - g_caps[idx].start; // so the cue does not jump to the cursor
+            if (g_capEdit != idx) g_capEdit = -1;            // clicking another cue leaves the text box
+            g_capSel = idx;
         } else {
             g_gest.kind = 1;
             curSec = std::min(xToSec(mx), g_compDur);
@@ -1970,6 +2374,30 @@ static void drawTimeline(double& curSec, bool& playing) {
             if (srcDur > 0.1) nOut = std::min(nOut, srcDur);
             nOut = std::max(nOut, c.in + 0.05);
             g_gest.gIn = c.in; g_gest.gOut = nOut;
+        } else if (g_gest.kind == 8 && std::abs(mx - g_gest.pressX) > 4) {
+            g_gest.kind = 11; g_gest.dragged = true;   // body press became a MOVE
+        } else if (g_gest.kind == 11) {
+            // Move: duration is preserved, so gOut-gIn is still the cue's length.
+            // Snap the START to a cut; if that finds nothing, try snapping the END
+            // so a caption can be parked flush against the cut on either side.
+            double dur = g_gest.gOut - g_gest.gIn;
+            double ns = xToSec(mx) - g_gest.grabOff;
+            double ss = capSnapCut(ns);
+            if (std::abs(ss - ns) > 1e-9) ns = ss;
+            else {
+                double se = capSnapCut(ns + dur);
+                if (std::abs(se - (ns + dur)) > 1e-9) ns = se - dur;
+            }
+            if (ns < 0) ns = 0;
+            g_gest.gIn = quantToFrame(ns); g_gest.gOut = quantToFrame(ns + dur);
+        } else if (g_gest.kind == 9) {
+            double t = quantToFrame(capSnapCut(xToSec(mx)));
+            double lim = quantToFrame(g_gest.gOut - 1.0 / reelFps());   // never shorter than one frame
+            g_gest.gIn = std::max(0.0, std::min(t, lim));
+        } else if (g_gest.kind == 10) {
+            double t = quantToFrame(capSnapCut(xToSec(mx)));
+            double lim = quantToFrame(g_gest.gIn + 1.0 / reelFps());
+            g_gest.gOut = std::max(t, lim);
         }
     }
 
@@ -2044,6 +2472,35 @@ static void drawTimeline(double& curSec, bool& playing) {
             } else {
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
+            }
+        } else if (g.kind == 8 && g.idx >= 0 && g.idx < (int)g_caps.size()) {
+            // A caption CLICK (pressed and released without dragging) opens the
+            // inline text box on that cue - "click and type the correct caption".
+            g_capSel = g.idx; g_capEdit = g.idx; g_capEditFocus = true;
+            std::string t = g_caps[g.idx].text;
+            for (auto& ch : t) if (ch == '\n' || ch == '\r') ch = ' ';
+            snprintf(g_capEditBuf, sizeof g_capEditBuf, "%s", t.c_str());
+        } else if ((g.kind == 9 || g.kind == 10 || g.kind == 11) && g.idx >= 0 && g.idx < (int)g_caps.size()) {
+            Caption& cp = g_caps[g.idx];
+            if (std::abs(g.gIn - cp.start) > 0.001 || std::abs(g.gOut - cp.end) > 0.001) {
+                // Measure, don't claim (same reason I-2/I-5 log their timings): one line
+                // per committed caption edit saying whether the edge actually landed on a
+                // cut point and on a whole frame. "Snapping works" is then a grepped
+                // number in crash.log, not an assertion.
+                double fps = reelFps();
+                bool onCut = false;
+                for (auto& c : g_track[0]) {
+                    double e = c.compStart + (c.out - c.in);
+                    if (std::abs(c.compStart - g.gIn) < 0.0006 || std::abs(e - g.gIn) < 0.0006) { onCut = true; break; }
+                }
+                crashLog("CAP commit kind=" + std::to_string(g.kind) +
+                         " start=" + std::to_string(g.gIn) + " end=" + std::to_string(g.gOut) +
+                         " startFrame=" + std::to_string(g.gIn * fps) +
+                         " fps=" + std::to_string(fps) +
+                         " pps=" + std::to_string(g_pps) +
+                         " onCut=" + (onCut ? "1" : "0"));
+                cp.start = g.gIn; cp.end = g.gOut;
+                saveCaptions();          // straight back to the .srt - no hidden unsaved state
             }
         }
     }
@@ -2143,6 +2600,46 @@ static void drawTimeline(double& curSec, bool& playing) {
         }
     }
 
+    // ---- caption lane ----
+    if (showCaps) {
+        dl->AddRectFilled(ImVec2(tlX, capY), ImVec2(tlX + tlW, capY + capH), COL_CAPLANE, 3);
+        // The reel's cut points, drawn THROUGH the caption lane, so it is visible at
+        // a glance whether a caption is sitting on its cut or drifting off it.
+        for (auto& c : g_track[0]) {
+            float cx = secToX(c.compStart);
+            if (cx >= tlX && cx <= tlX + tlW) dl->AddLine(ImVec2(cx, capY), ImVec2(cx, capY + capH), COL_CAPCUT);
+        }
+        float tlh = ImGui::GetTextLineHeight();
+        if (g_caps.empty()) {
+            const char* m = g_capErr.empty() ? "no captions in this reel's .srt" : g_capErr.c_str();
+            dl->AddText(ImVec2(tlX + 8, capY + (capH - tlh) * 0.5f), IM_COL32(170, 150, 120, 255), m);
+        }
+        for (size_t i = 0; i < g_caps.size(); i++) {
+            double s = g_caps[i].start, e = g_caps[i].end;
+            bool ghost = (g_gest.kind == 9 || g_gest.kind == 10 || g_gest.kind == 11) && (int)i == g_gest.idx;
+            if (ghost) { s = g_gest.gIn; e = g_gest.gOut; }
+            float x0 = secToX(s), x1 = secToX(e);
+            if (x1 < tlX - 4 || x0 > tlX + tlW + 4) continue;
+            bool sel = (int)i == g_capSel;
+            dl->AddRectFilled(ImVec2(x0 + 1, capY + 2), ImVec2(x1 - 1, capY + capH - 2), sel ? COL_CAPSEL : COL_CAP, 3);
+            dl->AddRect(ImVec2(x0 + 1, capY + 2), ImVec2(x1 - 1, capY + capH - 2),
+                        sel ? IM_COL32(255, 255, 255, 255) : COL_CAPBRD, 3, 0, sel ? 2.0f : 1.0f);
+            if (x1 - x0 > 18) {   // drag grips, same affordance the clips use
+                dl->AddRectFilled(ImVec2(x0 + 1, capY + 2), ImVec2(x0 + 4, capY + capH - 2), COL_CAPBRD);
+                dl->AddRectFilled(ImVec2(x1 - 4, capY + 2), ImVec2(x1 - 1, capY + capH - 2), COL_CAPBRD);
+            }
+            if ((int)i == g_capEdit) continue;   // the InputText renders the text instead
+            std::string t = g_caps[i].text;
+            for (auto& ch : t) if (ch == '\n' || ch == '\r') ch = ' ';
+            float tx0 = std::max(x0 + 6, tlX + 2), tx1 = std::min(x1 - 5, tlX + tlW);
+            if (tx1 > tx0 + 8) {
+                dl->PushClipRect(ImVec2(tx0, capY), ImVec2(tx1, capY + capH), true);
+                dl->AddText(ImVec2(tx0, capY + (capH - tlh) * 0.5f), COL_CAPTX, t.c_str());
+                dl->PopClipRect();
+            }
+        }
+    }
+
     if (g_thrOn) {
         for (auto& r : g_quietRanges) {
             float qx0 = secToX(r.first), qx1 = secToX(r.second);
@@ -2179,6 +2676,31 @@ static void drawTimeline(double& curSec, bool& playing) {
     }
 
     ImGui::PopClipRect();
+
+    // Inline caption text editing. Submitted AFTER the "tl" InvisibleButton so ImGui
+    // gives this box hover/keyboard priority over the timeline surface underneath it,
+    // and while it is active io.WantCaptureKeyboard is true - which is what stops the
+    // S / Del / space edit shortcuts from firing into the typed text (they are already
+    // gated on that flag in the main loop).
+    if (showCaps && g_capEdit >= 0 && g_capEdit < (int)g_caps.size()) {
+        float x0 = secToX(g_caps[g_capEdit].start), x1 = secToX(g_caps[g_capEdit].end);
+        float ex0 = std::max(x0, tlX), ex1 = std::min(x1, tlX + tlW);
+        if (ex1 - ex0 < 220) ex1 = std::min(tlX + tlW, ex0 + 220);   // always wide enough to read what you type
+        if (ex1 - ex0 < 80) { ex0 = tlX; ex1 = std::min(tlX + tlW, tlX + 220); }
+        ImGui::SetCursorScreenPos(ImVec2(ex0, capY + 4));
+        ImGui::SetNextItemWidth(ex1 - ex0);
+        if (g_capEditFocus) { ImGui::SetKeyboardFocusHere(); g_capEditFocus = false; }
+        bool enter = ImGui::InputText("##capedit", g_capEditBuf, sizeof g_capEditBuf,
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        // ImGui restores the pre-edit text into the buffer itself when Escape is
+        // pressed, so committing on deactivation covers Enter, Escape AND click-away
+        // through one path - Escape just commits the unchanged original, i.e. cancels.
+        if (enter || ImGui::IsItemDeactivated()) {
+            std::string nt = g_capEditBuf;
+            if (nt != g_caps[g_capEdit].text) { g_caps[g_capEdit].text = nt; saveCaptions(); }
+            g_capEdit = -1;
+        }
+    }
 
     ImGui::SetCursorScreenPos(ImVec2(tlX, sbY));
     ImGui::InvisibleButton("tlsb", ImVec2(tlW, sbH));
@@ -2635,7 +3157,14 @@ static void runSearch(bool qmd) {
 static void addHitToTimeline(const Hit& h) {
     double a = h.start, b = (h.end > a + 0.05) ? h.end : a + 0.05;
     std::string label = baseName(h.source);
+    // I-2 measurement: wall-clock the add_clip round trip (always-on, crash.log -
+    // one line per add, negligible cost) so "<200ms, proxy building never gates
+    // the add" is a grepped number, not a claim - same pattern as I-4's search
+    // timing (see searchWorker). AddClipAt (becky-go/cmd/clip/app.go) is a pure
+    // in-memory reel-list edit - no proxy/peaks work runs synchronously inside it.
+    double t0 = nowSec();
     json r = engineCall("add_clip", { {"source", h.source}, {"in", a}, {"out", b}, {"label", label} }, 6.0);
+    crashLog("I-2 add_clip source=" + label + " elapsedMs=" + std::to_string((nowSec() - t0) * 1000.0));
     if (r.value("ok", false) && r.contains("data") && r["data"].contains("clips")) {
         loadTimelineView(r["data"]);
         return;
@@ -2652,6 +3181,7 @@ int main(int argc, char** argv) {
     crashLog("=== becky-review starting ===");
     editLogInit();
     frameTraceInit();
+    scrubLogInit();
     // #0 CRITICAL: SEH-guarded - a gst_init crash must never take the window down with it.
     // GStreamer is only used by peaksWorker now (one-time per-source audio decode into
     // the .bpk peak cache, E-2) - the video player is mpv (D-1, launched after the
@@ -2670,7 +3200,10 @@ int main(int argc, char** argv) {
         // Pre-load a reel if the caller set BECKY_REVIEW_REEL (the "Open Forensic Hits" launcher).
         if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
             json r = engineCall("load_reel", { {"path", std::string(rp)} }, 30.0);
-            if (r.value("ok", false)) { json tv = engineCall("timeline", {}, 10.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]); }
+            if (r.value("ok", false)) {
+                json tv = engineCall("timeline", {}, 10.0); if (tv.value("ok", false)) loadTimelineView(tv["data"]);
+                loadCaptions(std::string(rp));   // "<reel stem>.srt" beside the reel
+            }
         }
         // Boot a default folder if supplied (env); else A-3: reopen whatever
         // folder was open last session, so the app is never blank on relaunch.
@@ -2712,7 +3245,17 @@ int main(int argc, char** argv) {
     g_hwnd = hwnd;
     DragAcceptFiles(hwnd, TRUE); // E-13: external video files can be dropped onto the timeline
     if (!CreateD3D(hwnd)) { fprintf(stderr, "D3D11 init failed\n"); return 4; }
-    ShowWindow(hwnd, SW_SHOWMAXIMIZED); UpdateWindow(hwnd);   // A-2: opens maximized
+    // A-2: opens maximized. ShowWindow is called TWICE on purpose - this is the
+    // documented Win32 trap, and it is why the app was "not able to be used":
+    // the FIRST ShowWindow of a process ignores its nCmdShow argument whenever the
+    // launching process supplied STARTUPINFO with STARTF_USESHOWWINDOW (every
+    // .bat / shortcut / Start-Process launcher does). The window was created,
+    // D3D/mpv came up and the render loop ran - but WS_VISIBLE was never set, so
+    // double-clicking the desktop button produced a live process and NOTHING on
+    // screen. Only the first call is special-cased, so the second one always wins.
+    ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+    ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+    UpdateWindow(hwnd);
 
     // D-1: launch mpv AFTER the window is visible - CreateProcess itself is fast, but
     // the IPC pipe connect retries on its own thread (mpvLaunch only spawns; it never
@@ -2725,6 +3268,8 @@ int main(int argc, char** argv) {
 
     double lastComposed = -1; bool playing = false;
     bool mpvArmedOnce = false;   // forces one dispatch the instant mpv finishes its async connect (see below)
+    bool wasComposeContinuous = false;   // I-5: was the PREVIOUS frame mid-churn (playing/dragging)?
+    double lastComposeContinuousEmit = -1;   // I-5: last time a continuous-churn compose dispatched (throttle to ~60/s)
     LARGE_INTEGER fq, prev; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&prev);
     bool run = true;
     long frameIdx = 0; double traceT0 = nowSec();
@@ -3074,9 +3619,34 @@ int main(int argc, char** argv) {
         // comes up a moment later. Force exactly one extra dispatch the first frame
         // mpv reports available, so the pending clip always gets shown.
         bool mpvReadyNow = g_mpvAvailable.load();
-        if (!g_track[0].empty() && (curSec != lastComposed || (mpvReadyNow && !mpvArmedOnce))) {
-            requestCompose(curSec); lastComposed = curSec;
+        // I-5 fix: curSec churns every single frame during "playing" (main()'s own
+        // dt-driven tick above) and during an active scrub-drag (g_gest.kind==1) -
+        // both are continuous, so each gets a cheap keyframe seek (mpvSeekExact's
+        // comment has the full story on why "exact" every frame can permanently
+        // wedge the decode thread). The instant churn STOPS (this frame's continuous
+        // flag flips false vs. last frame's), force one more dispatch even if curSec
+        // happens to be unchanged, so the settle/release always lands an exact frame.
+        bool composeContinuous = playing || g_gest.kind == 1;
+        bool composeExact = !composeContinuous;
+        bool composeSettling = wasComposeContinuous && !composeContinuous;
+        // I-5 fix, part 2 (found live via the same scrub-log evidence): a cheap
+        // keyframe seek still isn't FREE - mpv still has to do real decode work per
+        // seek, just less of it. This render loop is otherwise uncapped (no vsync
+        // wait), so during playback/drag it was still asking mpv for 200-1000+
+        // seeks/sec; the named pipe's kernel buffer absorbs a burst (WriteFile looks
+        // instant for a while) before mpv falls far enough behind to fill it, so the
+        // SAME permanent wedge (mpvWriteLine's WriteFile, no timeout) reappeared
+        // ~149 decodes in during a live re-test. Throttling continuous dispatch to
+        // ~60/sec - matching emitScrub's existing precedent for the exact same
+        // "engine seek" flood - caps the request rate at what mpv can actually keep
+        // up with; a settle/final dispatch (composeSettling) is never throttled.
+        if (composeContinuous && !composeSettling && nowSec() - lastComposeContinuousEmit < 0.016) {
+            // skip this frame's dispatch - too soon since the last one
+        } else if (!g_track[0].empty() && (curSec != lastComposed || (mpvReadyNow && !mpvArmedOnce) || composeSettling)) {
+            requestCompose(curSec, composeExact); lastComposed = curSec;
+            if (composeContinuous) lastComposeContinuousEmit = nowSec();
         }
+        wasComposeContinuous = composeContinuous;
         if (mpvReadyNow) mpvArmedOnce = true;
         if (g_resize) { resizeD3D(); g_resize = false; }
 
@@ -3262,6 +3832,43 @@ int main(int argc, char** argv) {
                 // whichever clip is under the playhead right now - every frame is cheap
                 // (mpvUpdateOverlay no-ops unless the mode is "shown" or the text changed).
                 mpvUpdateOverlay(clipAtComp(0, curSec));
+                // The caption itself, at this reel's saved vertical placement.
+                mpvUpdateCaptionOsd(curSec);
+
+                // ---- drag a caption UP or DOWN to place ALL of them ----
+                // mpv's --wid child hwnd belongs to another PROCESS, so it swallows
+                // every mouse message over the video: ImGui never sees a click there
+                // and an InvisibleButton over the pane would never fire. Polling the
+                // OS cursor + button is the whole mechanism (mpv is launched with
+                // --input-cursor=no so it ignores the very same clicks).
+                if (!g_capPath.empty() && videoH > 32) {
+                    POINT cp; GetCursorPos(&cp); ScreenToClient(g_hwnd, &cp);
+                    bool inPane = cp.x >= (LONG)origin.x && cp.x <= (LONG)(origin.x + avail.x) &&
+                                  cp.y >= (LONG)origin.y && cp.y <= (LONG)(origin.y + videoH);
+                    bool btn = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                    bool mine = GetForegroundWindow() == g_hwnd;
+                    if (!g_capMarginDrag && btn && mine && inPane) {
+                        g_capMarginDrag = true;
+                        g_capMarginAtGrab = g_capMarginV;
+                        g_capMarginGrabY = (double)cp.y;
+                        // The 288-tall ASS canvas is fitted to the pane's height, so
+                        // one screen pixel is 288/videoH of a MarginV unit.
+                        g_capMarginUnitsPerPx = (double)CAP_ASS_H / (double)videoH;
+                    } else if (g_capMarginDrag && btn) {
+                        // Drag UP (negative dy) must RAISE the captions, and MarginV
+                        // grows upward from the bottom edge - hence the minus.
+                        double dy = (double)cp.y - g_capMarginGrabY;
+                        int m = g_capMarginAtGrab - (int)std::llround(dy * g_capMarginUnitsPerPx);
+                        if (m < 0) m = 0;
+                        if (m > CAP_ASS_H - 20) m = CAP_ASS_H - 20;   // keep it on screen
+                        g_capMarginV = m;
+                    } else if (g_capMarginDrag && !btn) {
+                        g_capMarginDrag = false;
+                        saveCapStyle();          // one write per drag, not per frame
+                        g_renderMsg = "Caption placement saved (MarginV " + std::to_string(g_capMarginV) + ")";
+                        g_renderMsgAt = nowSec();
+                    }
+                }
             } else {
                 if (g_mpvHwnd) ShowWindow(g_mpvHwnd, SW_HIDE);
                 if (!g_mpvAvailable.load()) {
@@ -3270,6 +3877,7 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("video pane (mpv) - no clip loaded");
                 }
                 mpvClearOverlay();
+                mpvClearCaptionOsd();
             }
             ImGui::Text("%.1f / %.1f s", curSec, g_compDur);
             if (ImGui::Button(playing ? "Pause##play" : "Play##play")) { playing = !playing; g_playingExt = playing; }
@@ -3344,7 +3952,7 @@ int main(int argc, char** argv) {
                 std::string path = pickOpenReelFile(hwnd);
                 if (!path.empty()) {
                     json r = engineCall("load_reel", { {"path", path} }, 30.0);
-                    if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; g_renderMsg = "Loaded reel " + baseName(path); }
+                    if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
                     else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
                     g_renderMsgAt = nowSec();
                 }
