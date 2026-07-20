@@ -1734,6 +1734,11 @@ static void mpvEdlSeek(double compT) {
 // --------------- view + gesture state ---------------
 static HWND g_hwnd = nullptr;
 static double g_pps = 60;
+// Up/Down arrow zoom. The zoom math is a lambda inside drawTimeline (it needs the
+// panel's own rect to keep an anchor point fixed), so the key handler in the main
+// loop cannot call it directly - it leaves a request here and drawTimeline spends
+// it on the same frame. +1 = in, -1 = out, 0 = nothing pending.
+static int g_zoomReq = 0;
 static double g_scrollSec = 0;
 static bool g_visible = true;
 static bool g_playingExt = false;
@@ -2728,6 +2733,10 @@ static void drawTimeline(double& curSec, bool& playing) {
         else { zoomTo(g_pps * std::pow(1.15, (double)notches), zoomAnchorX()); }
     };
     if (hovered && io.MouseWheel != 0) applyWheel(io.MouseWheel, io.KeyCtrl, mx);
+    // Keyboard zoom (item 48): same path as the wheel, so the two can never
+    // disagree about anchoring or limits. Two notches per press - one is barely
+    // perceptible and he would have to hammer the key.
+    if (g_zoomReq != 0) { applyWheel((float)g_zoomReq * 2.0f, false, zoomAnchorX()); g_zoomReq = 0; }
 
     static bool s_midPan = false;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) { s_midPan = true; }
@@ -4132,6 +4141,15 @@ int main(int argc, char** argv) {
             // modifies: held, or pressed since the last frame, either counts.
             SHORT ctrlState = GetAsyncKeyState(VK_CONTROL);
             bool ctrlDown = (ctrlState & 0x8000) != 0 || (ctrlState & 1) != 0;
+            // Up/Down = zoom the timeline (item 48). Guarded on the library NOT
+            // having focus, because Up/Down move the selection in that list - a
+            // key must never do two things at once depending on where he last
+            // clicked. He works mouse+keyboard and precise mouse work costs him
+            // physically, so zoom needs to be reachable without the wheel.
+            if (!g_libFocused) {
+                if (GetAsyncKeyState(VK_UP) & 1) g_zoomReq = 1;
+                if (GetAsyncKeyState(VK_DOWN) & 1) g_zoomReq = -1;
+            }
             if (GetAsyncKeyState(VK_LEFT) & 1) {
                 if (ctrlDown) {
                     // E-4: step to the previous EDIT POINT anywhere on the timeline.
