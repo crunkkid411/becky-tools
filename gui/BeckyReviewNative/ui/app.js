@@ -265,6 +265,7 @@
         case 'folder': onFolder(m.reply);    break;
         case 'screenshot': onScreenshot(m.path); break;
         case 'externalDrop': onExternalDrop(m.paths); break;   // OS files dropped onto the window (item 21)
+      case 'openReel': loadReelPath(m.path); break;          // an edit/reel dropped on the window
         case 'tlEvent': onTlEvent(m.json); break;   // becky-timeline gesture events (scrub/select/edit/view)
         case 'tlDead': onTlDead(); break;           // the native timeline process died -> DOM fallback
         case 'capMargin': onCapMargin(m.v); break;  // captions dragged UP/DOWN on the video -> global placement
@@ -3538,15 +3539,24 @@
     else { toast('Save failed' + (rep.error ? ': ' + rep.error : '')); }
   });
 
-  $tLoad.addEventListener('click', async function () {
-    var dlg = await beckyCall('load_dialog', { default: state.folder || '' });
-    if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
-    var rep = await beckyCall('load_reel', { path: dlg.data.path });
+  // ONE load path, shared by the Load button and by dropping an edit on the window.
+  // The host has already converted a Vegas .txt / Final Cut .xml into a reel by the
+  // time we get here, so this only ever sees a reel path.
+  async function loadReelPath(path) {
+    if (!path) { return; }
+    var rep = await beckyCall('load_reel', { path: path });
     if (rep.ok && rep.data) {
-      state.reelPath = dlg.data.path;   // names the caption sidecar (<reel>.srt)
+      state.reelPath = path;   // names the caption sidecar (<reel>.srt)
       resetSourceColors(); applyTimeline(rep.data); refreshCaptions(); toast('Loaded reel');
     }
     else { toast('Load failed' + (rep.error ? ': ' + rep.error : '')); }
+  }
+  window.loadReelPath = loadReelPath;
+
+  $tLoad.addEventListener('click', async function () {
+    var dlg = await beckyCall('load_dialog', { default: state.folder || '' });
+    if (!dlg.ok || !dlg.data || !dlg.data.path) { return; }   // cancelled
+    await loadReelPath(dlg.data.path);
   });
 
   // Same single-click-unchanged / double-click-also-reveals pattern as render selection.
