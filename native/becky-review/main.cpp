@@ -871,6 +871,22 @@ static void endWork() {
     if (g_workCount == 0) g_workLabel.clear();
 }
 
+// BUTTONS MUST NEVER MOVE. Jordan stated this twice (feedback7, item 6/110):
+// "Timeline toolbar buttons must never shift position". A button whose LABEL
+// changes - Play/Pause, the 3-state Overlay, Skip Quiet On/Off - is a different
+// width in each state, so every button to its right jumps sideways on each
+// click. He aims by muscle memory at speed; a control that moves under the
+// cursor is a control he mis-clicks.
+//
+// fixedButton sizes to the WIDEST label the control can ever show, so its
+// footprint is constant whatever state it is in. Pass every variant.
+static bool fixedButton(const char* label, std::initializer_list<const char*> allStates) {
+    float w = 0;
+    for (const char* s : allStates) w = (std::max)(w, ImGui::CalcTextSize(s).x);
+    w += ImGui::GetStyle().FramePadding.x * 2.0f;
+    return ImGui::Button(label, ImVec2(w, 0));
+}
+
 // ---- run an engine verb WITHOUT freezing the window ----
 //
 // THIS IS THE FREEZE. Jordan: "the becky-review-native app FROZE when i tried
@@ -4723,7 +4739,7 @@ int main(int argc, char** argv) {
                 mpvClearCaptionOsd();
             }
             ImGui::Text("%.1f / %.1f s", curSec, g_compDur);
-            if (ImGui::Button(playing ? "Pause##play" : "Play##play")) { playing = !playing; g_playingExt = playing; }
+            if (fixedButton(playing ? "Pause##play" : "Play##play", { "Pause", "Play" })) { playing = !playing; g_playingExt = playing; }
             ImGui::SameLine();
             if (ImGui::Button("|<<")) { curSec = 0; g_playingExt = playing; }
             ImGui::SameLine();
@@ -4738,7 +4754,8 @@ int main(int argc, char** argv) {
                 const char* ovLabel = g_ovMode == 0 ? "Overlay: Off##ov"
                                     : g_ovMode == 1 ? "Overlay: On (hidden)##ov"
                                                     : "Overlay: On (shown)##ov";
-                if (ImGui::Button(ovLabel)) setOverlayMode((g_ovMode + 1) % 3);
+                if (fixedButton(ovLabel, { "Overlay: Off", "Overlay: On (hidden)", "Overlay: On (shown)" }))
+                    setOverlayMode((g_ovMode + 1) % 3);
             }
             ImGui::SameLine();
             // E-10 SKIP QUIET — the feature Jordan called "the single biggest
@@ -4755,7 +4772,7 @@ int main(int argc, char** argv) {
             {
                 char qLabel[40];
                 snprintf(qLabel, sizeof qLabel, "Skip Quiet: %s##thr", g_thrOn ? "On" : "Off");
-                if (ImGui::Button(qLabel)) {
+                if (fixedButton(qLabel, { "Skip Quiet: On", "Skip Quiet: Off" })) {
                     g_thrOn = !g_thrOn;
                     g_quietDirty = true;      // force recomputeQuiet on the next frame
                     emitThreshold(true);
