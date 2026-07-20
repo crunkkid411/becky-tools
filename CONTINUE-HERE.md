@@ -160,6 +160,16 @@ Every item below was verified by RUNNING it and looking, not by the tests passin
 | Escape deletes · timeline click restores keyboard · I-beam cursor · opaque selection (no white ring) · Up/Down zoom · >1s work indicator | Each driven and screenshotted |
 | **Renders no longer land on E:** (his criminal-case evidence drive) — the destination came from the browsed folder, not the footage | Test fails if any path starts with `E:`; all 5 export call sites fixed |
 | Captions: 202 cues/34 one-word/7 stutters → **150/8/1** | Counted independently, twice |
+| **Redo** (Ctrl+Y / Ctrl+Shift+Z) — the engine had it all along, the app had zero references to it | split → undo → redo, three states screenshotted |
+| **Toolbar buttons stop moving.** Play/Pause, Overlay and Skip Quiet each changed width with their label, shifting everything to their right | Button row cropped in both states and stacked — identical layout |
+| **Extend selected clip by exactly one frame** (`<+1f` / `+1f>`), at that clip's own source rate | Timeline geometry shifts across its full width on click |
+| **Ruler**: drag pans, click sets playhead + stock (it used to scrub) | Span moved 0:00–0:20 → 0:08–0:26 with the playhead held at 14.7s |
+| **Up/Down zoom** | 4 presses: 0:20 span → 0:06 with half-second ticks |
+| **A delete no longer drags the view sideways** — the scroll clamp ran every frame | Only intervenes when the view is past all content, never mid-gesture |
+
+**`GUI-CHECKLIST-STATUS.md` is now STALE** — it was written before most of the
+above. Items it lists as ABSENT that are now done: 15, 36, 37, 48, 52, 109 (plus
+8). Re-audit before trusting its counts.
 
 ## What's left — in order
 
