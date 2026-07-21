@@ -29,7 +29,10 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <d3d11.h>
-#include <dxgi1_3.h>   // IDXGISwapChain2 - the frame-latency waitable object (see CreateD3D)
+#include <dxgi1_3.h>
+#include <dwmapi.h>    // DwmFlush - efficient windowed vsync pacing that replaces Present(1,0)'s
+                       // driver busy-wait (the ~345% idle-CPU spin); see the render loop.
+#pragma comment(lib, "dwmapi.lib")
 #include <wincodec.h> // E-11: WIC decodes the thumb verb's JPEG - native platform feature, no image lib dependency
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -508,6 +511,11 @@ static int gstInitSEH(int argc, char** argv) {
 // failing is an ordinary Win32 return value, not a hardware exception).
 static std::atomic<bool> g_mpvAvailable{ false };
 static HWND g_mpvHwnd = nullptr;
+// Whether the mpv child HWND is currently shown. Tracked so ShowWindow is called
+// ONLY on a transition - calling it (either SW_SHOWNA or SW_HIDE) every frame is
+// window-manager churn that costs real CPU for zero visible change. See the
+// "PERF" comment at the video pane for the full story.
+static bool g_mpvChildShown = false;
 static PROCESS_INFORMATION g_mpvProc{};
 static HANDLE g_mpvPipe = INVALID_HANDLE_VALUE;       // write side (mpvWriteLine only)
 static HANDLE g_mpvPipeRead = INVALID_HANDLE_VALUE;   // read side (mpvReaderThread only)
@@ -1895,13 +1903,53 @@ static void stopPlayback(double& curSec, bool& playing, bool returnToStart) {
     g_stockSec = -1; g_stockFlash = false; g_playStartSec = -1;
 }
 
+// SEEK WORKER (coalesce-to-latest). emitScrub used to call engineCall("seek")
+// SYNCHRONOUSLY on the UI thread on every frame of a drag/scrub - a full blocking
+// pipe round-trip to the Go engine (~ms each), whose reply was then thrown away.
+// To a fast editor scrubbing the timeline that IS the sluggishness: the frame
+// cannot present until the engine answers a seek nobody reads. This worker takes
+// the LATEST requested position and seeks to that, dropping every intermediate
+// one (you only care where the playhead is NOW), so the UI thread never blocks.
+// Same shape as the decode worker's coalesce-to-latest; detached, so process exit
+// is its only shutdown. The engine "seek" is shared-state telemetry for the AI
+// seam - it never needed to be on the UI thread's critical path.
+static std::mutex g_seekMx;
+static std::condition_variable g_seekCv;
+static double g_seekTarget = -1.0;   // pending target; <0 means nothing queued
+static bool   g_seekQuiet  = true;
+static void ensureSeekWorker() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::thread([] {
+            t_threadTag = "seekWorker";
+            for (;;) {
+                double t; bool quiet;
+                {
+                    std::unique_lock<std::mutex> lk(g_seekMx);
+                    g_seekCv.wait(lk, [] { return g_seekTarget >= 0.0; });
+                    t = g_seekTarget; quiet = g_seekQuiet;
+                    g_seekTarget = -1.0;   // consumed; a newer scrub re-posts
+                }
+                json r = engineCall("seek", { {"t", t}, {"quiet", quiet} }, 2.0);
+                (void)r;
+            }
+        }).detach();
+    });
+}
 static void emitScrub(double t, bool final_) {
     double n = nowSec();
     if (!final_ && n - g_lastScrubEmit < 0.016) return;
     g_lastScrubEmit = n;
-    // Route through the engine so the playhead is the single source of truth.
-    json r = engineCall("seek", { {"t", t}, {"quiet", final_ ? false : true} }, 2.0);
-    (void)r;
+    // Post the latest playhead position to the seek worker and return immediately -
+    // NEVER block the UI thread here (see ensureSeekWorker). The final scrub (mouse
+    // release) is not throttled above, so the committed position always lands last.
+    ensureSeekWorker();
+    {
+        std::lock_guard<std::mutex> lk(g_seekMx);
+        g_seekTarget = (t < 0.0 ? 0.0 : t);
+        g_seekQuiet  = !final_;
+    }
+    g_seekCv.notify_one();
 }
 static bool emitView() {
     double n = nowSec();
@@ -2067,56 +2115,35 @@ static bool CreateD3D(HWND h) {
 #ifdef _DEBUG
     flags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
-    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0,
-        D3D11_SDK_VERSION, &g_dev, nullptr, &g_ctx))) return false;
-
-    IDXGIDevice1* dxgiDev = nullptr;
-    if (SUCCEEDED(g_dev->QueryInterface(__uuidof(IDXGIDevice1), (void**)&dxgiDev)) && dxgiDev) {
-        IDXGIAdapter* adapter = nullptr;
-        if (SUCCEEDED(dxgiDev->GetAdapter(&adapter)) && adapter) {
-            IDXGIFactory2* factory = nullptr;
-            if (SUCCEEDED(adapter->GetParent(__uuidof(IDXGIFactory2), (void**)&factory)) && factory) {
-                DXGI_SWAP_CHAIN_DESC1 sd = {};
-                sd.Width = g_W; sd.Height = g_H;
-                sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-                sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-                sd.BufferCount = 2;
-                sd.SampleDesc.Count = 1;
-                sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-                sd.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-
-                IDXGISwapChain1* sc1 = nullptr;
-                if (SUCCEEDED(factory->CreateSwapChainForHwnd(g_dev, h, &sd, nullptr, nullptr, &sc1)) && sc1) {
-                    sc1->QueryInterface(__uuidof(IDXGISwapChain), (void**)&g_swap);
-                    IDXGISwapChain2* sc2 = nullptr;
-                    if (SUCCEEDED(sc1->QueryInterface(__uuidof(IDXGISwapChain2), (void**)&sc2)) && sc2) {
-                        sc2->SetMaximumFrameLatency(1);
-                        g_frameWait = sc2->GetFrameLatencyWaitableObject();
-                        sc2->Release();
-                    }
-                    sc1->Release();
-                }
-                factory->Release();
-            }
-            adapter->Release();
-        }
-        dxgiDev->Release();
-    }
-
-    if (!g_swap) {
-        // Waitable path unavailable - fall back to the plain swap chain rather than
-        // refusing to open a window. Latency is worse; the app still works.
-        DXGI_SWAP_CHAIN_DESC sd = {};
-        sd.BufferCount = 2; sd.BufferDesc.Width = g_W; sd.BufferDesc.Height = g_H;
-        sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = h;
-        sd.SampleDesc.Count = 1; sd.Windowed = TRUE;
-        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        if (g_dev) { g_dev->Release(); g_dev = nullptr; }
-        if (g_ctx) { g_ctx->Release(); g_ctx = nullptr; }
-        if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
-            D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, nullptr, &g_ctx))) return false;
-    }
+    // BITBLT swap chain (DXGI_SWAP_EFFECT_DISCARD), deliberately NOT flip-model.
+    //
+    // THE CPU-SPIN ROOT CAUSE (measured 2026-07-20): this window hosts mpv in an
+    // OVERLAPPING --wid child HWND (see g_mpvHwnd / MpvEmbed). A flip-model swap chain
+    // (FLIP_DISCARD, the previous setting) cannot be composited cheaply against an
+    // overlapping child window - DWM drops to a continuous per-frame redraw path that
+    // spun ~12 Windows thread-pool threads at ~345% CPU with the app sitting IDLE and
+    // even EMPTY (no reel). That spin starved mpv's decode to ~10-15 fps on a 29.97fps
+    // clip and made a plain click feel slow. Proof it was the compositor, not our code:
+    // idle CPU was 345% with the window visible and 29% the instant it was minimized
+    // (the render loop skips drawing when hidden). Bitblt composites with child windows
+    // without that spin.
+    //
+    // Cost: bitblt cannot use FRAME_LATENCY_WAITABLE_OBJECT, so g_frameWait stays null
+    // and vsync pacing comes from Present(1,0) alone - one extra frame of latency. That
+    // is the right trade: a low-latency path that pegs 4 cores and plays at 10fps is not
+    // actually low-latency to the user, it is unusable. Present(1,0) still blocks on
+    // vsync, so the loop is paced (61 fps measured), never busy-spinning.
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = g_W; sd.BufferDesc.Height = g_H;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = h;
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0,
+        D3D11_SDK_VERSION, &sd, &g_swap, &g_dev, nullptr, &g_ctx))) return false;
     createRTV();
     return true;
 }
@@ -4506,6 +4533,24 @@ int main(int argc, char** argv) {
     bool wasComposeContinuous = false;   // I-5: was the PREVIOUS frame mid-churn (playing/dragging)?
     double lastComposeContinuousEmit = -1;   // I-5: last time a continuous-churn compose dispatched (throttle to ~60/s)
     LARGE_INTEGER fq, prev; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&prev);
+    // Frame pacing: a HIGH-RESOLUTION periodic waitable timer - NOT Present(1,0) and NOT
+    // DwmFlush. Both of those tied idle CPU to the GPU driver / compositor: Present(1,0)'s
+    // vsync-wait busy-SPUN ~12 thread-pool threads (~345% CPU idle), and DwmFlush only
+    // paces while the window is the FOREGROUND composited surface - backgrounded, it
+    // returns instantly and the loop spins again (measured: no-reel jumped back to 440%
+    // when the window lost focus). A waitable timer paces the loop at ~60fps efficiently
+    // and IDENTICALLY whether focused, background, or occluded. Windowed Present(0,0) is
+    // still composited tear-free by DWM.
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+    HANDLE frameTimer = CreateWaitableTimerExW(nullptr, nullptr,
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
+    if (!frameTimer) frameTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);  // pre-Win10-1803 fallback
+    if (frameTimer) {
+        LARGE_INTEGER due; due.QuadPart = -166667;   // first fire 16.667ms out (negative = relative, 100ns units)
+        SetWaitableTimer(frameTimer, &due, 16, nullptr, nullptr, FALSE);  // then periodic every 16ms (~62fps)
+    }
     bool run = true;
     long frameIdx = 0; double traceT0 = nowSec();
     while (run) {
@@ -4521,7 +4566,16 @@ int main(int argc, char** argv) {
         //
         // The 100ms cap means a lost/never-signalled handle costs a few dropped
         // frames rather than hanging the window forever.
-        if (g_frameWait) WaitForSingleObjectEx(g_frameWait, 100, TRUE);
+        // Pace the frame HERE, at the top, with DwmFlush: it blocks efficiently until
+        // the compositor's next vblank (an event wait, not a spin). This replaces the
+        // frame-latency waitable object (unusable now we are on a bitblt swap chain) AND
+        // the reason Present(1,0) is gone: Present(1,0)'s driver-side vsync-wait was
+        // busy-SPINNING ~12 thread-pool worker threads at ~345% CPU while idle. With
+        // DwmFlush pacing + Present(0,0) below (no driver wait), the loop still runs at
+        // the refresh rate but sleeps between frames. Input is sampled right after this
+        // wait, so a scrub still feels attached to the cursor. (g_frameWait is always
+        // null now; the guard is kept only so a future waitable path can slot back in.)
+        if (frameTimer) WaitForSingleObject(frameTimer, 100);
 
         MSG msg; while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); if (msg.message == WM_QUIT) run = false; }
         if (!run) break;
@@ -4552,7 +4606,7 @@ int main(int argc, char** argv) {
             g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
             g_ctx->ClearRenderTargetView(g_rtv, clr);
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-            g_swap->Present(1, 0);
+            g_swap->Present(0, 0);   // no driver vsync-wait (that busy-spun); DwmFlush at the loop top paces us
             continue;
         }
 
@@ -4993,7 +5047,17 @@ int main(int argc, char** argv) {
                         if (tp != s_lastTp) { s_lastTp = tp; s_tpAt = nowSec(); }
                         double ext = (nowSec() - s_tpAt) * g_playRate;
                         if (ext > 0.5) ext = 0.5;
-                        curSec = tp + ext;
+                        double target = tp + ext;
+                        // Keep the playhead MONOTONIC during forward playback. The
+                        // extrapolation above overshoots between mpv's ~0.15s time-pos
+                        // updates; when the next (slightly-earlier) value arrives, re-
+                        // anchoring to it snapped the playhead BACK ~one frame - the
+                        // visible backward jitter Jordan reported. A genuine backward move
+                        // (a seek) is handled by the seekPending branch above, never here,
+                        // so holding is safe. Suppress only SMALL backslides (< 0.5s);
+                        // a larger one is a real discontinuity (loop/reload) and is followed.
+                        if (target < curSec && curSec - target < 0.5) target = curSec;
+                        curSec = target;
                     } else curSec += dt * g_playRate;   // mpv hasn't reported yet - keep moving
                 }
             } else {
@@ -5581,18 +5645,40 @@ int main(int argc, char** argv) {
                 // which is correct whether or not viewports are ever enabled.
                 ImVec2 vp = ImGui::GetMainViewport()->Pos;
                 POINT pt{ (LONG)(origin.x - vp.x), (LONG)(origin.y - vp.y) };
+                // PERF - THE IDLE-CPU ROOT CAUSE (measured 2026-07-20).
+                //
+                // This used to call MoveWindow(..., bRepaint=TRUE) AND ShowWindow EVERY
+                // FRAME, even when the pane had not moved by a single pixel. Moving and
+                // force-repainting an OVERLAPPING child HWND 60x/second makes DWM
+                // recomposite the whole video region every frame, and that work fans out
+                // across ~12 driver/compositor thread-pool threads. That is why the app
+                // burned 4-5 CPU cores sitting completely IDLE, why it collapsed to ~29%
+                // the instant the window was minimized (no frames -> no MoveWindow), and
+                // why neither the swap-chain model (flip vs bitblt) nor the frame pacing
+                // (Present(1,0) vs DwmFlush vs waitable timer) moved the number: none of
+                // them were the cause. It also starved mpv's own decode, which is what
+                // made a 29.97fps clip play back at ~10-15fps.
+                //
+                // Fix: touch the child window ONLY when its rect actually changes, and use
+                // SetWindowPos with NOREDRAW|NOCOPYBITS - mpv paints its own surface, so
+                // Windows never needs to invalidate or blit anything on its behalf. The
+                // parent redraws its whole client area every frame anyway, so nothing is
+                // left stale behind a move.
+                const int mvW = (int)avail.x, mvH = (int)videoH;
                 {
-                    static POINT last{ -99999, -99999 };
-                    if (pt.x != last.x || pt.y != last.y) {
-                        last = pt;
+                    static LONG lastX = -99999, lastY = -99999;
+                    static int  lastW = -1, lastH = -1;
+                    if (pt.x != lastX || pt.y != lastY || mvW != lastW || mvH != lastH) {
+                        lastX = pt.x; lastY = pt.y; lastW = mvW; lastH = mvH;
                         char b[256];
-                        snprintf(b, sizeof b, "mpvrect: origin=(%.0f,%.0f) vp=(%.0f,%.0f) -> client=(%ld,%ld) size=(%.0fx%.0f)",
-                                 origin.x, origin.y, vp.x, vp.y, pt.x, pt.y, avail.x, videoH);
+                        snprintf(b, sizeof b, "mpvrect: origin=(%.0f,%.0f) vp=(%.0f,%.0f) -> client=(%ld,%ld) size=(%dx%d)",
+                                 origin.x, origin.y, vp.x, vp.y, pt.x, pt.y, mvW, mvH);
                         crashLog(b);
+                        SetWindowPos(g_mpvHwnd, nullptr, pt.x, pt.y, mvW, mvH,
+                                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
                     }
                 }
-                MoveWindow(g_mpvHwnd, pt.x, pt.y, (int)avail.x, (int)videoH, TRUE);
-                ShowWindow(g_mpvHwnd, SW_SHOWNA);
+                if (!g_mpvChildShown) { ShowWindow(g_mpvHwnd, SW_SHOWNA); g_mpvChildShown = true; }
                 ImGui::Dummy({ avail.x, videoH });
                 // D-6: push/refresh the provenance overlay into mpv's own surface for
                 // whichever clip is under the playhead right now - every frame is cheap
@@ -5636,7 +5722,11 @@ int main(int argc, char** argv) {
                     }
                 }
             } else {
-                if (g_mpvHwnd) ShowWindow(g_mpvHwnd, SW_HIDE);
+                // Hide ONLY on the transition, never every frame - see the PERF comment
+                // above. An unconditional per-frame ShowWindow(SW_HIDE) is the same
+                // window-manager churn as the per-frame MoveWindow, and it is why even an
+                // EMPTY app (no reel loaded, so this branch runs) still burned ~3.4 cores.
+                if (g_mpvHwnd && g_mpvChildShown) { ShowWindow(g_mpvHwnd, SW_HIDE); g_mpvChildShown = false; }
                 if (!g_mpvAvailable.load()) {
                     ImGui::TextDisabled("video decode unavailable (mpv failed to start - shell/library/timeline still work)");
                 } else {
@@ -6363,7 +6453,7 @@ int main(int argc, char** argv) {
         g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_ctx->ClearRenderTargetView(g_rtv, clr);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        g_swap->Present(1, 0);
+        g_swap->Present(0, 0);   // no driver vsync-wait (that busy-spun); DwmFlush at the loop top paces us
     }
 
     if (g_frameTrace.is_open()) {
