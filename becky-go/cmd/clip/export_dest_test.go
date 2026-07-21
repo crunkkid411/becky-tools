@@ -21,6 +21,12 @@ import (
 // The browsed folder answers "what am I looking at". Only the clip sources answer
 // "what is this render made of", and only that may choose the destination. The
 // rule, in his words: "where the raw footage exists = where output files go".
+//
+// These tests assert the DECISION (renderDirPath), not the mkdir: the CI
+// machine has no X: drive, so creating the decided path fails on Windows
+// runners and litters literal `X:\...`-named directories on Linux ones. The
+// mkdir path is still covered by TestRenderFallsBackToBrowsedFolderOnlyWithNoSource,
+// which uses a real temp dir.
 func TestRenderGoesWithTheFootageNotTheBrowsedFolder(t *testing.T) {
 	a := &App{
 		folder:  `E:\TakingBack2007`, // the forensic evidence drive, open in the library
@@ -28,10 +34,7 @@ func TestRenderGoesWithTheFootageNotTheBrowsedFolder(t *testing.T) {
 	}
 	sources := []string{`X:\Videos\2025\11_November\raw\FLYV9992.mp4`}
 
-	got, err := a.renderDir(sources...)
-	if err != nil {
-		t.Fatalf("renderDir: %v", err)
-	}
+	got := a.renderDirPath(sources...)
 
 	if strings.HasPrefix(strings.ToUpper(got), "E:") {
 		t.Fatalf("render dir = %q — NEVER the forensic evidence drive", got)
@@ -51,10 +54,7 @@ func TestThumbnailsGoWithTheFootageNotTheBrowsedFolder(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 
-	got, err := a.thumbDir(`X:\Videos\2025\11_November\raw\FLYV9992.mp4`)
-	if err != nil {
-		t.Fatalf("thumbDir: %v", err)
-	}
+	got := a.thumbDirPath(`X:\Videos\2025\11_November\raw\FLYV9992.mp4`)
 
 	if strings.HasPrefix(strings.ToUpper(got), "E:") {
 		t.Fatalf("thumb dir = %q — NEVER the forensic evidence drive", got)
@@ -71,10 +71,7 @@ func TestRenderDoesNotNestInsideRendered(t *testing.T) {
 	a := &App{folder: `E:\TakingBack2007`, workDir: t.TempDir()}
 	src := filepath.Join(`X:\Videos\2025\11_November`, reel.RenderSubdir, "post_constantly.mp4")
 
-	got, err := a.renderDir(src)
-	if err != nil {
-		t.Fatalf("renderDir: %v", err)
-	}
+	got := a.renderDirPath(src)
 	want := filepath.Join(`X:\Videos\2025\11_November`, reel.RenderSubdir)
 	if !strings.EqualFold(got, want) {
 		t.Errorf("render dir = %q, want %q — no Rendered inside Rendered", got, want)

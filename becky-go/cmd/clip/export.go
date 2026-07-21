@@ -499,15 +499,20 @@ func writeTextFile(path string, fn func(*bufio.Writer) error) error {
 // same sources as renderDir for the same reason — thumbnails of X:\ footage
 // belong with that footage, not on whatever drive the library is browsing.
 func (a *App) thumbDir(sources ...string) (string, error) {
-	base, err := a.renderDir(sources...)
-	if err != nil {
+	if _, err := a.renderDir(sources...); err != nil {
 		return "", err
 	}
-	dir := filepath.Join(base, "timeline_thumbnails")
+	dir := a.thumbDirPath(sources...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create thumbnail dir %q: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// thumbDirPath decides the thumbnail destination without touching the disk —
+// see renderDirPath for why the decision and the mkdir are separate.
+func (a *App) thumbDirPath(sources ...string) string {
+	return filepath.Join(a.renderDirPath(sources...), "timeline_thumbnails")
 }
 
 // renderDir is where HUMAN-FACING outputs go: a Rendered/ subfolder OF THE RAW
@@ -528,21 +533,30 @@ func (a *App) thumbDir(sources ...string) (string, error) {
 // (a headless call, an empty timeline), and the work dir when there is no folder
 // either — a render still needs somewhere to land.
 func (a *App) renderDir(sources ...string) (string, error) {
-	dir := reel.RenderDirFor(sources...)
-	if dir == "" {
-		a.mu.Lock()
-		folder := a.folder
-		work := a.workDir
-		a.mu.Unlock()
-		dir = work
-		if strings.TrimSpace(folder) != "" {
-			dir = filepath.Join(folder, reel.RenderSubdir)
-		}
-	}
+	dir := a.renderDirPath(sources...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create render dir %q: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// renderDirPath is the destination DECISION alone, no disk I/O. Split from
+// renderDir so the never-on-the-wrong-drive rule is testable on machines that
+// don't have the footage's drive at all — CI has no X:, so a test that mkdirs
+// the decided path fails on Windows runners (and litters `X:\...`-named
+// directories on Linux ones) even though the decision it guards is correct.
+func (a *App) renderDirPath(sources ...string) string {
+	if dir := reel.RenderDirFor(sources...); dir != "" {
+		return dir
+	}
+	a.mu.Lock()
+	folder := a.folder
+	work := a.workDir
+	a.mu.Unlock()
+	if strings.TrimSpace(folder) != "" {
+		return filepath.Join(folder, reel.RenderSubdir)
+	}
+	return work
 }
 
 // nextSequencedPath returns dir/<base>_NNNN<ext> for the lowest 4-digit NNNN (>=1)
