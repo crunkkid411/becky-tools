@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"becky-go/internal/edl"
+	"becky-go/internal/pathx"
 )
 
 // The render must land on the SAME DRIVE as the raw footage, in a Rendered/
@@ -30,7 +31,10 @@ func TestRenderGoesBesideTheFootageNotTheCwd(t *testing.T) {
 	if strings.HasPrefix(strings.ToUpper(got), "E:") {
 		t.Fatalf("output = %q — NEVER the forensic drive", got)
 	}
-	if !filepath.IsAbs(got) {
+	// pathx.IsAbs, not filepath.IsAbs: the sources here are Windows paths and
+	// this test also runs on Linux CI, where filepath.IsAbs calls `X:\...`
+	// relative and fails the test on the wrong OS instead of the real bug.
+	if !pathx.IsAbs(got) {
 		t.Errorf("output = %q — a bare relative name resolves against the cwd, which is the bug", got)
 	}
 }

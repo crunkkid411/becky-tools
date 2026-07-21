@@ -165,9 +165,19 @@ func (f *fakeGetter) PostForm(_ string, _ url.Values) (*http.Response, error) {
 	return &http.Response{Body: io.NopCloser(strings.NewReader(f.postBody))}, nil
 }
 
+// isolateHome points the chat-id cache file at a throwaway dir on every OS.
+// os.UserHomeDir reads USERPROFILE on Windows but HOME on Linux — setting only
+// the former let the caching test below write its fake "555" into the REAL
+// home on Linux CI, which the none-discoverable test then found and returned.
+func isolateHome(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("HOME", dir)
+}
+
 func TestResolveChatID_EnvOverride(t *testing.T) {
 	t.Setenv("BECKY_TELEGRAM_CHAT_ID", "999")
-	t.Setenv("USERPROFILE", t.TempDir()) // isolate from any real cache file
+	isolateHome(t)
 	got, err := resolveChatID("token", &fakeGetter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -178,7 +188,7 @@ func TestResolveChatID_EnvOverride(t *testing.T) {
 }
 
 func TestResolveChatID_DiscoversAndCaches(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir())
+	isolateHome(t)
 	fg := &fakeGetter{getBody: `{"ok":true,"result":[{"message":{"chat":{"id":555}}}]}`}
 	got, err := resolveChatID("token", fg)
 	if err != nil {
@@ -200,7 +210,7 @@ func TestResolveChatID_DiscoversAndCaches(t *testing.T) {
 }
 
 func TestResolveChatID_NoneDiscoverable(t *testing.T) {
-	t.Setenv("USERPROFILE", t.TempDir())
+	isolateHome(t)
 	fg := &fakeGetter{getBody: `{"ok":true,"result":[]}`}
 	_, err := resolveChatID("token", fg)
 	if err == nil {

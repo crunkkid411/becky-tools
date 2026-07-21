@@ -32,3 +32,19 @@ func Dir(p string) string {
 	}
 	return ""
 }
+
+// IsAbs reports whether p is absolute under EITHER OS convention: a rooted
+// POSIX path ("/x"), a Windows drive path (`C:\x` or `C:/x`), or a UNC path
+// (`\\server\share`). filepath.IsAbs answers only for the HOST OS, so on Linux
+// it calls a `X:\...` path relative — which reads as "resolves against the
+// cwd" in tests that guard against exactly that bug.
+func IsAbs(p string) bool {
+	if len(p) >= 1 && (p[0] == '/' || p[0] == '\\') {
+		return true
+	}
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '/' || p[2] == '\\') {
+		c := p[0]
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+	}
+	return false
+}

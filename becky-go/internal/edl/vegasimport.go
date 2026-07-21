@@ -531,5 +531,12 @@ func pathFromURL(raw string) string {
 	if len(s) > 2 && s[0] == '/' && s[2] == ':' {
 		s = s[1:]
 	}
+	// A drive-letter path came from Windows no matter which OS is parsing it,
+	// so normalise its separators deterministically — filepath.FromSlash is a
+	// no-op on Linux, which made the same Vegas .xml parse to different source
+	// strings on CI than on Jordan's machine.
+	if len(s) > 1 && s[1] == ':' {
+		return strings.ReplaceAll(s, "/", `\`)
+	}
 	return filepath.FromSlash(s)
 }

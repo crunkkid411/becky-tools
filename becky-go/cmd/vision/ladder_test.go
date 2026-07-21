@@ -343,11 +343,11 @@ var _ = vision.Source{Kind: "vlm", Model: "x", OK: true}
 
 func TestOCRLooksLikePrompt(t *testing.T) {
 	cases := map[string]bool{
-		"":                                     false,
+		"":                                      false,
 		"A cat sits on a windowsill.":           false,
 		"Do you want to proceed?":               true,
 		"1. Yes":                                false, // needs a companion prompt line to read as a dialog
-		"Esc to cancel - Tab to amend":           true,
+		"Esc to cancel - Tab to amend":          true,
 		"Are you sure you want to delete this?": true,
 		"MENU - File Edit View":                 false,
 	}
