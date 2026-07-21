@@ -42,6 +42,84 @@ already answered below.
    put Jordan's YouTube edits on E:\ — a removable forensic drive holding
    evidence for a criminal case.
 
+## 2026-07-20 PM — THE REAL PERF ROOT CAUSE (found + fixed), and the mpv verdict
+
+**Read this before touching performance. Four earlier theories were wrong and are
+already ruled out — do not re-test them.**
+
+### The bug: we repositioned mpv's child window 60 times a second
+
+Jordan: *"it's slow as fuck… clicking is slow… 10 or 15 fps playback… it's using about
+50% of my cpu just sitting idle."* All one cause.
+
+The video pane called `MoveWindow(..., bRepaint=TRUE)` **and** `ShowWindow` on mpv's
+overlapping `--wid` child HWND **every single frame**, even when the pane had not moved
+one pixel. (With no reel loaded the other branch called `ShowWindow(SW_HIDE)` every frame
+instead — which is why even an EMPTY app burned 3.4 cores.) Moving and force-repainting an
+overlapping child window at 60Hz makes DWM recomposite that whole region every frame, and
+that work fans out across ~12 driver/compositor thread-pool threads.
+
+| idle, maximized, his real 88-clip reel | background | foreground |
+|---|---|---|
+| before | **490%** of one core | 412% |
+| after  | **46.9%** | 44.9% |
+
+~10x. Under half a core, and now identical whether the window is focused or not.
+Fix: `SetWindowPos` with `NOREDRAW\|NOCOPYBITS` **only when the rect actually changes**,
+and `ShowWindow` only on a transition (`g_mpvChildShown`). `crash.log` now logs the rect
+changing twice per session instead of 60x/second — that log line is the regression canary.
+
+### Four theories that were MEASURED AND WRONG — don't repeat them
+
+1. **Flip-model vs bitblt swap chain.** Changed `FLIP_DISCARD` → `DISCARD`: 490% → 470%. Not it.
+2. **Present/vsync pacing.** `Present(1,0)` vs `DwmFlush` vs a high-res waitable timer: all
+   ~400%. (DwmFlush also only paces while the window is FOREGROUND — backgrounded it returns
+   instantly and the loop spins. Don't use it for pacing.) Not it.
+3. **Render loop running uncapped.** Measured 61 fps with the frame trace the whole time. Not it.
+4. **WARP / software rendering.** The GPU counter showed real 3D-engine use. Not it.
+
+The tell was that idle CPU collapsed to **29% the instant the window was minimized** (no
+frames drawn ⇒ no `MoveWindow`), and that the hot threads were ~12 **ntdll thread-pool**
+threads — i.e. the compositor, not our code. If perf regresses, measure minimized-vs-visible
+FIRST; it splits "our render path" from "everything else" in one step.
+
+**Also fixed in the same commit** (real improvements, none of them the root cause):
+`emitScrub` no longer blocks the UI thread on a synchronous engine round-trip whose reply was
+thrown away (a coalescing seek worker takes the latest position); the playhead no longer
+jitters BACKWARD a frame during playback (the between-update extrapolation overshot, then
+re-anchoring to mpv's clock snapped it back).
+
+### SETTLED: mpv is the WRONG engine for an NLE. Next phase is libavcodec direct.
+
+Jordan, 2026-07-20: *"mpv is a lazy dev choice and inappropriate for an NLE."* He is right,
+and the measurements agree. Playback still costs ~488% (UI) + ~548% (mpv) with the GPU pinned
+at 99.8%, and **that part is architectural, not a bug** — the idle fix above does not touch it.
+
+What mpv structurally costs us:
+- an **overlapping child HWND** — the thing that caused the spin above, and a permanent DWM
+  composition conflict with our own swap chain;
+- every seek is an **IPC round-trip over a named pipe** — the only reason scrubbing ever
+  needed an async worker;
+- our clock has to be **synced from mpv's reported `time-pos`** (a player's clock) — the sole
+  source of the playhead jitter;
+- **the sub-frame cutpoint error Jordan reported lives here.** The reel data is frame-exact —
+  verified: every `in`/`out` in `post_constantly.reel.json` lands exactly on a frame at true
+  29.97 (30000/1001). The error is in mpv's EDL playback, not our import math
+  (`internal/edl/vegasimport.go` snaps to the frame grid correctly);
+- no CPU access to decoded frames without decoding a second time.
+
+**The decided replacement** (matches the earlier native-NLE bake-off: "own compositor —
+independent NVDEC/D3D11 decoders + own shader + VRAM ring"):
+`libavformat` + `libavcodec` directly · hardware decode via **d3d11va / NVDEC** (copy-back only
+when pixels are needed on the CPU) · **`av_seek_frame` + `AVSEEK_FLAG_BACKWARD`, then decode
+FORWARD to the exact target frame** — this is the standard frame-exact seek and is precisely
+what mpv cannot give us · a **frame ring/cache around the playhead** for zero-latency scrubbing ·
+draw the frame as a **D3D11 texture inside our own swap chain**.
+
+That one move deletes the child window, the DWM conflict, the IPC seek latency, the clock
+jitter and the sub-frame cut error together. It is a substantial build, not a patch — but it
+is the difference between "a player embedded in an app" and an NLE.
+
 ## What's already done — MEASURED. Read the scope line first.
 
 **Scope, so this list is not read as more than it is:** everything below is the
@@ -209,6 +287,12 @@ now depends on. That was judged too risky to do blind at 4am. If you are working
 in `drainAsync` or the proposal path, fix this FIRST, with a test.
 
 ## What's left — in order
+
+0. **REPLACE mpv WITH A REAL VIDEO ENGINE (libavcodec direct).** See the mpv verdict at the
+   top of this file. This is now the biggest single item and it is a decided direction, not an
+   open question — Jordan called mpv "a lazy dev choice and inappropriate for an NLE" and the
+   measurements back him up. It fixes playback cost, scrub latency, playhead jitter and the
+   sub-frame cutpoint error in one move. Everything below is smaller than this.
 
 1. **Caption wording — the last thing between him and posting without wincing.**
    8 single-word lines remain (`media, can, have, posting, videos, actually, i,

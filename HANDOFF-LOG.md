@@ -10,6 +10,73 @@
 
 ---
 
+## The idle-CPU root cause, found and fixed (2026-07-20 PM, local, → `master` `2c6fb53`)
+
+**Why this entry matters:** Jordan reported the app as *"buggy as hell… slow as fuck… I can't
+use it, too slow… 10 or 15 fps playback… using about 50% of my cpu just sitting idle."* All of
+that was ONE bug, and it was not where anyone had been looking.
+
+**The bug.** The video pane called `MoveWindow(..., bRepaint=TRUE)` **and** `ShowWindow` on
+mpv's overlapping `--wid` child HWND **every frame**, even when the pane had not moved a pixel
+(and with no reel loaded, `ShowWindow(SW_HIDE)` every frame instead — which is why an EMPTY app
+still burned 3.4 cores). Repositioning and force-repainting an overlapping child window at 60Hz
+makes DWM recomposite that region every frame, fanned across ~12 driver/compositor thread-pool
+threads.
+
+**Measured, idle, maximized, on his real 88-clip reel:**
+
+| | background | foreground |
+|---|---|---|
+| before | **490%** of one core | 412% |
+| after | **46.9%** | 44.9% |
+
+~10x, from 4–5 of 12 cores to under half a core, and now identical focused or not.
+Fix: `SetWindowPos` with `NOREDRAW|NOCOPYBITS` only when the rect actually changes; `ShowWindow`
+only on a transition. `crash.log` now logs the rect changing **twice per session** instead of
+60×/second — that line is the regression canary. Verified on screen afterwards: video, timeline,
+waveforms, thumbnails and captions all still render correctly.
+
+**Four theories measured and RULED OUT — do not re-test them.** (1) flip-model vs bitblt swap
+chain: 490% → 470%. (2) Present/vsync pacing — `Present(1,0)` vs `DwmFlush` vs a high-res
+waitable timer: all ~400% (and `DwmFlush` only paces while the window is FOREGROUND; backgrounded
+it returns instantly and the loop spins — don't use it). (3) render loop running uncapped:
+measured 61 fps throughout. (4) WARP/software rendering: the GPU counter showed real 3D use.
+The tell was that idle CPU collapsed to **29% the moment the window was minimized**, and that the
+hot threads were **ntdll thread-pool** threads. Measure minimized-vs-visible FIRST next time.
+
+**Also landed:** real **Segoe UI** base font replacing ImGui's ProggyClean bitmap (both Jordan and
+a free vision model had called the old look unusable — the model went from "jagged, pixelated" to
+"clean and professional, 8/10" on the same comparison); `emitScrub` no longer blocks the UI thread
+on a synchronous engine round-trip whose reply was discarded (coalescing seek worker); the playhead
+no longer jitters BACKWARD a frame during playback (extrapolation overshoot then re-anchor snap).
+
+**Correction to the entry below.** That entry states "VISUAL CRITIC IS LIVE … `BeckyVisualCritic`
+scheduled task, every 2 hours". **On this machine at the start of this session that scheduled task
+did not exist** — only `BeckyBullshitCheck` (which reads docs/code TEXT and never takes a
+screenshot) and `BeckyModelHeartbeat` were registered, and `HANDOFF-NEXT-AGENT.md` admits in its
+own first section that the visual critic was never built. It is real **now**: `scripts/visual-critic.ps1`,
+registered as `BeckyVisualCritic` (every 2h, indefinite), run once and proven to append a real
+free-model verdict to `.visual-critic/visual-critic-log.md`. Also fixed a bug that made every
+screenshot-based comparison lie: `verify-shot.ps1` / `gui-diff.ps1` called `ShowWindow(SW_RESTORE)`,
+which **un-maximizes** the window, so the critic (and I) kept judging a shrunk 1280×800 app against
+a 1600×900 reference and "seeing" cramped panels and sliced filenames that do not exist at the size
+Jordan actually runs.
+
+**Open, and now the top of the list: mpv is the wrong engine.** Jordan: *"mpv is a lazy dev choice
+and inappropriate for an NLE."* Correct, and measured — playback still costs ~488% (UI) + ~548%
+(mpv) with the GPU at 99.8%, and that part is **architectural, not a bug**. mpv forces an
+overlapping child window (the DWM conflict above), makes every seek an IPC round-trip, forces our
+clock to be synced from its `time-pos` (the sole source of the playhead jitter), and **owns the
+sub-frame cutpoint error Jordan reported** — the reel data itself is frame-exact (verified: every
+`in`/`out` in `post_constantly.reel.json` lands exactly on a frame at true 29.97 = 30000/1001, so
+`internal/edl/vegasimport.go` snaps correctly). Decided replacement: `libavformat`/`libavcodec`
+direct, d3d11va/NVDEC hardware decode with copy-back only when pixels are needed on the CPU,
+`av_seek_frame` + `AVSEEK_FLAG_BACKWARD` then decode FORWARD to the exact frame, a frame ring
+around the playhead for zero-latency scrub, drawn as a D3D11 texture **inside our own swap chain**.
+Full reasoning at the top of `CONTINUE-HERE.md`.
+
+---
+
 ## Rate limit handoff (2026-07-20, ~05:30, `fix/becky-review-3-audio`)
 
 **Why:** Claude (Anthropic) rate limit hit at ~05:30 on 2026-07-20. Session ended early — this is everything that was done in the last 12 hours, pushed to GitHub for the cloud agent to pick up. Full detail in `RATELIMIT-HANDOFF-2026-07-20.md`.
