@@ -218,14 +218,14 @@ Status, checked 2026-07-20 — **the app half is mostly not built**:
   under Jordan's input rate and violates acceptance items 100/119 ("no embedded browser engine,
   ever"). So the entire forensic workflow landed in the dead app. **Fixed** — it now calls
   `Open Becky Review 3.bat`; the `BECKY_REVIEW_*` env vars were always correct and are inherited.
-- **H-1 shared state is DEAD CODE, both directions.** `main.cpp` fires `seek`, `set_select` and
-  `set_threshold` from three worker threads, and **none of those three verbs exists in
-  `bridge.go`** — every one falls through to `default:` → `ok:false` and the reply is discarded.
-  main.cpp's own comment admits `"seek"/"set_select" … never did [exist] and were silent
-  no-ops`. So the engine (and therefore the AI) never learns the playhead, the selection or the
-  threshold. Either add the three trivial verbs or delete the three threads — but do not leave
-  it looking wired when it is not. (This is also why making `emitScrub` async was free: it was
-  blocking the UI thread on a round-trip to a verb that does not exist.)
+- ~~**H-1 shared state is DEAD CODE, both directions.**~~ **FIXED 2026-07-21 (cloud):**
+  `seek`, `set_select` and `set_threshold` now exist in `bridge.go`; the state lands in
+  `assistant.Context.Timeline` (Playhead/Selected/SkipQuiet*) and the prompt's TIMELINE block
+  prints it, so "delete this clip"/"split here" can resolve against where Jordan actually is.
+  Unit-tested through the bridge (`TestCallH1SharedStateVerbs`). The three C++ worker threads
+  needed no change — they were already firing the right payloads at a table that didn't know
+  them. (Historical context kept: this dead seam was also why making `emitScrub` async was
+  free — it was blocking the UI thread on a round-trip to a verb that did not exist.)
 
 Constraints that go with it: **no MCP server, no separate AI tool surface** —
 the AI uses the SAME shared-state JSON / engine-verb seam the human UI uses
@@ -321,19 +321,27 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    open question — Jordan called mpv "a lazy dev choice and inappropriate for an NLE" and the
    measurements back him up. It fixes playback cost, scrub latency, playhead jitter and the
    sub-frame cutpoint error in one move. Everything below is smaller than this.
+   **Cloud half done 2026-07-21:** `SPEC-BECKY-VIDEO-ENGINE.md` (architecture + the exact
+   FFmpeg/D3D11VA API map + the risk order) and `HANDOFF-VIDEO-ENGINE.md` (8 staged,
+   checkboxed steps — standalone harness first, wire-in last, DoD numbers final). The C++
+   build is the local agent's, on a fresh `local/video-engine` branch.
 
-1. **Caption wording — the last thing between him and posting without wincing.**
-   8 single-word lines remain (`media, can, have, posting, videos, actually, i,
-   fundamentals`). Root cause is NOT the cut-spanning that was fixed: it is
-   `ChunkWords`' greedy char-limit packing having no lookahead, so a line that
-   hits the 22-char cap leaves the remainder stranded. That means changing a
-   foundational, heavily-tested function — do it deliberately, with the existing
-   tests as the guard.
+1. ~~**Caption wording**~~ **FIXED 2026-07-21 (cloud), pending a burn check on real footage.**
+   `ChunkWords` no longer packs greedily: pauses first, then over-cap runs split at their
+   biggest pauses with lookahead (cli-cut's own rule for a cap-suppressed break, per Jordan's
+   "cli-cut wins" instruction). Three underlying defects fixed with regression tests — see
+   HANDOFF-LOG.md 2026-07-21. **Local: re-run the caption build on `post_constantly` and
+   count one-word lines; expect the 8 (`media, can, have, posting, videos, actually, i,
+   fundamentals`) to drop to only genuinely pause-isolated words.**
 2. **H-6/H-7 are the product.** H-4 (`apply_edit_batch`) and H-6 (`ask` ->
    proposal -> apply) are BUILT and wired both sides. H-5 (activity stream)
-   landed tonight. **H-7 is the gap**: the forensic path works but is only
-   reachable via `BECKY_REVIEW_REEL` before launch, not as an in-app action.
-   Spec: `HANDOFF-VIDEOAGENT-SEAM.md`.
+   landed 2026-07-20. **H-7's Go half landed 2026-07-21**: the `forensic_query`
+   verb runs becky-judge → becky-hits against the open folder and lands the
+   reel + Q&A cards via `LoadReel` (one undo span), with H-5 events narrating.
+   **Left: the C++ entry point** — a chat route or button in main.cpp that
+   calls `engineCall("forensic_query", {query})` and `loadTimelineView`s the
+   reply, same wiring shape as `apply_proposal` (main.cpp:4714). Spec:
+   `HANDOFF-VIDEOAGENT-SEAM.md` + `research/videoagent-integration.md`.
 3. **`GUI-CHECKLIST-STATUS.md`** has all 120 acceptance items audited against the
    code — 69 DONE / 31 PARTIAL / 11 ABSENT / 9 needing a human eye — with a
    ranked top-10 and the exact function each change belongs in. Items 1, 2, 3 and

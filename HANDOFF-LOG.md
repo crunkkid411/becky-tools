@@ -10,6 +10,47 @@
 
 ---
 
+## Captions un-stranded + H-1/H-7 Go halves + the mpv-replacement handoff (2026-07-21, cloud, `claude/continue-here-review-pgf85b`)
+
+Cloud pass over CONTINUE-HERE.md's "What's left", everything the cloud lane can do; all five
+gates green on Linux (build/test/vet/gofmt; `build-all-tools.bat` is local's step as always).
+
+1. **The 8 stranded one-word captions — root cause fixed** (`internal/subs`). `ChunkWords` no
+   longer packs greedily to the 22-char cap: it breaks at real pauses first, then splits any
+   over-cap run at its biggest internal pauses via `splitAtBiggestPause` — cli-cut's own pass-2
+   rule ("split at strong clause boundaries where the pause was suppressed by the 22-char
+   limit") made deterministic, per Jordan's standing rule that cli-cut wins where becky
+   drifted. Three compounding defects fixed underneath: the `>=` tie-break on ASR-equal gaps
+   landed on the greedy cap boundary; the right piece's length over-counted by the joining
+   space (a 6-char word passed a minPiece of 7); a long lone word ("fundamentals", 12 chars)
+   passed the char guard while still being the defect — candidates now prefer both-pieces-
+   multi-word. Regression tests for all three; the test that PINNED the greedy behaviour now
+   pins the lookahead. Also corrected README's stale "not lowercased by default" note (code
+   always followed cli-cut; `--lower` defaults true).
+2. **H-1 shared state is no longer dead code** (`cmd/clip`). `seek`/`set_select`/
+   `set_threshold` verbs added — main.cpp had been firing all three into `default:` →
+   `ok:false`. Playhead/selection/threshold now land in `assistant.Context.Timeline`
+   (+ the prompt's TIMELINE block prints them), so "delete this clip"/"split here" can
+   resolve. Telemetry only; unit-tested through the bridge.
+3. **H-7 Go half built** (`cmd/clip/forensic.go`): `forensic_query` verb runs becky-judge →
+   becky-hits against the open folder and lands the reel via the existing `LoadReel` (one
+   undo span) + questions sidecar; H-5 events narrate started/progress/done. Execs behind
+   `runJudge`/`runHits` seams — the whole orchestration is tested offline (success, guards,
+   missing-binary message, judge-failure leaves timeline untouched, dispatch wiring).
+   **Left for local: the C++ entry point** (chat route/button → `engineCall("forensic_query")`
+   → `loadTimelineView`, same shape as `apply_proposal`).
+4. **`research/videoagent-integration.md` written** — the intent→verb mapping
+   `BUILD-INPUTS.md:29` promised and nobody wrote.
+5. **The mpv replacement is now a real handoff**: `SPEC-BECKY-VIDEO-ENGINE.md` (architecture +
+   exact FFmpeg/D3D11VA API map + risk order) and `HANDOFF-VIDEO-ENGINE.md` (8 staged,
+   checkboxed steps, each ending runnable and measured — harness-first, wire-in last).
+   C++/GPU build = local lane, on a fresh `local/video-engine` branch.
+6. **CI actually green on Linux again**: four pre-existing Windows-born test failures fixed
+   (notify tests redirected USERPROFILE but not HOME so a fake chat-id leaked into the real
+   home; `pathFromURL` left Vegas drive paths with forward slashes on Linux; the reel
+   never-render-to-cwd guard used host-OS `filepath.IsAbs` — new `pathx.IsAbs` answers for
+   either convention) + two gofmt drifts formatted.
+
 ## The idle-CPU root cause, found and fixed (2026-07-20 PM, local, → `master` `2c6fb53`)
 
 **Why this entry matters:** Jordan reported the app as *"buggy as hell… slow as fuck… I can't

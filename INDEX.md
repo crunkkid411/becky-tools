@@ -138,6 +138,15 @@
   (`--remote-debugging-port=9222 --user-data-dir=X:\AI-2\becky-chrome-profile`, log in once,
   every tool attaches to 9222) + a Win32 OS-level fallback (the "Qwen way"). Read before ANY
   browser-control/OSINT/CDP work.
+- `SPEC-BECKY-VIDEO-ENGINE.md` + `HANDOFF-VIDEO-ENGINE.md` — **the mpv replacement
+  (2026-07-21): libavcodec/D3D11VA direct playback inside Becky Review 3.** The spec carries
+  the decided architecture, the exact FFmpeg API map, and the risk order; the handoff is the
+  8-step staged work order (harness first, wire-in last) for the local agent. Read WITH the
+  mpv verdict in `CONTINUE-HERE.md`. Does NOT touch render/export.
+- `research/videoagent-integration.md` — the VideoAgent→becky **intent→verb mapping**
+  (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
+  timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
+  `HANDOFF-VIDEOAGENT-SEAM.md`.
 - **PRIORITY BUILDS — 2026-06-23 (the "adopt a mature host, add the becky layer" pivot; see
   `BECKY-CANVAS-ROADMAP.md` + the `research/daw-nle-*` + `research/bookmarks-*` docs):**
   - `SPEC-BECKY-NLE.md` — **the real video NLE, to be built FIRST** (Jordan's priority). ADOPT
