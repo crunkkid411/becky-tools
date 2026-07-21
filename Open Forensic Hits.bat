@@ -58,5 +58,11 @@ REM the reel. Hand it to Becky Review so the Q&A cards show in the right panel.
 set "QSIDE=%CASE%\becky-hits.reel.questions.json"
 if exist "%QSIDE%" set "BECKY_REVIEW_QUESTIONS=%QSIDE%"
 
-call "%ROOT%Open Becky Review.bat"
+REM Becky Review 3 - the NATIVE reviewer. This used to call "Open Becky Review.bat",
+REM which launches gui\BeckyReview\...\BeckyReview.exe: the deprecated WPF + WebView2
+REM build. That dropped the whole forensic workflow into the app that FROZE under
+REM Jordan's real input rate, and it violates acceptance items 100/119 ("no embedded
+REM browser engine, ever"). Native won on 2026-07-20; the forensic path has to land
+REM there too. Every BECKY_REVIEW_* env var set above is inherited through this call.
+call "%ROOT%Open Becky Review 3.bat"
 exit /b 0
