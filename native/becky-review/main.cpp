@@ -4684,20 +4684,51 @@ int main(int argc, char** argv) {
             // full-size keyboard Delete is a reach, and his hand is already near Esc
             // between takes. Same edit, same undo span; Esc is purely a second key
             // onto the identical path so the two can never drift apart.
-            if ((GetAsyncKeyState(VK_DELETE) & 1) || (GetAsyncKeyState(VK_ESCAPE) & 1)) {
+            //
+            // DELETE TARGETS THE SELECTION. This used to be clipAtComp(0, editT()) - the
+            // clip under the PLAYHEAD - and never looked at g_sel at all. Once clicking a
+            // clip deliberately stopped moving the playhead (his MUST-NEVER-DO: "when a
+            // user clicks within a clip, the playhead should not be affected"), only half
+            // the pair had been changed, so the app had TWO competing cursors and Delete
+            // followed the wrong one:
+            //     click clip B  ->  B highlights  ->  press Delete  ->  clip A disappears.
+            // Silent, destructive, and Escape fired the same path. (The +-1f buttons below
+            // already targeted g_sel, so the app disagreed with itself.)
+            //
+            // Now: the SELECTION is the target whenever there is one, and every selected
+            // clip goes in ONE undo group (same g_group) so one Ctrl+Z puts them all back.
+            // Delete alone still falls back to the clip under the playhead when nothing is
+            // selected - that is the old muscle memory and it is unambiguous with an empty
+            // selection. ESCAPE never falls back: it is universally "cancel", so with
+            // nothing selected it must be a no-op, not a deletion of whatever the playhead
+            // happens to be sitting on.
+            bool delKey = (GetAsyncKeyState(VK_DELETE) & 1) != 0;
+            bool escKey = (GetAsyncKeyState(VK_ESCAPE) & 1) != 0;
+            if (delKey || escKey) {
                 double t = editT();
-                Clip* c = clipAtComp(0, t);
-                bool noId = c && c->id.empty();
-                bool gated = c && !noId && g_editsInFlight.count(c->id);
-                editLog("EDGE DEL clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
-                if (c && !noId && !gated) {
-                    auto rem = std::make_pair(c->compStart, c->out - c->in);
+                std::vector<Clip*> targets;
+                if (!g_sel.empty()) {
+                    for (auto& c : g_track[0]) if (g_sel.count(c.id)) targets.push_back(&c);
+                } else if (delKey) {
+                    if (Clip* c = clipAtComp(0, t)) targets.push_back(c);
+                }
+                editLog("EDGE DEL key=" + std::string(delKey ? "Del" : "Esc") +
+                        " sel=" + std::to_string(g_sel.size()) + " targets=" + std::to_string(targets.size()));
+                bool anyQueued = false;
+                for (Clip* c : targets) {
+                    if (!c || c->id.empty()) { editLog("  skip: preview-only, no engine id"); continue; }
+                    if (g_editsInFlight.count(c->id)) { editLog("  skip: gated (in flight) id=" + c->id); continue; }
                     EditReq req; req.verb = "remove_clip"; req.args = { {"id", c->id} };
-                    req.kind = 1; req.t = t; req.group = g_group; req.rem = rem;
+                    req.kind = 1; req.t = t; req.group = g_group;
+                    req.rem = std::make_pair(c->compStart, c->out - c->in);
                     g_editsInFlight.insert(c->id);
                     queueEdit(std::move(req));
-                    editLog("QUEUE remove_clip id=" + c->id);
+                    editLog("  QUEUE remove_clip id=" + c->id);
+                    anyQueued = true;
                 }
+                // The removed clips are gone; a stale selection would leave the +-1f
+                // buttons and Render Selection pointing at ids that no longer exist.
+                if (anyQueued && !g_sel.empty()) g_sel.clear();
                 curSec = std::min(curSec, g_compDur); if (!playing) lastComposed = -1;
             }
             if (GetAsyncKeyState('O') & 1) {
