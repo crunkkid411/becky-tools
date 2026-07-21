@@ -33,8 +33,12 @@ func TestChunkWordsBreaksOnPause(t *testing.T) {
 }
 
 func TestChunkWordsBreaksOnCharLimit(t *testing.T) {
-	// No pauses at all: only the 22-char limit can break these.
-	// "aaaaa bbbbb ccccc" = 17 chars; adding " ddddd" would be 23 > 22.
+	// No pauses at all: only the 22-char limit can break these. The full run
+	// ("aaaaa bbbbb ccccc ddddd" = 23 chars) is over the cap, so it must break —
+	// but with LOOKAHEAD, not greedily: the greedy fill gave 3 words + a
+	// stranded "ddddd", which is the exact defect from Jordan's real edit
+	// ("media", "videos", "fundamentals" alone on a line). The balanced split
+	// leaves no lone word.
 	words := []Word{
 		w("aaaaa", 0.0, 0.1),
 		w("bbbbb", 0.1, 0.2),
@@ -45,12 +49,87 @@ func TestChunkWordsBreaksOnCharLimit(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("chunks = %d, want 2", len(got))
 	}
-	if len(got[0]) != 3 {
-		t.Errorf("chunk 0 len = %d, want 3 (17 chars)", len(got[0]))
+	if len(got[0]) != 2 || len(got[1]) != 2 {
+		t.Errorf("chunks = %d + %d words, want 2 + 2 (no stranded lone word)", len(got[0]), len(got[1]))
 	}
-	if len(got[1]) != 1 || got[1][0].Word != "ddddd" {
-		t.Errorf("chunk 1 = %+v, want [ddddd]", got[1])
+}
+
+// TestChunkWordsDoesNotStrandTheCapOverflowWord is the root cause of the 8
+// remaining one-word captions on Jordan's post_constantly edit: with
+// ASR-quantised timings every gap is equal, the old greedy chunker filled the
+// line to exactly the 22-char cap, and whatever word landed after the cap
+// ("videos" here) was stranded alone. The rebalance pass then could not fix it
+// either, because its re-split's >= tie-break on equal gaps picked the same
+// greedy boundary back. The chunker must pick a split that leaves both lines
+// multi-word.
+func TestChunkWordsDoesNotStrandTheCapOverflowWord(t *testing.T) {
+	// "and understand posting" = 22 chars exactly; " videos" overflows.
+	words := []Word{
+		w("and", 0.00, 0.10),
+		w("understand", 0.12, 0.40),
+		w("posting", 0.42, 0.60),
+		w("videos", 0.62, 0.80),
 	}
+	got := ChunkWords(words, 22, 0.120)
+	for i, c := range got {
+		if len(c) < 2 {
+			t.Fatalf("chunk %d = %+v is a lone word — the cap overflow was stranded", i, c)
+		}
+	}
+	if len(got) != 2 || got[0][len(got[0])-1].Word != "understand" {
+		t.Errorf("chunks = %v, want \"and understand\" | \"posting videos\"", renderChunks(got))
+	}
+}
+
+// TestChunkWordsDoesNotStrandALongOverflowWord: a LONG lone word
+// ("fundamentals", 12 chars) passes the char-based minPiece guard, so char
+// length alone cannot catch this — the no-lone-word preference has to be about
+// word count.
+func TestChunkWordsDoesNotStrandALongOverflowWord(t *testing.T) {
+	words := []Word{
+		w("learn", 0.00, 0.20),
+		w("the", 0.22, 0.30),
+		w("actual", 0.32, 0.55),
+		w("fundamentals", 0.57, 1.10),
+	}
+	got := ChunkWords(words, 22, 0.120)
+	for i, c := range got {
+		if len(c) < 2 {
+			t.Fatalf("chunk %d = %+v is a lone word — long words must not be stranded either", i, c)
+		}
+	}
+}
+
+// TestChunkWordsStillBreaksAtRealPausesFirst: the pause rule outranks the cap.
+// A word after a real pause "genuinely stands alone" (Jordan's rule) and must
+// stay its own caption, never be merged to fix a cosmetic lone-word count.
+func TestChunkWordsStillBreaksAtRealPausesFirst(t *testing.T) {
+	words := []Word{
+		w("i", 0.00, 0.05),
+		w("keep", 0.07, 0.20),
+		w("it", 0.22, 0.30),
+		w("simple", 0.32, 0.60),
+		w("actually", 1.50, 1.90), // 0.9s pause — a real break
+	}
+	got := ChunkWords(words, 22, 0.120)
+	if len(got) != 2 {
+		t.Fatalf("chunks = %v, want the pause respected as a break", renderChunks(got))
+	}
+	if len(got[1]) != 1 || got[1][0].Word != "actually" {
+		t.Errorf("chunk 1 = %+v, want [actually] alone (it follows a real pause)", got[1])
+	}
+}
+
+func renderChunks(chunks [][]Word) []string {
+	var out []string
+	for _, c := range chunks {
+		var parts []string
+		for _, wd := range c {
+			parts = append(parts, wd.Word)
+		}
+		out = append(out, strings.Join(parts, " "))
+	}
+	return out
 }
 
 func TestAutoGapSecondsAdaptsToTheASR(t *testing.T) {

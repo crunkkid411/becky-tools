@@ -176,16 +176,28 @@ func splitAtBiggestPause(chunk []Word, maxChars int) [][]Word {
 		return [][]Word{chunk}
 	}
 
-	best, bestGap := -1, -1.0
+	// Candidates come in two tiers: a split leaving BOTH pieces multi-word
+	// always beats one that makes a piece a lone word. A lone word is the
+	// exact defect this function exists to prevent, and the char-based
+	// minPiece guard alone does not catch a long one — "fundamentals" is 12
+	// chars, comfortably past minPiece, and still one word on a line. With
+	// ASR-quantised timings the gaps are frequently ALL equal, and the >=
+	// tie-break below then lands on the last valid index — the greedy cap
+	// boundary itself — so without the tiers this reproduced the very
+	// stranding it was written to fix.
+	best, bestGap := -1, -1.0 // both pieces multi-word
+	lone, loneGap := -1, -1.0 // fits the char guards but strands a lone word
 	fallback, bestBalance := 1, 1<<30
 	for i := 1; i < len(chunk); i++ {
 		left := lineLen(chunk[:i])
+		// The right side's REAL length. lineLen(chunk)-left over-counts by the
+		// joining space, which let a 6-char word slip past a minPiece of 7.
+		right := lineLen(chunk[i:])
 
 		// Most balanced point, used only if no split leaves a fitting left side.
-		if d := abs(left - (lineLen(chunk) - left)); d < bestBalance {
+		if d := abs(left - right); d < bestBalance {
 			bestBalance, fallback = d, i
 		}
-		right := lineLen(chunk) - left
 		// Both sides must carry real content. Without this the biggest pause is
 		// often right after the first word, which strands "want" / "can" / "that"
 		// on a line of their own - technically a pause, useless as a caption.
@@ -198,9 +210,18 @@ func splitAtBiggestPause(chunk []Word, maxChars int) [][]Word {
 		}
 		// >= keeps the LATER of two equal pauses, which fills a line more fully
 		// without ever exceeding the cap.
+		if i == 1 || i == len(chunk)-1 {
+			if gap >= loneGap {
+				loneGap, lone = gap, i
+			}
+			continue
+		}
 		if gap >= bestGap {
 			bestGap, best = gap, i
 		}
+	}
+	if best < 0 {
+		best = lone
 	}
 	if best < 0 {
 		best = fallback
@@ -221,11 +242,14 @@ func abs(n int) int {
 	return n
 }
 
-// rebalanceCapSplits fixes ChunkWords' one blind spot: it packs greedily with
-// NO LOOKAHEAD, so the word that happens to land right after the cap is hit
-// becomes its own line even when nothing about the speech justifies a break
-// there. On Jordan's real edit this produced "to grow on social" / "media" -
-// the combined line ("to grow on social media") is a single character over
+// rebalanceCapSplits repairs a cap-driven break that stranded a lone word.
+// ChunkWords itself no longer packs greedily (it splits over-cap runs at their
+// biggest pauses, with lookahead), so on the pass-1 path this is now a safety
+// net — but it still earns its keep on the MODEL path (RepairModelGroups),
+// where EnforceMaxChars' recursion can strand a word via its fallback, and on
+// any grouping a model returns directly. The founding example, from Jordan's
+// real edit under the old greedy chunker: "to grow on social" / "media" - the
+// combined line ("to grow on social media") is a single character over
 // MaxChars, and the word left behind was never near a pause.
 //
 // Fix: whenever the line AFTER a cap-driven break (never a real pause - see

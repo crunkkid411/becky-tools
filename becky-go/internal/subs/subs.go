@@ -252,39 +252,48 @@ func WordsPerSegment(segments []Segment) [][]Word {
 	return out
 }
 
-// ChunkWords is the deterministic pass-1 chunker: start a new caption when the
-// pause before a word exceeds gapSeconds, or when adding the word would push the
-// line past maxChars.
+// ChunkWords is the deterministic pass-1 chunker. Two rules, in order: break at
+// every real speaker pause (gap > gapSeconds), then split any pause-free run
+// still longer than maxChars at its own biggest internal pauses
+// (splitAtBiggestPause) rather than filling greedily up to the cap.
+//
+// It used to fill greedily with no lookahead, which was the root cause of the
+// stranded one-word captions on Jordan's real edit ("media", "videos",
+// "fundamentals", ...): whatever word landed after the cap became its own line
+// even though nothing about the speech justified a break there. cli-cut's own
+// rule for a cap-length line (its SKILL.md pass 2) is "Split at strong clause
+// boundaries where the pause was suppressed by the 22-char limit" — and the
+// deterministic stand-in for a clause boundary is the run's biggest pause,
+// which is exactly what splitAtBiggestPause picks.
 func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
-	var chunks [][]Word
+	// First pass: cut the stream at real pauses only. Every break here is one
+	// the speaker actually made.
+	var runs [][]Word
 	var cur []Word
-	curLen := 0
-
 	for _, w := range words {
-		text := strings.TrimSpace(w.Word)
-		if text == "" {
+		if strings.TrimSpace(w.Word) == "" {
 			continue
 		}
-		addedLen := len(text)
-		if len(cur) > 0 {
-			addedLen++ // the joining space
-			prevEnd := cur[len(cur)-1].End
-			gap := w.Start - prevEnd
-			if gap < 0 {
-				gap = 0
-			}
-			if gap > gapSeconds || curLen+addedLen > maxChars {
-				chunks = append(chunks, cur)
-				cur = []Word{w}
-				curLen = len(text)
-				continue
-			}
+		if len(cur) > 0 && w.Start-cur[len(cur)-1].End > gapSeconds {
+			runs = append(runs, cur)
+			cur = nil
 		}
 		cur = append(cur, w)
-		curLen += addedLen
 	}
 	if len(cur) > 0 {
-		chunks = append(chunks, cur)
+		runs = append(runs, cur)
+	}
+
+	// Second pass: a run that cannot fit on one line breaks where the speaker
+	// paused longest, with lookahead across the whole run — never at the
+	// character the cap happened to land on.
+	var chunks [][]Word
+	for _, run := range runs {
+		if maxChars > 0 && lineLen(run) > maxChars {
+			chunks = append(chunks, splitAtBiggestPause(run, maxChars)...)
+			continue
+		}
+		chunks = append(chunks, run)
 	}
 	return chunks
 }

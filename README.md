@@ -72,8 +72,16 @@ Two things worth knowing:
   with `end == start`, so its ordinary connected-speech gap is 0.16-0.24s — above the constant, which
   breaks after nearly every word (measured: 421 captions from 631 words). `subs.AutoGapSeconds` takes
   the 90th percentile of the transcript's own gaps instead (0.32s here → 180 captions, 3-4 words each).
-- **Captions are NOT lowercased by default**, unlike `cli-cut`. Jordan's published captions keep
-  sentence case and punctuation ("Their label doesn't want you..."). `--lower` restores the old look.
+- **Captions follow the cli-cut look by default** — lowercased, trailing sentence punctuation
+  stripped (`--lower` defaults to true; the burned proof frame reads "27 times a day"). Pass
+  `--lower=false` to keep sentence case. (An earlier version of this note claimed the opposite;
+  the code was always the truth, and Jordan's standing rule is: where becky and `cli-cut`
+  disagree on captions, `cli-cut` wins.)
+- **Over-long lines split at the speaker's biggest pause, with lookahead — never greedily at the
+  character cap.** The greedy fill stranded whatever word landed after the 22-char cap on its own
+  line ("media", "videos", "fundamentals" — 8 of them on the real edit). `cli-cut`'s own rule for
+  this case: "split at strong clause boundaries where the pause was suppressed by the 22-char
+  limit" — now enforced deterministically in `subs.ChunkWords`/`splitAtBiggestPause`.
 
 ## Importing an edit you already cut (`becky-otio --import`)
 
