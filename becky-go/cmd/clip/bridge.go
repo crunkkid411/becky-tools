@@ -156,6 +156,23 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		tl, changed := a.Redo()
 		return map[string]any{"timeline": tl, "changed": changed}, nil
 
+	// ---- H-1 shared state (UI → engine telemetry) ----
+	// The C++ app fires these from worker threads on every scrub, selection
+	// change and threshold drag. Before they existed here, all three fell
+	// through to default: → ok:false and the reply was discarded — so the
+	// engine (and through it the AI) never learned the playhead, selection or
+	// threshold. Telemetry only: none of them mutate the reel or the undo
+	// history; they feed assistant.Context.Timeline so "this clip"/"here"
+	// resolve against where Jordan actually is.
+	case "seek":
+		// "quiet" marks a scrub echo vs a deliberate seek; the stored state is
+		// the same either way, so it is accepted and ignored.
+		return a.SetPlayhead(argFloat(args, "t")), nil
+	case "set_select":
+		return a.SetSelection(argStringSlice(args, "ids")), nil
+	case "set_threshold":
+		return a.SetThreshold(argBool(args, "on"), argFloat(args, "level")), nil
+
 	// ---- save / load ----
 	case "save_reel":
 		path, err := a.SaveReel(argString(args, "path"))

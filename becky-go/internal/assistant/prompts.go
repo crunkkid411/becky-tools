@@ -83,6 +83,12 @@ func timelineBlock(ts TimelineState) string {
 		fmt.Fprintf(&b, "  #%d id=%s %s [%s-%s] %q\n",
 			i+1, c.ID, baseName(c.Source), secondsToTimecode(c.In), secondsToTimecode(c.Out), label)
 	}
+	// H-1 shared state: where Jordan IS. "this clip"/"here" in a request means
+	// the selection / the playhead, so the model has to see them.
+	fmt.Fprintf(&b, "  PLAYHEAD: %s\n", secondsToTimecode(ts.Playhead))
+	if len(ts.Selected) > 0 {
+		fmt.Fprintf(&b, "  SELECTED CLIP IDS: %s\n", strings.Join(ts.Selected, ", "))
+	}
 	return b.String()
 }
 

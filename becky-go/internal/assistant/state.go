@@ -46,9 +46,21 @@ type ClipRef struct {
 // TimelineState is the assistant's lightweight view of the current compilation:
 // the ordered clips + which overlay fields are on. It is small (no media), so it
 // goes into every model prompt unchanged.
+//
+// Playhead/Selected/SkipQuiet* are the H-1 shared state the editing UI reports
+// through the engine's seek/set_select/set_threshold verbs — they let a request
+// like "delete this clip" or "split here" resolve against where Jordan actually
+// is, instead of guessing.
 type TimelineState struct {
 	Clips   []ClipRef       `json:"clips"`
 	Overlay map[string]bool `json:"overlay,omitempty"` // e.g. {"date":true,"timecode":true}
+	// Playhead is the editor's playhead in compilation seconds.
+	Playhead float64 `json:"playhead,omitempty"`
+	// Selected holds the clip IDs currently selected in the UI, in timeline order.
+	Selected []string `json:"selected,omitempty"`
+	// SkipQuietOn/SkipQuietDB mirror the UI's skip-quiet threshold toggle+level.
+	SkipQuietOn bool    `json:"skip_quiet_on,omitempty"`
+	SkipQuietDB float64 `json:"skip_quiet_db,omitempty"`
 }
 
 // Context is the per-turn state the funnel + prompts need (all cheap to

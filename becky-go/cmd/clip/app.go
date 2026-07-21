@@ -114,6 +114,20 @@ type App struct {
 	// stale index can never resolve to the wrong clip.
 	lastSearchHits []footage.Candidate
 
+	// uiPlayhead / uiSelected / uiThresholdOn / uiThresholdDB are the H-1
+	// shared state the editing UI reports through the seek / set_select /
+	// set_threshold verbs: the playhead (compilation seconds), the selected
+	// clip IDs, and the skip-quiet threshold. Telemetry only — storing them
+	// never mutates the reel — but they flow into assistant.Context.Timeline
+	// so "delete this clip" / "split here" resolve against where Jordan
+	// actually is. Before these existed the C++ app fired all three verbs at
+	// a dispatch table that did not know them, so the engine (and the AI)
+	// never learned any of it.
+	uiPlayhead    float64
+	uiSelected    []string
+	uiThresholdOn bool
+	uiThresholdDB float64
+
 	// emit is H-5's AI-activity sink: set by cmdBridge (main.go) to push
 	// {"event":{...}} lines over the NDJSON stdio seam (GUI-RULES.md §2's
 	// "event" message kind) so the right panel can show what becky is doing
@@ -1351,6 +1365,38 @@ func (a *App) Ask(ctx context.Context, utterance string) (assistant.Proposal, er
 	return p, nil
 }
 
+// ---- H-1 shared state (UI → engine telemetry) -----------------------------
+
+// SetPlayhead records the editor's playhead in compilation seconds. Fired by
+// the UI's coalescing seek worker on every scrub/settle; always succeeds.
+func (a *App) SetPlayhead(t float64) map[string]any {
+	if t < 0 {
+		t = 0
+	}
+	a.mu.Lock()
+	a.uiPlayhead = t
+	a.mu.Unlock()
+	return map[string]any{"t": t}
+}
+
+// SetSelection records which clip IDs are selected in the UI. An empty list is
+// a real state (nothing selected), not an error.
+func (a *App) SetSelection(ids []string) map[string]any {
+	a.mu.Lock()
+	a.uiSelected = append([]string(nil), ids...)
+	a.mu.Unlock()
+	return map[string]any{"selected": len(ids)}
+}
+
+// SetThreshold records the UI's skip-quiet toggle and its dB level.
+func (a *App) SetThreshold(on bool, levelDB float64) map[string]any {
+	a.mu.Lock()
+	a.uiThresholdOn = on
+	a.uiThresholdDB = levelDB
+	a.mu.Unlock()
+	return map[string]any{"on": on, "level": levelDB}
+}
+
 // BeckyStatus reports which AI backends are usable right now (claude CLI / API key
 // / local model) plus the current online toggle, so the GUI can tell the user — in
 // plain language — what is powering the chat and how to enable more. It builds the
@@ -1390,6 +1436,10 @@ func (a *App) timelineStateLocked() assistant.TimelineState {
 			"location": ov.ShowLocation,
 			"link":     ov.ShowLink,
 		},
+		Playhead:    a.uiPlayhead,
+		Selected:    append([]string(nil), a.uiSelected...),
+		SkipQuietOn: a.uiThresholdOn,
+		SkipQuietDB: a.uiThresholdDB,
 	}
 }
 

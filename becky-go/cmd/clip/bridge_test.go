@@ -355,3 +355,49 @@ func TestPeaksAndAutoCutVerbsWireThroughDispatch(t *testing.T) {
 		t.Error("degrade should carry a plain-language note")
 	}
 }
+
+// TestCallH1SharedStateVerbs covers the UI→engine telemetry verbs. main.cpp
+// fires seek/set_select/set_threshold from three worker threads; before these
+// existed each fell through to default: → ok:false with the reply discarded,
+// so the engine — and through Context.Timeline the AI — never learned the
+// playhead, the selection or the threshold (the H-1 dead code found by the
+// 2026-07-20 audit).
+func TestCallH1SharedStateVerbs(t *testing.T) {
+	app := NewApp()
+
+	if r := callEnv(t, app, "seek", `{"t":14.7,"quiet":true}`); !r.OK {
+		t.Fatalf("seek failed: %s", r.Error)
+	}
+	if r := callEnv(t, app, "set_select", `{"ids":["c2","c5"]}`); !r.OK {
+		t.Fatalf("set_select failed: %s", r.Error)
+	}
+	if r := callEnv(t, app, "set_threshold", `{"on":true,"level":-17}`); !r.OK {
+		t.Fatalf("set_threshold failed: %s", r.Error)
+	}
+
+	app.mu.Lock()
+	ts := app.timelineStateLocked()
+	app.mu.Unlock()
+	if ts.Playhead != 14.7 {
+		t.Errorf("playhead = %v, want 14.7", ts.Playhead)
+	}
+	if len(ts.Selected) != 2 || ts.Selected[0] != "c2" || ts.Selected[1] != "c5" {
+		t.Errorf("selected = %v, want [c2 c5]", ts.Selected)
+	}
+	if !ts.SkipQuietOn || ts.SkipQuietDB != -17 {
+		t.Errorf("threshold = on:%v level:%v, want on:true level:-17", ts.SkipQuietOn, ts.SkipQuietDB)
+	}
+
+	// A cleared selection is a real state, and a negative playhead clamps to 0.
+	callEnv(t, app, "set_select", `{"ids":[]}`)
+	callEnv(t, app, "seek", `{"t":-3}`)
+	app.mu.Lock()
+	ts = app.timelineStateLocked()
+	app.mu.Unlock()
+	if len(ts.Selected) != 0 {
+		t.Errorf("selected after clear = %v, want empty", ts.Selected)
+	}
+	if ts.Playhead != 0 {
+		t.Errorf("playhead after negative seek = %v, want 0 (clamped)", ts.Playhead)
+	}
+}
