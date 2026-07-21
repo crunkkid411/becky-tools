@@ -202,10 +202,30 @@ Status, checked 2026-07-20 — **the app half is mostly not built**:
 
 | | Requirement (`BUILD_1.md:477-484`) | State |
 |---|---|---|
-| H-4 | `apply_edit_batch` — a whole AI pass is ONE undo span | Go side built + tested (`cmd/clip/edit_batch.go`, `bridge.go:223`); **C++ side not wired** — `native/becky-review/main.cpp` mentions it once, in a comment at L3107 |
-| H-5 | `event` stream announcing AI activity **without blocking Jordan's editing** | not found |
-| H-6 | plain-language intent in chat → timeline edits he can see/adjust/undo, via the existing `ask`/`apply_proposal` seam (**never fork it**) | not found |
-| H-7 | forensic path in-app: query → qmd recall → becky-judge → becky-hits reel on the timeline | not found |
+| H-4 | `apply_edit_batch` — a whole AI pass is ONE undo span | **BUILT (Go), deliberately not called raw from C++.** `cmd/clip/edit_batch.go` (one `pushUndoLocked` before the op loop), dispatch `bridge.go:223-232`, tests in `edit_batch_test.go`. The C++ side never calls the verb directly — it doesn't need to: every approved chat edit routes `applyActions` → `ApplyEditBatch`, so Jordan already gets one-press undo. The raw verb only matters for a future planner. |
+| H-5 | `event` stream announcing AI activity **without blocking Jordan's editing** | **BUILT, both sides.** Go: `app.go:121-136` (`EventEmitter`/`emitEvent`), `app.go:1336/1347/1350`, NDJSON writer `main.go:195`. C++: reader branch `main.cpp:186-213`, capped 50-deep deque, passive render in the frame loop. |
+| H-6 | plain-language intent in chat → timeline edits he can see/adjust/undo, via the existing `ask`/`apply_proposal` seam (**never fork it**) | **BUILT, both sides, seam NOT forked.** Go `app.go:1336-1350` + `bridge.go:212-222`; C++ ask / apply / reject + the proposal card. |
+| H-7 | forensic path in-app: query → qmd recall → becky-judge → becky-hits reel on the timeline | **THE ONLY ONE ACTUALLY MISSING.** No `forensic_query` verb (`bridge.go` has 45 verbs, none forensic); `becky-judge`/`becky-hits`/`forensic` = 0 hits in `main.cpp`. Reachable today only by an outside agent building the reel first, then `load_reel` / `BECKY_REVIEW_REEL`. |
+
+> **Corrected 2026-07-20 PM by a full code audit.** The three "not found" entries above were
+> wrong — H-5 and H-6 are real and H-4 is a defensible deviation, verified in BOTH languages.
+> H-7 is the genuine gap. Believe the code, not the older prose further down this file.
+
+### Two more things that audit found, worth fixing before H-7
+
+- **`Open Forensic Hits.bat` launched the WRONG APP** — it `call`ed `Open Becky Review.bat`,
+  i.e. `gui\BeckyReview\...\BeckyReview.exe`, the deprecated **WPF + WebView2** build that froze
+  under Jordan's input rate and violates acceptance items 100/119 ("no embedded browser engine,
+  ever"). So the entire forensic workflow landed in the dead app. **Fixed** — it now calls
+  `Open Becky Review 3.bat`; the `BECKY_REVIEW_*` env vars were always correct and are inherited.
+- **H-1 shared state is DEAD CODE, both directions.** `main.cpp` fires `seek`, `set_select` and
+  `set_threshold` from three worker threads, and **none of those three verbs exists in
+  `bridge.go`** — every one falls through to `default:` → `ok:false` and the reply is discarded.
+  main.cpp's own comment admits `"seek"/"set_select" … never did [exist] and were silent
+  no-ops`. So the engine (and therefore the AI) never learns the playhead, the selection or the
+  threshold. Either add the three trivial verbs or delete the three threads — but do not leave
+  it looking wired when it is not. (This is also why making `emitScrub` async was free: it was
+  blocking the UI thread on a round-trip to a verb that does not exist.)
 
 Constraints that go with it: **no MCP server, no separate AI tool surface** —
 the AI uses the SAME shared-state JSON / engine-verb seam the human UI uses
@@ -273,7 +293,15 @@ none stalls (median 16.0ms, 0 frames over 100ms in a full drag/scrub/split/
 render session) — converting them is real risk for no measured gain. The
 frame-trace harness is compiled in; revisit if one ever shows a stall.
 
-## KNOWN LANDMINE — flagged, deliberately not defused
+## ~~KNOWN LANDMINE~~ — RESOLVED 2026-07-20, kept only for the reasoning
+
+> **This is FIXED — do not go hunting it.** `drainAsync()` was moved OUT of `drawTimeline()`
+> and into the main loop; `main.cpp` even carries a marker comment where it used to sit
+> ("drainAsync used to be called HERE. It is not anymore"). Verified by code audit
+> 2026-07-20 PM. The description below is retained because the reasoning is worth keeping,
+> not because the hazard is live.
+
+## KNOWN LANDMINE (historical) — flagged, deliberately not defused
 
 `apply_proposal`'s async completion callback mutates `g_track` from inside
 `drainAsync()`, which runs inside `drawTimeline()`. Traced 2026-07-20: it does
