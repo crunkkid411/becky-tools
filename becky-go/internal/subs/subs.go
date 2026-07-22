@@ -131,6 +131,18 @@ const (
 	maxAutoGap = 0.600
 )
 
+// gapEps absorbs float noise when a gap is compared to the pause threshold.
+// Parakeet quantises word times to 0.08s, so dozens of gaps are "0.32s" — but
+// as float64 subtractions they differ in their last bits (0.3200000000000216
+// vs 0.3200000000000074), and the threshold is itself one of those gaps
+// (AutoGapSeconds' p90). Strictly-greater on those near-equal floats made the
+// SAME spoken gap break in one place and not another: on Jordan's real edit it
+// split "a thousand" / "videos" and stranded "i", at spots where silencedetect
+// shows no real pause at all. A microsecond is far below anything an ASR can
+// distinguish and far above the float noise, so: a gap within gapEps of the
+// threshold is NOT a pause.
+const gapEps = 1e-6
+
 // AutoGapSeconds derives the pause threshold from the transcript's OWN timing
 // instead of assuming a constant.
 //
@@ -274,7 +286,7 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 		if strings.TrimSpace(w.Word) == "" {
 			continue
 		}
-		if len(cur) > 0 && w.Start-cur[len(cur)-1].End > gapSeconds {
+		if len(cur) > 0 && w.Start-cur[len(cur)-1].End > gapSeconds+gapEps {
 			runs = append(runs, cur)
 			cur = nil
 		}
@@ -350,7 +362,7 @@ func continuesAcrossCut(prevSeg Segment, prevChunks [][]Word, nextSeg Segment, n
 	if leading < 0 {
 		leading = 0
 	}
-	return trailing+leading <= gapSeconds
+	return trailing+leading <= gapSeconds+gapEps
 }
 
 // BuildFromChunks is Build with the word grouping already decided — used when

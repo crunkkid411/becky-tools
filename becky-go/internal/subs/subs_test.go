@@ -388,8 +388,10 @@ func TestBuildFloorNeverOverlapsNextCue(t *testing.T) {
 	// blinking OFF for a few frames — when the next caption is already arriving
 	// there is no blink to prevent, so the incoming caption wins.
 	words := []Word{
-		w("aaaaaaaaaaaaaaaaaaaaa", 0.00, 0.04), // 21 chars — next word must break
-		w("b", 0.05, 0.90),
+		// 21 + 8 chars: 30 combined, past even the burn slack, so the line
+		// MUST break (a shorter second word would now be kept whole instead).
+		w("aaaaaaaaaaaaaaaaaaaaa", 0.00, 0.04),
+		w("bbbbbbbb", 0.05, 0.90),
 	}
 	segs := []Segment{{Start: 0.0, End: 1.0, Words: words}}
 	cues := Build(segs, DefaultOptions())

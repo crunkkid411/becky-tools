@@ -176,17 +176,33 @@ func splitAtBiggestPause(chunk []Word, maxChars int) [][]Word {
 		return [][]Word{chunk}
 	}
 
-	// Candidates come in two tiers: a split leaving BOTH pieces multi-word
-	// always beats one that makes a piece a lone word. A lone word is the
-	// exact defect this function exists to prevent, and the char-based
-	// minPiece guard alone does not catch a long one — "fundamentals" is 12
-	// chars, comfortably past minPiece, and still one word on a line. With
-	// ASR-quantised timings the gaps are frequently ALL equal, and the >=
-	// tie-break below then lands on the last valid index — the greedy cap
-	// boundary itself — so without the tiers this reproduced the very
-	// stranding it was written to fix.
-	best, bestGap := -1, -1.0 // both pieces multi-word
-	lone, loneGap := -1, -1.0 // fits the char guards but strands a lone word
+	// Every split point is ranked into a tier, best (lowest) first:
+	//
+	//   0 — both pieces multi-word, the left piece fits the cap, and the
+	//       boundary word doesn't dangle (RepairDangling won't need to undo
+	//       it later);
+	//   1 — like 0, but the left piece runs past the cap by at most
+	//       overflowSlack. The burn width already allows cap+slack everywhere
+	//       else (RepairDangling's push, the cross-cut merge), and a
+	//       slightly-long line that keeps a phrase whole beats every option
+	//       below — this is what keeps "posting twenty-seven times" together
+	//       instead of stranding "posting";
+	//   2 — both pieces multi-word but the boundary word dangles ("the",
+	//       "gonna", "twenty-seven"): RepairDangling will push that word
+	//       forward, and pushing out of a short line is exactly how lone
+	//       words were made, so only when nothing cleaner exists;
+	//   3 — a lone word at either end. The defect this whole function exists
+	//       to prevent; kept only as the very last resort for a chunk too
+	//       long to keep whole (below) with no multi-word split at all.
+	//
+	// Within a tier the biggest pause wins; >= keeps the LATER of two equal
+	// pauses, which fills lines more fully without exceeding the cap. And if
+	// even the best candidate would strand a lone word but the WHOLE chunk
+	// fits within maxChars+overflowSlack, the chunk is kept whole: a line a
+	// few characters over the cap reads fine on screen, a stranded word does
+	// not ("the fundamentals learned" whole beats "the fundamentals" +
+	// a 33ms "learned").
+	bestTier, best, bestGap := 1<<30, -1, -1.0
 	fallback, bestBalance := 1, 1<<30
 	for i := 1; i < len(chunk); i++ {
 		left := lineLen(chunk[:i])
@@ -194,34 +210,38 @@ func splitAtBiggestPause(chunk []Word, maxChars int) [][]Word {
 		// joining space, which let a 6-char word slip past a minPiece of 7.
 		right := lineLen(chunk[i:])
 
-		// Most balanced point, used only if no split leaves a fitting left side.
+		// Most balanced point, used only if no ranked split exists at all.
 		if d := abs(left - right); d < bestBalance {
 			bestBalance, fallback = d, i
 		}
-		// Both sides must carry real content. Without this the biggest pause is
-		// often right after the first word, which strands "want" / "can" / "that"
-		// on a line of their own - technically a pause, useless as a caption.
-		if left > maxChars || left < minPiece(maxChars) || right < minPiece(maxChars) {
+		// Both sides must carry real content, and the left side must at least
+		// fit the burn width. Without the minPiece guards the biggest pause is
+		// often right after the first word, which strands "want" / "can" /
+		// "that" on a line of their own.
+		if left < minPiece(maxChars) || right < minPiece(maxChars) || left > maxChars+overflowSlack {
 			continue
+		}
+		tier := 0
+		switch {
+		case i == 1 || i == len(chunk)-1:
+			tier = 3
+		case isDangling(chunk[i-1].Word):
+			tier = 2
+		case left > maxChars:
+			tier = 1
 		}
 		gap := chunk[i].Start - chunk[i-1].End
 		if gap < 0 {
 			gap = 0
 		}
-		// >= keeps the LATER of two equal pauses, which fills a line more fully
-		// without ever exceeding the cap.
-		if i == 1 || i == len(chunk)-1 {
-			if gap >= loneGap {
-				loneGap, lone = gap, i
-			}
-			continue
-		}
-		if gap >= bestGap {
-			bestGap, best = gap, i
+		if tier < bestTier || (tier == bestTier && gap >= bestGap) {
+			bestTier, best, bestGap = tier, i, gap
 		}
 	}
-	if best < 0 {
-		best = lone
+	if bestTier >= 3 && lineLen(chunk) <= maxChars+overflowSlack {
+		// Nothing splits this without stranding a word — keep it whole, it
+		// still fits the burn width.
+		return [][]Word{chunk}
 	}
 	if best < 0 {
 		best = fallback
@@ -296,7 +316,7 @@ func rebalanceCapSplits(chunks [][]Word, maxChars int, gapSeconds float64) [][]W
 				gap = 0
 			}
 			switch {
-			case gap > gapSeconds:
+			case gap > gapSeconds+gapEps:
 				// A real pause - not this bug, leave it.
 			case isDangling(last):
 				if lineLen(cur)-len(last)-1 < minPiece(maxChars) {
@@ -313,7 +333,12 @@ func rebalanceCapSplits(chunks [][]Word, maxChars int, gapSeconds float64) [][]W
 				// blind re-split would - leave it for that pass.
 			default:
 				combined := append(append([]Word{}, cur...), next)
-				if pieces := splitAtBiggestPause(combined, maxChars); len(pieces) >= 2 && noLonePiece(pieces) {
+				// A single returned piece is the pair folded into one line
+				// (splitAtBiggestPause keeps a chunk whole when nothing
+				// splits it cleanly and it fits the burn width) — that fold
+				// is an acceptable repair too, so only a lone-word piece
+				// rejects the re-split.
+				if pieces := splitAtBiggestPause(combined, maxChars); noLonePiece(pieces) {
 					out = append(out, pieces...)
 					i++ // the lone chunk was folded into pieces above
 					continue
@@ -397,9 +422,23 @@ func RepairDangling(chunks [][]Word, maxChars int) [][]Word {
 	}
 
 	// pushTrailing moves a phrase-splitting last word onto the next line.
+	//
+	// Never out of a TWO-word line whose other word is a real word: that
+	// leaves it alone on screen, which is the exact stranded-caption defect
+	// this package exists to prevent — on Jordan's real edit this push
+	// manufactured "posting", "anything" and "probably" as one-word cues at
+	// spots where the audio has no pause at all. A line ending on a dangler
+	// (even a number) is the lesser evil, and splitAtBiggestPause avoids
+	// creating such pairs in the first place. When the word left behind is
+	// itself a dangler ("against another": pushing "another" leaves
+	// "against"), the push is fine — mergeContentless sweeps the leftover
+	// forward too and the whole line dissolves instead of stranding.
 	pushTrailing := func(in [][]Word) [][]Word {
 		for i := len(in) - 2; i >= 0; i-- {
 			for len(in[i]) > 1 && isDangling(in[i][len(in[i])-1].Word) {
+				if len(in[i]) == 2 && !isDangling(in[i][0].Word) {
+					break // pushing would strand a real word
+				}
 				word := in[i][len(in[i])-1]
 				// Never strand what is left behind. Pushing "to" out of "want to"
 				// leaves "want" alone on screen, which is worse than the dangle

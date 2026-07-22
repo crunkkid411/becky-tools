@@ -46,9 +46,15 @@ func TestRepairKeepsNumberWithItsUnit(t *testing.T) {
 			[]string{"don't post", "27 times a day"},
 		},
 		{
-			"hyphenated number is not stranded",
+			// Pushing "twenty-seven" out of a TWO-word line would leave
+			// "posting" alone on screen — the stranded-caption defect, seen
+			// verbatim on the real edit at 40.07s with no pause in the audio.
+			// The no-strand rule outranks the number rule here; the pair
+			// itself is a chunking mistake splitAtBiggestPause no longer
+			// makes (it keeps "posting twenty-seven times" together).
+			"hyphenated number stays when moving it would strand a word",
 			[]string{"posting twenty-seven", "times a day"},
-			[]string{"posting", "twenty-seven times a day"},
+			[]string{"posting twenty-seven", "times a day"},
 		},
 		{
 			"already correct is left alone",
@@ -204,7 +210,10 @@ func TestRebalanceCapSplitsPicksNaturalPauseOverCapBoundary(t *testing.T) {
 		{w("media", 0.86, 0.96)},
 	}
 	got := render(rebalanceCapSplits(in, 22, 0.12))
-	want := []string{"to grow on", "social media"}
+	// The biggest pause sits before "social", but that boundary ends the left
+	// line on the dangling "on" — which RepairDangling would then push
+	// forward anyway. The splitter now goes straight to the final grouping.
+	want := []string{"to grow", "on social media"}
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
 	}
@@ -289,6 +298,106 @@ func TestPass1ChunksEliminatesTheLoneWordEndToEnd(t *testing.T) {
 	want := []string{"to grow", "on social media"}
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// The five tests below are the 2026-07-21 one-word-caption regressions,
+// rebuilt from the REAL word timings in post_constantly's transcript
+// (FLYV9992_convertedsnow2.transcript.json). ffmpeg silencedetect confirmed
+// none of these spots has a real pause at the run's derived threshold
+// (0.32s), so none of them may produce a one-word caption. Each asserts the
+// exact grouping, not just "no lone word".
+
+// "posting" was stranded at 40.07s: RepairDangling pushed the number
+// "twenty-seven" out of a two-word line. The right grouping keeps the number
+// with its unit by letting the first line run 4 chars into the burn slack.
+func TestPass1KeepsPostingWithItsNumber(t *testing.T) {
+	words := []Word{
+		w("posting", 107.04, 107.36), w("twenty-seven", 107.60, 108.00),
+		w("times", 108.16, 108.32), w("a", 108.48, 108.48),
+		w("day,", 108.56, 108.80), w("it's", 108.88, 109.20),
+	}
+	got := render(Pass1Chunks(words, 22, 0.32))
+	want := []string{"posting twenty-seven times", "a day, it's"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// "anything" was stranded at 56.72s: the splitter broke before "because"
+// (a dangling conjunction), and RepairDangling's push then left "anything,"
+// alone. The splitter must pick the boundary after "i'm" instead.
+func TestPass1DoesNotStrandAnything(t *testing.T) {
+	words := []Word{
+		w("don't", 139.28, 139.52), w("tell", 139.76, 139.84), w("me", 139.92, 139.92),
+		w("anything,", 140.08, 140.40), w("because", 140.48, 140.48),
+		w("I'm", 140.64, 140.80), w("not", 140.80, 140.80), w("gonna", 140.88, 141.04),
+	}
+	got := render(Pass1Chunks(words, 22, 0.32))
+	want := []string{"don't tell me", "anything, because I'm", "not gonna"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// "probably" was stranded at 115.68s (zero silence there even at -25dB):
+// the splitter cut after "gonna", and RepairDangling's push of the dangling
+// "gonna" out of the two-word "probably gonna" left "probably" alone.
+func TestPass1DoesNotStrandProbably(t *testing.T) {
+	words := []Word{
+		w("probably", 242.80, 242.88), w("gonna", 243.04, 243.20),
+		w("give", 243.28, 243.36), w("you", 243.44, 243.44), w("some", 243.52, 243.52),
+		w("bad", 243.68, 243.76), w("outdated", 243.92, 244.24),
+		w("advice", 244.40, 244.56), w("to", 244.72, 244.72), w("be", 244.88, 244.88),
+		w("honest", 244.96, 245.12),
+	}
+	got := render(Pass1Chunks(words, 22, 0.32))
+	want := []string{"probably gonna give", "you some bad outdated", "advice to be honest"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// "learned" became a 33ms cue at 137.87s: the only in-cap split of
+// "the fundamentals learned" strands "learned", so the chunk must be kept
+// WHOLE — 24 chars, over the 22 cap but inside the burn slack, which beats a
+// stranded word every time.
+func TestPass1KeepsFundamentalsLearnedWhole(t *testing.T) {
+	words := []Word{
+		w("you", 279.60, 279.60), w("don't", 279.68, 279.84), w("have", 280.00, 280.00),
+		w("the", 280.16, 280.16), w("fundamentals", 280.24, 280.64),
+		w("learned", 280.80, 281.12),
+	}
+	got := render(Pass1Chunks(words, 22, 0.32))
+	want := []string{"you don't have", "the fundamentals learned"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// "a thousand" / "videos" split (68.30s) and "i" stranded (93.46s) because
+// Parakeet quantises times to 0.08s: the gap before "videos" and the derived
+// threshold are BOTH "0.32s", but as float64 subtractions they differ in the
+// last bits, and strictly-greater flickered. A gap within gapEps of the
+// threshold is not a pause.
+func TestChunkWordsQuantisedGapAtThresholdIsNotAPause(t *testing.T) {
+	// Runtime float64 subtraction (constant expressions would be exact and
+	// hide the noise this test exists to pin).
+	e1, s1, e2, s2, thr := 163.76, 164.08, 203.92, 204.24, 0.32
+	if !(s1-e1 > thr) || !(s2-e2 > thr) {
+		t.Fatal("fixture no longer exercises the float-noise case")
+	}
+	got := render(ChunkWords([]Word{
+		w("a", 163.28, 163.28), w("thousand", 163.52, 163.76), w("videos", 164.08, 164.40),
+	}, 22, 0.32))
+	if len(got) != 1 || got[0] != "a thousand videos" {
+		t.Errorf("got %q, want one chunk \"a thousand videos\"", strings.Join(got, " | "))
+	}
+	got = render(ChunkWords([]Word{
+		w("I", 203.92, 203.92), w("pressed", 204.24, 204.56), w("record", 204.72, 204.96),
+	}, 22, 0.32))
+	if len(got) != 1 || got[0] != "I pressed record" {
+		t.Errorf("got %q, want one chunk \"I pressed record\"", strings.Join(got, " | "))
 	}
 }
 
