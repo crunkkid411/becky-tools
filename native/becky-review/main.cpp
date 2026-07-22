@@ -956,6 +956,11 @@ struct Peaks {
     std::string source, cachePath;
 };
 static const int kMaxStuckAttempts = 8;
+// cycle 22: bounds a single decodeWindow() attempt so a hung GStreamer pipeline
+// (confirmed reproducible on a real, otherwise-clean corpus file - see
+// decodeWindow's comment) can't block a bgPool worker thread forever. Worst
+// case before giving up on a window entirely: kMaxStuckAttempts * this.
+static const double kDecodeWindowTimeoutSec = 15.0;
 static std::map<std::string, std::shared_ptr<Peaks>> g_peaks;
 static std::mutex g_peaksMx;
 static std::mutex g_decMx; static std::condition_variable g_decCv; static int g_decActive = 0;
@@ -1224,12 +1229,34 @@ static void savePeaksCache(Peaks& P) {
     fclose(f);
     P.dirty = false;
 }
-static void decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a, double b) {
+// cycle 22 real-corpus finding: this reads decodeWindow's own progress, not a
+// success/fail flag. E:\TakingBack2007's real .mkv was previously assumed to
+// have a genuine ~48min audio CAPTURE GAP (project memory) - that theory is
+// WRONG for this file: ffprobe reads all 710k audio packets end to end with
+// zero gaps >1s, and ffmpeg fully decodes the audio track to a null output in
+// 12s with zero warnings. The actual bug is THIS pipeline: reproduced live
+// with gst-launch-1.0 using this exact "uridecodebin ! ... ! appsink" string
+// against the real file - it prerolls fine (duration resolves correctly,
+// matching the app's own fast "ready=1" logs) and then HANGS after
+// PLAYING (90+ seconds, zero buffers, zero EOS, zero bus error). Before this
+// fix, decodeWindow's own for(;;) pull loop had no deadline, so a hang like
+// this blocked a bgPool worker thread FOREVER and the closing block below
+// blindly marked the ENTIRE requested [a,b) range "filled" the moment the
+// loop exited for ANY reason - so even a mostly-empty decode looked like a
+// complete one to the rest of the app. Returns the highest second actually
+// reached by real sample data (clamped to b), NOT b itself - the caller uses
+// this, not the request bounds, to decide what to mark filled.
+static double decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a, double b) {
     if (!gst_element_seek(pipe, 1.0, GST_FORMAT_TIME,
         (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
         GST_SEEK_TYPE_SET, (gint64)(a * GST_SECOND),
-        GST_SEEK_TYPE_SET, (gint64)(b * GST_SECOND))) return;
+        GST_SEEK_TYPE_SET, (gint64)(b * GST_SECOND))) return a;
+    double maxCoveredSec = a;
     for (;;) {
+        // a watchdog on another thread may force the pipe to GST_STATE_NULL to
+        // break a hang (see peaksProcessBatch) - GST_STATE() is a plain field
+        // read (no blocking), safe to poll from the thread that owns the pipe.
+        if (GST_STATE(pipe) == GST_STATE_NULL) break;
         GstSample* smp = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), GST_SECOND);
         if (!smp) {
             if (gst_app_sink_is_eos(GST_APP_SINK(sink))) break;
@@ -1258,16 +1285,20 @@ static void decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a,
             }
             pyramidRegion(P, firstBin, lastBin + 1);
             gst_buffer_unmap(buf, &mi);
+            double thisSec = (double)(samplePos + ns) / kPeakRate;
+            if (thisSec > maxCoveredSec) maxCoveredSec = thisSec;
         }
         gst_sample_unref(smp);
     }
+    if (maxCoveredSec > b) maxCoveredSec = b;
     {
         std::lock_guard<std::mutex> lk(P.mx);
-        for (size_t s = (size_t)std::ceil(a); s + 1 <= (size_t)std::floor(b) && s < P.secFilled.size(); s++)
+        for (size_t s = (size_t)std::ceil(a); s + 1 <= (size_t)std::floor(maxCoveredSec) && s < P.secFilled.size(); s++)
             P.secFilled[s] = 1;
         P.dirty = true;
     }
     g_fillEpoch.fetch_add(1);
+    return maxCoveredSec;
 }
 static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
     t_threadTag = "peaksBatch";
@@ -1297,8 +1328,16 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
     GstElement* sink = gst_bin_get_by_name(GST_BIN(pipe), "as");
     if (!P->ready) {
         gst_element_set_state(pipe, GST_STATE_PAUSED);
-        if (gst_element_get_state(pipe, nullptr, nullptr, 20 * GST_SECOND) == GST_STATE_CHANGE_FAILURE) {
-            crashLog("peaks: " + baseName(P->source) + " - audio preroll failed (source likely has NO AUDIO TRACK, e.g. a silent screen capture), waveform disabled");
+        // cycle 22 fix: gst_element_get_state() returns GST_STATE_CHANGE_ASYNC
+        // (not ...FAILURE) when the timeout elapses before preroll finishes -
+        // the old check only tested for FAILURE, so a preroll that was simply
+        // STUCK (as this app's real-corpus finding proved can happen - see
+        // decodeWindow's comment) fell through as if it had succeeded, then
+        // queried a duration that may or may not be meaningful and pushed on
+        // into a pipe that was never actually ready.
+        GstStateChangeReturn prerollScr = gst_element_get_state(pipe, nullptr, nullptr, 20 * GST_SECOND);
+        if (prerollScr == GST_STATE_CHANGE_FAILURE || prerollScr == GST_STATE_CHANGE_ASYNC) {
+            crashLog("peaks: " + baseName(P->source) + " - audio preroll failed or timed out (source likely has NO AUDIO TRACK, e.g. a silent screen capture), waveform disabled");
             P->failed = true;
             gst_element_set_state(pipe, GST_STATE_NULL);
             gst_object_unref(sink); gst_object_unref(pipe);
@@ -1336,6 +1375,7 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
             if ((filled || s == (size_t)b) && runA >= 0) { runs.push_back({ runA, std::min(b, (double)s + 1) }); runA = -1; }
         }
         if (runA >= 0) runs.push_back({ runA, b });
+        bool watchdogFired = false;
         for (auto& r : runs) {
             if (r.second - r.first < 0.01) continue;
             {
@@ -1343,6 +1383,24 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
                 g_decCv.wait(g, [] { return g_decActive < (g_busyHint.load() ? 1 : 2); });
                 g_decActive++;
             }
+            // cycle 22: decodeWindow can hang mid-decode on a real file even
+            // though the file itself decodes cleanly outside this app (see
+            // decodeWindow's comment above) - without this, that hang blocked
+            // this worker thread FOREVER, silently shrinking the bgPool by one
+            // thread per stuck source. gst_element_set_state(pipe, NULL) from
+            // another thread is the documented way to unblock a stuck seek/pull.
+            std::atomic<bool> decodeDone{ false };
+            std::thread watchdog([&] {
+                for (int i = 0; i < (int)(kDecodeWindowTimeoutSec * 10) && !decodeDone.load(); i++)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (!decodeDone.load()) {
+                    crashLog("peaksBatch: decodeWindow watchdog firing after " + std::to_string((int)kDecodeWindowTimeoutSec) +
+                        "s on " + baseName(P->source) + " [" + std::to_string(r.first) + "," + std::to_string(r.second) +
+                        "] - forcing the pipe closed to free the worker");
+                    gst_element_set_state(pipe, GST_STATE_NULL);
+                    watchdogFired = true;
+                }
+            });
             try {
                 decodeWindow(*P, pipe, sink, r.first, r.second);
             } catch (const std::exception& e) {
@@ -1350,11 +1408,14 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
             } catch (...) {
                 crashLog("peaksBatch decodeWindow: caught non-std exception - window skipped, not crashing");
             }
+            decodeDone = true;
+            watchdog.join();
             {
                 std::lock_guard<std::mutex> g(g_decMx);
                 g_decActive--;
             }
             g_decCv.notify_one();
+            if (watchdogFired) break;   // pipe is dead - stop draining further runs this batch
         }
         {
             std::unique_lock<std::mutex> lk(P->mx);
@@ -1363,18 +1424,30 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
             bool nowFilled = true;
             for (size_t s = s0; s < s1; s++) if (!P->secFilled[s]) { nowFilled = false; break; }
             if (nowFilled) P->stuckAttempts = 0;
-            else if (++P->stuckAttempts >= kMaxStuckAttempts) {
-                P->failed = true;
+            else if (watchdogFired || ++P->stuckAttempts >= kMaxStuckAttempts) {
+                // cycle 22: previously this set P->failed = true, permanently
+                // blinding the WHOLE source (e.g. Jordan's entire 4.5-hour clip)
+                // because one window's decode got stuck. Mark just the stuck
+                // range filled (silent/placeholder - the amplitude arrays already
+                // default to that) so it stops being retried forever, but leave
+                // the source usable: whatever DID decode stays visible, and any
+                // other window for this source can still be requested normally.
+                for (size_t s = s0; s < s1; s++) P->secFilled[s] = 1;
+                P->dirty = true;
+                P->stuckAttempts = 0;
                 lk.unlock();
                 crashLog("peaksBatch: giving up on " + baseName(P->source) + " - window [" +
-                    std::to_string(a) + "," + std::to_string(b) + "] never filled after " +
-                    std::to_string(kMaxStuckAttempts) + " attempts (likely corrupt/gapped media) - "
-                    "waveform disabled for this source, not retrying forever");
+                    std::to_string(a) + "," + std::to_string(b) + "] never filled" +
+                    (watchdogFired ? " (decode watchdog fired)" : (" after " + std::to_string(kMaxStuckAttempts) + " attempts")) +
+                    " - marking it silent and moving on, not retrying this range forever");
                 gst_element_set_state(pipe, GST_STATE_NULL);
                 gst_object_unref(sink); gst_object_unref(pipe);
-                return false;
+                std::lock_guard<std::mutex> lk2(P->mx);
+                if (P->dirty) savePeaksCache(*P);
+                return !P->jobs.empty();
             }
         }
+        if (watchdogFired) break;   // pipe is dead - stop draining more jobs, let the pool re-wake us with a fresh one
     }
     // Save cache now that we're done draining (pool will wake us if more arrive)
     {
