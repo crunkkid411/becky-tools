@@ -531,5 +531,11 @@ func pathFromURL(raw string) string {
 	if len(s) > 2 && s[0] == '/' && s[2] == ':' {
 		s = s[1:]
 	}
+	// A drive-letter path IS a Windows path no matter where this runs, and
+	// filepath.FromSlash is a no-op on Linux/CI — convert it explicitly (the
+	// pathx rule: Windows paths stay Windows paths off-Windows too).
+	if len(s) > 1 && s[1] == ':' {
+		return strings.ReplaceAll(s, "/", `\`)
+	}
 	return filepath.FromSlash(s)
 }

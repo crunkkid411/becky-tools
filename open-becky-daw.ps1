@@ -16,8 +16,9 @@ $out = Join-Path $root "becky-session.rpp"
 Write-Host "becky is authoring your session ..."
 & $exe template --out $out
 
-# Make sure the REAPER Chat brain is up (llama-server on :11435). If nothing is
-# listening yet, start it in its own window so REAPER Chat can connect.
+# Make sure the REAPER Chat brain is up (the lightweight proxy on :11435 - no
+# local model, no GPU). If nothing is listening yet, start it in its own window
+# so REAPER Chat can connect instead of erroring.
 $brainUp = $false
 try {
   $c = New-Object System.Net.Sockets.TcpClient
@@ -26,7 +27,7 @@ try {
   $c.Close()
 } catch { $brainUp = $false }
 if (-not $brainUp) {
-  Write-Host "Starting REAPER Chat brain (llama-server on :11435) ..."
+  Write-Host "Starting REAPER Chat brain (proxy on :11435) ..."
   $brain = Join-Path $root "start-becky-brain.ps1"
   Start-Process powershell -ArgumentList ('-ExecutionPolicy Bypass -NoProfile -File "' + $brain + '"')
 } else {

@@ -22,21 +22,23 @@ import (
 // "what is this render made of", and only that may choose the destination. The
 // rule, in his words: "where the raw footage exists = where output files go".
 func TestRenderGoesWithTheFootageNotTheBrowsedFolder(t *testing.T) {
+	browsed := t.TempDir() // stand-in for E:\TakingBack2007, open in the library
+	footage := t.TempDir() // stand-in for X:\Videos\...\raw
 	a := &App{
-		folder:  `E:\TakingBack2007`, // the forensic evidence drive, open in the library
+		folder:  browsed,
 		workDir: t.TempDir(),
 	}
-	sources := []string{`X:\Videos\2025\11_November\raw\FLYV9992.mp4`}
+	sources := []string{filepath.Join(footage, "FLYV9992.mp4")}
 
 	got, err := a.renderDir(sources...)
 	if err != nil {
 		t.Fatalf("renderDir: %v", err)
 	}
 
-	if strings.HasPrefix(strings.ToUpper(got), "E:") {
-		t.Fatalf("render dir = %q — NEVER the forensic evidence drive", got)
+	if strings.HasPrefix(got, browsed) {
+		t.Fatalf("render dir = %q — NEVER the browsed (evidence) folder", got)
 	}
-	want := filepath.Join(`X:\Videos\2025\11_November\raw`, reel.RenderSubdir)
+	want := filepath.Join(footage, reel.RenderSubdir)
 	if !strings.EqualFold(got, want) {
 		t.Errorf("render dir = %q, want %q — the render must sit with its own footage", got, want)
 	}
@@ -46,20 +48,22 @@ func TestRenderGoesWithTheFootageNotTheBrowsedFolder(t *testing.T) {
 // timeline_thumbnails subfolder so the many tiny jpegs don't litter the render
 // folder beside the actual compilations (Jordan complained about both).
 func TestThumbnailsGoWithTheFootageNotTheBrowsedFolder(t *testing.T) {
+	browsed := t.TempDir()
+	footage := t.TempDir()
 	a := &App{
-		folder:  `E:\TakingBack2007`,
+		folder:  browsed,
 		workDir: t.TempDir(),
 	}
 
-	got, err := a.thumbDir(`X:\Videos\2025\11_November\raw\FLYV9992.mp4`)
+	got, err := a.thumbDir(filepath.Join(footage, "FLYV9992.mp4"))
 	if err != nil {
 		t.Fatalf("thumbDir: %v", err)
 	}
 
-	if strings.HasPrefix(strings.ToUpper(got), "E:") {
-		t.Fatalf("thumb dir = %q — NEVER the forensic evidence drive", got)
+	if strings.HasPrefix(got, browsed) {
+		t.Fatalf("thumb dir = %q — NEVER the browsed (evidence) folder", got)
 	}
-	want := filepath.Join(`X:\Videos\2025\11_November\raw`, reel.RenderSubdir, "timeline_thumbnails")
+	want := filepath.Join(footage, reel.RenderSubdir, "timeline_thumbnails")
 	if !strings.EqualFold(got, want) {
 		t.Errorf("thumb dir = %q, want %q", got, want)
 	}
@@ -68,14 +72,15 @@ func TestThumbnailsGoWithTheFootageNotTheBrowsedFolder(t *testing.T) {
 // A reel whose clips are already inside Rendered/ (Jordan routinely edits from a
 // previous render) stays put instead of nesting Rendered/Rendered.
 func TestRenderDoesNotNestInsideRendered(t *testing.T) {
-	a := &App{folder: `E:\TakingBack2007`, workDir: t.TempDir()}
-	src := filepath.Join(`X:\Videos\2025\11_November`, reel.RenderSubdir, "post_constantly.mp4")
+	footage := t.TempDir()
+	a := &App{folder: t.TempDir(), workDir: t.TempDir()}
+	src := filepath.Join(footage, reel.RenderSubdir, "post_constantly.mp4")
 
 	got, err := a.renderDir(src)
 	if err != nil {
 		t.Fatalf("renderDir: %v", err)
 	}
-	want := filepath.Join(`X:\Videos\2025\11_November`, reel.RenderSubdir)
+	want := filepath.Join(footage, reel.RenderSubdir)
 	if !strings.EqualFold(got, want) {
 		t.Errorf("render dir = %q, want %q — no Rendered inside Rendered", got, want)
 	}
