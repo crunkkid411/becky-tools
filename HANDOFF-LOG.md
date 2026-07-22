@@ -12,6 +12,13 @@
 
 ## Branch `claude/reaper-chat-resource-errors-fuz41p` (cloud, 2026-07-22) — REAPER Chat brain v2: the llama-server hog is GONE; answers come from Claude OAuth or OpenCode Zen free models. **READY FOR LOCAL — work order `HANDOFF-REAPER-BRAIN.md`, do NOT merge-and-stop.**
 
+**AUTHORIZATION CORRECTION (Jordan, same day):** the in-REAPER chat is **Jordan's own, built on
+the Dawzy paper (2025)** — it predates becky, and the becky-side "brain" (llama-server + its
+autostart) that a Claude Opus session bolted onto it was **UNAUTHORIZED** and is what broke his
+machine. His standing order: fix it quickly or **disable it**. The work order now has a hard
+kill switch (one fix attempt → Step 5 disables the becky machinery, Dawzy chat left untouched)
+and a ~15-minute agent-time budget. Never rebuild his chat; only serve (or vacate) its port.
+
 **Jordan's report:** *"reaper chat auto starts a BROKEN chatbox that hogs system resources AND
 ALSO returns errors every time i open reaper. literally cannot use reaper until its fixed."*
 Root cause: the 2026-06-20 brain put a llama.cpp `llama-server` + 4B GGUF on :11435 (GPU/RAM
