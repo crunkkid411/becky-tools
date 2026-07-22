@@ -10,6 +10,46 @@
 
 ---
 
+## Branch `claude/reaper-chat-resource-errors-fuz41p` (cloud, 2026-07-22) — REAPER Chat brain v2: the llama-server hog is GONE; answers come from Claude OAuth or OpenCode Zen free models. **READY FOR LOCAL — work order `HANDOFF-REAPER-BRAIN.md`, do NOT merge-and-stop.**
+
+**Jordan's report:** *"reaper chat auto starts a BROKEN chatbox that hogs system resources AND
+ALSO returns errors every time i open reaper. literally cannot use reaper until its fixed."*
+Root cause: the 2026-06-20 brain put a llama.cpp `llama-server` + 4B GGUF on :11435 (GPU/RAM
+hog), and whenever it wasn't serving, the REAPER Chat extension (hard-wired to
+`localhost:11435/v1/chat/completions`) errored at every REAPER launch.
+
+- **`internal/reaperbrain` REWRITTEN as a featherweight proxy** (no model, no GPU, a few MB):
+  a Go HTTP server on :11435 speaking enough OpenAI wire format for the extension — plain +
+  SSE-streamed chat completions, `/v1/models`, llama-server-compatible `/health`. Two backends,
+  Jordan's choice: **claude** (default — shells `claude -p --model sonnet` over his Max OAuth,
+  runs in the OS temp dir so it answers as a chat model, not inside a repo) and **zen**
+  (OpenCode Zen `https://opencode.ai/zen/v1`, OpenAI-compatible, key in `OPENCODE_API_KEY`).
+- **Zen SPEND GUARD enforced in code** (`IsZenFree`, the cmd/subtitle `isFreeModel` twin): Zen
+  also sells paid Claude/GPT ids on the same endpoint; anything not `-free`-suffixed /
+  `big-pickle` / `BECKY_ZEN_FREE_EXTRA` is refused BEFORE a request leaves the machine. Free
+  rotation (verified live against `/zen/v1/models` 2026-07-22): `big-pickle` →
+  `deepseek-v4-flash-free` → `nemotron-3-ultra-free` → `laguna-s-2.1-free` → `mimo-v2.5-free` →
+  `north-mini-code-free`, intersected with the live catalogue so stale names can't survive.
+- **CLI:** `becky-reaper brain [--start|--check|--selftest] [--backend claude|zen]`
+  (env `BECKY_REAPER_BACKEND`, `BECKY_CLAUDE_BIN/MODEL`, `OPENCODE_API_KEY`, `BECKY_ZEN_MODEL`).
+  The old llama resolver + `BECKY_LLAMA_SERVER`/`BECKY_REAPER_MODEL` are gone with it.
+- **Launchers:** `start-becky-brain.ps1` now asks **1 = Claude / 2 = Zen** with high-contrast
+  colors, remembers the choice (`%APPDATA%\becky\reaper-brain-backend.txt`), and stores the Zen
+  key to user env on first use; `Start Becky REAPER Brain.bat` + `open-becky-daw.ps1` reworded.
+  ASCII-only verified via `scripts/check-launchers.sh`.
+- **PROOF (cloud RAN it):** (1) `brain --selftest` — real TCP listener, real HTTP POST of the
+  exact REAPER Chat request, plain (294 bytes, echoed turn) + SSE (596 bytes, chunks + `[DONE]`),
+  `/health` + `/v1/models` OK, spend guard OK → `SELFTEST PASS`. (2) **Live claude backend**:
+  proxy on :21435 answered a real `claude -p` turn through the exact endpoint in 7.1s
+  (`"TEMPO SET TO 128"`). 13 unit tests (flatten/guard/rotation/backends/server/SSE/errors);
+  `go build/vet/test ./...` + `gofmt -l` green (also fixed pre-existing gofmt drift in
+  `cmd/vision/ladder_test.go` + `internal/vision/ocrengine.go`).
+- **Left for local (`HANDOFF-REAPER-BRAIN.md`, checkboxed):** gates on Windows;
+  `build-all-tools.bat`; **find + remove whatever auto-starts the old llama-server with REAPER**
+  (REAPER `__startup.lua` / SWS startup action / shell:startup — the machine-side hog trigger,
+  outside the repo); chat test in real REAPER (Claude, and Zen if Jordan supplies his key);
+  optional login-startup shortcut so the chatbox never errors again.
+
 ## The idle-CPU root cause, found and fixed (2026-07-20 PM, local, → `master` `2c6fb53`)
 
 **Why this entry matters:** Jordan reported the app as *"buggy as hell… slow as fuck… I can't

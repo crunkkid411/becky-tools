@@ -48,9 +48,9 @@ type OCRFrame struct {
 // OCRHelperResult mirrors ocr_paddle.py's stdout JSON contract.
 type OCRHelperResult struct {
 	Skipped bool       `json:"skipped"`
-	Reason  string      `json:"reason"`
-	Engine  string      `json:"engine"`
-	Results []OCRFrame  `json:"results"`
+	Reason  string     `json:"reason"`
+	Engine  string     `json:"engine"`
+	Results []OCRFrame `json:"results"`
 }
 
 // RunOCR materializes the embedded helper, runs it over the batch of image
