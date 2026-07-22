@@ -33,12 +33,24 @@ func fakeForensicBins(t *testing.T) {
 // swapForensicSeams installs fakes for the two exec seams and restores them
 // on cleanup.
 func swapForensicSeams(t *testing.T,
-	judge func(ctx context.Context, bin, folder, query, outPath string) error,
+	judge func(ctx context.Context, bin, folder, query, rubric, aliases, outPath string) error,
 	hits func(ctx context.Context, bin, folder, hitsPath, outPath string) error) {
 	t.Helper()
 	origJudge, origHits := runJudge, runHits
 	runJudge, runHits = judge, hits
 	t.Cleanup(func() { runJudge, runHits = origJudge, origHits })
+}
+
+// noGuideAnywhere makes guide resolution come up empty deterministically:
+// clears BECKY_JUDGE_GUIDE and points the hardcoded wiki default at a path
+// that does not exist (on Jordan's machine the real wiki guide DOES exist,
+// which would otherwise leak into every test).
+func noGuideAnywhere(t *testing.T) {
+	t.Helper()
+	t.Setenv("BECKY_JUDGE_GUIDE", "")
+	orig := defaultForensicGuide
+	defaultForensicGuide = filepath.Join(t.TempDir(), "no-such-guide.md")
+	t.Cleanup(func() { defaultForensicGuide = orig })
 }
 
 func TestForensicQueryRunsPipelineAndLoadsReel(t *testing.T) {
@@ -49,14 +61,20 @@ func TestForensicQueryRunsPipelineAndLoadsReel(t *testing.T) {
 		t.Fatalf("open folder: %v", err)
 	}
 	fakeForensicBins(t)
+	noGuideAnywhere(t)
+	// The case folder carries the conventional guide file — the judge MUST
+	// receive it as --rubric (the 0-hits regression: two real runs judged
+	// everything away because the verb sent no case context at all).
+	folderGuide := filepath.Join(dir, forensicGuideNames[0])
+	mustWrite(t, folderGuide, "# rubric + alias map")
 
 	// The fake judge writes a hit-list; the fake hits tool writes a real reel
 	// (one clip on the fixture video) plus the questions sidecar — exactly the
 	// artifacts the real tools produce, at the paths forensic_query dictates.
-	var gotQuery string
+	var gotQuery, gotRubric, gotAliases string
 	swapForensicSeams(t,
-		func(_ context.Context, _, folder, query, outPath string) error {
-			gotQuery = query
+		func(_ context.Context, _, folder, query, rubric, aliases, outPath string) error {
+			gotQuery, gotRubric, gotAliases = query, rubric, aliases
 			mustWrite(t, outPath, `{"folder":`+jsonStr(folder)+`,"hits":[{"srt":"ring.srt","t":"00:00:02,000"}]}`)
 			return nil
 		},
@@ -84,12 +102,18 @@ func TestForensicQueryRunsPipelineAndLoadsReel(t *testing.T) {
 		mu.Unlock()
 	}
 
-	res, err := app.ForensicQuery("  money for the cat  ")
+	res, err := app.ForensicQuery("  money for the cat  ", "", "")
 	if err != nil {
 		t.Fatalf("ForensicQuery: %v", err)
 	}
 	if gotQuery != "money for the cat" {
 		t.Errorf("judge received query %q, want it trimmed", gotQuery)
+	}
+	if gotRubric != folderGuide {
+		t.Errorf("judge received rubric %q, want the case-folder guide %q", gotRubric, folderGuide)
+	}
+	if gotAliases != "" {
+		t.Errorf("judge received aliases %q, want none (the guide file carries the alias map)", gotAliases)
 	}
 	if res.Clips != 1 || len(res.Timeline.Clips) != 1 {
 		t.Fatalf("clips = %d / %d on timeline, want 1", res.Clips, len(res.Timeline.Clips))
@@ -125,10 +149,10 @@ func TestForensicQueryGuards(t *testing.T) {
 	app := NewApp()
 	app.workDir = t.TempDir()
 
-	if _, err := app.ForensicQuery("   "); err == nil {
+	if _, err := app.ForensicQuery("   ", "", ""); err == nil {
 		t.Error("empty query must be a typed error")
 	}
-	if _, err := app.ForensicQuery("harassment"); err == nil || !strings.Contains(err.Error(), "folder") {
+	if _, err := app.ForensicQuery("harassment", "", ""); err == nil || !strings.Contains(err.Error(), "folder") {
 		t.Errorf("no open folder must say so, got: %v", err)
 	}
 }
@@ -140,7 +164,7 @@ func TestForensicQueryMissingBinaryIsPlainLanguage(t *testing.T) {
 		t.Fatalf("open folder: %v", err)
 	}
 	t.Setenv("BECKY_JUDGE", filepath.Join(t.TempDir(), "nope"))
-	_, err := app.ForensicQuery("harassment")
+	_, err := app.ForensicQuery("harassment", "", "")
 	if err == nil || !strings.Contains(err.Error(), "becky-judge") {
 		t.Errorf("missing judge binary must name the tool, got: %v", err)
 	}
@@ -155,7 +179,7 @@ func TestForensicQueryJudgeFailureDoesNotTouchTimeline(t *testing.T) {
 	}
 	fakeForensicBins(t)
 	swapForensicSeams(t,
-		func(_ context.Context, _, _, _, _ string) error {
+		func(_ context.Context, _, _, _, _, _, _ string) error {
 			return os.ErrDeadlineExceeded
 		},
 		func(_ context.Context, _, _, _, _ string) error {
@@ -163,7 +187,7 @@ func TestForensicQueryJudgeFailureDoesNotTouchTimeline(t *testing.T) {
 			return nil
 		})
 
-	if _, err := app.ForensicQuery("harassment"); err == nil {
+	if _, err := app.ForensicQuery("harassment", "", ""); err == nil {
 		t.Fatal("judge failure must propagate as an error")
 	}
 	if tl := app.Timeline(); len(tl.Clips) != 0 {
@@ -188,5 +212,127 @@ func TestCallForensicQueryViaBridge(t *testing.T) {
 	}
 	if !strings.Contains(r.Error, "folder") {
 		t.Errorf("error = %q, want the open-a-folder guard", r.Error)
+	}
+}
+
+// TestResolveForensicGuide pins the guide resolution order with exact values:
+// case-folder conventional file → BECKY_JUDGE_GUIDE → the wiki default → "".
+func TestResolveForensicGuide(t *testing.T) {
+	folder := t.TempDir()
+	noGuideAnywhere(t)
+
+	if got := resolveForensicGuide(folder); got != "" {
+		t.Fatalf("nothing configured: guide = %q, want \"\"", got)
+	}
+
+	// The wiki default kicks in once it exists.
+	mustWrite(t, defaultForensicGuide, "# wiki guide")
+	if got := resolveForensicGuide(folder); got != defaultForensicGuide {
+		t.Errorf("wiki default: guide = %q, want %q", got, defaultForensicGuide)
+	}
+
+	// BECKY_JUDGE_GUIDE beats the wiki default (passed through as-is, same
+	// contract as becky-judge's own env fallback).
+	envGuide := filepath.Join(folder, "env-guide.md")
+	t.Setenv("BECKY_JUDGE_GUIDE", envGuide)
+	if got := resolveForensicGuide(folder); got != envGuide {
+		t.Errorf("env: guide = %q, want %q", got, envGuide)
+	}
+
+	// A conventional file in the case folder beats everything.
+	folderGuide := filepath.Join(folder, forensicGuideNames[0])
+	mustWrite(t, folderGuide, "# case guide")
+	if got := resolveForensicGuide(folder); got != folderGuide {
+		t.Errorf("case folder: guide = %q, want %q", got, folderGuide)
+	}
+
+	// The short generic name works too.
+	folder2 := t.TempDir()
+	t.Setenv("BECKY_JUDGE_GUIDE", "")
+	short := filepath.Join(folder2, "_forensic_rubric.md")
+	mustWrite(t, short, "# case guide")
+	if got := resolveForensicGuide(folder2); got != short {
+		t.Errorf("short name: guide = %q, want %q", got, short)
+	}
+}
+
+// TestForensicQueryPassesCallerRubricAndAliases proves the payload fields ride
+// the whole way through the bridge to the judge exec — and that an explicit
+// rubric beats the case-folder guide.
+func TestForensicQueryPassesCallerRubricAndAliases(t *testing.T) {
+	app := NewApp()
+	app.workDir = t.TempDir()
+	dir := fixtureFolder(t)
+	if _, err := app.OpenFolder(dir); err != nil {
+		t.Fatalf("open folder: %v", err)
+	}
+	fakeForensicBins(t)
+	noGuideAnywhere(t)
+	// A folder guide exists but the caller's rubric must win.
+	mustWrite(t, filepath.Join(dir, forensicGuideNames[0]), "# ignored")
+
+	var gotRubric, gotAliases string
+	swapForensicSeams(t,
+		func(_ context.Context, _, folder, _, rubric, aliases, outPath string) error {
+			gotRubric, gotAliases = rubric, aliases
+			mustWrite(t, outPath, `{"folder":`+jsonStr(folder)+`,"hits":[{"srt":"ring.srt","t":"00:00:02,000"}]}`)
+			return nil
+		},
+		func(_ context.Context, _, folder, _, outPath string) error {
+			reel := edl.Reel{Version: "1", Name: "forensic", Clips: []edl.Clip{
+				{ID: "c1", Source: filepath.Join(folder, "ring.mp4"), In: 1, Out: 3, Label: "hit"},
+			}}
+			return edl.Save(outPath, reel)
+		})
+
+	r := callEnv(t, app, "forensic_query",
+		`{"query":"harassment","rubric":"my-rubric.md","aliases":"green hair -> Hair Jordan"}`)
+	if !r.OK {
+		t.Fatalf("forensic_query failed: %s", r.Error)
+	}
+	if gotRubric != "my-rubric.md" {
+		t.Errorf("judge received rubric %q, want the caller's %q", gotRubric, "my-rubric.md")
+	}
+	if gotAliases != "green hair -> Hair Jordan" {
+		t.Errorf("judge received aliases %q, want the caller's inline map", gotAliases)
+	}
+}
+
+// TestForensicQueryNotesWhenNoGuideAnywhere: when NO case context can be
+// found, the judge still runs (recall is never lost) but the reply must SAY
+// it ran context-free — the silent version of this is exactly the 0-hits bug.
+func TestForensicQueryNotesWhenNoGuideAnywhere(t *testing.T) {
+	app := NewApp()
+	app.workDir = t.TempDir()
+	dir := fixtureFolder(t)
+	if _, err := app.OpenFolder(dir); err != nil {
+		t.Fatalf("open folder: %v", err)
+	}
+	fakeForensicBins(t)
+	noGuideAnywhere(t)
+
+	var gotRubric string
+	swapForensicSeams(t,
+		func(_ context.Context, _, folder, _, rubric, _, outPath string) error {
+			gotRubric = rubric
+			mustWrite(t, outPath, `{"folder":`+jsonStr(folder)+`,"hits":[{"srt":"ring.srt","t":"00:00:02,000"}]}`)
+			return nil
+		},
+		func(_ context.Context, _, folder, _, outPath string) error {
+			reel := edl.Reel{Version: "1", Name: "forensic", Clips: []edl.Clip{
+				{ID: "c1", Source: filepath.Join(folder, "ring.mp4"), In: 1, Out: 3, Label: "hit"},
+			}}
+			return edl.Save(outPath, reel)
+		})
+
+	res, err := app.ForensicQuery("harassment", "", "")
+	if err != nil {
+		t.Fatalf("ForensicQuery: %v", err)
+	}
+	if gotRubric != "" {
+		t.Errorf("judge received rubric %q, want none (nothing is configured)", gotRubric)
+	}
+	if !strings.Contains(res.Note, "built-in rubric") {
+		t.Errorf("note = %q, want it to say the judge ran on the built-in rubric only", res.Note)
 	}
 }

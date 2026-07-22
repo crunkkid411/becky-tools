@@ -19,6 +19,16 @@ package main
 // server, no separate AI tool surface (BUILD-INPUTS.md:18-22), and the engine
 // is not forked: new capability = new verb (BUILD_1.md:27-28).
 //
+// THE JUDGE NEEDS THE CASE GUIDE. becky-judge's default rubric says "when
+// unsure who the referent is, keep=false" — without the case's rubric + alias
+// map (green hair = Hair Jordan, "my ex" = Shelby, the satire/DARVO traps) a
+// real judged run rejects every candidate. Two real runs on the real corpus
+// returned 0 hits for exactly this reason. So the verb resolves a guide when
+// the caller doesn't send one: a conventional file in the case folder →
+// BECKY_JUDGE_GUIDE → the documented case-wiki guide (the same
+// hardcoded-wiki-default pattern as cmd/enroll). Optional "rubric"/"aliases"
+// payload fields override, so the app's bare {query} works unchanged.
+//
 // The real execs sit behind the runJudge/runHits seams (same pattern as
 // transcribe.go's runTranscribe) so `go test` exercises the whole orchestration
 // with fakes — no test ever shells the real judge (which costs an LLM call).
@@ -70,14 +80,54 @@ type ForensicResult struct {
 	Note string `json:"note,omitempty"`
 }
 
+// forensicGuideNames are the conventional case-folder filenames for the
+// judge's rubric+alias guide — drop either next to the footage and the in-app
+// forensic search picks it up with zero configuration.
+var forensicGuideNames = []string{
+	"becky-judge-forensic-rubric-and-alias-map.md", // the case wiki guide's own filename
+	"_forensic_rubric.md",                          // short generic, _forensic_* family
+}
+
+// defaultForensicGuide is the documented case guide (SKILL.md's becky-judge
+// example) — same hardcoded-wiki-default pattern as cmd/enroll's wikiDefaults.
+// A var so tests can neutralize it. Consulted only when nothing else is set.
+var defaultForensicGuide = `C:\Users\only1\Documents\Obsidian\llm-wiki-CLANCY-TRIAL\wiki\becky-judge-forensic-rubric-and-alias-map.md`
+
+// resolveForensicGuide finds the judge's rubric+alias guide when the caller
+// sent none: a conventional file in the case folder → BECKY_JUDGE_GUIDE →
+// the documented case-wiki guide. "" = no case context anywhere; the judge
+// then runs rubric-only, which is the exact condition that judged two real
+// runs down to 0 hits — so the caller surfaces a note when this happens.
+func resolveForensicGuide(folder string) string {
+	for _, name := range forensicGuideNames {
+		if p := filepath.Join(folder, name); fileExists(p) {
+			return p
+		}
+	}
+	if p := strings.TrimSpace(os.Getenv("BECKY_JUDGE_GUIDE")); p != "" {
+		return p
+	}
+	if fileExists(defaultForensicGuide) {
+		return defaultForensicGuide
+	}
+	return ""
+}
+
 // runJudge is the seam over the real becky-judge exec:
 //
-//	becky-judge --folder <folder> --query <query> --out <outPath>
+//	becky-judge --folder <folder> --query <query> --out <outPath> [--rubric <g>] [--aliases <a>]
 //
 // Production never reassigns it; tests fake it with a function that writes a
 // canned hit-list.
-var runJudge = func(ctx context.Context, bin, folder, query, outPath string) error {
-	cmd := exec.CommandContext(ctx, bin, "--folder", folder, "--query", query, "--out", outPath)
+var runJudge = func(ctx context.Context, bin, folder, query, rubric, aliases, outPath string) error {
+	args := []string{"--folder", folder, "--query", query, "--out", outPath}
+	if strings.TrimSpace(rubric) != "" {
+		args = append(args, "--rubric", rubric)
+	}
+	if strings.TrimSpace(aliases) != "" {
+		args = append(args, "--aliases", aliases)
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	proc.NoWindow(cmd)
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
@@ -104,8 +154,10 @@ var runHits = func(ctx context.Context, bin, folder, hitsPath, outPath string) e
 // ForensicQuery runs the forensic pipeline for one plain-language query and
 // loads the resulting reel onto the timeline. Long-running (the judge is an
 // LLM pass) — the async bridge keeps the UI alive and the H-5 events show
-// progress in the activity panel.
-func (a *App) ForensicQuery(query string) (ForensicResult, error) {
+// progress in the activity panel. rubric/aliases are optional caller
+// overrides (path or inline text, becky-judge accepts both); when rubric is
+// empty the case guide resolves via resolveForensicGuide.
+func (a *App) ForensicQuery(query, rubric, aliases string) (ForensicResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return ForensicResult{}, fmt.Errorf("empty forensic query — say what to look for, e.g. \"asking people to harass Shelby\"")
@@ -116,6 +168,15 @@ func (a *App) ForensicQuery(query string) (ForensicResult, error) {
 	a.mu.Unlock()
 	if folder == "" {
 		return ForensicResult{}, fmt.Errorf("open a case folder first — the forensic search runs over its transcripts")
+	}
+
+	var notes []string
+	if strings.TrimSpace(rubric) == "" {
+		rubric = resolveForensicGuide(folder)
+		if rubric == "" && strings.TrimSpace(aliases) == "" {
+			notes = append(notes, "no case guide found — the judge used its built-in rubric with no alias map"+
+				" (drop "+forensicGuideNames[0]+" in the case folder or set BECKY_JUDGE_GUIDE)")
+		}
 	}
 
 	judgeBin, err := resolveForensicBin("BECKY_JUDGE", "becky-judge")
@@ -133,7 +194,7 @@ func (a *App) ForensicQuery(query string) (ForensicResult, error) {
 	hitsPath := filepath.Join(folder, forensicHitsName)
 	jctx, jcancel := context.WithTimeout(context.Background(), envDuration("BECKY_JUDGE_TIMEOUT", judgeTimeout))
 	defer jcancel()
-	if err := runJudge(jctx, judgeBin, folder, query, hitsPath); err != nil {
+	if err := runJudge(jctx, judgeBin, folder, query, rubric, aliases, hitsPath); err != nil {
 		a.emitEvent("done", "forensic_query", "Forensic search failed: "+truncateText(firstLine(err), 80))
 		return ForensicResult{}, err
 	}
@@ -155,16 +216,15 @@ func (a *App) ForensicQuery(query string) (ForensicResult, error) {
 		a.emitEvent("done", "forensic_query", "Forensic search failed: "+truncateText(firstLine(err), 80))
 		return ForensicResult{}, fmt.Errorf("the pipeline ran but its reel could not be loaded: %w", err)
 	}
-	note := ""
 	qPath := strings.TrimSuffix(reelPath, filepath.Ext(reelPath)) + ".questions.json"
 	if fileExists(qPath) {
 		if err := a.LoadQuestions(qPath); err != nil {
-			note = "review questions could not be loaded: " + firstLine(err)
+			notes = append(notes, "review questions could not be loaded: "+firstLine(err))
 		}
 	}
 
 	a.emitEvent("done", "forensic_query", fmt.Sprintf("Forensic search done: %d hit(s) on the timeline.", len(tl.Clips)))
-	return ForensicResult{Timeline: tl, Clips: len(tl.Clips), Reel: reelPath, Note: note}, nil
+	return ForensicResult{Timeline: tl, Clips: len(tl.Clips), Reel: reelPath, Note: strings.Join(notes, "; ")}, nil
 }
 
 // resolveForensicBin finds a pipeline executable, in the same order as

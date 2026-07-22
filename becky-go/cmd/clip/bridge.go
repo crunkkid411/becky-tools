@@ -241,8 +241,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// H-7: the forensic path in-app. Runs qmd recall + the becky-judge
 		// LLM pass + becky-hits against the OPEN folder and lands the
 		// resulting reel on the timeline as one undo span. Long-running —
-		// H-5 events narrate progress in the activity panel.
-		return a.ForensicQuery(argString(args, "query"))
+		// H-5 events narrate progress in the activity panel. Optional
+		// rubric/aliases override the case guide; a bare {query} resolves
+		// the guide from the case folder / BECKY_JUDGE_GUIDE / the wiki.
+		return a.ForensicQuery(argString(args, "query"), argString(args, "rubric"), argString(args, "aliases"))
 	case "apply_edit_batch":
 		// H-4: a list of existing edit ops (add_clip/remove_clip/reorder/
 		// set_trim/split/set_label) applied as ONE atomic undo span — Ctrl+Z
