@@ -2100,8 +2100,17 @@ static void emitThreshold(bool final_) {
     double n = nowSec();
     if (!final_ && n - g_lastThrEmit < 0.1) return;
     g_lastThrEmit = n;
-    json r = engineCall("set_threshold", { {"on", g_thrOn}, {"level", g_thrLevel} }, 2.0);
-    (void)r;
+    // cycle 18 review's THE ONE THING (item 1 of 2): this fired a synchronous
+    // engineCall on the UI thread every time the threshold slider moved (up to
+    // every 100ms while dragging) - the same P1 violation emitSelect() above was
+    // already fixed for. Same fix, same reasoning: best-effort telemetry for the
+    // AI seam, never worth blocking a frame or crashing the session over.
+    bool on = g_thrOn; double level = g_thrLevel;
+    try {
+        std::thread([on, level] { json r = engineCall("set_threshold", { {"on", on}, {"level", level} }, 2.0); (void)r; }).detach();
+    } catch (const std::exception& e) {
+        editLog(std::string("emitThreshold: thread spawn failed, skipping sync: ") + e.what());
+    }
 }
 static void recomputeQuiet() {
     g_quietRanges.clear();
@@ -2960,17 +2969,26 @@ static void drawTimeline(double& curSec, bool& playing) {
                 if (!hasExtCI(path, ".json") && !hasExtCI(path, ".txt") && !hasExtCI(path, ".xml")) continue;
                 std::string rp = convertEditIfNeeded(path);
                 if (!rp.empty()) {
-                    json r = engineCall("load_reel", { {"path", rp} }, 30.0);
-                    if (r.value("ok", false)) {
-                        loadTimelineView(r.contains("data") ? r["data"] : r);
-                        // NB: no lastComposed reset here (unlike the Load Reel button) -
-                        // that variable is local to main()'s loop, out of scope in
-                        // drawTimeline; playing=false already makes main()'s own
-                        // "if (!playing) lastComposed = -1" catch it next frame.
-                        curSec = 0; playing = false; g_playingExt = false;
-                        loadCaptions(rp); g_renderMsg = "Loaded reel " + baseName(rp);
-                    } else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
-                    g_renderMsgAt = nowSec();
+                    // cycle 18 review's THE ONE THING (item 2 of 2): this was still a
+                    // synchronous 30s engineCall on the UI thread - dropping a reel/EDL
+                    // onto the window froze exactly like the Load Reel button used to
+                    // before cycle 18 (main.cpp:1055's comment). curSec/playing are
+                    // drawTimeline's own reference params (bound to main()'s locals,
+                    // alive for the process lifetime), so capturing them by reference is
+                    // exactly as safe as the button fix.
+                    engineCallAsync("load_reel", { {"path", rp} }, 30.0, "Loading reel...",
+                                    [rp, &curSec, &playing](const json& r) {
+                        if (r.value("ok", false)) {
+                            loadTimelineView(r.contains("data") ? r["data"] : r);
+                            // NB: no lastComposed reset here (unlike the Load Reel button) -
+                            // that variable is local to main()'s loop, out of scope in
+                            // drawTimeline; playing=false already makes main()'s own
+                            // "if (!playing) lastComposed = -1" catch it next frame.
+                            curSec = 0; playing = false; g_playingExt = false;
+                            loadCaptions(rp); g_renderMsg = "Loaded reel " + baseName(rp);
+                        } else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
+                        g_renderMsgAt = nowSec();
+                    });
                 }
                 loadedEdit = true;
                 break;
@@ -3320,12 +3338,27 @@ static void drawTimeline(double& curSec, bool& playing) {
             // would corrupt the real reel out from under the preview.
             if (changed && !g_inTiedPreview) {
                 g_track[0] = rest; packTrack(0); recomputeDur();
+                // cycle 18 review's gap 4: local state (g_track[0], above) is already
+                // updated optimistically, so this engine sync - like emitSelect/
+                // emitThreshold - is best-effort telemetry the UI must never block a
+                // frame on. A drag-reorder during a fast multi-select edit burst (E-8/
+                // I-7/I-9) is exactly the case a 4s stall on the UI thread would hit.
                 if (g.group.size() > 1) {
                     json ids = json::array();
                     for (auto& c : moved) ids.push_back(c.id);
-                    json r = engineCall("reorder_many", { {"ids", ids}, {"to", to} }, 4.0); (void)r;
+                    int toArg = to;
+                    try {
+                        std::thread([ids, toArg] { json r = engineCall("reorder_many", { {"ids", ids}, {"to", toArg} }, 4.0); (void)r; }).detach();
+                    } catch (const std::exception& e) {
+                        editLog(std::string("reorder_many: thread spawn failed, skipping sync: ") + e.what());
+                    }
                 } else {
-                    json r = engineCall("reorder", { {"id", moved[0].id}, {"to", to} }, 4.0); (void)r;
+                    std::string movedId = moved[0].id; int toArg = to;
+                    try {
+                        std::thread([movedId, toArg] { json r = engineCall("reorder", { {"id", movedId}, {"to", toArg} }, 4.0); (void)r; }).detach();
+                    } catch (const std::exception& e) {
+                        editLog(std::string("reorder: thread spawn failed, skipping sync: ") + e.what());
+                    }
                 }
             }
             g_quietDirty = true;
@@ -3336,7 +3369,16 @@ static void drawTimeline(double& curSec, bool& playing) {
                 packTrack(0); recomputeDur();
                 if (curSec > g_compDur) curSec = g_compDur;
                 g_quietDirty = true;
-                json r = engineCall("set_trim", { {"id", c.id}, {"in", c.in}, {"out", c.out} }, 4.0); (void)r;
+                // Same fix as reorder/reorder_many above: local state is already
+                // updated, so this is best-effort telemetry, never a UI-thread stall.
+                {
+                    std::string trimId = c.id; double trimIn = c.in, trimOut = c.out;
+                    try {
+                        std::thread([trimId, trimIn, trimOut] { json r = engineCall("set_trim", { {"id", trimId}, {"in", trimIn}, {"out", trimOut} }, 4.0); (void)r; }).detach();
+                    } catch (const std::exception& e) {
+                        editLog(std::string("set_trim: thread spawn failed, skipping sync: ") + e.what());
+                    }
+                }
             } else {
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
@@ -5398,13 +5440,21 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             if (ImGui::MenuItem("Open Folder...", "Ctrl+O")) {
                 // Native folder dialog via the engine (pick_folder verb on Windows).
-                json r = engineCall("pick_folder", {}, 600.0);   // PickFolder also indexes (see loadFolder note)
-                if (r.value("ok", false)) {
-                    const json& d = r.contains("data") ? r["data"] : r;
-                    if (d.value("picked", false) && d.contains("folder")) { g_folderErr.clear(); applyFolderView(d["folder"], std::string()); }
-                } else {
-                    g_folderErr = r.value("error", std::string("pick_folder failed"));
-                }
+                // Gap 4 fix: this was a 600s synchronous engineCall right on the menu
+                // handler - the dialog itself runs in the ENGINE's own process, so this
+                // thread was just blocked reading a pipe the whole time. Even with the
+                // native picker legitimately open, OUR window's message pump wasn't
+                // running, so Windows would show it as "Not Responding" - indexing a big
+                // case folder afterward (see loadFolder's comment) could stretch that
+                // for minutes. Same engineCallAsync shape as the toolbar buttons.
+                engineCallAsync("pick_folder", {}, 600.0, "Opening folder...", [](const json& r) {
+                    if (r.value("ok", false)) {
+                        const json& d = r.contains("data") ? r["data"] : r;
+                        if (d.value("picked", false) && d.contains("folder")) { g_folderErr.clear(); applyFolderView(d["folder"], std::string()); }
+                    } else {
+                        g_folderErr = r.value("error", std::string("pick_folder failed"));
+                    }
+                });
             }
             ImGui::Text("%.1fs / %.0fs", curSec, g_compDur);
             // ---- RIGHT of the bar: health flags, then WHICH FOLDER IS OPEN ----
