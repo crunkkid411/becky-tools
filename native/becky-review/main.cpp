@@ -1174,11 +1174,22 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
     g_free(uri);
     GError* e = nullptr;
     GstElement* pipe = gst_parse_launch(desc, &e);
-    if (!pipe || e) { if (e) g_error_free(e); P->failed = true; return; }
+    // These three failure paths were SILENT (failed=true, no log line) - and that
+    // silence cost a whole diagnostic session on 2026-07-22: the demo proxy
+    // (ges-bench/proxyA.mp4) has NO audio track, its clips drew as flat blocks,
+    // and "waveforms are broken" got escalated as a code regression when
+    // crash.log could have answered it in one line. Every failed=true now says
+    // which source and which stage, so the next flat-wave report is a 10-second
+    // log check instead of a night of code archaeology.
+    if (!pipe || e) {
+        crashLog("peaks: " + baseName(P->source) + " - gst pipeline parse failed, waveform disabled");
+        if (e) g_error_free(e); P->failed = true; return;
+    }
     GstElement* sink = gst_bin_get_by_name(GST_BIN(pipe), "as");
     if (!P->ready) {
         gst_element_set_state(pipe, GST_STATE_PAUSED);
         if (gst_element_get_state(pipe, nullptr, nullptr, 20 * GST_SECOND) == GST_STATE_CHANGE_FAILURE) {
+            crashLog("peaks: " + baseName(P->source) + " - audio preroll failed (source likely has NO AUDIO TRACK, e.g. a silent screen capture), waveform disabled");
             P->failed = true;
             gst_element_set_state(pipe, GST_STATE_NULL);
             gst_object_unref(sink); gst_object_unref(pipe);
@@ -1189,6 +1200,7 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             std::lock_guard<std::mutex> lk(P->mx);
             sizeArrays(*P, (double)d / GST_SECOND);
         } else {
+            crashLog("peaks: " + baseName(P->source) + " - audio duration query failed, waveform disabled");
             P->failed = true;
             gst_element_set_state(pipe, GST_STATE_NULL);
             gst_object_unref(sink); gst_object_unref(pipe);
@@ -3296,9 +3308,23 @@ static void drawTimeline(double& curSec, bool& playing) {
         if (inDrag) fill = (fill & 0x00FFFFFF) | 0x60000000;
         dl->AddRectFilled(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), fill, 3);
         float vx0 = std::max(x0 + 1, tlX), vx1 = std::min(x1 - 1, tlX + tlW);
-        if (vx1 > vx0 && wy1 - wy0 > 6)
+        if (vx1 > vx0 && wy1 - wy0 > 6) {
             drawWave(dl, c.source, cin, cout, x0, vx0, vx1, wy0, wy1, g_pps,
                      inDrag ? COL_WAVEDIM : (selected ? IM_COL32(255, 255, 255, 190) : COL_WAVE));
+            // A source whose audio decode FAILED (most often: no audio track at
+            // all - silent screen captures, the ges-bench demo proxy) used to
+            // draw an unlabeled flat block, indistinguishable from "waveforms
+            // are broken" - that exact ambiguity was escalated as a regression
+            // on 2026-07-22 and cost a diagnostic session. Name the state, once,
+            // dim, only when there is room: a labeled degrade is legible, a
+            // silent one looks like a bug. (peaksGet here is the same per-clip
+            // per-frame cost class clipPreparing below already pays.)
+            if (auto pkf = peaksGet(c.source); pkf && pkf->failed && wy1 - wy0 > 14 && vx1 - vx0 > 96) {
+                const char* nam = "no audio / no waveform";
+                ImVec2 nts = ImGui::CalcTextSize(nam);
+                dl->AddText(ImVec2(vx0 + 6, (wy0 + wy1 - nts.y) * 0.5f), IM_COL32(158, 166, 180, 170), nam);
+            }
+        }
         // The border ALWAYS matches the clip's own colour - no white ring on the
         // selected clip. The opaque fill above is what says "selected".
         ImU32 brd = IM_COL32(c.r, c.g, c.b, 242);
