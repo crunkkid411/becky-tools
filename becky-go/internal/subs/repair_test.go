@@ -301,6 +301,35 @@ func TestPass1ChunksEliminatesTheLoneWordEndToEnd(t *testing.T) {
 	}
 }
 
+// TestRebalanceCapSplitsRescuesSegmentLeadingLoneWord is the model-path shape
+// of the same defect: the review model put "i" alone at the HEAD of a segment
+// (93.46s on the real edit — the gap after it is 0.32s quantisation at a
+// 0.32s threshold, not a pause). The lone-after-multi pass above never looks
+// at it and mergeContentless only sweeps danglers, so it survived every
+// repair. A real pause still keeps the word alone.
+func TestRebalanceCapSplitsRescuesSegmentLeadingLoneWord(t *testing.T) {
+	in := [][]Word{
+		{w("I", 203.92, 203.92)},
+		{w("pressed", 204.24, 204.56), w("record", 204.72, 204.96),
+			w("and", 205.20, 205.20), w("had", 205.36, 205.36)},
+	}
+	got := render(rebalanceCapSplits(in, 22, 0.32))
+	want := []string{"I pressed record", "and had"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+	// Across a REAL pause the lone word genuinely stands alone - untouched.
+	in2 := [][]Word{
+		{w("actually", 1.00, 1.40)},
+		{w("keep", 2.50, 2.70), w("it", 2.72, 2.80)},
+	}
+	got2 := render(rebalanceCapSplits(in2, 22, 0.32))
+	want2 := []string{"actually", "keep it"}
+	if strings.Join(got2, " | ") != strings.Join(want2, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got2, " | "), strings.Join(want2, " | "))
+	}
+}
+
 // The five tests below are the 2026-07-21 one-word-caption regressions,
 // rebuilt from the REAL word timings in post_constantly's transcript
 // (FLYV9992_convertedsnow2.transcript.json). ffmpeg silencedetect confirmed

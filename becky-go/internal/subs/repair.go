@@ -345,6 +345,30 @@ func rebalanceCapSplits(chunks [][]Word, maxChars int, gapSeconds float64) [][]W
 				}
 			}
 		}
+		// The mirrored shape: a lone chunk BEFORE a multi-word one ("i" |
+		// "pressed record and had", from the review model at 93.46s). Pass-1
+		// only makes this shape across a real pause, but a model returns it
+		// freely; mergeContentless only sweeps lone DANGLERS forward and the
+		// pair above only looks at a lone chunk on the RIGHT, so a
+		// segment-leading lone word survived every repair. Same rules apply:
+		// a real pause keeps the word alone (Jordan's rule), and only a
+		// re-split with no lone piece is an improvement. A lone dangler is
+		// left for mergeContentless, which already handles it.
+		if i+1 < len(chunks) && len(cur) == 1 && len(chunks[i+1]) >= 2 && !isDangling(cur[0].Word) {
+			next := chunks[i+1]
+			gap := next[0].Start - cur[0].End
+			if gap < 0 {
+				gap = 0
+			}
+			if gap <= gapSeconds+gapEps {
+				combined := append(append([]Word{}, cur...), next...)
+				if pieces := splitAtBiggestPause(combined, maxChars); noLonePiece(pieces) {
+					out = append(out, pieces...)
+					i++
+					continue
+				}
+			}
+		}
 		out = append(out, cur)
 	}
 	return out
