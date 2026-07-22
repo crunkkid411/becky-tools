@@ -40,6 +40,23 @@
 #include "imgui_impl_dx11.h"
 #include "json.hpp"
 
+// HYBRID-GPU FIX (found 2026-07-22, chasing the reviewer's "idle CPU regressed to
+// 300-370%, higher even than the documented 46.9% post-fix baseline" report). The
+// 490%->47% fix (2c6fb53) correctly diagnosed DWM recompositing an overlapping
+// child HWND every frame as the mechanism - but on Jordan's hybrid-graphics laptop
+// (RTX 3070 + Intel iGPU), `D3D11CreateDeviceAndSwapChain(nullptr, ...)` with a
+// null adapter does not necessarily pick the RTX 3070: `nvidia-smi` shows
+// becky-review.exe absent from the GPU's process list entirely (0% GPU util)
+// while burning 3+ CPU cores sustained even fully idle with nothing loaded -
+// exactly the signature of DWM (which composites on whichever GPU is the desktop's
+// primary) having to CPU-copy this window's frames from a different adapter every
+// present. These two exported globals are the standard, decade-old fix laptop
+// drivers look for (NVIDIA Optimus / AMD PowerXpress): they tell the driver this
+// process wants the DISCRETE GPU, not whatever Windows defaulted it to. Zero-cost,
+// no adapter-enumeration code needed - the driver reads the export by symbol name.
+extern "C" { __declspec(dllexport) DWORD NvOptimusEnablement = 1; }
+extern "C" { __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1; }
+
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/video/video.h>
@@ -2060,7 +2077,19 @@ static void emitSelect() {
     // something the UI needs to block on or strictly order.
     json ids = json::array();
     for (auto& c : g_track[0]) if (g_sel.count(c.id)) ids.push_back(c.id);
-    std::thread([ids] { json r = engineCall("set_select", { {"ids", ids} }, 2.0); (void)r; }).detach();
+    // Adversarial-review fix: this spawns a fresh OS thread on every selection
+    // change, unlike the one-time startup workers above - under a rapid burst
+    // (I-6's exact scenario, dozens of edits/sec each touching selection) OS
+    // thread creation can transiently fail (resource exhaustion), and an
+    // uncaught std::system_error from the std::thread ctor reaches
+    // std::terminate() -> abort() (see crashLogInit's note on this exact
+    // mechanism). This is best-effort telemetry, so a failed thread just means
+    // this one selection sync is skipped - never worth crashing the session.
+    try {
+        std::thread([ids] { json r = engineCall("set_select", { {"ids", ids} }, 2.0); (void)r; }).detach();
+    } catch (const std::exception& e) {
+        editLog(std::string("emitSelect: thread spawn failed, skipping sync: ") + e.what());
+    }
 }
 static void emitThreshold(bool final_) {
     double n = nowSec();
