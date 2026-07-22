@@ -6255,10 +6255,18 @@ int main(int argc, char** argv) {
                 if (!picked.empty()) {
                     std::string path = convertEditIfNeeded(picked);   // .txt/.xml Vegas/FCP export -> reel .json
                     if (!path.empty()) {
-                        json r = engineCall("load_reel", { {"path", path} }, 30.0);
-                        if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
-                        else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
-                        g_renderMsgAt = nowSec();
+                        // cycle 17 review's runner-up: this was the LAST synchronous engineCall
+                        // left on the render/export toolbar (30s timeout) - the exact freeze
+                        // main.cpp:1055's comment names as the bug engineCallAsync was written to
+                        // kill. curSec/playing/lastComposed are main()'s own locals (declared
+                        // once, alive for the process lifetime), so capturing them by reference
+                        // is exactly as safe as g_playingExt already being touched here.
+                        engineCallAsync("load_reel", { {"path", path} }, 30.0, "Loading reel...",
+                                        [path, &curSec, &playing, &lastComposed](const json& r) {
+                            if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
+                            else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
+                            g_renderMsgAt = nowSec();
+                        });
                     }
                 }
             }
