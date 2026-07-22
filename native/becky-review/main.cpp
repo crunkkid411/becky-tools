@@ -1110,6 +1110,11 @@ static void drainAsync() {
 // already-filled short-circuit, which is what keeps it at 0 once a source's
 // audio is warm).
 static std::atomic<uint64_t> g_peaksJobsEnqueued{ 0 };
+// E-18 thumbnail half (cycle 15 review's "ONE THING"): mirrors g_peaksJobsEnqueued
+// but for the thumb worker - counts every "thumb" engine call actually submitted,
+// not decode work, the submit itself. See requestThumb below for why this stays
+// flat across split (the cache key dropped clip in-point entirely).
+static std::atomic<uint64_t> g_thumbJobsEnqueued{ 0 };
 // cycle 19 diagnostic: mirrors g_track[0].size() (declared later in this file) so
 // peaksRequest can log it without a forward-declaration of Clip/g_track. Updated
 // once per loadTimelineView call, right after the real track is rebuilt.
@@ -2312,9 +2317,19 @@ static std::mutex g_thumbMx;
 static std::set<std::string> g_thumbInFlight;
 struct ThumbDone { std::string key; ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
 static std::deque<ThumbDone> g_thumbDoneQ;
-static std::string thumbKey(const std::string& source, double t) {
-    char buf[40]; snprintf(buf, sizeof buf, "@%.1f", t);
-    return source + buf;
+// E-18 (cycle 15 review's "ONE THING"): the contract line is explicit - caches
+// are "keyed by SOURCE FILE + resolution level, never by clip identity or clip
+// in/out." This used to be keyed by source+t where t was the CLIP's in-point
+// (cin), so every split minted a brand-new key (the child clip's in-point is a
+// timestamp nobody ever requested before) and fired a real ffmpeg decode on the
+// engine (becky-go cmd/clip/export.go Thumb: cache miss on a new t -> GrabThumb).
+// That is genuine per-split media work, exactly what P2/P5 forbid. Fix: key (and
+// request) by SOURCE ONLY, same as peaks - one representative frame per source
+// file, fetched once, reused by every clip regardless of where it's split. A
+// split never changes the source, so it is now unconditionally a cache hit.
+static const double kThumbRefT = 0.0; // "first-frame thumbnail" per the engine's own doc comment
+static std::string thumbKey(const std::string& source) {
+    return source;
 }
 // Degrade-never-crash: any WIC failure (bad JPEG, codec missing) yields nullptr -
 // the clip just shows no thumbnail, exactly like the engine's own {data:""} degrade.
@@ -2359,18 +2374,19 @@ static ID3D11ShaderResourceView* decodeJpegToTexture(const uint8_t* data, size_t
     if (coOwned) CoUninitialize();
     return srv;
 }
-static void requestThumb(const std::string& source, double t) {
-    std::string key = thumbKey(source, t);
+static void requestThumb(const std::string& source) {
+    std::string key = thumbKey(source);
     {
         std::lock_guard<std::mutex> lk(g_thumbMx);
         if (g_thumbInFlight.count(key)) return;
         g_thumbInFlight.insert(key);
     }
-    g_bgPool->submit([source, t, key] {
+    g_thumbJobsEnqueued.fetch_add(1, std::memory_order_relaxed);
+    g_bgPool->submit([source, key] {
         t_threadTag = "thumbWorker";
         ThumbDone d; d.key = key;
         try {
-            json r = engineCall("thumb", { {"source", source}, {"t", t} }, 15.0);
+            json r = engineCall("thumb", { {"source", source}, {"t", kThumbRefT} }, 15.0);
             if (r.value("ok", false)) {
                 std::string uri = r.value("data", json::object()).value("data", std::string());
                 const std::string marker = "base64,";
@@ -2397,11 +2413,11 @@ static void drainThumbs() {
 // cached entry with srv==nullptr means "fetched, no thumbnail available" - a
 // terminal degrade state that is never retried every frame (E-18: no repeated
 // media work for a clip that's already been resolved, even to "none").
-static ThumbTex* getThumb(const std::string& source, double t) {
-    std::string key = thumbKey(source, t);
+static ThumbTex* getThumb(const std::string& source) {
+    std::string key = thumbKey(source);
     auto it = g_thumbCache.find(key);
     if (it != g_thumbCache.end()) return &it->second;
-    requestThumb(source, t);
+    requestThumb(source);
     return nullptr;
 }
 
@@ -3459,7 +3475,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         bool showThumb = thumbH > 0 && (x1 - x0) > thumbH + 28;
         float labX0 = x0 + 6;
         if (showThumb) {
-            ThumbTex* tt = getThumb(c.source, cin);
+            ThumbTex* tt = getThumb(c.source);
             ImVec2 t0(x0 + 3, aY + 3), t1(x0 + 3 + thumbH, aY + 3 + thumbH);
             if (tt && tt->srv) dl->AddImage((ImTextureID)tt->srv, t0, t1);
             else dl->AddRectFilled(t0, t1, IM_COL32(0, 0, 0, 90));
@@ -4665,19 +4681,14 @@ int main(int argc, char** argv) {
             g_backendOK = false;
         }
 
-        if (g_track[0].empty()) {
-            // demo reel so the window is never blank (proves the pipeline without a folder).
-            // Was pointed at "timeline-bench" (multi-GB source footage, never named proxyA.mp4
-            // there) - the real 120s bench proxy lives in "ges-bench". Guarded on existence so a
-            // missing file leaves the timeline empty (visibly "no reel loaded") instead of showing
-            // dead clips with no video/waveform.
-            const char* demoSrc = "X:/AI-2/becky-tools/native/ges-bench/proxyA.mp4";
-            std::ifstream demoCheck(demoSrc, std::ios::binary);
-            if (demoCheck.good()) {
-                struct Seg { double in, out; }; Seg segs[] = { {5,25}, {40,60}, {75,95}, {100,115} };
-                double cs = 0; for (auto& s : segs) { g_track[0].push_back({ s.in, s.out, cs, "clip", demoSrc, "" }); cs += s.out - s.in; }
-            }
-        }
+        // cycle-13 review (becky-review-3-review.md "THE ONE THING"): a fake demo
+        // reel used to seed 4 clips here with engine id="" whenever no folder/reel
+        // loaded - looked like a real project but silently rejected every split/
+        // trim/delete with zero on-screen explanation. Killed outright: an empty
+        // g_track[0] now falls straight through to the timeline's existing honest
+        // "timeline empty - double-click a quote in the search results to add
+        // clips, or use Load Reel" message (drawn whenever g_track[0].empty(), see
+        // the timeline pane) instead of a look-alike uneditable surface.
         recomputeDur(); relabel(0); relabel(1);
         for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
         g_bootDone.store(true);
@@ -4739,6 +4750,28 @@ int main(int argc, char** argv) {
         frameTraceTick(++frameIdx, nowSec() - traceT0, dt * 1000.0);
 
         g_busyHint = playing || g_gest.kind != 0;
+
+        // #0-adjacent self-heal (cycle-13 reviewer finding): on this always-multi-
+        // agent shared machine, something OUTSIDE this process can clear WS_VISIBLE
+        // on our own hwnd minutes into a run - confirmed live via GetWindowLong
+        // (style bit 0x10000000 missing, IsZoomed still true, process still
+        // Responding) while nothing in this file ever calls ShowWindow(hwnd,
+        // SW_HIDE) on the main window. Root cause unconfirmed (external script /
+        // input-injection tool on the shared box is the leading theory - see
+        // becky-review-3-review.md cycle 12), so rather than chase every possible
+        // external actor, make the app self-heal: since we NEVER intend to hide our
+        // own window, force it back whenever we notice it happened. Throttled to
+        // ~2x/sec - IsWindowVisible is a cheap read, this is not a per-frame cost.
+        // ponytail: blunt watchdog, not a root-cause fix; if this fires often, the
+        // crashLog line below tells the next session exactly when.
+        static int s_visCheckCounter = 0;
+        if (++s_visCheckCounter >= 30) {
+            s_visCheckCounter = 0;
+            if (!IsWindowVisible(hwnd)) {
+                crashLog("SELF-HEAL: hwnd lost WS_VISIBLE unexpectedly (no in-app SW_HIDE on main window) - forcing ShowWindow back");
+                ShowWindow(hwnd, IsZoomed(hwnd) ? SW_SHOWMAXIMIZED : SW_SHOW);
+            }
+        }
 
         if (!g_visible) { Sleep(30); continue; }
 
@@ -5130,7 +5163,8 @@ int main(int argc, char** argv) {
                         // with BECKY_REVIEW_EDIT_LOG set can grep this line and see the counter
                         // stop climbing once the reel's audio is warm.
                         editLog("loadTimelineView done, " + std::to_string(g_track[0].size()) +
-                            " clips, peaksJobsEnqueued=" + std::to_string(g_peaksJobsEnqueued.load()));
+                            " clips, peaksJobsEnqueued=" + std::to_string(g_peaksJobsEnqueued.load()) +
+                            ", thumbJobsEnqueued=" + std::to_string(g_thumbJobsEnqueued.load()));
                     }
                     switch (res.req.kind) {
                     case 0: { // split
