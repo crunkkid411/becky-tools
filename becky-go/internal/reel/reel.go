@@ -327,9 +327,38 @@ func checkSourcesReadable(r edl.Reel) error {
 // confused with, or overwrite, the untouched originals.
 const RenderSubdir = "Rendered"
 
-// RenderDirFor returns the Rendered/ folder belonging to the FIRST usable source
-// path given — i.e. where output for that footage goes. "" when no source has a
-// usable directory, so the caller picks its own last resort.
+// ProtectedDrive is the one drive letter no becky-written file may ever land
+// on: Jordan's removable criminal-case evidence volume. A third incident
+// (2026-07-21/22, this time via the review app's "Render Selection") proved
+// "output goes with the footage" is not itself enough — when the FOOTAGE is
+// forensic evidence, following it lands the render right back on the evidence
+// volume. A forensic reel plays FROM evidence; its render is a NEW file, and
+// new files never touch the evidence volume, no exceptions. Hardcoded, not a
+// config value: this is a specific, named safety boundary Jordan stated in
+// those words, not a cosmetic default (contrast the UI's drive-colour badge,
+// which deliberately has no hardcoded drive list — that's cosmetics, this is
+// the boundary itself).
+const ProtectedDrive = 'E'
+
+// OnProtectedDrive reports whether p sits on the evidence drive. Exported so
+// cmd/clip can apply the identical rule to the browsed-folder fallback
+// (RenderDirFor only ever sees clip sources, not that folder).
+func OnProtectedDrive(p string) bool {
+	p = strings.TrimSpace(p)
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	d := p[0]
+	if d >= 'a' && d <= 'z' {
+		d -= 'a' - 'A'
+	}
+	return rune(d) == ProtectedDrive
+}
+
+// RenderDirFor returns the Rendered/ folder belonging to the FIRST usable,
+// NON-EVIDENCE source path given — i.e. where output for that footage goes.
+// "" when no such source exists (every source is empty, unusable, or itself on
+// the evidence drive), so the caller picks its own last resort.
 //
 // The destination must be derived from THE FOOTAGE, never from ambient state.
 // Twice now, ambient state has written Jordan's personal YouTube skits onto E:\,
@@ -340,14 +369,20 @@ const RenderSubdir = "Rendered"
 // business on an evidence volume, and neither the cwd nor the browsed folder
 // carries the information that would prevent it. The source footage does — it is
 // the only thing that says which job this render belongs to, so it decides.
-// Never the cwd, never the browsed folder, never a hardcoded drive.
+// Never the cwd, never the browsed folder, never a hardcoded drive — EXCEPT the
+// one hardcoded exclusion above, which exists to protect the evidence drive
+// itself, not to pick a destination.
 //
 // This is exported so cmd/clip (the review app's render + thumbnail paths) uses
 // the SAME rule as Render(). It was duplicated prose in two packages, and the
 // copy that was only prose is the one that drifted.
 func RenderDirFor(sources ...string) string {
 	for _, s := range sources {
-		dir := pathx.Dir(strings.TrimSpace(s))
+		s = strings.TrimSpace(s)
+		if s == "" || OnProtectedDrive(s) {
+			continue
+		}
+		dir := pathx.Dir(s)
 		if dir == "" || dir == "." {
 			continue
 		}

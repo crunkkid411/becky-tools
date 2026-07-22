@@ -58,3 +58,46 @@ func TestRenderFallsBackWhenThereIsNoSource(t *testing.T) {
 		t.Errorf("output = %q, want a relative fallback name for a reel with no source", got)
 	}
 }
+
+// The exact 2026-07-21/22 incident: a "Render Selection" whose clips are
+// sourced FROM the evidence drive. "Output goes with the footage" alone put
+// the render right back on E:\TakingBack2007\Rendered\ — 24MB of it, plus its
+// .edl/.srt sidecars, sitting on live case evidence. RenderDirFor must refuse
+// an evidence-drive source entirely, not just prefer non-evidence ones.
+func TestRenderDirForRefusesTheEvidenceDriveEvenAsTheOnlySource(t *testing.T) {
+	got := RenderDirFor(`E:\TakingBack2007\clips_01-02-reddit.mp4`)
+	if got != "" {
+		t.Errorf("RenderDirFor(all-evidence) = %q, want \"\" so the caller falls back — never a path on E:", got)
+	}
+}
+
+// A mixed-source list must skip the evidence-drive entries and land on the
+// first REAL (non-evidence) source, not just the first non-empty one.
+func TestRenderDirForSkipsEvidenceDriveSourcesInFavorOfRealFootage(t *testing.T) {
+	got := RenderDirFor(
+		`E:\TakingBack2007\clip_a.mp4`,
+		`X:\Videos\2025\11_November\raw\FLYV9992.mp4`,
+	)
+	want := filepath.Join(`X:\Videos\2025\11_November\raw`, RenderSubdir)
+	if !strings.EqualFold(got, want) {
+		t.Errorf("RenderDirFor(evidence, real) = %q, want %q", got, want)
+	}
+}
+
+func TestOnProtectedDrive(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{`E:\TakingBack2007\clip.mp4`, true},
+		{`e:\TakingBack2007\clip.mp4`, true}, // lowercase drive letter still counts
+		{`X:\Videos\raw\a.mp4`, false},
+		{`C:\Users\only1\AppData\Local\Temp\becky-clip`, false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := OnProtectedDrive(c.path); got != c.want {
+			t.Errorf("OnProtectedDrive(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}

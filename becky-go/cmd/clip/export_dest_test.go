@@ -106,3 +106,47 @@ func TestClipSourcesPickTheFirstRealSource(t *testing.T) {
 		t.Errorf("render dir = %q, want %q", got, want)
 	}
 }
+
+// The exact 2026-07-21/22 incident, reproduced end-to-end through the App:
+// Jordan had E:\TakingBack2007 open in the library AND every clip on the
+// timeline (a "Render Selection" of reddit hits) was itself sourced from E:.
+// "Output goes with the footage" alone landed the render, its .edl, and its
+// .srt on the evidence drive (clips_01-02-reddit_0001.mp4, 24,190,779 bytes).
+// With no non-evidence source anywhere and the browsed folder ALSO on E:, the
+// destination must fall all the way to the work dir — never a path on E:.
+func TestRenderNeverLandsOnEvidenceDriveEvenWhenAllFootageIsThere(t *testing.T) {
+	a := &App{
+		folder:  `E:\TakingBack2007`,
+		workDir: t.TempDir(),
+	}
+	sources := []string{
+		`E:\TakingBack2007\clips_01-02-reddit_source_a.mp4`,
+		`E:\TakingBack2007\clips_01-02-reddit_source_b.mp4`,
+	}
+
+	got := a.renderDirPath(sources...)
+
+	if strings.HasPrefix(strings.ToUpper(got), "E:") {
+		t.Fatalf("render dir = %q — NEVER the forensic evidence drive, even when it's where the footage lives", got)
+	}
+	if !strings.EqualFold(got, a.workDir) {
+		t.Errorf("render dir = %q, want the work dir %q — no real-footage source and the browsed folder is also E:", got, a.workDir)
+	}
+}
+
+// Same evidence-sourced timeline, but browsing a NORMAL (non-evidence) folder:
+// the destination must still avoid E: and fall back to that browsed folder,
+// exactly the existing "no usable source" behavior — evidence sources are
+// simply invisible to the destination decision, they don't poison it further.
+func TestRenderFallsBackToNonEvidenceBrowsedFolderWhenAllFootageIsEvidence(t *testing.T) {
+	folder := t.TempDir() // stands in for a normal, non-evidence folder (e.g. X:\...)
+	a := &App{folder: folder, workDir: t.TempDir()}
+	sources := []string{`E:\TakingBack2007\clips_01-02-reddit_source_a.mp4`}
+
+	got := a.renderDirPath(sources...)
+
+	want := filepath.Join(folder, reel.RenderSubdir)
+	if got != want {
+		t.Errorf("render dir = %q, want %q", got, want)
+	}
+}

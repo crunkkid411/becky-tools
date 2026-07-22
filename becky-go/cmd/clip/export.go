@@ -545,6 +545,14 @@ func (a *App) renderDir(sources ...string) (string, error) {
 // don't have the footage's drive at all — CI has no X:, so a test that mkdirs
 // the decided path fails on Windows runners (and litters `X:\...`-named
 // directories on Linux ones) even though the decision it guards is correct.
+//
+// reel.RenderDirFor already refuses to answer with a source on the evidence
+// drive (see its ProtectedDrive doc — the 2026-07-21/22 "Render Selection"
+// incident: a forensic reel's own footage IS the evidence drive, so following
+// the footage landed the render right back on E:). This function's OTHER two
+// branches must refuse the same way, or the browsed folder just reopens the
+// same hole: browsing the evidence drive with an all-evidence timeline used to
+// fall through to `folder + Rendered`, which is E: again.
 func (a *App) renderDirPath(sources ...string) string {
 	if dir := reel.RenderDirFor(sources...); dir != "" {
 		return dir
@@ -553,7 +561,7 @@ func (a *App) renderDirPath(sources ...string) string {
 	folder := a.folder
 	work := a.workDir
 	a.mu.Unlock()
-	if strings.TrimSpace(folder) != "" {
+	if strings.TrimSpace(folder) != "" && !reel.OnProtectedDrive(folder) {
 		return filepath.Join(folder, reel.RenderSubdir)
 	}
 	return work
