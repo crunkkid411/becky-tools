@@ -326,13 +326,19 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    checkboxed steps — standalone harness first, wire-in last, DoD numbers final). The C++
    build is the local agent's, on a fresh `local/video-engine` branch.
 
-1. ~~**Caption wording**~~ **FIXED 2026-07-21 (cloud), pending a burn check on real footage.**
-   `ChunkWords` no longer packs greedily: pauses first, then over-cap runs split at their
-   biggest pauses with lookahead (cli-cut's own rule for a cap-suppressed break, per Jordan's
-   "cli-cut wins" instruction). Three underlying defects fixed with regression tests — see
-   HANDOFF-LOG.md 2026-07-21. **Local: re-run the caption build on `post_constantly` and
-   count one-word lines; expect the 8 (`media, can, have, posting, videos, actually, i,
-   fundamentals`) to drop to only genuinely pause-isolated words.**
+1. ~~**Caption wording**~~ **FIXED 2026-07-22 (local, `local/fix-caption-strands`), measured
+   on the real footage.** The 2026-07-21 cloud fix was verified INCOMPLETE on
+   `post_constantly`: 5 one-word cues survived (posting/anything/videos/i/probably +
+   a 33ms "learned") and none sits on a real pause (silencedetect: 81–117ms dips at
+   best). Three more root causes fixed in `internal/subs`, each with a regression
+   test pinning the exact grouping: RepairDangling stranding a word by pushing a
+   dangler out of a two-word line; splitAtBiggestPause's lone tier (split ranking is
+   now tiered, and a chunk that can only strand stays whole within the 28-char burn
+   width); and float noise flickering ASR-quantised 0.32s gaps across the derived
+   0.32s threshold (gapEps). Deterministic run after: **155 cues, 0 one-word lines,
+   longest line 28 chars, narrowest cue 234ms**; "a thousand videos" is one cue
+   again and "the fundamentals learned | against another creator" replaced the 33ms
+   strand.
 2. **H-6/H-7 are the product.** H-4 (`apply_edit_batch`) and H-6 (`ask` ->
    proposal -> apply) are BUILT and wired both sides. H-5 (activity stream)
    landed 2026-07-20. **H-7's Go half landed 2026-07-21**: the `forensic_query`
