@@ -127,7 +127,7 @@ echo Installed. Fresh-shell smoke test: becky-vision, becky-ocr, becky-perceive,
 echo search_library, becky should all resolve on PATH now.
 
 REM --- ALIAS BUILDS: same source, a second .exe name something else loads ----
-REM Becky Review 3 (nativeecky-review) spawns its engine as
+REM Becky Review 3 (native\becky-review) spawns its engine as
 REM becky-review-engine.exe, NOT becky-clip.exe - see engineStart() in its
 REM main.cpp. Both are built from cmd\clip, but the auto-discovery loop above
 REM only ever produces becky-clip.exe, so this alias silently went STALE:
@@ -137,9 +137,9 @@ REM thumbnail source resolution, the render-output drive fix) were invisible in
 REM the GUI while every test passed. Rebuilt here so the two can never diverge.
 echo.
 echo Building becky-review-engine.exe ^(cmd\clip alias - Becky Review 3 loads THIS one^)...
-go build -o binecky-review-engine.exe .\cmd\clip
+go build -o bin\becky-review-engine.exe .\cmd\clip
 if errorlevel 1 echo WARN: becky-review-engine.exe failed to build - Becky Review 3 will run a STALE engine.
-copy /Y binecky-review-engine.exe "%BECKY_PATH_BIN%\" >nul
+copy /Y bin\becky-review-engine.exe "%BECKY_PATH_BIN%\" >nul
 
 REM --- becky-vision regression gate: testdata\vision fixtures (FAST mode) ----
 REM becky-AI-Agent-review-1.md Section 5. Best-effort like the GUI/audio
