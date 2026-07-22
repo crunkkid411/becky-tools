@@ -21,7 +21,8 @@
 // clock and the decode thread is simply told "show this exact frame" via an mpv
 // hr-seek instead of a GStreamer pull - a render-backend swap, not an architecture
 // change. GStreamer itself stays linked and initialized (gstInitSEH) because
-// peaksWorker still uses it for one-time per-source audio decode into the .bpk
+// peaksProcessBatch still uses it for one-time per-source audio decode into the .bpk<parameter>
+
 // peak cache (E-2) - that pipeline is unrelated to the video player and untouched.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -465,7 +466,7 @@ static void editWorker() {
 // it) when the official msvc_x86_64 GStreamer DLLs and an Anaconda/conda-forge shadow
 // GStreamer install both land on PATH. SEH (__try/__except) is the only mechanism that can
 // catch a hardware/structured exception. If init fails or crashes, g_gstAvailable stays
-// false; every GStreamer call site below (peaksWorker, decodeWorker/composeOnDecodeThread,
+// false; every GStreamer call site below (peaksProcessBatch, decodeWorker/composeOnDecodeThread,
 // the video pane draw, shutdown) checks it first, so the window still opens (shell, library,
 // timeline, search all work) and the video pane shows a plain "video decode unavailable"
 // note instead of the whole app dying before CreateWindow ever runs.
@@ -481,7 +482,7 @@ static int gstInitSEH(int argc, char** argv) {
         // FIX (cycle-4, root-caused via isolated repro): GStreamer/GLib lazily create
         // GLib's internal "pool-spawner" thread-pool manager on the FIRST pipeline state
         // change anywhere in the process. If that first-ever call happens on a thread
-        // already in THREAD_MODE_BACKGROUND_BEGIN - which every peaksWorker decode thread
+        // already in THREAD_MODE_BACKGROUND_BEGIN - which every bgPool worker thread
         // enters immediately - Windows rejects the manager thread's own SetThreadPriority
         // call and GLib treats that as fatal. Fix: force that one-time lazy init here, on
         // the main thread at normal priority, before any worker thread exists to race it.
@@ -805,6 +806,100 @@ static void mpvSeekExact(const std::string& source, double srcSec, bool exact) {
         mpvCommand(json::array({ "seek", srcSec, "absolute", exact ? "exact" : "keyframes" }));
     }
 }
+
+// ===== I-8 / §3.4 P3: Bounded background worker pool =====
+// All peaks decode (GStreamer audio -> .bpk min/max) runs through a fixed pool
+// of N = max(1, physical_cores / 2) threads in Windows BACKGROUND processing
+// mode. This prevents the FB9 failure mode: 100+ concurrent GStreamer decode
+// threads (one per unique source file) from saturating disk I/O and stalling
+// even the OS cursor during a cold folder load.
+//
+// Workers process pending source jobs from a shared FIFO. A source currently
+// being processed is tracked so no two workers decode the same source
+// simultaneously - the per-source Peaks.jobs/secFilled/inFlight dedup stays
+// intact (only one thread touches a Peaks at a time).
+//
+// Also handles thumbnails (requestThumb) and external file probes
+// (requestAddExternal) through the same pool, so those also benefit from the
+// concurrency cap.
+
+struct Peaks;   // forward decl — defined below in the waveform section
+static std::shared_ptr<Peaks> peaksGet(const std::string& source);
+static bool peaksProcessBatch(std::shared_ptr<Peaks> P);
+
+class BgWorkPool {
+    int N;
+    std::vector<std::thread> workers;
+    std::deque<std::string> pending;          // sources with pending peaks work
+    std::set<std::string> pendingSet;         // O(log n) dedup
+    std::set<std::string> active;             // sources being processed
+    std::deque<std::function<void()>> extras; // one-shot jobs (thumbs/add_ext)
+    std::mutex mx;
+    std::condition_variable cv;
+    bool stop = false;
+public:
+    BgWorkPool() {
+        SYSTEM_INFO si; GetSystemInfo(&si);
+        N = std::max(1, (int)si.dwNumberOfProcessors / 2);
+        for (int i = 0; i < N; i++)
+            workers.emplace_back([this]{ loop(); });
+    }
+    ~BgWorkPool() {
+        { std::lock_guard lk(mx); stop = true; cv.notify_all(); }
+        for (auto& w : workers) if (w.joinable()) w.join();
+    }
+    /// Queue a source's pending peaks jobs for processing. Dedup'd: if the
+    /// source is already active or queued, this is a no-op.
+    void wakeSource(const std::string& s) {
+        if (s.empty()) return;
+        std::lock_guard lk(mx);
+        if (stop || active.count(s) || pendingSet.count(s)) return;
+        pending.push_back(s);
+        pendingSet.insert(s);
+        cv.notify_one();
+    }
+    /// Submit a one-shot job (thumbnail, add_external, etc.).
+    void submit(std::function<void()> f) {
+        std::lock_guard lk(mx);
+        extras.push_back(std::move(f));
+        cv.notify_one();
+    }
+private:
+    void loop() {
+        t_threadTag = "bgPool";
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN))
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        for (;;) {
+            std::function<void()> extra;
+            bool haveExtra = false;
+            std::string src;
+            {
+                std::unique_lock lk(mx);
+                cv.wait(lk, [this]{ return stop || !extras.empty() || !pending.empty(); });
+                if (stop) return;
+                if (!extras.empty()) {
+                    extra = std::move(extras.front()); extras.pop_front(); haveExtra = true;
+                } else if (!pending.empty()) {
+                    src = pending.front(); pending.pop_front(); pendingSet.erase(src);
+                    active.insert(src);
+                } else continue;
+            }
+            if (haveExtra) { extra(); continue; }
+            auto P = peaksGet(src);
+            bool redo = false;
+            if (P) redo = peaksProcessBatch(P);  // returns true if jobs remain
+            {
+                std::lock_guard lk(mx);
+                active.erase(src);
+                if (redo && !stop && !pendingSet.count(src) && !active.count(src)) {
+                    pending.push_back(src); pendingSet.insert(src); cv.notify_one();
+                }
+                if (!pending.empty()) cv.notify_one();
+            }
+        }
+    }
+};
+static BgWorkPool* g_bgPool = nullptr;
 
 // --------------- ACCURATE WAVEFORMS: windowed, seek-first min/max peak pyramid ---------------
 static const int    kSpb = 64;
@@ -1152,19 +1247,18 @@ static void decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a,
     }
     g_fillEpoch.fetch_add(1);
 }
-static void peaksWorker(std::shared_ptr<Peaks> P) {
-    t_threadTag = "peaksWorker";
-    // Spec 3.4 P3: CPU priority alone is not enough - a background thread doing disk
-    // I/O can still stall the OS cursor. BACKGROUND_BEGIN also drops I/O + memory
-    // priority (this is the documented fix for FB9's "even my mouse lags" bug).
-    if (!SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN))
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
+    t_threadTag = "peaksBatch";
+    // I-8: called from BgWorkPool (which already set BACKGROUND priority).
+    // Batch-drains all currently-queued jobs instead of looping forever.
+    // Returns true if any jobs remain (caller should re-signal the pool).
+    if (!P || P->failed) return false;
     if (loadPeaksCache(*P)) g_fillEpoch.fetch_add(1);
     // #0 CRITICAL: GStreamer never initialized - do not touch any gst_* call, it is unsafe.
-    if (!g_gstAvailable.load()) { P->failed = true; return; }
+    if (!g_gstAvailable.load()) { P->failed = true; return false; }
     GError* uerr = nullptr;
     char* uri = gst_filename_to_uri(P->source.c_str(), &uerr);
-    if (!uri) { if (uerr) g_error_free(uerr); P->failed = true; return; }
+    if (!uri) { if (uerr) g_error_free(uerr); P->failed = true; return false; }
     char desc[2600];
     snprintf(desc, sizeof desc,
         "uridecodebin uri=\"%s\" caps=\"audio/x-raw\" expose-all-streams=false ! "
@@ -1174,16 +1268,9 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
     g_free(uri);
     GError* e = nullptr;
     GstElement* pipe = gst_parse_launch(desc, &e);
-    // These three failure paths were SILENT (failed=true, no log line) - and that
-    // silence cost a whole diagnostic session on 2026-07-22: the demo proxy
-    // (ges-bench/proxyA.mp4) has NO audio track, its clips drew as flat blocks,
-    // and "waveforms are broken" got escalated as a code regression when
-    // crash.log could have answered it in one line. Every failed=true now says
-    // which source and which stage, so the next flat-wave report is a 10-second
-    // log check instead of a night of code archaeology.
     if (!pipe || e) {
         crashLog("peaks: " + baseName(P->source) + " - gst pipeline parse failed, waveform disabled");
-        if (e) g_error_free(e); P->failed = true; return;
+        if (e) g_error_free(e); P->failed = true; return false;
     }
     GstElement* sink = gst_bin_get_by_name(GST_BIN(pipe), "as");
     if (!P->ready) {
@@ -1193,7 +1280,7 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             P->failed = true;
             gst_element_set_state(pipe, GST_STATE_NULL);
             gst_object_unref(sink); gst_object_unref(pipe);
-            return;
+            return false;
         }
         gint64 d = 0;
         if (gst_element_query_duration(pipe, GST_FORMAT_TIME, &d) && d > 0) {
@@ -1204,27 +1291,20 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             P->failed = true;
             gst_element_set_state(pipe, GST_STATE_NULL);
             gst_object_unref(sink); gst_object_unref(pipe);
-            return;
+            return false;
         }
     }
     gst_element_set_state(pipe, GST_STATE_PLAYING);
     g_fillEpoch.fetch_add(1);
-    std::unique_lock<std::mutex> lk(P->mx);
+    // Drain all pending jobs (no per-source infinite loop)
     for (;;) {
-        if (P->jobs.empty()) {
-            if (P->dirty) { savePeaksCache(*P); }
-            P->cv.wait_for(lk, std::chrono::seconds(2));
-            if (P->jobs.empty()) continue;
+        std::pair<double, double> job;
+        {
+            std::unique_lock<std::mutex> lk(P->mx);
+            if (P->jobs.empty() || P->failed) break;
+            job = P->jobs.front(); P->jobs.pop_front();
+            P->inFlight = job;
         }
-        auto job = P->jobs.front(); P->jobs.pop_front();
-        // I-6 dedup: mark this window in-flight WHILE still holding the lock, so
-        // a peaksRequest arriving between the pop above and the re-lock below
-        // (a split's reload can land at any point in that window - decodeWindow
-        // itself can take real wall-clock time) sees it as "already being
-        // handled" instead of finding it in neither `jobs` nor `secFilled` and
-        // re-pushing a brand-new duplicate. Cleared right after this job's runs
-        // are decoded, below.
-        P->inFlight = job;
         double a = std::max(0.0, job.first), b = std::min(P->duration, job.second);
         std::vector<std::pair<double, double>> runs;
         double runA = -1;
@@ -1234,7 +1314,6 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             if ((filled || s == (size_t)b) && runA >= 0) { runs.push_back({ runA, std::min(b, (double)s + 1) }); runA = -1; }
         }
         if (runA >= 0) runs.push_back({ runA, b });
-        lk.unlock();
         for (auto& r : runs) {
             if (r.second - r.first < 0.01) continue;
             {
@@ -1245,9 +1324,9 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             try {
                 decodeWindow(*P, pipe, sink, r.first, r.second);
             } catch (const std::exception& e) {
-                crashLog(std::string("peaksWorker decodeWindow: caught ") + e.what() + " - window skipped, not crashing");
+                crashLog(std::string("peaksBatch decodeWindow: caught ") + e.what() + " - window skipped, not crashing");
             } catch (...) {
-                crashLog("peaksWorker decodeWindow: caught non-std exception - window skipped, not crashing");
+                crashLog("peaksBatch decodeWindow: caught non-std exception - window skipped, not crashing");
             }
             {
                 std::lock_guard<std::mutex> g(g_decMx);
@@ -1255,20 +1334,9 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             }
             g_decCv.notify_one();
         }
-        lk.lock();
-        P->inFlight = { -1.0, -1.0 };
-        // cycle 19 real-corpus finding: did this job's range actually gain any
-        // decoded seconds? A window whose audio is unseekable/gapped (confirmed
-        // live on a partially-downloaded livestream .mkv - see Peaks::stuckAttempts
-        // above) reaches here every single time with the EXACT same range still
-        // unfilled - decodeWindow hit no error to catch, it simply produced zero
-        // samples. Left unchecked, drawWave's once-a-second "still missing" retry
-        // (main.cpp drawWave) re-requests this same window forever - a real,
-        // slow-but-truly-unbounded job-enqueue growth, distinct from (and not
-        // fixed by) the split-time dedup above. Give up after kMaxStuckAttempts
-        // instead of retrying forever - same "degrade, never hang" contract as
-        // any other decode failure.
         {
+            std::unique_lock<std::mutex> lk(P->mx);
+            P->inFlight = { -1.0, -1.0 };
             size_t s0 = (size_t)std::ceil(a), s1 = std::min(P->secFilled.size(), (size_t)std::floor(b));
             bool nowFilled = true;
             for (size_t s = s0; s < s1; s++) if (!P->secFilled[s]) { nowFilled = false; break; }
@@ -1276,16 +1344,25 @@ static void peaksWorker(std::shared_ptr<Peaks> P) {
             else if (++P->stuckAttempts >= kMaxStuckAttempts) {
                 P->failed = true;
                 lk.unlock();
-                crashLog("peaksWorker: giving up on " + baseName(P->source) + " - window [" +
+                crashLog("peaksBatch: giving up on " + baseName(P->source) + " - window [" +
                     std::to_string(a) + "," + std::to_string(b) + "] never filled after " +
                     std::to_string(kMaxStuckAttempts) + " attempts (likely corrupt/gapped media) - "
                     "waveform disabled for this source, not retrying forever");
                 gst_element_set_state(pipe, GST_STATE_NULL);
                 gst_object_unref(sink); gst_object_unref(pipe);
-                return;
+                return false;
             }
         }
     }
+    // Save cache now that we're done draining (pool will wake us if more arrive)
+    {
+        std::lock_guard<std::mutex> lk(P->mx);
+        if (P->dirty) savePeaksCache(*P);
+    }
+    gst_element_set_state(pipe, GST_STATE_NULL);
+    gst_object_unref(sink); gst_object_unref(pipe);
+    // Return true if any jobs still remain for this source (pool will re-signal)
+    { std::lock_guard<std::mutex> lk(P->mx); return !P->jobs.empty(); }
 }
 static std::shared_ptr<Peaks> peaksGet(const std::string& source) {
     std::lock_guard<std::mutex> lk(g_peaksMx);
@@ -1301,11 +1378,12 @@ static std::shared_ptr<Peaks> peaksEnsure(const std::string& source) {
     P->source = source;
     P->cachePath = peaksCachePath(source);
     g_peaks[source] = P;
-    std::thread(peaksWorker, P).detach();
+    // I-8: no per-source thread. peaksRequest will wake the pool when the first
+    // job is pushed, and the pool's bounded workers drain the job queue.
     return P;
 }
 // True if every second in [a,b) is already decoded (P.secFilled) - a pure cache
-// hit, nothing left for peaksWorker to do. Caller must hold P.mx.
+// hit, nothing left for peaksProcessBatch to do. Caller must hold P.mx.
 //
 // Uses ceil(a)/floor(b), matching decodeWindow's OWN fill-marking promise
 // (it only marks the INTERIOR whole seconds of a decoded run, never the
@@ -1365,7 +1443,7 @@ static void peaksRequest(const std::string& source, double a, double b) {
     if (P->inFlight.first <= aa && P->inFlight.second >= b) return;
     P->jobs.push_front({ aa, b });
     g_peaksJobsEnqueued.fetch_add(1, std::memory_order_relaxed);
-    P->cv.notify_one();
+    g_bgPool->wakeSource(source);
     // cycle 19 diagnostic (review's suggested next step): log how many seconds of
     // [aa,b] were ALREADY filled at push time and how many total clips are on the
     // track right now. If pushes correlate with trackClips growing while
@@ -2259,7 +2337,7 @@ static void requestThumb(const std::string& source, double t) {
         if (g_thumbInFlight.count(key)) return;
         g_thumbInFlight.insert(key);
     }
-    std::thread([source, t, key] {
+    g_bgPool->submit([source, t, key] {
         t_threadTag = "thumbWorker";
         ThumbDone d; d.key = key;
         try {
@@ -2277,7 +2355,7 @@ static void requestThumb(const std::string& source, double t) {
         std::lock_guard<std::mutex> lk(g_thumbMx);
         g_thumbInFlight.erase(key);
         g_thumbDoneQ.push_back(d);
-    }).detach();
+    });
 }
 // Moves any textures finished since last frame into the UI-thread cache. Call
 // once per frame before drawing clips.
@@ -3595,7 +3673,7 @@ struct AddExternalDone { bool ok = false; std::string err; json data; };
 static std::mutex g_addExtMx;
 static std::deque<AddExternalDone> g_addExtDoneQ;
 static void requestAddExternal(const std::string& path, int at) {
-    std::thread([path, at] {
+    g_bgPool->submit([path, at] {
         t_threadTag = "addExternalWorker";
         AddExternalDone d;
         try {
@@ -3608,7 +3686,7 @@ static void requestAddExternal(const std::string& path, int at) {
         }
         std::lock_guard<std::mutex> lk(g_addExtMx);
         g_addExtDoneQ.push_back(std::move(d));
-    }).detach();
+    });
 }
 
 // ---- search state ----
@@ -3676,6 +3754,15 @@ static std::vector<CueRow> g_cues;
 static std::string g_cueName;             // which video's transcript is open
 static std::string g_cueErr;
 static char g_withinBuf[128] = { 0 };     // search-within-this-transcript
+static std::string g_withinLast;          // last frame's search text, to fire the
+                                           // auto-scroll-to-first-match only on change
+// case-insensitive "find" - a real word processor's search never makes you match
+// the ASR's exact capitalization to find a word you know is in the transcript.
+static bool ciContains(const std::string& hay, const std::string& needle) {
+    auto it = std::search(hay.begin(), hay.end(), needle.begin(), needle.end(),
+        [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+    return it != hay.end();
+}
 
 // ---- Q&A cards (G-1) ----
 struct QACard {
@@ -4339,12 +4426,19 @@ int main(int argc, char** argv) {
     frameTraceInit();
     scrubLogInit();
     // #0 CRITICAL: SEH-guarded - a gst_init crash must never take the window down with it.
-    // GStreamer is only used by peaksWorker now (one-time per-source audio decode into
+    // GStreamer is only used by peaksProcessBatch now (one-time per-source audio decode into
     // the .bpk peak cache, E-2) - the video player is mpv (D-1, launched after the
     // window exists, below).
     g_gstAvailable.store(gstInitSEH(argc, argv) != 0);
     if (g_gstAvailable.load()) crashLog("gst_init: OK, waveform decode available");
     else crashLog("gst_init: FAILED or crashed (caught) - waveform decode disabled, window still opening");
+    // I-8 / §3.4 P3: bounded background worker pool. Created AFTER gstInitSEH
+    // (which must run at normal priority - see the GLib pool-spawner fix above).
+    g_bgPool = new BgWorkPool();
+    crashLog("bgPool: created with " + std::to_string([]{
+        SYSTEM_INFO si; GetSystemInfo(&si);
+        return std::max(1, (int)si.dwNumberOfProcessors / 2);
+    }()) + " workers");
     std::thread(decodeWorker).detach();   // P1 fix: owns the mpv IPC dispatch, off the UI thread
     std::thread(editWorker).detach();     // A-4 fix: owns split/delete/trim/undo engine round-trips, off the UI thread
     std::thread(searchWorker).detach();   // I-* fix: owns search/qmd_search engine round-trips, off the UI thread
@@ -5527,7 +5621,25 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndChild();
             } else if (!g_cueName.empty()) {
-                // ---- flowing single-video transcript view (B-8) ----
+                // ---- flowing single-video transcript view (B-8/B15, audapolis pattern) ----
+                // Continuous word-wrapped prose, not one bordered row per ASR segment.
+                //
+                // ImGui::TextWrapped() chained with SameLine() looked like the obvious
+                // way to do this and is WRONG: ImGui computes ONE wrap width for a
+                // TextWrapped call from wherever its FIRST line starts, and reuses that
+                // same (narrow, off-margin) width for every wrapped continuation line of
+                // THAT call - a cue starting mid-line via SameLine() that itself needed
+                // 2+ lines rendered as a garbled single-word-per-line column (verified
+                // with a real transcript, screenshot showed it). Laying out one WORD at
+                // a time - draw it, then only NewLine() if the NEXT word would overflow
+                // the child's actual width - keeps every wrapped line starting at the
+                // real left margin, which is what real word-wrap requires.
+                //
+                // A timecode appears only at a real pause in speech (a paragraph break),
+                // not repeated on every line. Each word is its own click target so
+                // hovering/clicking anywhere in a cue's run of words seeks the player
+                // there; the current search match is highlighted, not hidden - a real
+                // "find", not a filter that deletes the rest of the document.
                 if (ImGui::SmallButton("< Back")) { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); }
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
@@ -5535,11 +5647,50 @@ int main(int argc, char** argv) {
                 if (!g_cueErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cueErr.c_str());
                 ImGui::BeginChild("transcript", { 0, 0 }, false);
                 std::string within(g_withinBuf);
-                for (auto& c : g_cues) {
-                    if (!within.empty() && c.text.find(within) == std::string::npos) continue;
-                    std::string line = c.timecode + "  " + c.text;
-                    // click a cue -> player seeks there, PAUSED (D-3/B-8).
-                    if (ImGui::Selectable(line.c_str())) seekToSpan(c.source, c.start, c.end, false, curSec, playing, lastComposed);
+                bool searchChanged = (within != g_withinLast);
+                g_withinLast = within;
+                bool scrolledToMatch = false;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                float spaceW = ImGui::CalcTextSize(" ").x;
+                if (spaceW <= 0.0f) spaceW = 4.0f * ImGui::GetIO().FontGlobalScale;
+                double lastEnd = -1000.0;
+                for (size_t i = 0; i < g_cues.size(); i++) {
+                    CueRow& c = g_cues[i];
+                    ImGui::PushID((int)i);
+                    // A real pause (>1.5s) reads as a paragraph break, like an actual
+                    // transcript - never a boxed row per ASR segment.
+                    bool newParagraph = (c.start - lastEnd > 1.5);
+                    if (lastEnd > -999.0 && newParagraph) { ImGui::NewLine(); ImGui::NewLine(); }
+                    lastEnd = c.end;
+                    if (newParagraph) { ImGui::TextDisabled("%s", c.timecode.c_str()); ImGui::SameLine(0, 6); }
+                    bool isMatch = !within.empty() && ciContains(c.text, within);
+                    bool cueHovered = false, cueClicked = false;
+                    size_t pos = 0, n = c.text.size();
+                    while (pos < n) {
+                        size_t wstart = c.text.find_first_not_of(' ', pos);
+                        if (wstart == std::string::npos) break;
+                        size_t wend = c.text.find(' ', wstart);
+                        if (wend == std::string::npos) wend = n;
+                        std::string word = c.text.substr(wstart, wend - wstart);
+                        pos = wend;
+                        ImVec2 sz = ImGui::CalcTextSize(word.c_str());
+                        if (ImGui::GetContentRegionAvail().x < sz.x) ImGui::NewLine();
+                        if (isMatch) {
+                            ImVec2 p0 = ImGui::GetCursorScreenPos();
+                            dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0xFF, 0xD7, 0x00, 60), 2.0f);
+                        }
+                        ImGui::PushID((int)wstart);
+                        ImGui::TextUnformatted(word.c_str());
+                        if (ImGui::IsItemHovered()) cueHovered = true;
+                        if (ImGui::IsItemClicked()) cueClicked = true;
+                        ImGui::PopID();
+                        ImGui::SameLine(0, spaceW);
+                    }
+                    // click ANYWHERE in this cue's words -> player seeks there, PAUSED (D-3/B-8).
+                    if (cueClicked) seekToSpan(c.source, c.start, c.end, false, curSec, playing, lastComposed);
+                    if (isMatch && searchChanged && !scrolledToMatch) { ImGui::SetScrollHereY(0.2f); scrolledToMatch = true; }
+                    if (cueHovered) ImGui::SetTooltip("%s - click to play from here", c.timecode.c_str());
+                    ImGui::PopID();
                 }
                 ImGui::EndChild();
             } else {
@@ -6591,6 +6742,8 @@ int main(int argc, char** argv) {
     if (g_mpvPipeRead != INVALID_HANDLE_VALUE) CloseHandle(g_mpvPipeRead);
     if (g_mpvProc.hProcess) { TerminateProcess(g_mpvProc.hProcess, 0); WaitForSingleObject(g_mpvProc.hProcess, 1500); CloseHandle(g_mpvProc.hProcess); CloseHandle(g_mpvProc.hThread); }
     if (g_mpvHwnd) DestroyWindow(g_mpvHwnd);
+    // I-8: shut down the background pool; all worker threads join here.
+    delete g_bgPool; g_bgPool = nullptr;
     ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
     if (g_rtv) g_rtv->Release(); if (g_swap) g_swap->Release(); if (g_ctx) g_ctx->Release(); if (g_dev) g_dev->Release();
     return 0;
