@@ -3722,6 +3722,12 @@ static std::string g_backendSummary; // engine `status` -> one plain sentence
 static bool g_backendOK = false;     // any backend live? drives the status card's colour
 static std::string g_answerCardID;   // non-empty => the ask box is answering THIS card
 static std::string g_answerCardQ;
+// H-7: one forensic run at a time. The judge stage is an LLM pass that can take
+// minutes; a double-click must never start two pipelines over the same folder
+// (they would race on the same _forensic_hits.json / reel artifacts). Set on
+// click, cleared in the completion callback (which drainAsync delivers on the
+// UI thread, so a plain bool is enough - no atomics needed).
+static bool g_forensicBusy = false;
 
 // Real prompts for a video editor reviewing his OWN footage. The reference's chips
 // ("find every threat to the host family") are forensic-case examples and read as
@@ -6306,6 +6312,68 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
                 if (ImGui::Button("Send", ImVec2(sendW, 0))) submit = true;
                 ImGui::PopStyleColor(4);
+
+                // H-7: the forensic route - same box, second button. The query in the
+                // box runs the WHOLE forensic pipeline (qmd recall + becky-judge LLM
+                // pass + becky-hits reel build) through the ONE forensic_query verb,
+                // and the resulting reel lands on the timeline as one undo span, with
+                // the Q&A cards refreshed from the questions sidecar. Same wiring
+                // shape as Apply##proposal above: async verb -> callback delivered on
+                // the UI thread by drainAsync -> loadTimelineView. Hidden while the
+                // box is retargeted to answer a Q&A card (that gesture owns the box);
+                // disabled while a run is in flight (see g_forensicBusy). The H-5
+                // activity feed narrates progress (started/progress/done) for free -
+                // the engine already emits those events for this verb.
+                if (g_answerCardID.empty()) {
+                    ImGui::SameLine();
+                    // High-contrast amber, deliberately distinct from the green Send:
+                    // one button costs nothing, the other starts a minutes-long LLM
+                    // pipeline - they must not look alike. (Accessibility rule: color
+                    // is an aid here, never stripped.)
+                    ImVec4 amber(1.0f, 0.72f, 0.18f, 1.0f);
+                    float forW = ImGui::CalcTextSize("Forensic").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                    ImGui::PushStyleColor(ImGuiCol_Button, amber);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(amber.x * 0.82f, amber.y * 0.82f, amber.z * 0.82f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(amber.x * 0.66f, amber.y * 0.66f, amber.z * 0.66f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                    if (g_forensicBusy) ImGui::BeginDisabled();
+                    bool fclick = ImGui::Button("Forensic", ImVec2(forW, 0));
+                    if (g_forensicBusy) ImGui::EndDisabled();
+                    ImGui::PopStyleColor(4);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Forensic search: recall + judge + reel.\nHits land on the timeline; can take minutes.\nThe activity feed above narrates progress.");
+                    if (fclick && g_askBuf[0]) {
+                        std::string q(g_askBuf);
+                        g_askBuf[0] = 0;
+                        g_askEcho = q;
+                        g_askAnswer = "Forensic search running (recall + judge + reel)... this can take a few minutes.";
+                        g_forensicBusy = true;
+                        // 1800s: becky-judge alone is allowed 20 minutes for its LLM
+                        // pass (BECKY_JUDGE_TIMEOUT), becky-hits 2 more. The timeout
+                        // is the safety net, not the expectation - and it costs the
+                        // UI nothing, the wait lives on engineCallAsync's own thread.
+                        engineCallAsync("forensic_query", { {"query", q} }, 1800.0, "Forensic search...",
+                            [](const json& r) {
+                                g_forensicBusy = false;
+                                if (r.value("ok", false)) {
+                                    const json& d = r.contains("data") ? r["data"] : r;
+                                    if (d.contains("timeline")) loadTimelineView(d["timeline"]);
+                                    int n = d.value("clips", 0);
+                                    g_askAnswer = "Forensic search done: " + std::to_string(n) +
+                                                  " hit(s) on the timeline (one Ctrl+Z removes them all).";
+                                    std::string note = d.value("note", std::string());
+                                    if (!note.empty()) g_askAnswer += "\n(" + note + ")";
+                                    // becky-hits writes a questions sidecar and the engine
+                                    // loaded it; pull the fresh Q&A cards. In-memory verb,
+                                    // measured-fast class of call (CONTINUE-HERE: median
+                                    // 16ms, none stalls) - same as save_answer's refresh.
+                                    refreshCards();
+                                } else {
+                                    g_askAnswer = "Forensic search failed: " + r.value("error", std::string("?"));
+                                }
+                            });
+                    }
+                }
 
                 if (submit && g_askBuf[0]) {
                     std::string q(g_askBuf);
