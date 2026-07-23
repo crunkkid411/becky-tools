@@ -1,9 +1,9 @@
 // becky-review - the full-native single-window Becky Review (phases 3+4 start).
 //
-// Grown from native/becky-timeline (Dear ImGui + D3D11), video pane driven by mpv.
+// Grown from native/becky-timeline (Dear ImGui + D3D11).
 // ONE process owns the whole window - no WebView2, no WPF, no airspace:
 //   left  = library / search / transcript (ImGui)
-//   center = video pane (mpv, --wid child of our hwnd, hwdec GPU decode)
+//   center = video pane (in-process engine.cpp, D3D11VA hw decode, no subprocess)
 //   right = Q&A / ask-becky (ImGui)
 //   bottom = native timeline (the seed's code, in-process instead of embedded)
 //
@@ -12,17 +12,13 @@
 // ask. This process is VIEW/CONTROLLER only - every edit routes to engine verbs,
 // engine undo is THE undo. NDJSON seam = {"id","verb","args":{...}} -> {"id","reply":{ok,data,error}}.
 //
-// D-1 (2026-07-19): the video pane is mpv (runtime/mpv/mpv.exe, fetched via
-// fetch-mpv.ps1), embedded as a genuine WS_CHILD hwnd via --wid, driven over its
-// JSON IPC named pipe (see MpvEmbed below) - no libmpv linking, same subprocess+
-// pipe pattern as the Go engine seam. Every UI-thread control loop (curSec, the
-// dt-driven playhead, threshold-skip, stock playhead, edit application) is
-// UNCHANGED from the prior GStreamer build: curSec stays the single authoritative
-// clock and the decode thread is simply told "show this exact frame" via an mpv
-// hr-seek instead of a GStreamer pull - a render-backend swap, not an architecture
-// change. GStreamer stays linked/initialized (gstInitSEH) only as a legacy runtime
-// dependency; since cycle 23 the waveform peaks are decoded by ffmpeg (see
-// decodeWindow), because the gst uridecodebin pipeline hangs on real corpus files.
+// D-1 (2026-07-19) launched the video pane on mpv; step 6 of the overnight
+// mpv-swap mission (2026-07-23, HANDOFF-VIDEO-ENGINE.md/SPEC-BECKY-VIDEO-ENGINE.md)
+// deleted it entirely - see the "D-1 (step 6 rewrite)" block below for the
+// current native engine architecture. GStreamer stays linked/initialized
+// (gstInitSEH) only as a legacy runtime dependency; since cycle 23 the waveform
+// peaks are decoded by ffmpeg (see decodeWindow), because the gst uridecodebin
+// pipeline hangs on real corpus files.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
