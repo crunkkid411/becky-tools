@@ -719,6 +719,13 @@ struct Peaks {
     std::vector<uint8_t> secFilled;
     size_t bins = 0;
     double duration = 0;
+    // Some sources' AUDIO stream starts later than their VIDEO stream (ffprobe
+    // start_time differs between the two) - a real, per-file mic/encoder lead-in,
+    // not a becky-review bug. cin/cout/compStart everywhere else in this file are
+    // VIDEO-frame time; decodeWindow must add this before seeking the audio
+    // stream, or the waveform (and anything cut against it) reads as shifted by
+    // that same constant. Zero for a normally-muxed file - a no-op.
+    double avSkew = 0;
     bool ready = false;
     bool failed = false;
     bool dirty = false;
@@ -1077,18 +1084,40 @@ static bool runPipeCapture(const std::string& cmd8, double deadlineSec,
     CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     return true;
 }
-// One ffprobe per cold source: does it have an audio track, and how long is it?
-// Replaces the old gst preroll + duration query (which could themselves hang).
-static bool probeAudioDuration(const std::string& source, double& dur, bool& hasAudio) {
-    std::string cmd = "ffprobe -v error -select_streams a:0 "
-        "-show_entries stream=codec_type:format=duration -of default=noprint_wrappers=1 \"" + source + "\"";
+// One ffprobe per cold source: does it have an audio track, how long is it, and
+// - the reason this now reads EVERY stream instead of just "a:0" - does its
+// audio stream start at the same real time as its video stream? A source whose
+// mic activated ~0.2s after its camera (common on phone-captured clips; verified
+// on this corpus with `ffprobe -show_entries stream=codec_type,start_time`,
+// video start_time=0.000000, audio start_time=0.230000) has NO audio samples
+// before that gap - not a decode bug, just missing data - and every waveform
+// pixel after it reads as shifted by that same constant unless decodeWindow
+// compensates. avSkew is that gap (audio start_time minus video start_time),
+// zero for a normally-muxed file.
+static bool probeAudioDuration(const std::string& source, double& dur, bool& hasAudio, double& avSkew) {
+    std::string cmd = "ffprobe -v error -show_entries stream=codec_type,start_time:format=duration "
+        "-of default=noprint_wrappers=1 \"" + source + "\"";
     std::string out;
     if (!runPipeCapture(cmd, 20.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); }))
         return false;
-    hasAudio = out.find("codec_type=audio") != std::string::npos;
-    dur = 0;
-    size_t p = out.find("duration=");
-    if (p != std::string::npos) dur = atof(out.c_str() + p + 9);
+    hasAudio = false; dur = 0; avSkew = 0;
+    double videoStart = 0, audioStart = -1;
+    bool haveVideoStart = false, haveAudioStart = false;
+    std::string curType;
+    size_t pos = 0;
+    while (pos < out.size()) {
+        size_t nl = out.find('\n', pos);
+        std::string line = out.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = (nl == std::string::npos) ? out.size() : nl + 1;
+        if (line.rfind("codec_type=", 0) == 0) { curType = line.substr(11); if (curType == "audio") hasAudio = true; }
+        else if (line.rfind("start_time=", 0) == 0) {
+            double t = atof(line.c_str() + 11);
+            // first stream of each type only - matches the old "-select_streams a:0"
+            if (curType == "video" && !haveVideoStart) { videoStart = t; haveVideoStart = true; }
+            else if (curType == "audio" && !haveAudioStart) { audioStart = t; haveAudioStart = true; }
+        } else if (line.rfind("duration=", 0) == 0) dur = atof(line.c_str() + 9);
+    }
+    if (hasAudio && audioStart >= 0) avSkew = audioStart - videoStart;
     return true;
 }
 // Decodes [a,b) of P.source into the peak bins via ffmpeg. Returns the highest
@@ -1099,9 +1128,15 @@ static bool probeAudioDuration(const std::string& source, double& dur, bool& has
 static double decodeWindow(Peaks& P, double a, double b) {
     if (b <= a) return a;
     char head[128], tail[192];
-    snprintf(head, sizeof head, "ffmpeg -v error -nostdin -ss %.3f -i ", a);
+    // Seek the AUDIO stream at a + avSkew, not a: `a`/`b` are VIDEO-frame time
+    // (same clock as every cin/cout/compStart elsewhere in this file), and on a
+    // source whose audio starts later than its video (see avSkew's comment on
+    // Peaks) the audio content that plays in sync with video time `a` sits at
+    // that later position in the file, not at `a` itself.
+    snprintf(head, sizeof head, "ffmpeg -v error -nostdin -ss %.3f -i ", std::max(0.0, a + P.avSkew));
     snprintf(tail, sizeof tail, " -t %.3f -map a:0 -vn -sn -dn -ac 1 -ar %d -f s16le pipe:1", b - a, kPeakRate);
     const std::string cmd = std::string(head) + "\"" + P.source + "\"" + tail;
+    // Bins stay indexed by VIDEO time `a` - only the disk-seek position moves.
     const uint64_t sampleBase = (uint64_t)(a * kPeakRate);
     uint64_t nsTotal = 0;         // samples consumed so far (position = sampleBase + nsTotal)
     uint8_t carry = 0; bool haveCarry = false;   // an s16 sample split across two reads
@@ -1150,8 +1185,8 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
     if (!P->ready) {
         // cycle 23: one ffprobe replaces the old gst preroll + duration query,
         // both of which could hang on this corpus (see decodeWindow's comment).
-        double dur = 0; bool hasAudio = false;
-        if (!probeAudioDuration(P->source, dur, hasAudio)) {
+        double dur = 0, avSkew = 0; bool hasAudio = false;
+        if (!probeAudioDuration(P->source, dur, hasAudio, avSkew)) {
             crashLog("peaks: " + baseName(P->source) + " - ffprobe could not be started (not on PATH?), waveform disabled");
             P->failed = true; return false;
         }
@@ -1163,7 +1198,11 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
             crashLog("peaks: " + baseName(P->source) + " - audio duration probe failed, waveform disabled");
             P->failed = true; return false;
         }
+        if (std::abs(avSkew) > 0.001)
+            crashLog("peaks: " + baseName(P->source) + " - audio stream starts " + std::to_string(avSkew) +
+                      "s after video (ffprobe start_time) - compensating every waveform seek");
         std::lock_guard<std::mutex> lk(P->mx);
+        P->avSkew = avSkew;
         sizeArrays(*P, dur);
     }
     g_fillEpoch.fetch_add(1);
@@ -1689,6 +1728,7 @@ static uint64_t edlTrackSig() {
 }
 
 static double reelFps(); // defined later (needs the async ffprobe state)
+static double quantToFrame(double t); // defined later (needs reelFps)
 
 // Hands the engine the current reel and starts it PLAYING at compT. Also used to
 // re-enter after a mid-playback edit (rebuild + resume at the same spot).
@@ -2027,6 +2067,17 @@ static void loadTimelineView(const json& tv) {
     }
     packTrack(0); recomputeDur();
     g_trackClipCountForLog.store(g_track[0].size(), std::memory_order_relaxed);
+    // Measure, don't assert (same reason the caption-commit code below logs
+    // instead of asserting): Jordan cut every clip in Vegas frame-exact, so
+    // every clip boundary MUST already sit on quantToFrame's grid - this is
+    // not something the app can be wrong about silently. One line per boundary
+    // in crash.log, grepped for "PACK boundary", for the first 10 cuts of every
+    // freshly loaded reel.
+    for (size_t i = 0; i < g_track[0].size() && i < 10; i++) {
+        double b = g_track[0][i].compStart, q = quantToFrame(b);
+        crashLog("PACK boundary i=" + std::to_string(i) + " t=" + std::to_string(b) +
+                 " quant=" + std::to_string(q) + " err=" + std::to_string(q - b));
+    }
     g_sel.clear();
     // Windowed waveform decode: only what's on the timeline, newest first. (FB9 fix: keyed by SOURCE.)
     for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
@@ -2373,12 +2424,28 @@ static const ImU32 COL_CAPTX    = IM_COL32(255, 240, 208, 255);
 static const ImU32 COL_CAPCUT   = IM_COL32(255, 255, 255, 46);
 static const ImU32 COL_QUIETDIM = IM_COL32(0, 0, 0, 110);
 
+// Jordan's screenshot showed "0:08.5" printed twice in a row on the ruler, then
+// the whole label sequence one tick off. Root cause: this used to do
+// `int d = (int)((s - t) * 10)` - TRUNCATING the decisecond digit. A tick that
+// should read 8.6 but is actually the double 8.599999999996 (either from the
+// ruler loop's accumulated `s += step` drift, or just because 0.1 has no exact
+// binary representation) truncates to d=5, printing "0:08.5" again instead of
+// "0:08.6". Rounding the whole decisecond count as ONE integer - with carry,
+// so 59.96 correctly becomes 1:00.0 instead of 0:59.9 - makes the label match
+// whatever tick is actually nearest, every time.
 static void fmtTime(double s, char* out, size_t n, bool subSec) {
     if (s < 0) s = 0;
-    int t = (int)s, h = t / 3600, m = (t % 3600) / 60, sec = t % 60;
-    if (subSec) { int d = (int)((s - t) * 10); if (h) snprintf(out, n, "%d:%02d:%02d.%d", h, m, sec, d); else snprintf(out, n, "%d:%02d.%d", m, sec, d); }
-    else if (h) snprintf(out, n, "%d:%02d:%02d", h, m, sec);
-    else snprintf(out, n, "%d:%02d", m, sec);
+    if (subSec) {
+        long long deci = std::llround(s * 10.0), t = deci / 10, d = deci % 10;
+        int h = (int)(t / 3600), m = (int)((t % 3600) / 60), sec = (int)(t % 60);
+        if (h) snprintf(out, n, "%d:%02d:%02d.%lld", h, m, sec, d);
+        else snprintf(out, n, "%d:%02d.%lld", m, sec, d);
+    } else {
+        long long t = std::llround(s);
+        int h = (int)(t / 3600), m = (int)((t % 3600) / 60), sec = (int)(t % 60);
+        if (h) snprintf(out, n, "%d:%02d:%02d", h, m, sec);
+        else snprintf(out, n, "%d:%02d", m, sec);
+    }
 }
 static double rulerStep(double pps) {
     static const double steps[] = { 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600 };
@@ -3377,15 +3444,40 @@ static void drawTimeline(double& curSec, bool& playing) {
 
     double step = rulerStep(g_pps);
     double t0 = std::floor(g_scrollSec / step) * step;
-    for (double s = t0; s <= g_scrollSec + viewDur + step; s += step) {
+    // Each tick is t0 + k*step from an INTEGER k, never `s += step` in a loop -
+    // accumulating a double step (0.1 has no exact binary value) drifts a
+    // fraction of a step further off with every iteration, and by the far edge
+    // of a long timeline a tick that should be exactly on the step lands just
+    // under it - which is what fed the duplicate-label bug fmtTime just fixed.
+    // Computing every tick straight from t0 keeps the error bounded to one
+    // rounding step, not an accumulating one.
+    long long nTicks = (long long)std::ceil((g_scrollSec + viewDur + step - t0) / step) + 1;
+    double frameDur = 1.0 / reelFps();
+    bool frameTicks = reelFps() > 1.0 && g_pps * frameDur >= 4.0;
+    for (long long k = 0; k < nTicks; k++) {
+        double s = t0 + (double)k * step;
         float x = secToX(s);
         if (x < tlX - 60 || x > tlX + tlW + 60) continue;
         dl->AddLine(ImVec2(x, p.y + 6), ImVec2(x, p.y + rulerH), COL_TICK);
         char b[24]; fmtTime(s, b, sizeof b, step < 1.0);
         dl->AddText(ImVec2(x + 3, p.y + 3), COL_RULERTX, b);
-        for (int m = 1; m < 5; m++) {
-            float xm = secToX(s + step * m / 5.0);
-            dl->AddLine(ImVec2(xm, p.y + rulerH - 5), ImVec2(xm, p.y + rulerH), COL_TICKMIN);
+        if (frameTicks) {
+            // Zoomed in enough that a frame is a real, clickable width (>= 4px):
+            // Jordan cut every clip by hand in Vegas, one frame at a time, and
+            // reads these minor ticks AS frame marks - so at this zoom they must
+            // BE frame boundaries (multiples of 1/fps from comp time 0, the same
+            // grid quantToFrame snaps to), not the old meaningless step/5 split.
+            long long f = (long long)std::ceil(s / frameDur);
+            while (f * frameDur <= s + 1e-9) f++;
+            for (; f * frameDur < s + step - 1e-9; f++) {
+                float xm = secToX((double)f * frameDur);
+                dl->AddLine(ImVec2(xm, p.y + rulerH - 5), ImVec2(xm, p.y + rulerH), COL_TICKMIN);
+            }
+        } else {
+            for (int m = 1; m < 5; m++) {
+                float xm = secToX(s + step * m / 5.0);
+                dl->AddLine(ImVec2(xm, p.y + rulerH - 5), ImVec2(xm, p.y + rulerH), COL_TICKMIN);
+            }
         }
     }
 
@@ -3415,6 +3507,24 @@ static void drawTimeline(double& curSec, bool& playing) {
         if (x1 < tlX - 4 || x0 > tlX + tlW + 4) continue;
         bool selected = g_sel.count(c.id) != 0;
         bool inDrag = g_gest.kind == 3 && std::find(g_gest.group.begin(), g_gest.group.end(), (int)i) != g_gest.group.end();
+        // Jordan cuts butt-joined clips with ZERO gap in Vegas - the reel data
+        // proves it (compStart of clip i+1 equals clip i's compStart+dur exactly).
+        // But every clip used to get a 1px inset on BOTH sides unconditionally,
+        // so two touching clips always left a 2px unfilled seam (the lane
+        // background showing through), and rounding all 4 corners on both clips
+        // widened that seam further with a rounded notch on each side - together
+        // reading as the "visible dark gap between clips that are supposed to be
+        // butt-joined" he flagged. An edge that touches a real neighbour now
+        // draws flush (no inset, no rounding on that side); only an edge facing
+        // actual empty timeline (or a real gap) keeps the 1px inset + rounding.
+        bool touchesPrev = !ghost && i > 0 &&
+            std::abs((g_track[0][i - 1].compStart + (g_track[0][i - 1].out - g_track[0][i - 1].in)) - drawStart) < 1e-4;
+        bool touchesNext = !ghost && i + 1 < g_track[0].size() &&
+            std::abs((drawStart + drawDur) - g_track[0][i + 1].compStart) < 1e-4;
+        float fx0 = x0 + (touchesPrev ? 0.0f : 1.0f), fx1 = x1 - (touchesNext ? 0.0f : 1.0f);
+        ImDrawFlags rf = ImDrawFlags_RoundCornersNone;
+        if (!touchesPrev) rf |= ImDrawFlags_RoundCornersLeft;
+        if (!touchesNext) rf |= ImDrawFlags_RoundCornersRight;
         // SELECTION = OPAQUE FILL, NEVER AN OUTLINE. Jordan, verbatim: "Pleae
         // remove the yellow outline around the selected clip" [feedback2], and
         // a clip's border must match its own colour [feedback4]. The clip
@@ -3423,8 +3533,8 @@ static void drawTimeline(double& curSec, bool& playing) {
         // going solid, not by drawing a different colour on top of it.
         ImU32 fill = IM_COL32(c.r, c.g, c.b, selected ? 255 : 62);
         if (inDrag) fill = (fill & 0x00FFFFFF) | 0x60000000;
-        dl->AddRectFilled(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), fill, 3);
-        float vx0 = std::max(x0 + 1, tlX), vx1 = std::min(x1 - 1, tlX + tlW);
+        dl->AddRectFilled(ImVec2(fx0, aY + 1), ImVec2(fx1, aY + laneH - 1), fill, 3, rf);
+        float vx0 = std::max(fx0, tlX), vx1 = std::min(fx1, tlX + tlW);
         if (vx1 > vx0 && wy1 - wy0 > 6) {
             drawWave(dl, c.source, cin, cout, x0, vx0, vx1, wy0, wy1, g_pps,
                      inDrag ? COL_WAVEDIM : (selected ? IM_COL32(255, 255, 255, 190) : COL_WAVE));
@@ -3445,7 +3555,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         // The border ALWAYS matches the clip's own colour - no white ring on the
         // selected clip. The opaque fill above is what says "selected".
         ImU32 brd = IM_COL32(c.r, c.g, c.b, 242);
-        dl->AddRect(ImVec2(x0 + 1, aY + 1), ImVec2(x1 - 1, aY + laneH - 1), brd, 3, 0, 1.0f);
+        dl->AddRect(ImVec2(fx0, aY + 1), ImVec2(fx1, aY + laneH - 1), brd, 3, rf, 1.0f);
         if (clipPreparing(c)) {
             ImVec2 pr0(std::max(x0 + 1, tlX), aY + 1), pr1(std::min(x1 - 1, tlX + tlW), aY + laneH - 1);
             if (pr1.x > pr0.x) {
