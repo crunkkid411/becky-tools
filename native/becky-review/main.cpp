@@ -82,6 +82,7 @@ extern "C" { __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #include <sstream>
 #include <array>
 #include <exception>
+#include <csignal>   // SIGABRT hook: names the thread+stack behind any abort() (bug-1 forensics)
 using json = nlohmann::json;
 
 static double nowSec() {
@@ -292,6 +293,15 @@ struct EditReq {
     double t = 0;       // editT() at request time, for the local group-track mirror
     bool group = false;
     std::pair<double, double> rem{ 0, 0 };   // precomputed ripple (Del/O/I only)
+    // Bug-2 fix (4AM verification: "edit ops dead on real clips"): a clip that
+    // reached the timeline as a LOCAL PREVIEW (single-click search hit, cue click,
+    // Space-played video, or add_clip's engine-failure fallback) has no engine id,
+    // so split/trim aimed at it silently no-opped. With promote set, editWorker
+    // first registers the span with the engine (add_clip) and patches the real id
+    // into args before running the verb - the first edit on a preview clip
+    // PROMOTES it to a real reel clip instead of dying silently.
+    bool promote = false;
+    std::string pSource; double pIn = 0, pOut = 0; std::string pLabel;
 };
 struct EditResult { EditReq req; bool ok = false; json data; };
 static std::deque<EditReq> g_editQ;
@@ -317,6 +327,13 @@ static bool g_editQuit = false;
 // clip id be queued at all; once its reply lands (typically single-digit ms),
 // the next press resolves against the fresh, engine-confirmed id.
 static std::set<std::string> g_editsInFlight;
+// One preview-clip promotion (add_clip + verb, see EditReq.promote) in flight at
+// a time. UI-thread-only, like g_editsInFlight: set when a promote request is
+// queued, cleared when its reply drains. Keeps key-spam on an unregistered clip
+// from stacking N add_clips of the same span. ponytail: one global gate, not a
+// per-span map - promotions are rare (first edit on a preview) and serialized
+// through the FIFO editWorker anyway.
+static bool g_promoteInFlight = false;
 
 // Ground-truth edit trace, OPT-IN via BECKY_REVIEW_EDIT_LOG=<path> (unset =
 // zero overhead, no file touched). Settles the still-open question from the
@@ -406,6 +423,35 @@ static void crashLogInit() {
         crashLog(std::string("TERMINATE - ") + msg);
         std::abort();
     });
+    // Bug-1 forensics: the recurring 0xc0000409 faults INSIDE ucrtbase!abort
+    // (export-map-verified against fault offset 0x7286e), yet crash.log stayed
+    // empty - so abort() is being reached WITHOUT std::terminate (GLib/GStreamer
+    // g_error(), or a direct CRT abort). UCRT's abort() raises SIGABRT before it
+    // fastfails, and ucrtbase.dll is one shared CRT for every module in the
+    // process, so this hook is the one place that sees those too. Log the thread
+    // tag + raw stack (module+offset, resolvable via becky-review.map) then let
+    // the crash proceed - this is a flight recorder, not a rescue.
+    signal(SIGABRT, [](int) {
+        void* frames[32];
+        USHORT n = CaptureStackBackTrace(0, 32, frames, nullptr);
+        std::string s = "SIGABRT (abort called) - stack:";
+        for (USHORT i = 0; i < n; i++) {
+            HMODULE m = nullptr;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCWSTR)frames[i], &m);
+            char name[MAX_PATH] = { 0 };
+            const char* base = "?";
+            if (m && GetModuleFileNameA(m, name, MAX_PATH)) {
+                const char* p = strrchr(name, '\\');
+                base = p ? p + 1 : name;
+            }
+            char fr[MAX_PATH + 32];
+            snprintf(fr, sizeof fr, " %s+0x%llx", base,
+                     (unsigned long long)((uintptr_t)frames[i] - (uintptr_t)m));
+            s += fr;
+        }
+        crashLog(s);
+    });
 }
 
 static void queueEdit(EditReq req) {
@@ -429,6 +475,32 @@ static void editWorker() {
         }
         EditResult res;
         try {
+            if (req.promote) {
+                // Register the preview span as a real reel clip first, then aim the
+                // queued verb at the id the engine hands back. add_clip APPENDS, so
+                // the new clip is the reply's last one (ponytail: last-wins is safe
+                // because this FIFO worker is the only promote path; a concurrent
+                // double-click add racing this in the same instant just means the
+                // verb lands on that identical span instead).
+                json ar = engineCall("add_clip", { {"source", req.pSource}, {"in", req.pIn},
+                                                   {"out", req.pOut}, {"label", req.pLabel} }, 6.0);
+                std::string newId;
+                if (ar.value("ok", false)) {
+                    json ad = ar.value("data", json::object());
+                    if (ad.contains("clips") && ad["clips"].is_array() && !ad["clips"].empty())
+                        newId = ad["clips"].back().value("id", std::string());
+                }
+                editLog("PROMOTE preview -> engine verb=" + req.verb +
+                        " id=" + (newId.empty() ? std::string("(add_clip failed)") : newId));
+                if (newId.empty()) {
+                    res.ok = false;
+                    res.req = std::move(req);
+                    std::lock_guard<std::mutex> lk(g_editDoneMx);
+                    g_editDone.push_back(std::move(res));
+                    continue;
+                }
+                req.args["id"] = newId;
+            }
             json r = engineCall(req.verb, req.args, 5.0);
             res.ok = r.value("ok", false); res.data = r.value("data", json::object());
             if (res.ok && req.verb == "undo") {
@@ -4575,6 +4647,11 @@ static void addHitToTimeline(const Hit& h) {
         cl.r = 220; cl.g = 30; cl.b = 60;
         g_track[0].push_back(cl); packTrack(0); recomputeDur();
         g_quietDirty = true; peaksRequest(src, a - 1.0, b + 5.0);
+        // Bug-2 fix: this fallback used to be SILENT, leaving a clip that looked
+        // real but had no engine id (every edit no-opped). Say so - and the first
+        // edit on it now auto-registers it anyway (see EditReq.promote).
+        g_renderMsg = "Engine didn't confirm the add - clip shown as a preview; your first edit will register it.";
+        g_renderMsgAt = nowSec();
     });
 }
 
@@ -4972,7 +5049,16 @@ int main(int argc, char** argv) {
                 bool noId = c && c->id.empty();
                 bool gated = c && !noId && g_editsInFlight.count(c->id);
                 editLog("EDGE S clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
-                if (c && !noId && !gated) {
+                if (c && noId && !g_promoteInFlight) {
+                    // Preview clip: promote it to a real reel clip, then split (bug-2 fix).
+                    double srcT = c->in + (t - c->compStart);
+                    EditReq req; req.verb = "split"; req.args = { {"at", srcT} };
+                    req.kind = 0; req.t = t; req.group = g_group;
+                    req.promote = true; req.pSource = c->source; req.pIn = c->in; req.pOut = c->out; req.pLabel = c->label;
+                    g_promoteInFlight = true;
+                    queueEdit(std::move(req));
+                    editLog("QUEUE promote+split src=" + c->label);
+                } else if (c && !noId && !gated) {
                     double srcT = c->in + (t - c->compStart);
                     EditReq req; req.verb = "split"; req.args = { {"id", c->id}, {"at", srcT} };
                     req.kind = 0; req.t = t; req.group = g_group;
@@ -5029,6 +5115,25 @@ int main(int argc, char** argv) {
                     editLog("  QUEUE remove_clip id=" + c->id);
                     anyQueued = true;
                 }
+                // Bug-2 fix: a preview-only clip (no engine id) is not on the engine
+                // reel at all, so "delete" for it is a plain LOCAL removal, not an
+                // engine verb - the old "skip" left the clip on screen and Delete
+                // looking broken (reproduced live before this fix). Indices collected
+                // first, erased back-to-front, because the Clip* targets point into
+                // the vector being edited.
+                {
+                    std::vector<size_t> localKill;
+                    for (Clip* c : targets)
+                        if (c && c->id.empty()) localKill.push_back((size_t)(c - g_track[0].data()));
+                    if (!localKill.empty()) {
+                        std::sort(localKill.begin(), localKill.end());
+                        for (size_t k = localKill.size(); k-- > 0; )
+                            if (localKill[k] < g_track[0].size()) g_track[0].erase(g_track[0].begin() + localKill[k]);
+                        packTrack(0); recomputeDur();
+                        g_sel.clear(); g_quietDirty = true;
+                        editLog("  local remove: " + std::to_string(localKill.size()) + " preview-only clip(s)");
+                    }
+                }
                 // The removed clips are gone; a stale selection would leave the +-1f
                 // buttons and Render Selection pointing at ids that no longer exist.
                 if (anyQueued && !g_sel.empty()) g_sel.clear();
@@ -5047,7 +5152,16 @@ int main(int argc, char** argv) {
                 bool noId = c && c->id.empty();
                 bool gated = c && !noId && g_editsInFlight.count(c->id);
                 editLog("EDGE O clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
-                if (c && !noId && !gated && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
+                if (c && noId && !g_promoteInFlight && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
+                    // Preview clip: promote to a real reel clip, then trim (bug-2 fix).
+                    auto rem = std::make_pair(t, c->compStart + (c->out - c->in) - t);
+                    EditReq req; req.verb = "set_trim"; req.args = { {"in", c->in}, {"out", srcT} };
+                    req.kind = 2; req.t = t; req.group = g_group; req.rem = rem;
+                    req.promote = true; req.pSource = c->source; req.pIn = c->in; req.pOut = c->out; req.pLabel = c->label;
+                    g_promoteInFlight = true;
+                    queueEdit(std::move(req));
+                    editLog("QUEUE promote+set_trim(out) src=" + c->label);
+                } else if (c && !noId && !gated && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
                     auto rem = std::make_pair(t, c->compStart + (c->out - c->in) - t);
                     EditReq req; req.verb = "set_trim"; req.args = { {"id", c->id}, {"in", c->in}, {"out", srcT} };
                     req.kind = 2; req.t = t; req.group = g_group; req.rem = rem;
@@ -5069,7 +5183,16 @@ int main(int argc, char** argv) {
                 bool noId = c && c->id.empty();
                 bool gated = c && !noId && g_editsInFlight.count(c->id);
                 editLog("EDGE I clip=" + (c ? c->id : std::string("none")) + " gated=" + (gated ? "1" : "0") + (noId ? " (preview-only, no engine id)" : ""));
-                if (c && !noId && !gated && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
+                if (c && noId && !g_promoteInFlight && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
+                    // Preview clip: promote to a real reel clip, then trim (bug-2 fix).
+                    auto rem = std::make_pair(c->compStart, t - c->compStart);
+                    EditReq req; req.verb = "set_trim"; req.args = { {"in", srcT}, {"out", c->out} };
+                    req.kind = 3; req.t = t; req.group = g_group; req.rem = rem;
+                    req.promote = true; req.pSource = c->source; req.pIn = c->in; req.pOut = c->out; req.pLabel = c->label;
+                    g_promoteInFlight = true;
+                    queueEdit(std::move(req));
+                    editLog("QUEUE promote+set_trim(in) src=" + c->label);
+                } else if (c && !noId && !gated && srcT > c->in + 0.05 && srcT < c->out - 0.05) {
                     auto rem = std::make_pair(c->compStart, t - c->compStart);
                     EditReq req; req.verb = "set_trim"; req.args = { {"id", c->id}, {"in", srcT}, {"out", c->out} };
                     req.kind = 3; req.t = t; req.group = g_group; req.rem = rem;
@@ -5176,6 +5299,19 @@ int main(int argc, char** argv) {
                     curSec = std::min(g_compDur, curSec + (1.0 / fps)); playing = false; g_playingExt = false;
                 }
             }
+        } else {
+            // FOCUS-BLEED FIX (bug 3, reproduced live: typing "dog" into the search
+            // box logged an EDGE O when Enter submitted). GetAsyncKeyState's low bit
+            // means "pressed since the LAST call" - while a text box owns the
+            // keyboard the block above never polls, so every key typed into the box
+            // (Enter, Space, S/O/I/Del...) stays LATCHED and replays as a transport/
+            // edit action on the first un-gated frame after the box loses focus.
+            // Drain the latch every gated frame so typed text can never fire
+            // shortcuts later. (The latch is per-key, process-wide; we are the only
+            // poller of these keys in this process.)
+            static const int kEdgeKeys[] = { VK_SPACE, VK_RETURN, 'S', 'O', 'I', 'G', 'Z', 'Y',
+                                             VK_DELETE, VK_ESCAPE, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT };
+            for (int vk : kEdgeKeys) GetAsyncKeyState(vk);
         }
 
         // I-* fix: apply a finished search from searchWorker (see runSearch/searchWorker
@@ -5261,6 +5397,9 @@ int main(int argc, char** argv) {
                         std::string rid = res.req.args.value("id", std::string());
                         if (!rid.empty()) g_editsInFlight.erase(rid);
                     }
+                    // A promote request (add_clip + verb on a preview clip) resolved -
+                    // success or failure, the next edit key may promote again.
+                    if (res.req.promote) g_promoteInFlight = false;
                     editLog("drain: gate released, building reply log line");
                     std::string replyId = res.req.args.value("id", std::string());
                     editLog("drain: got id=" + replyId);
@@ -5529,7 +5668,10 @@ int main(int argc, char** argv) {
                     }
                 });
             }
-            ImGui::Text("%.1fs / %.0fs", curSec, g_compDur);
+            // %.2f, not %.1f: one frame is ~0.033s, so a +1-frame step from 0 read
+            // "0.0" and looked dead (bug 7). Two decimals make every frame step move
+            // the number.
+            ImGui::Text("%.2fs / %.0fs", curSec, g_compDur);
             // ---- RIGHT of the bar: health flags, then WHICH FOLDER IS OPEN ----
             //
             // Right-aligned and drawn LAST so the left cluster's width can never push
@@ -5545,19 +5687,41 @@ int main(int argc, char** argv) {
                 const float barW = ImGui::GetWindowWidth();
 
                 // ---- optional second badge: where a render would actually LAND ----
-                // Mirrors becky-go/internal/reel/reel.go RenderDirFor(): output goes to a
-                // "Rendered" folder NEXT TO THE FIRST CLIP'S SOURCE - NOT next to the
-                // folder being browsed. Browsing E: while the timeline holds X: footage is
-                // the exact state that put personal renders onto the evidence volume.
-                // Shown ONLY when the two drives disagree, so it is silent normally.
+                // Mirrors the ENGINE's real decision chain (cmd/clip renderDirPath ->
+                // reel.RenderDirFor): the first usable clip source NOT on the evidence
+                // drive (E:) wins; an all-evidence timeline falls back to the browsed
+                // folder if IT isn't evidence, else to the engine's temp workdir
+                // (%TEMP%\becky-clip). When clips are SELECTED the selection decides -
+                // Render Selection renders those sources, so the badge must follow
+                // them, not the whole timeline's first clip. Shown only when the
+                // destination drive differs from the folder he's browsing, so it is
+                // silent normally and loud exactly when "renders go somewhere else"
+                // is true - including the evidence-drive redirect the engine now does.
                 std::string warnDir;
                 if (haveFolder && !g_track[0].empty()) {
-                    const std::string& src = g_track[0].front().source;
-                    if (src.size() > 2 && src[1] == ':' && toupper((unsigned char)src[0]) != toupper((unsigned char)g_folderRoot[0])) {
-                        size_t i = src.find_last_of("/\\");
-                        std::string dir = (i == std::string::npos) ? src : src.substr(0, i);
-                        warnDir = (baseName(dir) == "Rendered") ? dir : dir + "\\Rendered";
+                    auto onEvidence = [](const std::string& s) {
+                        return s.size() > 1 && s[1] == ':' && toupper((unsigned char)s[0]) == 'E';
+                    };
+                    std::string dest;
+                    for (auto& c : g_track[0]) {
+                        if (!g_sel.empty() && !g_sel.count(c.id)) continue;   // selection first
+                        if (c.source.empty() || onEvidence(c.source)) continue;
+                        size_t i = c.source.find_last_of("/\\");
+                        if (i == std::string::npos) continue;
+                        std::string dir = c.source.substr(0, i);
+                        dest = (baseName(dir) == "Rendered") ? dir : dir + "\\Rendered";
+                        break;
                     }
+                    if (dest.empty()) {   // every usable source is on the evidence drive
+                        if (!onEvidence(g_folderRoot)) dest = g_folderRoot + "\\Rendered";
+                        else {
+                            char tmp[MAX_PATH]; DWORD n = GetTempPathA(MAX_PATH, tmp);
+                            dest = (n > 0 && n < MAX_PATH) ? std::string(tmp) + "becky-clip"
+                                                           : std::string("C:\\becky-clip");
+                        }
+                    }
+                    if (dest.size() > 1 && toupper((unsigned char)dest[0]) != toupper((unsigned char)g_folderRoot[0]))
+                        warnDir = dest;
                 }
                 const std::string warnTxt = warnDir.empty() ? std::string()
                                                             : std::string("renders -> ") + warnDir.substr(0, 2);
@@ -5596,8 +5760,9 @@ int main(int argc, char** argv) {
                 };
 
                 if (!warnTxt.empty()) {
-                    const std::string tip = "This timeline's footage lives on another drive.\n"
-                                            "A render will land in:\n" + warnDir +
+                    const std::string tip = "Renders do NOT go to the folder you're browsing.\n"
+                                            + std::string(g_sel.empty() ? "" : "(showing where the SELECTED clips render)\n")
+                                            + "A render will land in:\n" + warnDir +
                                             "\n(click to open it in Explorer)";
                     badge(warnTxt.c_str(), driveColor(warnDir), tip.c_str(), warnDir.c_str());
                     ImGui::SameLine();
@@ -6135,7 +6300,8 @@ int main(int argc, char** argv) {
                 mpvClearOverlay();
                 mpvClearCaptionOsd();
             }
-            ImGui::Text("%.1f / %.1f s", curSec, g_compDur);
+            // %.2f: a one-frame step (~0.033s) must visibly move this number (bug 7).
+            ImGui::Text("%.2f / %.1f s", curSec, g_compDur);
             if (fixedButton(playing ? ico(ICON_PAUSE "##play", "Pause##play") : ico(ICON_PLAY "##play", "Play##play"),
                             { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) {
                 // Same rule as Space, via the same helper. This button used to

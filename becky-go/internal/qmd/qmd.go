@@ -92,7 +92,10 @@ func Search(query string) ([]Hit, string, string) {
 		return hits, "hybrid", ""
 	}
 	if hits, err := run(bin, 25*time.Second, "search", "--json", query, "-c", "transcripts"); err == nil {
-		return hits, "keyword", "smart (semantic) search was unavailable — showing keyword matches instead"
+		// Worded as fresh info, not a stuck error: this note rides NEXT TO a
+		// successful result list, and "was unavailable" read like a dead banner
+		// (2026-07-22 4AM driven verification, bug 4).
+		return hits, "keyword", "these are keyword matches - smart matching didn't answer this time; search again to retry it"
 	}
 	return nil, "unavailable", "qmd is not available (is it installed and indexed?)"
 }
