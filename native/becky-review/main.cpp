@@ -20,10 +20,9 @@
 // UNCHANGED from the prior GStreamer build: curSec stays the single authoritative
 // clock and the decode thread is simply told "show this exact frame" via an mpv
 // hr-seek instead of a GStreamer pull - a render-backend swap, not an architecture
-// change. GStreamer itself stays linked and initialized (gstInitSEH) because
-// peaksProcessBatch still uses it for one-time per-source audio decode into the .bpk<parameter>
-
-// peak cache (E-2) - that pipeline is unrelated to the video player and untouched.
+// change. GStreamer stays linked/initialized (gstInitSEH) only as a legacy runtime
+// dependency; since cycle 23 the waveform peaks are decoded by ffmpeg (see
+// decodeWindow), because the gst uridecodebin pipeline hangs on real corpus files.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -1260,17 +1259,19 @@ static bool loadPeaksCache(Peaks& P) {
         && fread(&rate, 4, 1, f) == 1 && rate == (uint32_t)kPeakRate
         && fread(&count, 8, 1, f) == 1 && count < (1ULL << 32)
         && fread(&dur, 8, 1, f) == 1 && dur > 0;
-    bool v2 = ok && memcmp(magic, "BPK2", 4) == 0;
-    bool v1 = ok && memcmp(magic, "BPK1", 4) == 0;
-    if (ok && (v1 || v2)) {
+    // cycle 23: BPK3 only. BPK1/BPK2 caches were written while the old GStreamer
+    // decoder was hanging on real corpus files, and the give-up path stamped the
+    // hung ranges secFilled=1 with silent amplitudes - PERMANENT fake silence.
+    // Rejecting the old magic makes every poisoned cache rebuild through the
+    // ffmpeg decoder below; layout is unchanged from BPK2, only the magic moved.
+    bool v3 = ok && memcmp(magic, "BPK3", 4) == 0;
+    if (ok && v3) {
         std::lock_guard<std::mutex> lk(P.mx);
         sizeArrays(P, dur);
-        if (v2) {
+        {
             uint32_t secN = 0;
             ok = fread(&secN, 4, 1, f) == 1 && secN <= P.secFilled.size();
             if (ok && secN) ok = fread(P.secFilled.data(), 1, secN, f) == secN;
-        } else {
-            std::fill(P.secFilled.begin(), P.secFilled.end(), 1);
         }
         if (ok) {
             std::vector<int8_t> buf((size_t)count * 2);
@@ -1289,7 +1290,7 @@ static bool loadPeaksCache(Peaks& P) {
 static void savePeaksCache(Peaks& P) {
     FILE* f = nullptr; fopen_s(&f, P.cachePath.c_str(), "wb");
     if (!f) return;
-    fwrite("BPK2", 1, 4, f);
+    fwrite("BPK3", 1, 4, f);
     uint32_t spb = kSpb, rate = kPeakRate; uint64_t count = P.bins; double dur = P.duration;
     uint32_t secN = (uint32_t)P.secFilled.size();
     fwrite(&spb, 4, 1, f); fwrite(&rate, 4, 1, f); fwrite(&count, 8, 1, f); fwrite(&dur, 8, 1, f);
@@ -1301,67 +1302,116 @@ static void savePeaksCache(Peaks& P) {
     fclose(f);
     P.dirty = false;
 }
-// cycle 22 real-corpus finding: this reads decodeWindow's own progress, not a
-// success/fail flag. E:\TakingBack2007's real .mkv was previously assumed to
-// have a genuine ~48min audio CAPTURE GAP (project memory) - that theory is
-// WRONG for this file: ffprobe reads all 710k audio packets end to end with
-// zero gaps >1s, and ffmpeg fully decodes the audio track to a null output in
-// 12s with zero warnings. The actual bug is THIS pipeline: reproduced live
-// with gst-launch-1.0 using this exact "uridecodebin ! ... ! appsink" string
-// against the real file - it prerolls fine (duration resolves correctly,
-// matching the app's own fast "ready=1" logs) and then HANGS after
-// PLAYING (90+ seconds, zero buffers, zero EOS, zero bus error). Before this
-// fix, decodeWindow's own for(;;) pull loop had no deadline, so a hang like
-// this blocked a bgPool worker thread FOREVER and the closing block below
-// blindly marked the ENTIRE requested [a,b) range "filled" the moment the
-// loop exited for ANY reason - so even a mostly-empty decode looked like a
-// complete one to the rest of the app. Returns the highest second actually
-// reached by real sample data (clamped to b), NOT b itself - the caller uses
-// this, not the request bounds, to decide what to mark filled.
-static double decodeWindow(Peaks& P, GstElement* pipe, GstElement* sink, double a, double b) {
-    if (!gst_element_seek(pipe, 1.0, GST_FORMAT_TIME,
-        (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-        GST_SEEK_TYPE_SET, (gint64)(a * GST_SECOND),
-        GST_SEEK_TYPE_SET, (gint64)(b * GST_SECOND))) return a;
-    double maxCoveredSec = a;
+// cycle 23 (Jordan: "we no longer have waveforms" - his top blocker): the peaks
+// decoder is now FFMPEG, not GStreamer. cycle 22 proved with gst-launch-1.0 that
+// this app's exact "uridecodebin ! ... ! appsink" pipeline HANGS after PLAYING on
+// real E:\TakingBack2007 files (90+s, zero buffers, zero EOS, zero bus error)
+// while ffmpeg decodes the same audio track end to end in ~12s with zero
+// warnings. cycle 22 only BOUNDED the hang (watchdogs); a bounded hang still
+// fills nothing, and its give-up path stamped the hung ranges "filled" into the
+// .bpk cache as permanent fake silence. Root fix: decode with the decoder that
+// demonstrably works on this corpus. ffmpeg writes s16le mono PCM at kPeakRate
+// to an anonymous pipe; we min/max it into the same bins/pyramid as before.
+//
+// runPipeCapture: spawn cmd, stream its stdout into onData until EOF or
+// deadlineSec (then the child is terminated - "degrade, never hang"). Polling
+// with PeekNamedPipe instead of a blocking ReadFile means no watchdog thread is
+// needed: the deadline check and the read live in the same loop.
+static bool runPipeCapture(const std::string& cmd8, double deadlineSec,
+                           const std::function<void(const uint8_t*, size_t)>& onData) {
+    SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 1 << 20)) return false;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si{}; si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;                       // stderr/stdin stay null: -v error is quiet,
+    PROCESS_INFORMATION pi{};                 // and PCM must never be interleaved with text
+    std::wstring cmd = utf8ToWide(cmd8);
+    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(wr);                          // ours only - the child holds its inherited copy
+    if (!ok) { CloseHandle(rd); return false; }
+    const double t0 = nowSec();
+    static thread_local std::vector<uint8_t> buf(1 << 16);
     for (;;) {
-        // a watchdog on another thread may force the pipe to GST_STATE_NULL to
-        // break a hang (see peaksProcessBatch) - GST_STATE() is a plain field
-        // read (no blocking), safe to poll from the thread that owns the pipe.
-        if (GST_STATE(pipe) == GST_STATE_NULL) break;
-        GstSample* smp = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), GST_SECOND);
-        if (!smp) {
-            if (gst_app_sink_is_eos(GST_APP_SINK(sink))) break;
-            GstBus* bus = gst_element_get_bus(pipe);
-            GstMessage* m = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
-            gst_object_unref(bus);
-            if (m) { gst_message_unref(m); break; }
+        DWORD avail = 0;
+        if (!PeekNamedPipe(rd, nullptr, 0, nullptr, &avail, nullptr)) break;   // pipe closed = EOF
+        if (avail == 0) {
+            if (WaitForSingleObject(pi.hProcess, 20) == WAIT_OBJECT_0) {
+                // child exited - drain the last bytes still sitting in the pipe
+                while (PeekNamedPipe(rd, nullptr, 0, nullptr, &avail, nullptr) && avail) {
+                    DWORD got = 0;
+                    if (!ReadFile(rd, buf.data(), (DWORD)std::min<size_t>(avail, buf.size()), &got, nullptr) || !got) break;
+                    onData(buf.data(), got);
+                }
+                break;
+            }
+            if (nowSec() - t0 > deadlineSec) { TerminateProcess(pi.hProcess, 1); break; }
             continue;
         }
-        GstBuffer* buf = gst_sample_get_buffer(smp);
-        GstClockTime pts = GST_BUFFER_PTS(buf);
-        GstMapInfo mi;
-        if (GST_CLOCK_TIME_IS_VALID(pts) && gst_buffer_map(buf, &mi, GST_MAP_READ)) {
-            const int16_t* sm = (const int16_t*)mi.data;
-            size_t ns = mi.size / 2;
-            uint64_t samplePos = (uint64_t)((double)pts / GST_SECOND * kPeakRate);
-            std::lock_guard<std::mutex> lk(P.mx);
-            size_t firstBin = (size_t)(samplePos / kSpb), lastBin = firstBin;
-            for (size_t i = 0; i < ns; i++) {
-                size_t bin = (size_t)((samplePos + i) / kSpb);
-                if (bin >= P.bins) break;
-                int8_t q = (int8_t)(sm[i] >> 8);
-                if (q < P.n0[bin]) P.n0[bin] = q;
-                if (q > P.x0[bin]) P.x0[bin] = q;
-                lastBin = bin;
-            }
-            pyramidRegion(P, firstBin, lastBin + 1);
-            gst_buffer_unmap(buf, &mi);
-            double thisSec = (double)(samplePos + ns) / kPeakRate;
-            if (thisSec > maxCoveredSec) maxCoveredSec = thisSec;
-        }
-        gst_sample_unref(smp);
+        DWORD got = 0;
+        if (!ReadFile(rd, buf.data(), (DWORD)std::min<size_t>(avail, buf.size()), &got, nullptr) || !got) break;
+        onData(buf.data(), got);
+        if (nowSec() - t0 > deadlineSec) { TerminateProcess(pi.hProcess, 1); break; }
     }
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, 2000);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    return true;
+}
+// One ffprobe per cold source: does it have an audio track, and how long is it?
+// Replaces the old gst preroll + duration query (which could themselves hang).
+static bool probeAudioDuration(const std::string& source, double& dur, bool& hasAudio) {
+    std::string cmd = "ffprobe -v error -select_streams a:0 "
+        "-show_entries stream=codec_type:format=duration -of default=noprint_wrappers=1 \"" + source + "\"";
+    std::string out;
+    if (!runPipeCapture(cmd, 20.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); }))
+        return false;
+    hasAudio = out.find("codec_type=audio") != std::string::npos;
+    dur = 0;
+    size_t p = out.find("duration=");
+    if (p != std::string::npos) dur = atof(out.c_str() + p + 9);
+    return true;
+}
+// Decodes [a,b) of P.source into the peak bins via ffmpeg. Returns the highest
+// second actually reached by real sample data (clamped to b), NOT b itself -
+// the caller uses this, not the request bounds, to decide what to mark filled.
+// A window bigger than the deadline can decode simply stops at the deadline;
+// the covered part is kept and drawWave's still-missing retry resumes from there.
+static double decodeWindow(Peaks& P, double a, double b) {
+    if (b <= a) return a;
+    char head[128], tail[192];
+    snprintf(head, sizeof head, "ffmpeg -v error -nostdin -ss %.3f -i ", a);
+    snprintf(tail, sizeof tail, " -t %.3f -map a:0 -vn -sn -dn -ac 1 -ar %d -f s16le pipe:1", b - a, kPeakRate);
+    const std::string cmd = std::string(head) + "\"" + P.source + "\"" + tail;
+    const uint64_t sampleBase = (uint64_t)(a * kPeakRate);
+    uint64_t nsTotal = 0;         // samples consumed so far (position = sampleBase + nsTotal)
+    uint8_t carry = 0; bool haveCarry = false;   // an s16 sample split across two reads
+    bool started = runPipeCapture(cmd, kDecodeWindowTimeoutSec, [&](const uint8_t* d, size_t n) {
+        std::lock_guard<std::mutex> lk(P.mx);
+        size_t firstBin = (size_t)((sampleBase + nsTotal) / kSpb), lastBin = firstBin;
+        size_t i = 0;
+        while (i < n) {
+            int16_t s;
+            if (haveCarry) { s = (int16_t)(carry | (d[i] << 8)); haveCarry = false; i += 1; }
+            else if (i + 1 < n) { s = (int16_t)(d[i] | (d[i + 1] << 8)); i += 2; }
+            else { carry = d[i]; haveCarry = true; break; }
+            size_t bin = (size_t)((sampleBase + nsTotal) / kSpb);
+            nsTotal++;
+            if (bin >= P.bins) continue;
+            int8_t q = (int8_t)(s >> 8);
+            if (q < P.n0[bin]) P.n0[bin] = q;
+            if (q > P.x0[bin]) P.x0[bin] = q;
+            lastBin = bin;
+        }
+        pyramidRegion(P, firstBin, lastBin + 1);
+    });
+    if (!started) {
+        crashLog("peaks: " + baseName(P.source) + " - could not start ffmpeg (not on PATH?), window [" +
+            std::to_string(a) + "," + std::to_string(b) + "] skipped");
+        return a;
+    }
+    double maxCoveredSec = a + (double)nsTotal / kPeakRate;
     if (maxCoveredSec > b) maxCoveredSec = b;
     {
         std::lock_guard<std::mutex> lk(P.mx);
@@ -1379,55 +1429,25 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
     // Returns true if any jobs remain (caller should re-signal the pool).
     if (!P || P->failed) return false;
     if (loadPeaksCache(*P)) g_fillEpoch.fetch_add(1);
-    // #0 CRITICAL: GStreamer never initialized - do not touch any gst_* call, it is unsafe.
-    if (!g_gstAvailable.load()) { P->failed = true; return false; }
-    GError* uerr = nullptr;
-    char* uri = gst_filename_to_uri(P->source.c_str(), &uerr);
-    if (!uri) { if (uerr) g_error_free(uerr); P->failed = true; return false; }
-    char desc[2600];
-    snprintf(desc, sizeof desc,
-        "uridecodebin uri=\"%s\" caps=\"audio/x-raw\" expose-all-streams=false ! "
-        "audioconvert ! audioresample ! audio/x-raw,format=S16LE,channels=1,rate=%d ! "
-        "appsink name=as sync=false",
-        uri, kPeakRate);
-    g_free(uri);
-    GError* e = nullptr;
-    GstElement* pipe = gst_parse_launch(desc, &e);
-    if (!pipe || e) {
-        crashLog("peaks: " + baseName(P->source) + " - gst pipeline parse failed, waveform disabled");
-        if (e) g_error_free(e); P->failed = true; return false;
-    }
-    GstElement* sink = gst_bin_get_by_name(GST_BIN(pipe), "as");
     if (!P->ready) {
-        gst_element_set_state(pipe, GST_STATE_PAUSED);
-        // cycle 22 fix: gst_element_get_state() returns GST_STATE_CHANGE_ASYNC
-        // (not ...FAILURE) when the timeout elapses before preroll finishes -
-        // the old check only tested for FAILURE, so a preroll that was simply
-        // STUCK (as this app's real-corpus finding proved can happen - see
-        // decodeWindow's comment) fell through as if it had succeeded, then
-        // queried a duration that may or may not be meaningful and pushed on
-        // into a pipe that was never actually ready.
-        GstStateChangeReturn prerollScr = gst_element_get_state(pipe, nullptr, nullptr, 20 * GST_SECOND);
-        if (prerollScr == GST_STATE_CHANGE_FAILURE || prerollScr == GST_STATE_CHANGE_ASYNC) {
-            crashLog("peaks: " + baseName(P->source) + " - audio preroll failed or timed out (source likely has NO AUDIO TRACK, e.g. a silent screen capture), waveform disabled");
-            P->failed = true;
-            gst_element_set_state(pipe, GST_STATE_NULL);
-            gst_object_unref(sink); gst_object_unref(pipe);
-            return false;
+        // cycle 23: one ffprobe replaces the old gst preroll + duration query,
+        // both of which could hang on this corpus (see decodeWindow's comment).
+        double dur = 0; bool hasAudio = false;
+        if (!probeAudioDuration(P->source, dur, hasAudio)) {
+            crashLog("peaks: " + baseName(P->source) + " - ffprobe could not be started (not on PATH?), waveform disabled");
+            P->failed = true; return false;
         }
-        gint64 d = 0;
-        if (gst_element_query_duration(pipe, GST_FORMAT_TIME, &d) && d > 0) {
-            std::lock_guard<std::mutex> lk(P->mx);
-            sizeArrays(*P, (double)d / GST_SECOND);
-        } else {
-            crashLog("peaks: " + baseName(P->source) + " - audio duration query failed, waveform disabled");
-            P->failed = true;
-            gst_element_set_state(pipe, GST_STATE_NULL);
-            gst_object_unref(sink); gst_object_unref(pipe);
-            return false;
+        if (!hasAudio) {
+            crashLog("peaks: " + baseName(P->source) + " - source has NO AUDIO TRACK (e.g. a silent screen capture), waveform disabled");
+            P->failed = true; return false;
         }
+        if (dur <= 0) {
+            crashLog("peaks: " + baseName(P->source) + " - audio duration probe failed, waveform disabled");
+            P->failed = true; return false;
+        }
+        std::lock_guard<std::mutex> lk(P->mx);
+        sizeArrays(*P, dur);
     }
-    gst_element_set_state(pipe, GST_STATE_PLAYING);
     g_fillEpoch.fetch_add(1);
     // Drain all pending jobs (no per-source infinite loop)
     for (;;) {
@@ -1440,14 +1460,17 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
         }
         double a = std::max(0.0, job.first), b = std::min(P->duration, job.second);
         std::vector<std::pair<double, double>> runs;
-        double runA = -1;
-        for (size_t s = (size_t)a; s <= (size_t)b && s < P->secFilled.size(); s++) {
-            bool filled = P->secFilled[s] != 0;
-            if (!filled && runA < 0) runA = std::max(a, (double)s);
-            if ((filled || s == (size_t)b) && runA >= 0) { runs.push_back({ runA, std::min(b, (double)s + 1) }); runA = -1; }
+        {
+            std::lock_guard<std::mutex> lk(P->mx);
+            double runA = -1;
+            for (size_t s = (size_t)a; s <= (size_t)b && s < P->secFilled.size(); s++) {
+                bool filled = P->secFilled[s] != 0;
+                if (!filled && runA < 0) runA = std::max(a, (double)s);
+                if ((filled || s == (size_t)b) && runA >= 0) { runs.push_back({ runA, std::min(b, (double)s + 1) }); runA = -1; }
+            }
+            if (runA >= 0) runs.push_back({ runA, b });
         }
-        if (runA >= 0) runs.push_back({ runA, b });
-        bool watchdogFired = false;
+        bool progressed = false;
         for (auto& r : runs) {
             if (r.second - r.first < 0.01) continue;
             {
@@ -1455,39 +1478,20 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
                 g_decCv.wait(g, [] { return g_decActive < (g_busyHint.load() ? 1 : 2); });
                 g_decActive++;
             }
-            // cycle 22: decodeWindow can hang mid-decode on a real file even
-            // though the file itself decodes cleanly outside this app (see
-            // decodeWindow's comment above) - without this, that hang blocked
-            // this worker thread FOREVER, silently shrinking the bgPool by one
-            // thread per stuck source. gst_element_set_state(pipe, NULL) from
-            // another thread is the documented way to unblock a stuck seek/pull.
-            std::atomic<bool> decodeDone{ false };
-            std::thread watchdog([&] {
-                for (int i = 0; i < (int)(kDecodeWindowTimeoutSec * 10) && !decodeDone.load(); i++)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                if (!decodeDone.load()) {
-                    crashLog("peaksBatch: decodeWindow watchdog firing after " + std::to_string((int)kDecodeWindowTimeoutSec) +
-                        "s on " + baseName(P->source) + " [" + std::to_string(r.first) + "," + std::to_string(r.second) +
-                        "] - forcing the pipe closed to free the worker");
-                    gst_element_set_state(pipe, GST_STATE_NULL);
-                    watchdogFired = true;
-                }
-            });
+            double covered = r.first;
             try {
-                decodeWindow(*P, pipe, sink, r.first, r.second);
+                covered = decodeWindow(*P, r.first, r.second);
             } catch (const std::exception& e) {
                 crashLog(std::string("peaksBatch decodeWindow: caught ") + e.what() + " - window skipped, not crashing");
             } catch (...) {
                 crashLog("peaksBatch decodeWindow: caught non-std exception - window skipped, not crashing");
             }
-            decodeDone = true;
-            watchdog.join();
+            if (covered > r.first + 0.25) progressed = true;
             {
                 std::lock_guard<std::mutex> g(g_decMx);
                 g_decActive--;
             }
             g_decCv.notify_one();
-            if (watchdogFired) break;   // pipe is dead - stop draining further runs this batch
         }
         {
             std::unique_lock<std::mutex> lk(P->mx);
@@ -1495,39 +1499,37 @@ static bool peaksProcessBatch(std::shared_ptr<Peaks> P) {
             size_t s0 = (size_t)std::ceil(a), s1 = std::min(P->secFilled.size(), (size_t)std::floor(b));
             bool nowFilled = true;
             for (size_t s = s0; s < s1; s++) if (!P->secFilled[s]) { nowFilled = false; break; }
-            if (nowFilled) P->stuckAttempts = 0;
-            else if (watchdogFired || ++P->stuckAttempts >= kMaxStuckAttempts) {
-                // cycle 22: previously this set P->failed = true, permanently
-                // blinding the WHOLE source (e.g. Jordan's entire 4.5-hour clip)
-                // because one window's decode got stuck. Mark just the stuck
-                // range filled (silent/placeholder - the amplitude arrays already
-                // default to that) so it stops being retried forever, but leave
-                // the source usable: whatever DID decode stays visible, and any
-                // other window for this source can still be requested normally.
+            // cycle 23: PROGRESS also resets the stuck counter. A multi-hour
+            // window fills ~15s of decode per attempt (the per-window deadline),
+            // so "not fully filled yet" is normal for many consecutive attempts;
+            // only ZERO forward progress means the decoder is actually stuck on
+            // this range. Without this, a long window that was filling perfectly
+            // well got stamped silent after kMaxStuckAttempts partial fills.
+            if (nowFilled || progressed) P->stuckAttempts = 0;
+            else if (++P->stuckAttempts >= kMaxStuckAttempts) {
+                // Mark just the stuck range filled (silent/placeholder - the
+                // amplitude arrays already default to that) so it stops being
+                // retried forever, but leave the source usable: whatever DID
+                // decode stays visible, and any other window for this source
+                // can still be requested normally.
                 for (size_t s = s0; s < s1; s++) P->secFilled[s] = 1;
                 P->dirty = true;
                 P->stuckAttempts = 0;
                 lk.unlock();
                 crashLog("peaksBatch: giving up on " + baseName(P->source) + " - window [" +
-                    std::to_string(a) + "," + std::to_string(b) + "] never filled" +
-                    (watchdogFired ? " (decode watchdog fired)" : (" after " + std::to_string(kMaxStuckAttempts) + " attempts")) +
-                    " - marking it silent and moving on, not retrying this range forever");
-                gst_element_set_state(pipe, GST_STATE_NULL);
-                gst_object_unref(sink); gst_object_unref(pipe);
+                    std::to_string(a) + "," + std::to_string(b) + "] made zero decode progress after " +
+                    std::to_string(kMaxStuckAttempts) + " attempts - marking it silent and moving on");
                 std::lock_guard<std::mutex> lk2(P->mx);
                 if (P->dirty) savePeaksCache(*P);
                 return !P->jobs.empty();
             }
         }
-        if (watchdogFired) break;   // pipe is dead - stop draining more jobs, let the pool re-wake us with a fresh one
     }
     // Save cache now that we're done draining (pool will wake us if more arrive)
     {
         std::lock_guard<std::mutex> lk(P->mx);
         if (P->dirty) savePeaksCache(*P);
     }
-    gst_element_set_state(pipe, GST_STATE_NULL);
-    gst_object_unref(sink); gst_object_unref(pipe);
     // Return true if any jobs still remain for this source (pool will re-signal)
     { std::lock_guard<std::mutex> lk(P->mx); return !P->jobs.empty(); }
 }
@@ -4667,8 +4669,10 @@ int main(int argc, char** argv) {
     // the .bpk peak cache, E-2) - the video player is mpv (D-1, launched after the
     // window exists, below).
     g_gstAvailable.store(gstInitSEH(argc, argv) != 0);
-    if (g_gstAvailable.load()) crashLog("gst_init: OK, waveform decode available");
-    else crashLog("gst_init: FAILED or crashed (caught) - waveform decode disabled, window still opening");
+    // cycle 23: waveforms decode via ffmpeg now (see decodeWindow) - gst is a
+    // legacy runtime dependency only, its failure no longer costs any feature.
+    if (g_gstAvailable.load()) crashLog("gst_init: OK (legacy - waveforms decode via ffmpeg now)");
+    else crashLog("gst_init: FAILED or crashed (caught) - harmless, waveforms decode via ffmpeg");
     // I-8 / §3.4 P3: bounded background worker pool. Created AFTER gstInitSEH
     // (which must run at normal priority - see the GLib pool-spawner fix above).
     g_bgPool = new BgWorkPool();
