@@ -29,6 +29,12 @@
 #include <dwmapi.h>    // DwmFlush - efficient windowed vsync pacing that replaces Present(1,0)'s
                        // driver busy-wait (the ~345% idle-CPU spin); see the render loop.
 #pragma comment(lib, "dwmapi.lib")
+#include <timeapi.h>   // I-1 fix: timeBeginPeriod(1) - see the frame-pacing timer in the render loop.
+                       // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION only sharpens the TIMER's own due-time;
+                       // the thread's actual WAKE-UP after the timer signals still rides the system
+                       // clock-interrupt rate, which defaults to ~15.6ms/64Hz and adds wake jitter on
+                       // top of a precisely-fired timer. Raising it to 1ms/1000Hz tightens that jitter.
+#pragma comment(lib, "winmm.lib")
 #include <wincodec.h> // E-11: WIC decodes the thumb verb's JPEG - native platform feature, no image lib dependency
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -1167,6 +1173,15 @@ static bool probeAudioDuration(const std::string& source, double& dur, bool& has
         size_t nl = out.find('\n', pos);
         std::string line = out.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
         pos = (nl == std::string::npos) ? out.size() : nl + 1;
+        // D-7 fix (cycle-14, found live this session): ffprobe's piped stdout on
+        // Windows is CRLF-terminated even with the console showing plain "\n" -
+        // splitting on '\n' alone left every line ending in a trailing '\r', so
+        // curType ("audio\r") never equalled "audio" and hasAudio was FALSE for
+        // every file ever probed (confirmed: 0 successful avSkew lines in this
+        // project's entire crash.log history, 31/31 probes failed). Every source
+        // in the corpus showed "no audio/no waveform" regardless of whether it
+        // actually had an audio track.
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.rfind("codec_type=", 0) == 0) { curType = line.substr(11); if (curType == "audio") hasAudio = true; }
         else if (line.rfind("start_time=", 0) == 0) {
             double t = atof(line.c_str() + 11);
@@ -4913,10 +4928,30 @@ int main(int argc, char** argv) {
     HANDLE frameTimer = CreateWaitableTimerExW(nullptr, nullptr,
         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
     if (!frameTimer) frameTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);  // pre-Win10-1803 fallback
-    if (frameTimer) {
-        LARGE_INTEGER due; due.QuadPart = -166667;   // first fire 16.667ms out (negative = relative, 100ns units)
-        SetWaitableTimer(frameTimer, &due, 16, nullptr, nullptr, FALSE);  // then periodic every 16ms (~62fps)
-    }
+    // I-1 fix (cycle-14 reviewer finding): a PERIODIC waitable timer's repeat interval is
+    // still quantized to the system timer resolution even with CREATE_WAITABLE_TIMER_HIGH_
+    // RESOLUTION - that flag only sharpens the first (one-shot) due time, not a repeating
+    // timer's period. Measured against a requested 16ms period: p95=17.04ms, mean=16.70ms -
+    // drifting slower than the 60fps/16.667ms bar. Fix: re-arm a ONE-SHOT timer every frame
+    // against a fixed phase-locked epoch (nextFrameQpc += intervalQpc, not "+16ms from now"),
+    // so a single frame's overshoot self-corrects on the next wait instead of accumulating.
+    // If the app falls behind by more than one interval (e.g. mid-boot or a real stall),
+    // nextFrameQpc is clamped back to "now" so it free-runs instead of bursting to catch up.
+    LARGE_INTEGER frameFq; QueryPerformanceFrequency(&frameFq);
+    const LONGLONG intervalQpc = frameFq.QuadPart / 60;   // one 60fps tick, in QPC ticks
+    LARGE_INTEGER qpcNow0; QueryPerformanceCounter(&qpcNow0);
+    LONGLONG nextFrameQpc = qpcNow0.QuadPart + intervalQpc;
+    auto armFrameTimer = [&]() {
+        if (!frameTimer) return;
+        LARGE_INTEGER qpcNow; QueryPerformanceCounter(&qpcNow);
+        if (nextFrameQpc < qpcNow.QuadPart - intervalQpc) nextFrameQpc = qpcNow.QuadPart;   // clamp: don't burst-catch-up
+        LONGLONG deltaQpc = nextFrameQpc - qpcNow.QuadPart;
+        LONGLONG deltaHns = (deltaQpc > 0) ? (LONGLONG)((double)deltaQpc * 10000000.0 / frameFq.QuadPart) : 1;
+        LARGE_INTEGER due; due.QuadPart = -deltaHns;   // negative = relative, 100ns units
+        SetWaitableTimer(frameTimer, &due, 0, nullptr, nullptr, FALSE);   // one-shot; re-armed every frame below
+    };
+    const bool hiResTimerOn = (timeBeginPeriod(1) == TIMERR_NOERROR);   // see the timeapi.h comment above
+    armFrameTimer();
     bool run = true;
     long frameIdx = 0; double traceT0 = nowSec();
     while (run) {
@@ -4942,6 +4977,8 @@ int main(int argc, char** argv) {
         // wait, so a scrub still feels attached to the cursor. (g_frameWait is always
         // null now; the guard is kept only so a future waitable path can slot back in.)
         if (frameTimer) WaitForSingleObject(frameTimer, 100);
+        nextFrameQpc += intervalQpc;   // phase-locked next tick, computed from the schedule not "now"
+        armFrameTimer();               // re-arm the one-shot for that tick before doing any frame work
 
         MSG msg; while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); if (msg.message == WM_QUIT) run = false; }
         if (!run) break;
@@ -7047,6 +7084,7 @@ int main(int argc, char** argv) {
         g_frameTrace << "# total_frames=" << frameIdx << " stalls_over_100ms=" << g_frameTraceStalls << "\n";
         g_frameTrace.flush();
     }
+    if (hiResTimerOn) timeEndPeriod(1);   // restore the system clock-interrupt rate; see the loop-top comment
 
     engineShutdown();
     engine::shutdown();
