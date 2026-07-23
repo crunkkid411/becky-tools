@@ -82,6 +82,9 @@ extern "C" { __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #include <sstream>
 #include <array>
 #include <exception>
+#include <iomanip>   // std::fixed/setprecision - editLog needs ms resolution (default double
+                     // formatting is 6 sig figs, which is only tenths-of-a-second once process
+                     // uptime passes ~10000s, useless for measuring a sub-100ms round trip)
 #include <csignal>   // SIGABRT hook: names the thread+stack behind any abort() (bug-1 forensics)
 using json = nlohmann::json;
 
@@ -351,7 +354,11 @@ static void editLogInit() {
 static void editLog(const std::string& line) {
     if (!g_editLog.is_open()) return;
     std::lock_guard<std::mutex> lk(g_editLogMx);
-    g_editLog << nowSec() << " " << line << "\n"; g_editLog.flush();
+    // fixed/setprecision(4): nowSec() is QPC seconds since process start, so
+    // default 6-sig-fig double formatting silently loses sub-second resolution
+    // once uptime passes ~10000s - exactly when you'd want to measure a
+    // millisecond-scale round trip.
+    g_editLog << std::fixed << std::setprecision(4) << nowSec() << " " << line << "\n"; g_editLog.flush();
 }
 
 // I-5 evidence trail, OPT-IN via BECKY_REVIEW_SCRUB_LOG=<path> (unset = zero
@@ -1774,12 +1781,25 @@ static bool ctrlDownForRedo() { SHORT c = GetAsyncKeyState(VK_CONTROL); return (
 
 // ONE undo path and ONE redo path, shared by the keyboard chord and the toolbar
 // button. Written as functions rather than copied into the button handler on
-// purpose: the 250ms debounce below is load-bearing (an extra undo walks PAST
-// the intended edit and is destructive), and a second hand-copied call site is
+// purpose: the debounce below is load-bearing (an extra undo walks PAST the
+// intended edit and is destructive), and a second hand-copied call site is
 // exactly how a debounce gets left off one of them.
+//
+// 250ms -> 60ms (2026-07-23), measured after the mpv->native-engine swap. The
+// 250ms figure dated from when engineCall() blocked the UI thread on mpv's IPC
+// round trip; that block WAS the throttle, so 250ms was never really "chosen",
+// it was however long mpv happened to take. Measured on the real engine, 10
+// rapid Ctrl+Z presses driven at 90ms apart via editLog timestamps
+// (undo_measure.log, 2026-07-23): engineCall(undo) "wrote" -> "wait done" is
+// 1.3-1.6ms - the debounce was ~150-200x the real round trip, and at 90ms
+// gaps it silently dropped half of every real press (6 sent, 3 landed,
+// verified by clip count). 60ms sits inside Jordan's requested 50-75ms floor:
+// far under any deliberate double-tap, still comfortably absorbs a same/next-
+// frame double edge.
+static const double kEditDebounceSec = 0.06;
 static void queueUndo(double t) {
     double n = nowSec();
-    if (n - g_lastUndoQueued <= 0.25) return;
+    if (n - g_lastUndoQueued <= kEditDebounceSec) return;
     g_lastUndoQueued = n;
     editLog("EDGE UNDO");
     // req.args MUST be json::object(), not {} - see the long note at the Ctrl+Z
@@ -1790,7 +1810,7 @@ static void queueUndo(double t) {
 }
 static void queueRedo(double t) {
     double n = nowSec();
-    if (n - g_lastRedoQueued <= 0.25) return;
+    if (n - g_lastRedoQueued <= kEditDebounceSec) return;
     g_lastRedoQueued = n;
     editLog("EDGE REDO");
     EditReq req; req.verb = "redo"; req.args = json::object(); req.kind = 4; req.t = t;
@@ -5027,7 +5047,7 @@ int main(int argc, char** argv) {
             }
             if (GetAsyncKeyState('G') & 1) { g_group = !g_group; }
             // UNDO / REDO chords. Both go through queueUndo/queueRedo, the same
-            // two functions the toolbar buttons call, so the 250ms debounce can
+            // two functions the toolbar buttons call, so kEditDebounceSec can
             // never be present on one route and missing on the other.
             //
             // Debounce, and why it is load-bearing: with the blocking engineCall()
@@ -5036,8 +5056,9 @@ int main(int argc, char** argv) {
             // throttle. Non-blocking removes it, and undo is the one edit where a
             // spurious extra call is destructive (it walks PAST the intended edit
             // into whatever came before it - a single split plus two Ctrl+Z presses
-            // emptied a whole demo reel). 250ms is far under any real double-tap
-            // but absorbs a same/next-frame double edge.
+            // emptied a whole demo reel). See kEditDebounceSec's own comment for the
+            // 250ms->60ms measurement; 60ms is far under any real double-tap but
+            // still absorbs a same/next-frame double edge.
             //
             // READ EACH KEY'S EDGE EXACTLY ONCE, THEN DISPATCH ON THE MODIFIERS.
             // GetAsyncKeyState's low bit means "pressed since the PREVIOUS call",
