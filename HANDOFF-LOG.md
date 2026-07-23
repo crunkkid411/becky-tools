@@ -10,6 +10,40 @@
 
 ---
 
+## mpv is gone — native video engine replaces it, measured and deployed (2026-07-23 00:00–01:45, local, `local/video-engine` + `local/video-engine-swap` → `master` `c21537e`)
+
+The whole mpv-replacement mission from `HANDOFF-VIDEO-ENGINE.md` landed in one overnight push —
+probe harness first, then the app wiring, both merged to `master` and pushed.
+
+1. `4d18484` — two-device D3D11 architecture: decode and Present run on separate devices so
+   Present can never stall decode.
+2. `4866874` — step 4 proven: audio sync **PASS**, 0.01ms drift, 0 underruns.
+3. `9b4e82d` — the probe plays a real 88-clip reel gapless with synced audio.
+4. `9a42d8a` — **STEP 6: mpv DELETED from the app.** Engine wired in — libavcodec/D3D11VA
+   decodes in-process, ImGui paints the frame, WASAPI is the audio-master clock.
+5. `9812929` — linker fix: GStreamer ships an older FFmpeg `.dll.a`; the MSYS2 import libs now
+   link by full path.
+6. `2c4bf23` — black-pane root cause: the driver rejects per-plane SRVs on the decoder's array
+   texture; fixed via the probe-proven copy-to-scratch-NV12 path.
+7. `c21537e` — all 8 `HANDOFF-VIDEO-ENGINE.md` steps checked off with pasted evidence.
+
+**Measured:** a scrub storm (25 seeks/sec for 30s) never blocked the UI — max loop gap ~75ms;
+proxy scrub p95 54.5ms (raw 57.8ms), proxy scrub median 1.3ms; audio drift 0.01ms max. CPU: idle
+**46.9% → 9.4%**, playback **~1036% → 11.5%** of one core — roughly 90x. App deployed from
+`master` and left running the real reel; rollback is `becky-review-mpv-backup.exe` beside the
+new exe (rename to revert).
+
+**Known simplifications, on purpose:** 2x speed plays silent (time-stretch is the upgrade path,
+not built yet); no software-decode draw path yet (hardware decode has never failed on this
+machine); captions/provenance overlay are now ImGui-drawn (ASS/OSD died with mpv itself). Deploy
+note: the app dir carries the 96-DLL MSYS2 FFmpeg closure (gitignored) — a later swap to a 5-DLL
+self-contained FFmpeg shared build is the slimming step; do NOT build it from source. Pre-existing
+`cmd/tts` test failure unchanged (machine-dependent, not a regression).
+
+**Left for Jordan:** step 7's human eyes/ears run — audible sync, scrub across a cut,
+frame-exactness — at wake. Engine knobs live in `engine.cpp`; the mpv backup is one rename away
+if it misbehaves.
+
 ## The 20-hour Becky Review 3 hardening run — cloud merge to H-7 wired to the abort() root cause (2026-07-21 22:00 → 2026-07-22 18:00, cloud → free-fleet → local, → `master` `ecc35ec`)
 
 Twenty hours across three shifts (cloud handoff merge, then a free-fleet day shift, then a local

@@ -338,15 +338,12 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
 
 ## What's left — in order
 
-0. **REPLACE mpv WITH A REAL VIDEO ENGINE (libavcodec direct).** See the mpv verdict at the
-   top of this file. This is now the biggest single item and it is a decided direction, not an
-   open question — Jordan called mpv "a lazy dev choice and inappropriate for an NLE" and the
-   measurements back him up. It fixes playback cost, scrub latency, playhead jitter and the
-   sub-frame cutpoint error in one move. Everything below is smaller than this.
-   **Cloud half done 2026-07-21:** `SPEC-BECKY-VIDEO-ENGINE.md` (architecture + the exact
-   FFmpeg/D3D11VA API map + the risk order) and `HANDOFF-VIDEO-ENGINE.md` (8 staged,
-   checkboxed steps — standalone harness first, wire-in last, DoD numbers final). The C++
-   build is the local agent's, on a fresh `local/video-engine` branch.
+0. ~~**REPLACE mpv WITH A REAL VIDEO ENGINE (libavcodec direct).**~~ **DONE 2026-07-23
+   (local, `local/video-engine` + `local/video-engine-swap` → `c21537e`).** mpv is deleted;
+   libavcodec/D3D11VA decodes in-process, ImGui paints, WASAPI is the audio-master clock. Idle
+   CPU 46.9% → 9.4%, playback ~1036% → 11.5% of one core (~90x); audio drift 0.01ms max; a
+   25-seeks/sec scrub storm never blocked the UI. Full detail: `HANDOFF-LOG.md` top entry,
+   `HANDOFF-VIDEO-ENGINE.md`.
 
 1. ~~**Caption wording**~~ **FIXED 2026-07-22 (local, `local/fix-caption-strands`), measured
    on the real footage.** The 2026-07-21 cloud fix was verified INCOMPLETE on
@@ -397,6 +394,13 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    (every 2h) removes `X:\AI-2\fleet\PAUSE` if the repo has had no commits for
    2h — that file is the lane switch between the Claude agents and the free
    fleet. It is currently PRESENT, so the free fleet is standing down.
+9. **2x speed plays silent.** The new engine has no time-stretch yet; QPC-clocked 2x just
+   skips audio. Upgrade path is a time-stretch on the WASAPI output, not a new architecture.
+10. **No software-decode draw path.** The engine assumes D3D11VA hardware decode; it has never
+    failed on this machine, but there is no fallback frame path if it ever does.
+11. **FFmpeg DLL closure needs slimming.** The app dir ships the full 96-DLL MSYS2 build
+    (gitignored, works today). Planned: swap to a 5-DLL self-contained FFmpeg shared build —
+    do NOT rebuild FFmpeg from source to get there.
 
 ## Jordan's real footage to test with
 

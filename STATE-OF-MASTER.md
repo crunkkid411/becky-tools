@@ -6,7 +6,7 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### Current state of master (as of 2026-07-22 18:00, `ecc35ec`)
+### Current state of master (as of 2026-07-23 01:45, `c21537e`)
 
 Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
 blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
@@ -14,6 +14,14 @@ FAIL is pre-existing/environmental and machine-dependent (the local TTS model is
 "degrades when no model" inverts); `build-all-tools.bat` builds all `.exe`s, INCLUDING the
 `becky-review-engine.exe` alias (its own build script silently didn't, once — see below). Recent
 landings (details in `HANDOFF-LOG.md`):
+
+- **mpv is gone — native video engine replaces it (2026-07-23 00:00–01:45, local, → `c21537e`):**
+  the whole mpv-replacement mission landed overnight — libavcodec/D3D11VA decode in-process,
+  ImGui paint, WASAPI audio-master clock. Idle CPU **46.9% → 9.4%**, playback **~1036% → 11.5%**
+  of one core (~90x); a 25-seeks/sec scrub storm never blocked the UI; audio drift 0.01ms max.
+  Deployed from `master`, running the real reel; rollback = `becky-review-mpv-backup.exe` beside
+  the exe. Known simplifications: 2x speed plays silent, no software-decode draw path, the
+  96-DLL FFmpeg closure isn't slimmed yet.
 
 - **The 20-hour Becky Review 3 hardening run (2026-07-21 22:00 → 2026-07-22 18:00, cloud →
   free-fleet → local, → `ecc35ec`):** a cloud branch merged H-1's shared-state verbs and H-7's Go
