@@ -2300,6 +2300,26 @@ static void recomputeQuiet() {
 // the caption lane from the clips' own source transcripts after every rebuild.
 static void rebuildDerivedCaptions();
 
+// B (Jordan: "all clips from that source video are made a certain color and that
+// color does not change for the rest of the project"): the ENGINE owns the
+// per-source colour (cmd/clip/clipcolor.go, persisted per project). This is the
+// native mirror of every colour the engine has stated, so PREVIEW clips built
+// locally (seekToSpan auditions, the add_clip fallback) wear the same colour as
+// the source's real timeline clips instead of a hardcoded crimson.
+static std::map<std::string, uint32_t> g_srcRGB;   // lowercased source path -> 0xRRGGBB
+static std::string srcColorKey(std::string s) {
+    for (auto& c : s) { if (c == '/') c = '\\'; c = (char)tolower((unsigned char)c); }
+    return s;
+}
+static void paintClipFromKnownSource(Clip& cl) {
+    auto it = g_srcRGB.find(srcColorKey(cl.source));
+    if (it != g_srcRGB.end()) {
+        cl.r = (uint8_t)((it->second >> 16) & 0xFF);
+        cl.g = (uint8_t)((it->second >> 8) & 0xFF);
+        cl.b = (uint8_t)(it->second & 0xFF);
+    } else { cl.r = 220; cl.g = 30; cl.b = 60; }   // engine never met it: preview crimson
+}
+
 static void loadTimelineView(const json& tv) {
     // An authoritative reload always wins over a stale "Play tied clips" preview.
     g_inTiedPreview = false; g_reelBeforePreview.clear();
@@ -2317,6 +2337,7 @@ static void loadTimelineView(const json& tv) {
             if (hex.size() == 7 && hex[0] == '#') {
                 long v = strtol(hex.c_str() + 1, nullptr, 16);
                 cl.r = (uint8_t)((v >> 16) & 0xFF); cl.g = (uint8_t)((v >> 8) & 0xFF); cl.b = (uint8_t)(v & 0xFF);
+                g_srcRGB[srcColorKey(src)] = (uint32_t)v;   // B: previews reuse this colour
             }
             cl.ready = true;
             cl.date = c.value("date", std::string());
@@ -4559,7 +4580,8 @@ static std::string convertEditIfNeeded(const std::string& path) {
 static void seekToSpan(const std::string& source, double a, double b, bool startPlaying,
                         double& curSec, bool& playing, double& lastComposed) {
     Clip cl; cl.in = a; cl.out = (b > a + 0.05) ? b : a + 0.05;
-    cl.source = source; cl.label = baseName(source); cl.r = 220; cl.g = 30; cl.b = 60;
+    cl.source = source; cl.label = baseName(source);
+    paintClipFromKnownSource(cl);   // B: an audition wears its source's project colour
     g_track[0].clear(); g_track[0].push_back(cl);
     packTrack(0); recomputeDur();
     curSec = 0; playing = startPlaying; g_playingExt = playing; lastComposed = -1;
@@ -4753,7 +4775,7 @@ static void addHitToTimeline(const Hit& h) {
             return;
         }
         Clip cl; cl.in = a; cl.out = b; cl.source = src; cl.label = label;
-        cl.r = 220; cl.g = 30; cl.b = 60;
+        paintClipFromKnownSource(cl);   // B: same colour as the source's real clips
         g_track[0].push_back(cl); packTrack(0); recomputeDur();
         g_quietDirty = true; peaksRequest(src, a - 1.0, b + 5.0);
         // Bug-2 fix: this fallback used to be SILENT, leaving a clip that looked

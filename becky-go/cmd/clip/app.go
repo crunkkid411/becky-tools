@@ -228,6 +228,11 @@ func (a *App) OpenFolder(folder string) (FolderView, error) {
 	a.lastSearchHits = nil // a new corpus invalidates any prior "add clip N" referent
 	a.mu.Unlock()
 
+	// Per-source clip colours are frozen PER PROJECT (= this case folder) on
+	// disk. Loaded here so a restarted engine wears yesterday's colours, not a
+	// fresh first-appearance shuffle. See clipcolor.go.
+	LoadClipColors(abs)
+
 	// I-4 (M: becky-review-3-review cycle 18): the first keyword search after a
 	// fresh engine boot pays ~7.8-8.0s to parse+cache every transcript (measured
 	// on the real 1,136-transcript corpus); every later search is 226-270ms.
@@ -1102,6 +1107,11 @@ func (a *App) LoadReel(path string) (TimelineView, error) {
 	if err != nil {
 		return TimelineView{}, err
 	}
+	// The reel's folder identifies the project for clip-colour persistence; in
+	// the standard layout (reel beside the footage) this is the same file the
+	// case folder loads, so the forensic launcher's reel-before-folder boot
+	// order still lands on one frozen assignment. See clipcolor.go.
+	LoadClipColors(filepath.Dir(path))
 	a.mu.Lock()
 	a.pushUndoLocked()
 	a.reel = r

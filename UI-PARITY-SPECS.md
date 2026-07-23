@@ -2398,3 +2398,39 @@ Not violations: no icon font (primitives are drawn deliberately — correct), no
 **Flag to the caller, not a fix:** `openTranscript` (main.cpp:3658) calls `engineCall("transcript", ..., 25.0)` **synchronously on the UI thread**. The spec makes double-click hit it more discoverably but does not introduce it. It is a pre-existing 25-second freeze risk of exactly the class `engineCallAsync` was written to kill — it belongs to whoever owns that path.
 
 ---
+
+# SPEC — ONE STABLE COLOUR PER SOURCE VIDEO (ratified 2026-07-22, Jordan's rule)
+
+Jordan, verbatim: "it's supposed to be 1 color for that source video - all
+clips from that source video are made a certain color and that color does not
+change for the rest of the project."
+
+## The rule (binding for every future agent)
+
+1. Every clip from the same source video wears the SAME colour, everywhere it
+   appears: timeline clips, auditions/previews, Q&A card chips.
+2. The colour is assigned when the source FIRST appears in the project, from
+   the fixed high-contrast 8-entry palette, in first-appearance order —
+   "#14FF39 (video 1), #00AEEF (video 2), #DC143C (video 3)" is what Jordan
+   has learned to read. The palette is an ACCESSIBILITY AID (impaired vision);
+   never mute, desaturate or reorder it. Collisions past 8 sources are fine.
+3. Once assigned, the colour NEVER changes for the life of the project —
+   across edits, deletes, re-orders, reel reloads, app/engine restarts.
+   Deleting every clip of a source does NOT release its colour.
+
+## Where it lives (do not reimplement elsewhere)
+
+- **Owner: the engine.** `becky-go/cmd/clip/clipcolor.go` — `clipColor(source)`
+  is the single choke point; every `TimelineView` clip carries `color`.
+- **Persistence (the 2026-07-22 fix):** the source→colour map is written to
+  `%LOCALAPPDATA%\becky\colors\<fnv64-of-project-dir>.json` on every new
+  assignment and loaded by `LoadClipColors()` from `OpenFolder` AND `LoadReel`
+  (reel-before-folder boot order is safe: disk wins over pre-load
+  assignments). Before this, the map died with the engine process and every
+  relaunch re-dealt colours in that session's first-appearance order — the
+  exact "colors are going wild" bug.
+- **Native mirror:** `main.cpp` `g_srcRGB`/`paintClipFromKnownSource()` —
+  locally-built preview clips (seekToSpan auditions, add_clip fallback) reuse
+  the engine's colour; crimson only for a source the engine has never stated.
+- **Regression tests:** `clipcolor_test.go` — `TestClipColorsSurviveEngineRestart`
+  is Jordan's scenario verbatim; keep it green.
