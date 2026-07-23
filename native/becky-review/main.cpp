@@ -3610,6 +3610,10 @@ static void drawTimeline(double& curSec, bool& playing) {
             // would corrupt the real reel out from under the preview.
             if (changed && !g_inTiedPreview) {
                 g_track[0] = rest; packTrack(0); recomputeDur();
+                // A-1: the reorder is optimistic-local (no timeline reload), so the
+                // derived caption lane must follow the clips RIGHT NOW - found live:
+                // dragging the blue clip first left every caption at its old position.
+                rebuildDerivedCaptions();
                 // cycle 18 review's gap 4: local state (g_track[0], above) is already
                 // updated optimistically, so this engine sync - like emitSelect/
                 // emitThreshold - is best-effort telemetry the UI must never block a
@@ -3641,6 +3645,7 @@ static void drawTimeline(double& curSec, bool& playing) {
                 packTrack(0); recomputeDur();
                 if (curSec > g_compDur) curSec = g_compDur;
                 g_quietDirty = true;
+                rebuildDerivedCaptions();   // A-1: same reason as the reorder above
                 // Same fix as reorder/reorder_many above: local state is already
                 // updated, so this is best-effort telemetry, never a UI-thread stall.
                 {
@@ -4594,35 +4599,62 @@ static void seekToSpan(const std::string& source, double a, double b, bool start
 // selected row"). Duration comes from the engine probe; an unprobe-able source
 // degrades to a generous cap rather than blocking playback.
 static void playWholeVideo(const std::string& path, double& curSec, bool& playing, double& lastComposed) {
-    json pr = engineCall("probe", { {"source", path} }, 8.0);
+    // D (violent-input pass, 2026-07-22): this was a SYNCHRONOUS engineCall("probe")
+    // on the UI thread - Space on a library row froze the whole window for the probe
+    // round trip (up to the 8s timeout on a slow source). Play must start NOW:
+    // use the peaks decoder's duration when the source is warm, else the same
+    // generous 3600s degrade cap this function already shipped with - and let an
+    // async probe pull the out-point in when it lands a moment later.
     double dur = 0;
-    if (pr.value("ok", false)) { const json& d = pr.contains("data") ? pr["data"] : pr; dur = d.value("duration", 0.0); }
-    if (dur <= 0) dur = 3600;
+    if (auto pk = peaksGet(path)) { std::lock_guard<std::mutex> lk(pk->mx); if (pk->ready) dur = pk->duration; }
+    bool provisional = dur <= 0;
+    if (provisional) dur = 3600;
     seekToSpan(path, 0.0, dur, true, curSec, playing, lastComposed);
+    if (provisional) {
+        engineCallAsync("probe", { {"source", path} }, 8.0, "checking video length...",
+            [path](const json& pr) {
+                double d2 = 0;
+                if (pr.value("ok", false)) { const json& d = pr.contains("data") ? pr["data"] : pr; d2 = d.value("duration", 0.0); }
+                if (d2 <= 0.05) return;   // unprobe-able: keep the cap, exactly the old degrade
+                // Only correct the clip if he is still on THIS single-clip audition.
+                if (g_track[0].size() == 1 && g_track[0][0].source == path && g_track[0][0].out > d2) {
+                    g_track[0][0].out = d2; packTrack(0); recomputeDur();
+                    g_quietDirty = true;
+                    rebuildDerivedCaptions();
+                }
+            });
+    }
 }
 
 // openTranscript opens a video's transcript (B-8) and remembers which row was viewed.
+// D (violent-input pass, 2026-07-22): was a SYNCHRONOUS engineCall on the UI thread
+// with a 25s timeout - the freeze risk UI-PARITY-SPECS flagged. The row is claimed
+// immediately (dedupes rapid re-clicks) and the cues land via drainAsync.
 static void openTranscript(const std::string& fullVideoPath) {
     std::string name = baseName(fullVideoPath);
-    if (g_cueName == name) return;       // already open
+    if (g_cueName == name) return;       // already open (or already loading)
     g_cueErr.clear();
-    json r = engineCall("transcript", { {"name", name} }, 25.0);
-    if (!r.value("ok", false)) { g_cueErr = r.value("error", std::string("transcript unavailable")); g_cues.clear(); g_cueName = name; return; }
-    const json& d = r.contains("data") ? r["data"] : r;
-    g_cues.clear();
-    if (d.is_array()) {
-        for (auto& c : d) {
-            CueRow cr;
-            cr.source = c.value("source", std::string());
-            cr.name = c.value("name", std::string());
-            cr.text = c.value("text", std::string());
-            cr.timecode = c.value("timecode", std::string());
-            cr.start = c.value("start", 0.0);
-            cr.end = c.value("end", 0.0);
-            g_cues.push_back(cr);
-        }
-    }
     g_cueName = name;
+    g_cues.clear();
+    engineCallAsync("transcript", { {"name", name} }, 25.0, "Opening transcript...",
+        [name](const json& r) {
+            if (g_cueName != name) return;   // he moved to another row - stale reply
+            if (!r.value("ok", false)) { g_cueErr = r.value("error", std::string("transcript unavailable")); g_cues.clear(); return; }
+            const json& d = r.contains("data") ? r["data"] : r;
+            g_cues.clear();
+            if (d.is_array()) {
+                for (auto& c : d) {
+                    CueRow cr;
+                    cr.source = c.value("source", std::string());
+                    cr.name = c.value("name", std::string());
+                    cr.text = c.value("text", std::string());
+                    cr.timecode = c.value("timecode", std::string());
+                    cr.start = c.value("start", 0.0);
+                    cr.end = c.value("end", 0.0);
+                    g_cues.push_back(cr);
+                }
+            }
+        });
 }
 
 // render Q&A cards from the engine `questions` verb (G-1).
