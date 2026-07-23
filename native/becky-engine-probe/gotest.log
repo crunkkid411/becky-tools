@@ -1,0 +1,212 @@
+?   	becky-go/cmd/arrange	[no test files]
+ok  	becky-go/cmd/ask	(cached)
+ok  	becky-go/cmd/beat	(cached)
+ok  	becky-go/cmd/becky	(cached)
+ok  	becky-go/cmd/becky-audiotrack	(cached)
+ok  	becky-go/cmd/becky-case	(cached)
+ok  	becky-go/cmd/becky-crawl	(cached)
+ok  	becky-go/cmd/becky-edit	(cached)
+?   	becky-go/cmd/becky-groove	[no test files]
+ok  	becky-go/cmd/becky-hits	(cached)
+?   	becky-go/cmd/becky-judge	[no test files]
+?   	becky-go/cmd/becky-midi	[no test files]
+ok  	becky-go/cmd/becky-nle	(cached)
+?   	becky-go/cmd/becky-otio	[no test files]
+ok  	becky-go/cmd/becky-perceive	(cached)
+ok  	becky-go/cmd/becky-presence	(cached)
+?   	becky-go/cmd/becky-proxy	[no test files]
+ok  	becky-go/cmd/becky-reaper	(cached)
+ok  	becky-go/cmd/becky-resolve	(cached)
+ok  	becky-go/cmd/becky-voice	(cached)
+?   	becky-go/cmd/becky-vst	[no test files]
+?   	becky-go/cmd/becky-workflow	[no test files]
+ok  	becky-go/cmd/canvas	(cached)
+ok  	becky-go/cmd/captions	(cached)
+ok  	becky-go/cmd/catalog	(cached)
+ok  	becky-go/cmd/click	(cached)
+ok  	becky-go/cmd/clip	(cached)
+?   	becky-go/cmd/clipcheck	[no test files]
+ok  	becky-go/cmd/cluster	(cached)
+?   	becky-go/cmd/compose	[no test files]
+ok  	becky-go/cmd/consolidate	(cached)
+?   	becky-go/cmd/ctx	[no test files]
+?   	becky-go/cmd/cubase	[no test files]
+?   	becky-go/cmd/cut	[no test files]
+ok  	becky-go/cmd/dates	(cached)
+ok  	becky-go/cmd/daw	48.264s
+ok  	becky-go/cmd/daw-engine	(cached)
+ok  	becky-go/cmd/debt-scan	(cached)
+ok  	becky-go/cmd/deslop	(cached)
+ok  	becky-go/cmd/devbuild	(cached)
+?   	becky-go/cmd/diagram	[no test files]
+ok  	becky-go/cmd/diarize	(cached)
+ok  	becky-go/cmd/drum	(cached)
+ok  	becky-go/cmd/drummachine	46.997s
+ok  	becky-go/cmd/embed	(cached)
+ok  	becky-go/cmd/enroll	(cached)
+ok  	becky-go/cmd/eval	(cached)
+?   	becky-go/cmd/events	[no test files]
+ok  	becky-go/cmd/export	(cached)
+ok  	becky-go/cmd/file	(cached)
+ok  	becky-go/cmd/framematch	(cached)
+?   	becky-go/cmd/freshness	[no test files]
+?   	becky-go/cmd/fxchain	[no test files]
+?   	becky-go/cmd/genre	[no test files]
+ok  	becky-go/cmd/gmail	(cached)
+ok  	becky-go/cmd/goal	(cached)
+ok  	becky-go/cmd/habits	(cached)
+?   	becky-go/cmd/handoff	[no test files]
+?   	becky-go/cmd/harness	[no test files]
+?   	becky-go/cmd/hum	[no test files]
+ok  	becky-go/cmd/identify	(cached)
+?   	becky-go/cmd/imagegen	[no test files]
+ok  	becky-go/cmd/kanban	(cached)
+?   	becky-go/cmd/library	[no test files]
+ok  	becky-go/cmd/location	(cached)
+?   	becky-go/cmd/mix	[no test files]
+ok  	becky-go/cmd/motion	(cached)
+ok  	becky-go/cmd/name	(cached)
+ok  	becky-go/cmd/new-tool	(cached)
+ok  	becky-go/cmd/notify	(cached)
+ok  	becky-go/cmd/ocr	(cached)
+?   	becky-go/cmd/omni	[no test files]
+?   	becky-go/cmd/osint	[no test files]
+?   	becky-go/cmd/palantir	[no test files]
+ok  	becky-go/cmd/pipeline	(cached)
+ok  	becky-go/cmd/quotes	(cached)
+?   	becky-go/cmd/radar	[no test files]
+ok  	becky-go/cmd/reel	(cached)
+ok  	becky-go/cmd/ref	(cached)
+ok  	becky-go/cmd/regrab	(cached)
+?   	becky-go/cmd/report	[no test files]
+ok  	becky-go/cmd/research	(cached)
+ok  	becky-go/cmd/review	(cached)
+ok  	becky-go/cmd/review-index	(cached)
+?   	becky-go/cmd/route	[no test files]
+ok  	becky-go/cmd/scout	(cached)
+ok  	becky-go/cmd/screenwatch	(cached)
+?   	becky-go/cmd/seam-echo	[no test files]
+ok  	becky-go/cmd/search	(cached)
+ok  	becky-go/cmd/search_library	(cached)
+?   	becky-go/cmd/song	[no test files]
+?   	becky-go/cmd/stems	[no test files]
+?   	becky-go/cmd/subtitle	[no test files]
+ok  	becky-go/cmd/transcribe	(cached)
+Saved: C:\Users\only1\AppData\Local\Temp\TestRun_SelfTestWritesValidWAV486160053\001\s.wav (28844 bytes, 24000 Hz)
+becky-tts: --selftest needs --out (or --play)
+becky-tts: --out is required unless --play (or --selftest)
+becky-tts: --out must end in .wav (got "C:\\Users\\only1\\AppData\\Local\\Temp\\TestRun_RefusesNonWAVOut1212421507\\001\\speech.mp3")
+--- FAIL: TestRun_DegradesWhenNoModel (64.87s)
+    main_test.go:161: expected non-zero exit when degrading (no model)
+FAIL
+FAIL	becky-go/cmd/tts	64.894s
+?   	becky-go/cmd/vad	[no test files]
+ok  	becky-go/cmd/validate	(cached)
+ok  	becky-go/cmd/vision	(cached)
+?   	becky-go/cmd/vox	[no test files]
+?   	becky-go/cmd/web2md	[no test files]
+ok  	becky-go/cmd/websearch	(cached)
+?   	becky-go/cmd/wire	[no test files]
+ok  	becky-go/internal/agentrun	(cached)
+ok  	becky-go/internal/arrange	(cached)
+ok  	becky-go/internal/assistant	(cached)
+ok  	becky-go/internal/audioengine	(cached)
+ok  	becky-go/internal/audiohost	(cached)
+ok  	becky-go/internal/audiotrack	(cached)
+ok  	becky-go/internal/autoroute	(cached)
+ok  	becky-go/internal/avlm	(cached)
+ok  	becky-go/internal/beatgen	(cached)
+ok  	becky-go/internal/beckydb	(cached)
+?   	becky-go/internal/beckyio	[no test files]
+ok  	becky-go/internal/bounce	(cached)
+ok  	becky-go/internal/canvas	(cached)
+ok  	becky-go/internal/canvasbridge	(cached)
+ok  	becky-go/internal/captions	(cached)
+ok  	becky-go/internal/catalog	(cached)
+ok  	becky-go/internal/clipcheck	(cached)
+ok  	becky-go/internal/composearr	(cached)
+ok  	becky-go/internal/config	(cached)
+ok  	becky-go/internal/ctlagent	(cached)
+ok  	becky-go/internal/ctledit	(cached)
+ok  	becky-go/internal/ctlmodel	(cached)
+ok  	becky-go/internal/cubasescan	(cached)
+ok  	becky-go/internal/datetri	(cached)
+ok  	becky-go/internal/dawmodel	(cached)
+ok  	becky-go/internal/diagram	(cached)
+ok  	becky-go/internal/digest	(cached)
+ok  	becky-go/internal/drumcmd	(cached)
+ok  	becky-go/internal/drummachine	(cached)
+ok  	becky-go/internal/dsp	(cached)
+ok  	becky-go/internal/editmodel	(cached)
+ok  	becky-go/internal/edittools	(cached)
+ok  	becky-go/internal/edl	(cached)
+ok  	becky-go/internal/exifmeta	(cached)
+ok  	becky-go/internal/facecrop	(cached)
+ok  	becky-go/internal/faceembed	(cached)
+ok  	becky-go/internal/facenaming	(cached)
+ok  	becky-go/internal/footage	(cached)
+ok  	becky-go/internal/forensic	(cached)
+ok  	becky-go/internal/forensicrun	(cached)
+ok  	becky-go/internal/freshness	(cached)
+ok  	becky-go/internal/fxchain	(cached)
+ok  	becky-go/internal/genreprofile	(cached)
+ok  	becky-go/internal/habits	(cached)
+ok  	becky-go/internal/handoff	(cached)
+ok  	becky-go/internal/hum	(cached)
+ok  	becky-go/internal/hydrogen	(cached)
+ok  	becky-go/internal/imagegen	(cached)
+ok  	becky-go/internal/intent	(cached)
+ok  	becky-go/internal/kdenlive	(cached)
+ok  	becky-go/internal/kitimport	(cached)
+ok  	becky-go/internal/library	(cached)
+?   	becky-go/internal/llamacpp	[no test files]
+ok  	becky-go/internal/llmlocal	(cached)
+ok  	becky-go/internal/location	(cached)
+ok  	becky-go/internal/machinectl	(cached)
+ok  	becky-go/internal/mediainfo	(cached)
+ok  	becky-go/internal/midilive	(cached)
+ok  	becky-go/internal/mixplan	(cached)
+ok  	becky-go/internal/music	(cached)
+ok  	becky-go/internal/musictheory	(cached)
+ok  	becky-go/internal/omni	(cached)
+ok  	becky-go/internal/orchestrate	(cached)
+ok  	becky-go/internal/osintexport	(cached)
+ok  	becky-go/internal/otio	(cached)
+ok  	becky-go/internal/pack	(cached)
+ok  	becky-go/internal/palantir	(cached)
+ok  	becky-go/internal/pathx	(cached)
+ok  	becky-go/internal/pianoroll	(cached)
+ok  	becky-go/internal/pirun	(cached)
+?   	becky-go/internal/proc	[no test files]
+?   	becky-go/internal/pyhelpers	[no test files]
+?   	becky-go/internal/pyhelpers/neutts_launcher	[no test files]
+ok  	becky-go/internal/qmd	(cached)
+ok  	becky-go/internal/quotes	(cached)
+ok  	becky-go/internal/radar	(cached)
+ok  	becky-go/internal/reaper	(cached)
+ok  	becky-go/internal/reaperbrain	(cached)
+ok  	becky-go/internal/reel	(cached)
+ok  	becky-go/internal/refmatch	(cached)
+ok  	becky-go/internal/report	(cached)
+ok  	becky-go/internal/research	(cached)
+ok  	becky-go/internal/sampledecode	(cached)
+ok  	becky-go/internal/samplelib	(cached)
+ok  	becky-go/internal/sampler	(cached)
+ok  	becky-go/internal/scout	(cached)
+ok  	becky-go/internal/seam	(cached)
+ok  	becky-go/internal/sidecar	(cached)
+ok  	becky-go/internal/songbuild	(cached)
+ok  	becky-go/internal/stemscan	(cached)
+ok  	becky-go/internal/studio	(cached)
+ok  	becky-go/internal/subs	(cached)
+ok  	becky-go/internal/tts	(cached)
+ok  	becky-go/internal/undo	(cached)
+ok  	becky-go/internal/videopreview	(cached)
+ok  	becky-go/internal/vision	(cached)
+ok  	becky-go/internal/voiceresp	(cached)
+ok  	becky-go/internal/voicerules	(cached)
+ok  	becky-go/internal/vox	(cached)
+ok  	becky-go/internal/winctx	(cached)
+ok  	becky-go/internal/workflowdef	(cached)
+FAIL
+GOTEST_EXIT=1

@@ -15,12 +15,15 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <d3dcompiler.h>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <thread>
 #include <chrono>
 
 extern "C" {
@@ -294,6 +297,384 @@ static int cmdSeekTest(const char* path, AVRational fps, const std::vector<int64
     return failures ? 1 : 0;
 }
 
+// ---------------------------------------------------------------- step 4: --play
+//
+// Bare Win32 + D3D11 window. Decode thread fills a +/-15 frame ring of
+// ring-owned NV12 textures (slices COPIED out immediately, spec section 4
+// risk 2); UI thread draws the due frame as an NV12->RGB quad and presents.
+// Arrow keys step +/-1 frame, PgUp/PgDn +/-30 (1 s), Space play/pause, Esc quit.
+
+static const int RING = 31; // +/-15 around the playhead
+
+struct RingSlot {
+    std::atomic<int64_t> frame{-1};
+    ID3D11Texture2D* tex = nullptr;
+    ID3D11ShaderResourceView* srvY = nullptr;
+    ID3D11ShaderResourceView* srvUV = nullptr;
+};
+
+struct PlayShared {
+    RingSlot ring[RING];
+    std::atomic<int64_t> want{0};      // playhead frame the UI wants shown
+    std::atomic<bool>    quit{false};
+    std::atomic<int64_t> eofAt{INT64_MAX}; // first frame index past EOF, if hit
+    HANDLE wake = nullptr;             // decode thread wake-up
+    AVD3D11VADeviceContext* d3dlock = nullptr; // FFmpeg's device lock: serialize ctx use
+    int codedW = 0, codedH = 0;        // decoder texture dims (may exceed display)
+};
+
+static void d3dLock(PlayShared& s)   { if (s.d3dlock) s.d3dlock->lock(s.d3dlock->lock_ctx); }
+static void d3dUnlock(PlayShared& s) { if (s.d3dlock) s.d3dlock->unlock(s.d3dlock->lock_ctx); }
+
+// Copy a decoded D3D11 frame into its ring slot (called on the decode thread).
+static bool ringStore(PlayShared& s, AVFrame* f, int64_t idx) {
+    if (f->format != AV_PIX_FMT_D3D11) {
+        // ponytail: sw-fallback upload not wired in the probe's play path; the
+        // hw path is what step 4 proves. Degrade ladder handles sw in step 6.
+        static bool once = false;
+        if (!once) { fprintf(stderr, "play: non-d3d11 frame, skipping draw path\n"); once = true; }
+        return false;
+    }
+    ID3D11Texture2D* src = (ID3D11Texture2D*)f->data[0];
+    UINT slice = (UINT)(intptr_t)f->data[1];
+    RingSlot& slot = s.ring[idx % RING];
+    slot.frame.store(-1, std::memory_order_release);
+    d3dLock(s);
+    if (!slot.tex) {
+        D3D11_TEXTURE2D_DESC sd; src->GetDesc(&sd);
+        s.codedW = (int)sd.Width; s.codedH = (int)sd.Height;
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = sd.Width; td.Height = sd.Height;
+        td.MipLevels = 1; td.ArraySize = 1;
+        td.Format = sd.Format; // NV12 (or P010 for 10-bit sources)
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        HRESULT hr = g_dev->CreateTexture2D(&td, nullptr, &slot.tex);
+        if (FAILED(hr)) { d3dUnlock(s); fprintf(stderr, "ring CreateTexture2D hr=0x%08lx\n", (unsigned long)hr); return false; }
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv = {};
+        sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sv.Texture2D.MipLevels = 1;
+        sv.Format = DXGI_FORMAT_R8_UNORM;
+        g_dev->CreateShaderResourceView(slot.tex, &sv, &slot.srvY);
+        sv.Format = DXGI_FORMAT_R8G8_UNORM;
+        g_dev->CreateShaderResourceView(slot.tex, &sv, &slot.srvUV);
+        if (!slot.srvY || !slot.srvUV) { d3dUnlock(s); fprintf(stderr, "ring SRV create failed\n"); return false; }
+    }
+    g_devctx->CopySubresourceRegion(slot.tex, 0, 0, 0, 0, src, slice, nullptr);
+    d3dUnlock(s);
+    slot.frame.store(idx, std::memory_order_release);
+    return true;
+}
+
+// Decode thread: keep the ring filled around ps.want; reseek when it jumps.
+static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalFrames) {
+    AVPacket* pkt = av_packet_alloc();
+    AVFrame*  f = av_frame_alloc();
+    int64_t next = -1000000; // decoder's sequential position (frame it will produce next)
+    while (!s->quit.load()) {
+        int64_t want = s->want.load();
+        int64_t lo = want - RING / 2; if (lo < 0) lo = 0;
+        int64_t hi = want + RING / 2;
+        if (totalFrames > 0 && hi >= totalFrames) hi = totalFrames - 1;
+
+        if (next < lo || next > hi + 1) {
+            // ring window jumped: frame-exact seek to lo, refill from there
+            int64_t targetTs = d->startTs + av_rescale_q(lo, av_inv_q(fps), d->tb);
+            int scanned = 0;
+            int r = seekExact(*d, pkt, f, targetTs, fps, &scanned);
+            if (r != 1) { WaitForSingleObject(s->wake, 20); continue; }
+            ringStore(*s, f, lo);
+            av_frame_unref(f);
+            next = lo + 1;
+            s->eofAt.store(INT64_MAX);
+            continue;
+        }
+        if (next > hi) { // ring full ahead of playhead; sleep until it moves
+            WaitForSingleObject(s->wake, 5);
+            continue;
+        }
+        int r = nextFrame(*d, pkt, f);
+        if (r == 0) { // EOF
+            s->eofAt.store(next);
+            next = INT64_MAX / 2; // force reseek on next backward jump
+            WaitForSingleObject(s->wake, 20);
+            continue;
+        }
+        if (r < 0) { Decoder::err("play decode", r); break; }
+        ringStore(*s, f, next);
+        av_frame_unref(f);
+        next++;
+    }
+    av_packet_free(&pkt);
+    av_frame_free(&f);
+}
+
+// --- tiny D3D11 present path ---
+
+static const char* kShaderSrc =
+"cbuffer cb : register(b0) { float2 uvScale; float2 pad; }\n"
+"struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n"
+"VSOut vsmain(uint id : SV_VertexID) {\n"
+"  float2 p = float2((id << 1) & 2, id & 2);\n"
+"  VSOut o;\n"
+"  o.pos = float4(p * float2(2, -2) + float2(-1, 1), 0, 1);\n"
+"  o.uv = p * uvScale;\n"
+"  return o;\n"
+"}\n"
+"Texture2D texY : register(t0);\n"
+"Texture2D texUV : register(t1);\n"
+"SamplerState smp : register(s0);\n"
+"float4 psmain(VSOut i) : SV_Target {\n"
+"  float y = (texY.Sample(smp, i.uv).r - 16.0/255.0) * (255.0/219.0);\n"
+"  float2 c = texUV.Sample(smp, i.uv).rg;\n"
+"  float u = (c.r - 128.0/255.0) * (255.0/224.0);\n"
+"  float v = (c.g - 128.0/255.0) * (255.0/224.0);\n"
+"  float3 rgb = float3(y + 1.5748*v, y - 0.1873*u - 0.4681*v, y + 1.8556*u);\n"
+"  return float4(saturate(rgb), 1.0);\n"
+"}\n";
+
+struct Renderer {
+    IDXGISwapChain* swap = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
+    ID3D11VertexShader* vs = nullptr;
+    ID3D11PixelShader* ps = nullptr;
+    ID3D11SamplerState* samp = nullptr;
+    ID3D11Buffer* cb = nullptr;
+    int w = 0, h = 0;
+
+    bool init(HWND hwnd, int cw, int ch) {
+        w = cw; h = ch;
+        IDXGIDevice* dxdev = nullptr;
+        g_dev->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxdev);
+        IDXGIAdapter* ad = nullptr; dxdev->GetAdapter(&ad);
+        IDXGIFactory1* fac = nullptr;
+        ad->GetParent(__uuidof(IDXGIFactory1), (void**)&fac);
+        DXGI_SWAP_CHAIN_DESC sd = {};
+        sd.BufferDesc.Width = cw; sd.BufferDesc.Height = ch;
+        sd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        sd.SampleDesc.Count = 1;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.BufferCount = 2;
+        sd.OutputWindow = hwnd;
+        sd.Windowed = TRUE;
+        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        HRESULT hr = fac->CreateSwapChain(g_dev, &sd, &swap);
+        fac->Release(); ad->Release(); dxdev->Release();
+        if (FAILED(hr)) { fprintf(stderr, "CreateSwapChain hr=0x%08lx\n", (unsigned long)hr); return false; }
+
+        ID3D11Texture2D* bb = nullptr;
+        swap->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
+        g_dev->CreateRenderTargetView(bb, nullptr, &rtv);
+        bb->Release();
+
+        ID3DBlob *vsb = nullptr, *psb = nullptr, *errb = nullptr;
+        hr = D3DCompile(kShaderSrc, strlen(kShaderSrc), nullptr, nullptr, nullptr,
+                        "vsmain", "vs_4_0", 0, 0, &vsb, &errb);
+        if (FAILED(hr)) { fprintf(stderr, "vs compile: %s\n", errb ? (char*)errb->GetBufferPointer() : "?"); return false; }
+        hr = D3DCompile(kShaderSrc, strlen(kShaderSrc), nullptr, nullptr, nullptr,
+                        "psmain", "ps_4_0", 0, 0, &psb, &errb);
+        if (FAILED(hr)) { fprintf(stderr, "ps compile: %s\n", errb ? (char*)errb->GetBufferPointer() : "?"); return false; }
+        g_dev->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &vs);
+        g_dev->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(), nullptr, &ps);
+        vsb->Release(); psb->Release();
+
+        D3D11_SAMPLER_DESC smd = {};
+        smd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        smd.AddressU = smd.AddressV = smd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        g_dev->CreateSamplerState(&smd, &samp);
+
+        D3D11_BUFFER_DESC bd = {};
+        bd.ByteWidth = 16;
+        bd.Usage = D3D11_USAGE_DEFAULT;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        g_dev->CreateBuffer(&bd, nullptr, &cb);
+        return true;
+    }
+
+    void draw(PlayShared& s, ID3D11ShaderResourceView* srvY, ID3D11ShaderResourceView* srvUV,
+              float uScale, float vScale) {
+        d3dLock(s);
+        float cbData[4] = { uScale, vScale, 0, 0 };
+        g_devctx->UpdateSubresource(cb, 0, nullptr, cbData, 0, 0);
+        D3D11_VIEWPORT vp = { 0, 0, (float)w, (float)h, 0, 1 };
+        g_devctx->RSSetViewports(1, &vp);
+        g_devctx->OMSetRenderTargets(1, &rtv, nullptr);
+        g_devctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        g_devctx->IASetInputLayout(nullptr);
+        g_devctx->VSSetShader(vs, nullptr, 0);
+        g_devctx->VSSetConstantBuffers(0, 1, &cb);
+        g_devctx->PSSetShader(ps, nullptr, 0);
+        ID3D11ShaderResourceView* srvs[2] = { srvY, srvUV };
+        g_devctx->PSSetShaderResources(0, 2, srvs);
+        g_devctx->PSSetSamplers(0, 1, &samp);
+        g_devctx->Draw(3, 0);
+        ID3D11ShaderResourceView* nul[2] = { nullptr, nullptr };
+        g_devctx->PSSetShaderResources(0, 2, nul);
+        d3dUnlock(s);
+        swap->Present(1, 0);
+    }
+};
+
+static PlayShared* g_ps = nullptr; // for WndProc
+static std::atomic<bool> g_playing{false};
+static double  g_stepT0 = 0;       // key press time for latency measurement
+static int64_t g_stepTarget = -1;
+static double  g_playAnchorMs = 0; // QPC clock anchor (audio clock arrives in step 5)
+static int64_t g_playAnchorFrame = 0;
+static int64_t g_totalFrames = 0;
+
+static LRESULT CALLBACK playWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
+    if (m == WM_KEYDOWN && g_ps) {
+        int64_t cur = g_ps->want.load();
+        int64_t nw = cur;
+        switch (w) {
+        case VK_RIGHT: nw = cur + 1; break;
+        case VK_LEFT:  nw = cur - 1; break;
+        case VK_NEXT:  nw = cur + 30; break;
+        case VK_PRIOR: nw = cur - 30; break;
+        case VK_SPACE:
+            g_playing = !g_playing;
+            if (g_playing) { g_playAnchorMs = nowMs(); g_playAnchorFrame = cur; }
+            printf("%s at frame %lld\n", g_playing ? "PLAY" : "PAUSE", (long long)cur);
+            return 0;
+        case VK_ESCAPE: PostQuitMessage(0); return 0;
+        default: return DefWindowProcW(h, m, w, l);
+        }
+        if (nw < 0) nw = 0;
+        if (g_totalFrames > 0 && nw >= g_totalFrames) nw = g_totalFrames - 1;
+        if (nw != cur) {
+            g_playing = false;
+            g_stepT0 = nowMs();
+            g_stepTarget = nw;
+            g_ps->want.store(nw);
+            SetEvent(g_ps->wake);
+        }
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+static int cmdPlay(const char* path, int exitAfterSec) {
+    if (!createD3D11Device()) return 2;
+    AVBufferRef* hwdev = createHwDeviceFromD3D();
+    if (!hwdev) { fprintf(stderr, "no hw device - --play needs the hw path\n"); return 2; }
+
+    Decoder d;
+    if (!d.open(path, hwdev)) return 2;
+    AVStream* st = d.fmt->streams[d.vstream];
+    AVRational fps = st->avg_frame_rate.num ? st->avg_frame_rate : AVRational{30000, 1001};
+    g_totalFrames = st->nb_frames > 0 ? st->nb_frames
+                  : (int64_t)(d.fmt->duration / (double)AV_TIME_BASE * av_q2d(fps));
+    printf("play %s: %dx%d fps=%d/%d frames=%lld\n", path, d.width, d.height,
+           fps.num, fps.den, (long long)g_totalFrames);
+
+    PlayShared ps;
+    ps.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    AVHWDeviceContext* hctx = (AVHWDeviceContext*)hwdev->data;
+    ps.d3dlock = (AVD3D11VADeviceContext*)hctx->hwctx;
+    g_ps = &ps;
+
+    // window sized to video aspect, longest side 960
+    int cw, ch;
+    if (d.width >= d.height) { cw = 960; ch = (int)(960.0 * d.height / d.width); }
+    else                     { ch = 960; cw = (int)(960.0 * d.width / d.height); }
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = playWndProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"BeckyEngineProbe";
+    wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    RegisterClassW(&wc);
+    RECT r = { 0, 0, cw, ch };
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    HWND hwnd = CreateWindowW(L"BeckyEngineProbe", L"becky-engine-probe",
+                              WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                              CW_USEDEFAULT, CW_USEDEFAULT,
+                              r.right - r.left, r.bottom - r.top,
+                              nullptr, nullptr, wc.hInstance, nullptr);
+    if (!hwnd) { fprintf(stderr, "CreateWindow failed\n"); return 2; }
+
+    Renderer rend;
+    if (!rend.init(hwnd, cw, ch)) return 2;
+
+    std::thread dec(decodeLoop, &d, &ps, fps, g_totalFrames);
+
+    int64_t lastDrawn = -1;
+    ID3D11ShaderResourceView *lastY = nullptr, *lastUV = nullptr;
+    int frames60 = 0; double statT0 = nowMs(); double runT0 = nowMs();
+    FILETIME ftc, fte, ftk0, ftu0, ftk1, ftu1;
+    GetProcessTimes(GetCurrentProcess(), &ftc, &fte, &ftk0, &ftu0);
+
+    MSG msg;
+    bool done = false;
+    while (!done) {
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) { done = true; break; }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if (done) break;
+
+        if (g_playing) {
+            double el = (nowMs() - g_playAnchorMs) / 1000.0;
+            int64_t due = g_playAnchorFrame + (int64_t)(el * av_q2d(fps));
+            if (g_totalFrames > 0 && due >= g_totalFrames) { due = g_totalFrames - 1; g_playing = false; }
+            if (due != ps.want.load()) { ps.want.store(due); SetEvent(ps.wake); }
+        }
+
+        int64_t want = ps.want.load();
+        RingSlot& slot = ps.ring[want % RING];
+        ID3D11ShaderResourceView *dy = lastY, *duv = lastUV;
+        int64_t drawn = lastDrawn;
+        if (slot.frame.load(std::memory_order_acquire) == want && slot.srvY) {
+            dy = slot.srvY; duv = slot.srvUV; drawn = want;
+        }
+        if (dy) {
+            float us = ps.codedW ? (float)d.width / ps.codedW : 1.0f;
+            float vs = ps.codedH ? (float)d.height / ps.codedH : 1.0f;
+            rend.draw(ps, dy, duv, us, vs);
+            if (drawn != lastDrawn) {
+                lastDrawn = drawn; lastY = dy; lastUV = duv;
+                if (drawn == g_stepTarget) {
+                    printf("step to %lld latency=%.2f ms\n", (long long)drawn, nowMs() - g_stepT0);
+                    g_stepTarget = -1;
+                }
+            }
+            frames60++;
+        } else {
+            Sleep(2); // nothing decoded yet
+        }
+
+        if (nowMs() - statT0 > 1000.0) {
+            printf("stat: drawn=%lld want=%lld fps=%.1f playing=%d\n",
+                   (long long)lastDrawn, (long long)want,
+                   frames60 * 1000.0 / (nowMs() - statT0), g_playing ? 1 : 0);
+            fflush(stdout);
+            frames60 = 0; statT0 = nowMs();
+        }
+        if (exitAfterSec > 0 && nowMs() - runT0 > exitAfterSec * 1000.0) done = true;
+    }
+
+    GetProcessTimes(GetCurrentProcess(), &ftc, &fte, &ftk1, &ftu1);
+    auto ftMs = [](const FILETIME& a, const FILETIME& b) {
+        ULARGE_INTEGER ua { { a.dwLowDateTime, a.dwHighDateTime } };
+        ULARGE_INTEGER ub { { b.dwLowDateTime, b.dwHighDateTime } };
+        return (double)(ub.QuadPart - ua.QuadPart) / 10000.0;
+    };
+    double wallMs = nowMs() - runT0;
+    double cpuMs = ftMs(ftk0, ftk1) + ftMs(ftu0, ftu1);
+    printf("cpu: %.1f%% of one core over %.1f s (process total, all threads)\n",
+           cpuMs * 100.0 / wallMs, wallMs / 1000.0);
+
+    ps.quit = true;
+    SetEvent(ps.wake);
+    dec.join();
+    d.close();
+    av_buffer_unref(&hwdev);
+    return 0;
+}
+
 // ---------------------------------------------------------------- arg parsing
 
 static AVRational parseFps(const char* s) {
@@ -325,6 +706,7 @@ int main(int argc, char** argv) {
     AVRational fps = {30000, 1001};
     std::vector<int64_t> targets = {100, 101, 102, 1000, 4499};
     bool reportSync = false;
+    int exitAfter = 0;
 
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -337,6 +719,7 @@ int main(int argc, char** argv) {
         else if (a == "--fps")       fps = parseFps(next());
         else if (a == "--targets")   targets = parseTargets(next());
         else if (a == "--report-sync") reportSync = true;
+        else if (a == "--exit-after")  exitAfter = atoi(next());
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 2; }
     }
     (void)reportSync;
@@ -349,6 +732,7 @@ int main(int argc, char** argv) {
 
     if (!strcmp(mode, "decode")) return cmdDecode(file, frames);
     if (!strcmp(mode, "seek"))   return cmdSeekTest(file, fps, targets);
-    fprintf(stderr, "mode %s not implemented yet (steps 4-5 pending)\n", mode);
+    if (!strcmp(mode, "play"))   return cmdPlay(file, exitAfter);
+    fprintf(stderr, "mode %s not implemented yet (step 5 pending)\n", mode);
     return 2;
 }
