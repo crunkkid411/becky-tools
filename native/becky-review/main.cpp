@@ -1072,14 +1072,48 @@ static bool runPipeCapture(const std::string& cmd8, double deadlineSec,
     HANDLE rd = nullptr, wr = nullptr;
     if (!CreatePipe(&rd, &wr, &sa, 1 << 20)) return false;
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    STARTUPINFOW si{}; si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = wr;                       // stderr/stdin stay null: -v error is quiet,
+
+    // D-7/E-2 root-cause fix (found live 2026-07-23 against real audio-bearing
+    // corpus files: probeAudioDuration deterministically reported "NO AUDIO
+    // TRACK" for files proven by a standalone ffprobe run - same binary, same
+    // command line - to have a real AAC stream). bInheritHandles=TRUE below
+    // inherits EVERY currently-inheritable handle in the process, not just
+    // `wr` - with peaks/decodeWindow spawning ffmpeg/ffprobe from concurrent
+    // worker threads, each child could leak in another in-flight call's own
+    // pipe handle. PROC_THREAD_ATTRIBUTE_HANDLE_LIST restricts inheritance to
+    // exactly {wr}, the documented fix for this class of Windows handle leak.
+    SIZE_T attrSize = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
+    std::vector<uint8_t> attrBuf(attrSize);
+    auto* attrList = (LPPROC_THREAD_ATTRIBUTE_LIST)attrBuf.data();
+    bool haveAttrList = attrSize > 0 && InitializeProcThreadAttributeList(attrList, 1, 0, &attrSize) != 0;
+    HANDLE inheritList[1] = { wr };
+    if (haveAttrList) {
+        haveAttrList = UpdateProcThreadAttribute(attrList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inheritList, sizeof(inheritList), nullptr, nullptr) != 0;
+    }
+
+    // cb MUST be sizeof(STARTUPINFOEXW) (the OUTER struct), not sizeof(StartupInfo) -
+    // empirically proven 500/500 CreateProcessW failures (ERROR_INVALID_PARAMETER)
+    // with the inner size vs 0/500 with the outer size, once EXTENDED_STARTUPINFO_PRESENT
+    // is in play. This was the actual root cause of every ffprobe/ffmpeg pipe call
+    // failing (E-2 waveforms, D-7 audio-track probing) - not a PATH problem.
+    STARTUPINFOEXW six{}; six.StartupInfo.cb = sizeof(six);
+    six.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    six.StartupInfo.hStdOutput = wr;           // stderr/stdin stay null: -v error is quiet,
+    if (haveAttrList) six.lpAttributeList = attrList;
     PROCESS_INFORMATION pi{};                 // and PCM must never be interleaved with text
     std::wstring cmd = utf8ToWide(cmd8);
-    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    DWORD flags = CREATE_NO_WINDOW | (haveAttrList ? EXTENDED_STARTUPINFO_PRESENT : 0);
+    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, flags, nullptr, nullptr,
+                             &six.StartupInfo, &pi);
+    if (haveAttrList) DeleteProcThreadAttributeList(attrList);
     CloseHandle(wr);                          // ours only - the child holds its inherited copy
-    if (!ok) { CloseHandle(rd); return false; }
+    if (!ok) {
+        crashLog("runPipeCapture: CreateProcessW failed, GetLastError=" + std::to_string(GetLastError()) +
+                  " haveAttrList=" + std::to_string(haveAttrList) + " cmd=" + cmd8);
+        CloseHandle(rd); return false;
+    }
     const double t0 = nowSec();
     static thread_local std::vector<uint8_t> buf(1 << 16);
     for (;;) {
