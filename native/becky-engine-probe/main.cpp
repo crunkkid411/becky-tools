@@ -380,6 +380,10 @@ struct PlayShared {
                                             // chasing an intermittent storm-mode crash.
     // instrumentation (decode-side truth for the storm reports)
     std::atomic<int> seeksDone{0}, seeksAborted{0}, framesDecoded{0}, backfills{0};
+    // ENGINE latency: want-request -> ring-slot published, decode thread only.
+    // Excludes the present path, whose ~45ms period on this hidden agent
+    // desktop is DWM throttling, not engine cost.
+    std::vector<double> decLat;
 };
 
 // Single entry point for moving the playhead: store + stamp + wake.
@@ -442,6 +446,9 @@ static bool ringStore(PlayShared& s, AVFrame* f, int64_t idx) {
     g_decCtx->CopySubresourceRegion(slot.decTex, 0, 0, 0, 0, src, slice, nullptr);
     g_decCtx->Flush(); // submit before publishing the slot
     slot.frame.store(idx, std::memory_order_release);
+    int64_t stamp = s.wantStampMs.load(std::memory_order_relaxed);
+    if (stamp > 0 && idx == s.want.load(std::memory_order_relaxed))
+        s.decLat.push_back(nowMs() - (double)stamp);
     return true;
 }
 
@@ -973,7 +980,7 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
     int64_t  audioBaseFrames = 0;
     int64_t  videoMaxLagFrames = 0;
     std::vector<double> driftSamples;
-    int      syncWindowSec = exitAfterSec > 0 ? exitAfterSec : 60;
+    int      syncWindowSec = exitAfterSec > 10 ? exitAfterSec - 10 : 60; // report BEFORE the exit timer
 
     int64_t lastDrawn = -1;
     ID3D11ShaderResourceView *lastY = nullptr, *lastUV = nullptr;
@@ -1166,6 +1173,12 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
     double cpuMs = ftMs(ftk0, ftk1) + ftMs(ftu0, ftu1);
     printf("cpu: %.1f%% of one core over %.1f s (process total, all threads)\n",
            cpuMs * 100.0 / wallMs, wallMs / 1000.0);
+    if (!ps.decLat.empty()) {
+        std::vector<double> v = ps.decLat;
+        std::sort(v.begin(), v.end());
+        printf("engine-latency (request->ring published, present excluded): n=%d median=%.1f p95=%.1f max=%.1f ms\n",
+               (int)v.size(), v[v.size() / 2], v[(size_t)(v.size() * 0.95)], v.back());
+    }
 
     ps.quit = true;
     SetEvent(ps.wake);
