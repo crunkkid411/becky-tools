@@ -14,7 +14,9 @@
 
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d10.h> // ID3D10Multithread (works on the d3d11 immediate context)
 #include <dxgi.h>
+#include <dxgi1_3.h> // waitable swapchain (IDXGIFactory2 / IDXGISwapChain2)
 #include <d3dcompiler.h>
 #include <cstdio>
 #include <cstdint>
@@ -47,13 +49,36 @@ static double nowMs() {
 
 // ---------------------------------------------------------------- D3D11 device
 
-static ID3D11Device*        g_dev = nullptr;
+static ID3D11Device*        g_dev = nullptr;    // RENDER device (window/swapchain)
 static ID3D11DeviceContext* g_devctx = nullptr;
+static ID3D11Device*        g_decDev = nullptr; // DECODE device - separate so a
+static ID3D11DeviceContext* g_decCtx = nullptr; // blocking Present can never
+                                                // stall decode (measured: Present
+                                                // holds the protection CS ~45ms
+                                                // and dropped decode to 15fps
+                                                // when devices were shared)
 
 // On this machine the DEFAULT adapter is "Microsoft Basic Render Driver"
 // (software, no ID3D11VideoDevice) and the RTX 3070 is adapter 1 - so never
 // create with a NULL adapter. Enumerate and take the first adapter whose
 // device exposes ID3D11VideoDevice (measured 2026-07-22, diag_adapters.cpp).
+static bool createOneDevice(IDXGIAdapter1* ad, ID3D11Device** dev, ID3D11DeviceContext** ctx) {
+    D3D_FEATURE_LEVEL fl;
+    HRESULT hr = D3D11CreateDevice(ad, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+                                   D3D11_CREATE_DEVICE_BGRA_SUPPORT |
+                                   D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                                   nullptr, 0, D3D11_SDK_VERSION, dev, &fl, ctx);
+    if (FAILED(hr)) return false;
+    // Per-call serialization inside each device (decode thread vs any other
+    // call). Without it the NVIDIA UMD races and segfaults (nvwgf2umx.dll).
+    ID3D10Multithread* mt = nullptr;
+    if (SUCCEEDED((*ctx)->QueryInterface(__uuidof(ID3D10Multithread), (void**)&mt))) {
+        mt->SetMultithreadProtected(TRUE);
+        mt->Release();
+    }
+    return true;
+}
+
 static bool createD3D11Device() {
     IDXGIFactory1* fac = nullptr;
     if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&fac))) {
@@ -65,23 +90,25 @@ static bool createD3D11Device() {
         if (fac->EnumAdapters1(i, &ad) == DXGI_ERROR_NOT_FOUND) break;
         DXGI_ADAPTER_DESC1 desc; ad->GetDesc1(&desc);
         ID3D11Device* dev = nullptr; ID3D11DeviceContext* ctx = nullptr;
-        D3D_FEATURE_LEVEL fl;
-        HRESULT hr = D3D11CreateDevice(ad, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
-                                       D3D11_CREATE_DEVICE_BGRA_SUPPORT |
-                                       D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-                                       nullptr, 0, D3D11_SDK_VERSION,
-                                       &dev, &fl, &ctx);
-        ad->Release();
-        if (FAILED(hr)) continue;
+        if (!createOneDevice(ad, &dev, &ctx)) { ad->Release(); continue; }
         ID3D11VideoDevice* vd = nullptr;
         if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D11VideoDevice), (void**)&vd))) {
             vd->Release();
             g_dev = dev; g_devctx = ctx;
-            fprintf(stderr, "d3d11 device on adapter %u: %ls\n", i, desc.Description);
+            // Decode device on the SAME adapter; falls back to sharing the
+            // render device if a second create fails.
+            if (!createOneDevice(ad, &g_decDev, &g_decCtx)) {
+                g_decDev = g_dev; g_decCtx = g_devctx;
+                g_decDev->AddRef(); g_decCtx->AddRef();
+                fprintf(stderr, "warning: single-device mode (decode contends with Present)\n");
+            }
+            fprintf(stderr, "d3d11 render+decode devices on adapter %u: %ls\n", i, desc.Description);
+            ad->Release();
             fac->Release();
             return true;
         }
         ctx->Release(); dev->Release();
+        ad->Release();
     }
     fac->Release();
     fprintf(stderr, "no video-capable D3D11 adapter found\n");
@@ -95,8 +122,9 @@ static AVBufferRef* createHwDeviceFromD3D() {
     if (!hw) { fprintf(stderr, "av_hwdevice_ctx_alloc failed\n"); return nullptr; }
     AVHWDeviceContext* hctx = (AVHWDeviceContext*)hw->data;
     AVD3D11VADeviceContext* d3d = (AVD3D11VADeviceContext*)hctx->hwctx;
-    g_dev->AddRef();
-    d3d->device = g_dev;
+    ID3D11Device* dd = g_decDev ? g_decDev : g_dev; // decoder lives on the decode device
+    dd->AddRef();
+    d3d->device = dd;
     int r = av_hwdevice_ctx_init(hw);
     if (r < 0) {
         char buf[128]; av_strerror(r, buf, sizeof buf);
@@ -129,6 +157,7 @@ struct Decoder {
     AVRational tb = {0, 1};
     int64_t    startTs = 0;   // stream start_time in tb units (0 if none)
     int        width = 0, height = 0;
+    AVD3D11VADeviceContext* hwLock = nullptr; // set by --play; serializes flushes
 
     bool open(const char* path, AVBufferRef* hwdev) {
         int r = avformat_open_input(&fmt, path, nullptr, nullptr);
@@ -147,6 +176,7 @@ struct Decoder {
         if (hwdev) {
             ctx->hw_device_ctx = av_buffer_ref(hwdev);
             ctx->get_format = pick_d3d11;
+            ctx->extra_hw_frames = 6; // headroom for the 4-frame delay-unref queue
         }
         r = avcodec_open2(ctx, dec, nullptr);
         if (r < 0) { err("avcodec_open2", r); return false; }
@@ -255,7 +285,10 @@ static int seekExact(Decoder& d, AVPacket* pkt, AVFrame* f,
     if (frameDurTb <= 0) frameDurTb = 1;
     int r = av_seek_frame(d.fmt, d.vstream, targetTs, AVSEEK_FLAG_BACKWARD);
     if (r < 0) { Decoder::err("av_seek_frame", r); return r; }
-    avcodec_flush_buffers(d.ctx);
+    // flush releases decoder pool surfaces; serialize it against draws/copies
+    // (part of the nvwgf2umx crash fix, 2026-07-23)
+    if (d.hwLock) { d.hwLock->lock(d.hwLock->lock_ctx); avcodec_flush_buffers(d.ctx); d.hwLock->unlock(d.hwLock->lock_ctx); }
+    else avcodec_flush_buffers(d.ctx);
     int scanned = 0;
     for (;;) {
         if (abortWant) {
@@ -324,8 +357,11 @@ static int cmdSeekTest(const char* path, AVRational fps, const std::vector<int64
 
 struct RingSlot {
     std::atomic<int64_t> frame{-1};
-    ID3D11Texture2D* tex = nullptr;
-    ID3D11ShaderResourceView* srvY = nullptr;
+    ID3D11Texture2D* decTex = nullptr;  // decode-device side (copy target, shared)
+    IDXGIKeyedMutex* kmDec = nullptr;
+    ID3D11Texture2D* rndTex = nullptr;  // render-device view of the same texture
+    IDXGIKeyedMutex* kmRnd = nullptr;
+    ID3D11ShaderResourceView* srvY = nullptr;  // on the RENDER device
     ID3D11ShaderResourceView* srvUV = nullptr;
 };
 
@@ -369,8 +405,7 @@ static bool ringStore(PlayShared& s, AVFrame* f, int64_t idx) {
     UINT slice = (UINT)(intptr_t)f->data[1];
     RingSlot& slot = s.ring[idx % RING];
     slot.frame.store(-1, std::memory_order_release);
-    d3dLock(s);
-    if (!slot.tex) {
+    if (!slot.decTex) {
         D3D11_TEXTURE2D_DESC sd; src->GetDesc(&sd);
         s.codedW = (int)sd.Width; s.codedH = (int)sd.Height;
         D3D11_TEXTURE2D_DESC td = {};
@@ -380,19 +415,32 @@ static bool ringStore(PlayShared& s, AVFrame* f, int64_t idx) {
         td.SampleDesc.Count = 1;
         td.Usage = D3D11_USAGE_DEFAULT;
         td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        HRESULT hr = g_dev->CreateTexture2D(&td, nullptr, &slot.tex);
-        if (FAILED(hr)) { d3dUnlock(s); fprintf(stderr, "ring CreateTexture2D hr=0x%08lx\n", (unsigned long)hr); return false; }
+        // Legacy SHARED (no keyed mutex): the mutex costs a full GPU sync per
+        // acquire (~78 ms measured with DWM in the loop) and throttled decode
+        // to 30 fps. Ordering = decode-side Flush + the slot.frame atomic.
+        // ponytail: worst case is one torn frame for one present; upgrade path
+        // is NT-handle sharing + ID3D11Fence if it ever shows on screen.
+        td.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+        HRESULT hr = g_decDev->CreateTexture2D(&td, nullptr, &slot.decTex);
+        if (FAILED(hr)) { fprintf(stderr, "ring CreateTexture2D hr=0x%08lx\n", (unsigned long)hr); return false; }
+        IDXGIResource* res = nullptr; HANDLE sh = nullptr;
+        slot.decTex->QueryInterface(__uuidof(IDXGIResource), (void**)&res);
+        if (res) { res->GetSharedHandle(&sh); res->Release(); }
+        if (!sh || FAILED(g_dev->OpenSharedResource(sh, __uuidof(ID3D11Texture2D), (void**)&slot.rndTex))) {
+            fprintf(stderr, "ring OpenSharedResource failed\n"); return false;
+        }
         D3D11_SHADER_RESOURCE_VIEW_DESC sv = {};
         sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         sv.Texture2D.MipLevels = 1;
         sv.Format = DXGI_FORMAT_R8_UNORM;
-        g_dev->CreateShaderResourceView(slot.tex, &sv, &slot.srvY);
+        g_dev->CreateShaderResourceView(slot.rndTex, &sv, &slot.srvY);
         sv.Format = DXGI_FORMAT_R8G8_UNORM;
-        g_dev->CreateShaderResourceView(slot.tex, &sv, &slot.srvUV);
-        if (!slot.srvY || !slot.srvUV) { d3dUnlock(s); fprintf(stderr, "ring SRV create failed\n"); return false; }
+        g_dev->CreateShaderResourceView(slot.rndTex, &sv, &slot.srvUV);
+        if (!slot.srvY || !slot.srvUV) { fprintf(stderr, "ring SRV create failed\n"); return false; }
     }
-    g_devctx->CopySubresourceRegion(slot.tex, 0, 0, 0, 0, src, slice, nullptr);
-    d3dUnlock(s);
+    // Copy on the DECODE device's context: zero contention with Present.
+    g_decCtx->CopySubresourceRegion(slot.decTex, 0, 0, 0, 0, src, slice, nullptr);
+    g_decCtx->Flush(); // submit before publishing the slot
     slot.frame.store(idx, std::memory_order_release);
     return true;
 }
@@ -401,6 +449,19 @@ static bool ringStore(PlayShared& s, AVFrame* f, int64_t idx) {
 static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalFrames) {
     AVPacket* pkt = av_packet_alloc();
     AVFrame*  f = av_frame_alloc();
+    // Delay-unref queue: our ring copies are ASYNC GPU commands; unreffing the
+    // AVFrame immediately returns its pool slice to the decoder, which can
+    // rewrite it before the queued copy executes (nvwgf2umx segfault on the
+    // all-intra proxy whose decode rate is ~10x realtime). Hold the last 4
+    // frames' refs so in-flight copies always read stable memory.
+    AVFrame* held[4] = {};
+    int heldIdx = 0;
+    auto holdFrame = [&](AVFrame* src) {
+        if (!held[heldIdx]) held[heldIdx] = av_frame_alloc();
+        av_frame_unref(held[heldIdx]);
+        av_frame_move_ref(held[heldIdx], src);
+        heldIdx = (heldIdx + 1) % 4;
+    };
     int64_t next = -1000000; // decoder's sequential position (frame it will produce next)
     while (!s->quit.load()) {
         int64_t want = s->want.load();
@@ -424,7 +485,7 @@ static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalF
             if (r != 1) { WaitForSingleObject(s->wake, 20); continue; }
             s->seeksDone++; s->framesDecoded += scanned;
             ringStore(*s, f, want);
-            av_frame_unref(f);
+            holdFrame(f);
             next = want + 1;
             s->eofAt.store(INT64_MAX);
             continue;
@@ -448,7 +509,7 @@ static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalF
                 if (r == 1) {
                     s->backfills++;
                     ringStore(*s, f, missing);
-                    av_frame_unref(f);
+                    holdFrame(f);
                     next = missing + 1; // sequential fill continues from here
                     // ponytail: frames [want, hi] get re-decoded on the way back
                     // through - idle-time waste only, paint already happened.
@@ -467,10 +528,11 @@ static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalF
             continue;
         }
         if (r < 0) { Decoder::err("play decode", r); break; }
-        if (next >= lo) ringStore(*s, f, next); // catch-up frames below lo: decode-and-discard
-        av_frame_unref(f);
+        if (next >= lo) { ringStore(*s, f, next); holdFrame(f); } // below lo: decode-and-discard
+        else av_frame_unref(f);
         next++;
     }
+    for (int i = 0; i < 4; i++) if (held[i]) av_frame_free(&held[i]);
     av_packet_free(&pkt);
     av_frame_free(&f);
 }
@@ -500,7 +562,8 @@ static const char* kShaderSrc =
 "}\n";
 
 struct Renderer {
-    IDXGISwapChain* swap = nullptr;
+    IDXGISwapChain1* swap = nullptr;
+    HANDLE frameWait = nullptr; // waitable-swapchain vsync gate
     ID3D11RenderTargetView* rtv = nullptr;
     ID3D11VertexShader* vs = nullptr;
     ID3D11PixelShader* ps = nullptr;
@@ -513,20 +576,30 @@ struct Renderer {
         IDXGIDevice* dxdev = nullptr;
         g_dev->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxdev);
         IDXGIAdapter* ad = nullptr; dxdev->GetAdapter(&ad);
-        IDXGIFactory1* fac = nullptr;
-        ad->GetParent(__uuidof(IDXGIFactory1), (void**)&fac);
-        DXGI_SWAP_CHAIN_DESC sd = {};
-        sd.BufferDesc.Width = cw; sd.BufferDesc.Height = ch;
-        sd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        IDXGIFactory2* fac = nullptr;
+        ad->GetParent(__uuidof(IDXGIFactory2), (void**)&fac);
+        // WAITABLE swapchain: the vsync wait happens on frameWait at the loop
+        // top, with NO lock held, and Present(0,0) never blocks. A blocking
+        // Present(1,0) held the ID3D10Multithread CS for its whole ~60 ms
+        // wait and starved the decoder to ~16 fps (measured 2026-07-23).
+        DXGI_SWAP_CHAIN_DESC1 sd = {};
+        sd.Width = cw; sd.Height = ch;
+        sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sd.BufferCount = 2;
-        sd.OutputWindow = hwnd;
-        sd.Windowed = TRUE;
         sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        HRESULT hr = fac->CreateSwapChain(g_dev, &sd, &swap);
+        sd.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+        HRESULT hr = fac->CreateSwapChainForHwnd(g_dev, hwnd, &sd, nullptr, nullptr, &swap);
         fac->Release(); ad->Release(); dxdev->Release();
-        if (FAILED(hr)) { fprintf(stderr, "CreateSwapChain hr=0x%08lx\n", (unsigned long)hr); return false; }
+        if (FAILED(hr)) { fprintf(stderr, "CreateSwapChainForHwnd hr=0x%08lx\n", (unsigned long)hr); return false; }
+        IDXGISwapChain2* sw2 = nullptr;
+        if (SUCCEEDED(swap->QueryInterface(__uuidof(IDXGISwapChain2), (void**)&sw2))) {
+            sw2->SetMaximumFrameLatency(1);
+            frameWait = sw2->GetFrameLatencyWaitableObject();
+            sw2->Release();
+        }
+        if (!frameWait) fprintf(stderr, "warning: no frame-latency waitable, pacing by Sleep\n");
 
         ID3D11Texture2D* bb = nullptr;
         swap->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb);
@@ -557,9 +630,14 @@ struct Renderer {
         return true;
     }
 
-    void draw(PlayShared& s, ID3D11ShaderResourceView* srvY, ID3D11ShaderResourceView* srvUV,
+    double lastLockMs = 0, lastDrawMs = 0, lastPresentMs = 0; // diagnostics
+
+    // Returns false if the slot was busy (decode writing it) - caller skips.
+    bool draw(IDXGIKeyedMutex* km, ID3D11ShaderResourceView* srvY, ID3D11ShaderResourceView* srvUV,
               float uScale, float vScale) {
-        d3dLock(s);
+        double t0 = nowMs();
+        if (km && km->AcquireSync(0, 2) != S_OK) return false; // busy: keep last image
+        double t1 = nowMs(); lastLockMs = t1 - t0;
         float cbData[4] = { uScale, vScale, 0, 0 };
         g_devctx->UpdateSubresource(cb, 0, nullptr, cbData, 0, 0);
         D3D11_VIEWPORT vp = { 0, 0, (float)w, (float)h, 0, 1 };
@@ -576,8 +654,13 @@ struct Renderer {
         g_devctx->Draw(3, 0);
         ID3D11ShaderResourceView* nul[2] = { nullptr, nullptr };
         g_devctx->PSSetShaderResources(0, 2, nul);
-        d3dUnlock(s);
-        swap->Present(1, 0);
+        double t2 = nowMs(); lastDrawMs = t2 - (t0 + lastLockMs);
+        if (km) km->ReleaseSync(0);
+        // Non-blocking present; pacing is the frameWait gate in the loop.
+        // Present now only ever stalls the RENDER device - decode runs free.
+        swap->Present(0, 0);
+        lastPresentMs = nowMs() - t2;
+        return true;
     }
 };
 
@@ -851,6 +934,7 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
     ps.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     AVHWDeviceContext* hctx = (AVHWDeviceContext*)hwdev->data;
     ps.d3dlock = (AVD3D11VADeviceContext*)hctx->hwctx;
+    d.hwLock = ps.d3dlock; // seekExact flushes under the same lock
     g_ps = &ps;
 
     // window sized to video aspect, longest side 960
@@ -893,6 +977,7 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
 
     int64_t lastDrawn = -1;
     ID3D11ShaderResourceView *lastY = nullptr, *lastUV = nullptr;
+    IDXGIKeyedMutex* lastKm = nullptr;
     int frames60 = 0; double statT0 = nowMs(); double runT0 = nowMs();
     FILETIME ftc, fte, ftk0, ftu0, ftk1, ftu1;
     GetProcessTimes(GetCurrentProcess(), &ftc, &fte, &ftk0, &ftu0);
@@ -900,6 +985,9 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
     MSG msg;
     bool done = false;
     while (!done) {
+        // vsync gate, no lock held; also prevents the 135k-fps occluded spin
+        if (rend.frameWait) WaitForSingleObject(rend.frameWait, 20);
+        else Sleep(8);
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { done = true; break; }
             TranslateMessage(&msg);
@@ -1028,16 +1116,17 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
         int64_t want = ps.want.load();
         RingSlot& slot = ps.ring[want % RING];
         ID3D11ShaderResourceView *dy = lastY, *duv = lastUV;
+        IDXGIKeyedMutex* dkm = lastKm;
         int64_t drawn = lastDrawn;
         if (slot.frame.load(std::memory_order_acquire) == want && slot.srvY) {
-            dy = slot.srvY; duv = slot.srvUV; drawn = want;
+            dy = slot.srvY; duv = slot.srvUV; dkm = slot.kmRnd; drawn = want;
         }
         if (dy) {
             float us = ps.codedW ? (float)d.width / ps.codedW : 1.0f;
             float vs = ps.codedH ? (float)d.height / ps.codedH : 1.0f;
-            rend.draw(ps, dy, duv, us, vs);
+            if (!rend.draw(dkm, dy, duv, us, vs)) { continue; } // slot busy: retry next loop
             if (drawn != lastDrawn) {
-                lastDrawn = drawn; lastY = dy; lastUV = duv;
+                lastDrawn = drawn; lastY = dy; lastUV = duv; lastKm = dkm;
                 if (drawn == g_stepTarget) {
                     printf("step to %lld latency=%.2f ms\n", (long long)drawn, nowMs() - g_stepT0);
                     g_stepTarget = -1;
@@ -1055,9 +1144,12 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
         }
 
         if (nowMs() - statT0 > 1000.0) {
-            printf("stat: drawn=%lld want=%lld fps=%.1f playing=%d\n",
+            printf("stat: drawn=%lld want=%lld fps=%.1f playing=%d seeks=%d aborts=%d dec=%d bf=%d lock=%.1f draw=%.1f pres=%.1f\n",
                    (long long)lastDrawn, (long long)want,
-                   frames60 * 1000.0 / (nowMs() - statT0), g_playing ? 1 : 0);
+                   frames60 * 1000.0 / (nowMs() - statT0), g_playing ? 1 : 0,
+                   ps.seeksDone.load(), ps.seeksAborted.load(),
+                   ps.framesDecoded.load(), ps.backfills.load(),
+                   rend.lastLockMs, rend.lastDrawMs, rend.lastPresentMs);
             fflush(stdout);
             frames60 = 0; statT0 = nowMs();
         }

@@ -1,0 +1,411 @@
+[New Thread 10792.0x17b0]
+[New Thread 10792.0x32b0]
+[New Thread 10792.0x7e0]
+[New Thread 10792.0x20e8]
+warning: onecore\windows\directx\database\helperlibrary\lib\directxdatabasehelper.cpp(652)\dxgi.dll!00007FFA6E68F221: (caller: 00007FFA6E68ED28) ReturnHr(1) tid(3cf4) 80004002 No such interface supported
+[New Thread 10792.0x19ac]
+[New Thread 10792.0x604]
+[Thread 10792.0x604 exited with code 0]
+[New Thread 10792.0x17a0]
+[New Thread 10792.0x20b8]
+[New Thread 10792.0x690]
+[New Thread 10792.0x3fb8]
+[New Thread 10792.0x3a34]
+[New Thread 10792.0x1c7c]
+[New Thread 10792.0x18c4]
+[New Thread 10792.0x1f1c]
+[New Thread 10792.0x2c68]
+[New Thread 10792.0x3224]
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+audio: no audio stream found in X:\AI-2\becky-wt-engine\native\becky-engine-probe\post_constantly.scrub.mp4, video-only
+[New Thread 10792.0x3e64]
+[New Thread 10792.0x31f0]
+[New Thread 10792.0x924]
+[New Thread 10792.0x3960]
+[New Thread 10792.0x298c]
+[New Thread 10792.0x3828]
+[New Thread 10792.0x360c]
+[New Thread 10792.0x303c]
+[New Thread 10792.0xc28]
+[New Thread 10792.0x3d64]
+[New Thread 10792.0x2ad0]
+[New Thread 10792.0x31d8]
+[New Thread 10792.0x2d7c]
+[New Thread 10792.0x2458]
+[New Thread 10792.0x4f0]
+[New Thread 10792.0x2b48]
+
+Thread 16 received signal SIGSEGV, Segmentation fault.
+[Switching to Thread 10792.0x2c68]
+0x00007ffa545e6073 in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+
+Thread 33 (Thread 10792.0x2b48):
+#0  0x00007ffa72eb0f24 in ntdll!ZwWaitForAlertByThreadId () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e74d6d in ntdll!RtlWaitOnAddress () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e74c22 in ntdll!RtlWaitOnAddress () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e74a3d in ntdll!RtlWaitOnAddress () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e3fcb4 in ntdll!RtlEnterCriticalSection () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e3fae2 in ntdll!RtlEnterCriticalSection () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x00007ffa72f08935 in ntdll!RtlRegisterSecureMemoryCacheCallback () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x00007ffa72e3d255 in ntdll!RtlAllocateHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#8  0x00007ffa72e3b44d in ntdll!RtlAllocateHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#9  0x00007ffa72e64bd5 in ntdll!RtlLoadString () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#10 0x00007ffa72e277a7 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#11 0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#12 0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#13 0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#14 0x0000000000000000 in ?? ()
+
+Thread 32 (Thread 10792.0x4f0):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e70022 in ntdll!RtlUnlockHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e277c3 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x0000000000000000 in ?? ()
+
+Thread 31 (Thread 10792.0x2458):
+#0  0x00007ffa72eae2e4 in ntdll!ZwAlertThreadByThreadId () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e74811 in ntdll!RtlWakeAddressAll () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e3f2c7 in ntdll!RtlLeaveCriticalSection () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72f08bd6 in ntdll!RtlRegisterSecureMemoryCacheCallback () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e3d255 in ntdll!RtlAllocateHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e3b44d in ntdll!RtlAllocateHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x00007ffa72e64bd5 in ntdll!RtlLoadString () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x00007ffa72e277a7 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#8  0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#9  0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#10 0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#11 0x0000000000000000 in ?? ()
+
+Thread 30 (Thread 10792.0x2d7c):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e70022 in ntdll!RtlUnlockHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e277c3 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x0000000000000000 in ?? ()
+
+Thread 29 (Thread 10792.0x31d8):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e70022 in ntdll!RtlUnlockHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e277c3 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x0000000000000000 in ?? ()
+
+Thread 28 (Thread 10792.0x2ad0):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e70022 in ntdll!RtlUnlockHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e277c3 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x0000000000000000 in ?? ()
+
+Thread 27 (Thread 10792.0x3d64):
+#0  0x00007ffa72eb0f24 in ntdll!ZwWaitForAlertByThreadId () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e74d6d in ntdll!RtlWaitOnAddress () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e74c22 in ntdll!RtlWaitOnAddress () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e74a3d in ntdll!RtlWaitOnAddress () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e3fcb4 in ntdll!RtlEnterCriticalSection () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e3fae2 in ntdll!RtlEnterCriticalSection () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x00007ffa72f08935 in ntdll!RtlRegisterSecureMemoryCacheCallback () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x00007ffa72e3d255 in ntdll!RtlAllocateHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#8  0x00007ffa72e3b44d in ntdll!RtlAllocateHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#9  0x00007ff9f91c7b3b in ppeGetVersion () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvppex.dll
+#10 0x00007ff9f91c241e in ppeGetVersion () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvppex.dll
+#11 0x00007ff9f91c1525 in ppeGetVersion () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvppex.dll
+#12 0x00007ff9f9183736 in ppeGetVersion () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvppex.dll
+#13 0x00007ff9f9183a9d in ppeGetVersion () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvppex.dll
+#14 0x00007ff9f9183cd0 in ppeGetVersion () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvppex.dll
+#15 0x00007ffa72e29a1d in ntdll!RtlActivateActivationContextUnsafeFast () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#16 0x00007ffa72e2789f in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#17 0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#18 0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#19 0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#20 0x0000000000000000 in ?? ()
+
+Thread 26 (Thread 10792.0xc28):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e70022 in ntdll!RtlUnlockHeap () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72e277c3 in ntdll!LdrShutdownThread () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#3  0x00007ffa72e86094 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x00007ffa72e85c73 in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x00007ffa72e85c1e in ntdll!LdrInitializeThunk () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x0000000000000000 in ?? ()
+
+Thread 25 (Thread 10792.0x303c):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa64e1869f in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#3  0x00007ffa650cb050 in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#4  0x00007ffa650cd198 in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#5  0x00007ffa72e73720 in ntdll!TpAllocPool () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x00007ffa72e5d79a in ntdll!TpReleaseCleanupGroupMembers () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#8  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#9  0x0000000000000000 in ?? ()
+
+Thread 24 (Thread 10792.0x360c):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa545783ae in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa54578691 in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54578f10 in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa54578f9a in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#6  0x00007ffa5463afdf in nvwgf2umx!OpenAdapter10 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#7  0x00007ffa6af8cc0e in d3d11!D3DKMTWaitForVerticalBlankEvent () from C:\WINDOWS\SYSTEM32\d3d11.dll
+#8  0x00007ffa6af0378f in ?? () from C:\WINDOWS\SYSTEM32\d3d11.dll
+#9  0x00007ff9fe51f581 in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#10 0x00007ff9fe522b21 in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#11 0x00007ff9fe62a437 in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#12 0x00007ff9fe6430d9 in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#13 0x00007ff9fe4b2dba in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#14 0x00007ff9fe4b32a5 in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#15 0x00007ff9fe4b353d in ?? () from C:\msys64\mingw64\bin\avcodec-62.dll
+#16 0x00007ff77da017cc in nextFrame(Decoder&, AVPacket*, AVFrame*) ()
+#17 0x00007ff77da02742 in decodeLoop(Decoder*, PlayShared*, AVRational, long long) ()
+#18 0x00007ff9f5b50ccf in ?? () from C:\msys64\mingw64\bin\libstdc++-6.dll
+#19 0x00007ff9f8c56cad in ?? () from C:\msys64\mingw64\bin\libwinpthread-1.dll
+#20 0x00007ffa725aaf5a in msvcrt!_beginthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#21 0x00007ffa725ab02c in msvcrt!_endthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#22 0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#23 0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#24 0x0000000000000000 in ?? ()
+
+Thread 23 (Thread 10792.0x3828):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 22 (Thread 10792.0x298c):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 21 (Thread 10792.0x3960):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 20 (Thread 10792.0x924):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 19 (Thread 10792.0x31f0):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 18 (Thread 10792.0x3e64):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 17 (Thread 10792.0x3224):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 16 (Thread 10792.0x2c68):
+#0  0x00007ffa545e6073 in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#1  0x00007ffa5455685f in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#2  0x00007ffa54577fdf in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa54577f3f in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa5456c81d in nvwgf2umx!SetDependencyInfo () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa54a6026a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#6  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#7  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#8  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#9  0x0000000000000000 in ?? ()
+
+Thread 15 (Thread 10792.0x1f1c):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 14 (Thread 10792.0x18c4):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 13 (Thread 10792.0x1c7c):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 12 (Thread 10792.0x3a34):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 11 (Thread 10792.0x3fb8):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 10 (Thread 10792.0x690):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa548fa3c8 in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa548fa2ef in nvwgf2umx!OpenAdapter12 () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 9 (Thread 10792.0x20b8):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa54984ebf in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#3  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#5  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#6  0x0000000000000000 in ?? ()
+
+Thread 8 (Thread 10792.0x17a0):
+#0  0x00007ffa72eae044 in ntdll!ZwWaitForMultipleObjects () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa70840d00 in WaitForMultipleObjectsEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa70840bfe in WaitForMultipleObjects () from C:\WINDOWS\System32\KernelBase.dll
+#3  0x00007ffa5411c896 in nvwgf2umx!NVAPI_DirectMethods () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#4  0x00007ffa54efeb2a in nvwgf2umx!NVDEV_Thunk () from C:\WINDOWS\System32\DriverStore\FileRepository\nvmiui.inf_amd64_8952eee7a1ada4a4\nvwgf2umx.dll
+#5  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#6  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#7  0x0000000000000000 in ?? ()
+
+Thread 6 (Thread 10792.0x19ac):
+#0  0x00007ffa72eae044 in ntdll!ZwWaitForMultipleObjects () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa70840d00 in WaitForMultipleObjectsEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa705fb7b7 in CertFreeCTLContext () from C:\WINDOWS\System32\crypt32.dll
+#3  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#4  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#5  0x0000000000000000 in ?? ()
+
+Thread 5 (Thread 10792.0x20e8 "pool-0"):
+#0  0x00007ffa72ead7b4 in ntdll!ZwQueryKey () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7081ca67 in RegCloseKey () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa70818e04 in OpenProcess () from C:\WINDOWS\System32\KernelBase.dll
+#3  0x00007ffa708a480c in KERNELBASE!GetTempPath2W () from C:\WINDOWS\System32\KernelBase.dll
+#4  0x00007ffa7081bc9b in RegQueryValueExW () from C:\WINDOWS\System32\KernelBase.dll
+#5  0x00007ff9fafa6391 in ?? () from C:\msys64\mingw64\bin\libgio-2.0-0.dll
+#6  0x00007ff9faf970b5 in ?? () from C:\msys64\mingw64\bin\libgio-2.0-0.dll
+#7  0x00007ff9faf9b465 in ?? () from C:\msys64\mingw64\bin\libgio-2.0-0.dll
+#8  0x00007ff9faf9c45f in ?? () from C:\msys64\mingw64\bin\libgio-2.0-0.dll
+#9  0x00007ff9faf9cb25 in ?? () from C:\msys64\mingw64\bin\libgio-2.0-0.dll
+#10 0x00007ffa0adecac2 in ?? () from C:\msys64\mingw64\bin\libglib-2.0-0.dll
+#11 0x00007ffa0adebb9f in ?? () from C:\msys64\mingw64\bin\libglib-2.0-0.dll
+#12 0x00007ffa0adeb397 in ?? () from C:\msys64\mingw64\bin\libglib-2.0-0.dll
+#13 0x00007ffa725aaf5a in msvcrt!_beginthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#14 0x00007ffa725ab02c in msvcrt!_endthreadex () from C:\WINDOWS\System32\msvcrt.dll
+#15 0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#16 0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#17 0x0000000000000000 in ?? ()
+
+Thread 4 (Thread 10792.0x7e0):
+#0  0x00007ffa72eb0f84 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e5d407 in ntdll!TpReleaseCleanupGroupMembers () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#3  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x0000000000000000 in ?? ()
+
+Thread 3 (Thread 10792.0x32b0):
+#0  0x00007ffa72eb0f84 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e5d407 in ntdll!TpReleaseCleanupGroupMembers () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#3  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x0000000000000000 in ?? ()
+
+Thread 2 (Thread 10792.0x17b0):
+#0  0x00007ffa72eb0f84 in ntdll!ZwWaitForWorkViaWorkerFactory () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa72e5d407 in ntdll!TpReleaseCleanupGroupMembers () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#2  0x00007ffa72c07374 in KERNEL32!BaseThreadInitThunk () from C:\WINDOWS\System32\kernel32.dll
+#3  0x00007ffa72e5cc91 in ntdll!RtlUserThreadStart () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#4  0x0000000000000000 in ?? ()
+
+Thread 1 (Thread 10792.0x3cf4):
+#0  0x00007ffa72ead574 in ntdll!ZwWaitForSingleObject () from C:\WINDOWS\SYSTEM32\ntdll.dll
+#1  0x00007ffa7080b6ae in WaitForSingleObjectEx () from C:\WINDOWS\System32\KernelBase.dll
+#2  0x00007ffa650ccfc4 in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#3  0x00007ffa64e1a979 in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#4  0x00007ffa64e2b860 in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#5  0x00007ffa64def6e0 in d3d10warp!QueryDListForApplication1 () from C:\WINDOWS\SYSTEM32\d3d10warp.dll
+#6  0x00007ffa6af14ea1 in ?? () from C:\WINDOWS\SYSTEM32\d3d11.dll
+#7  0x00007ffa6af13c36 in ?? () from C:\WINDOWS\SYSTEM32\d3d11.dll
+#8  0x00007ffa6e69d2ff in dxgi!PIXGetCaptureState () from C:\WINDOWS\SYSTEM32\dxgi.dll
+#9  0x00007ffa6e6622ca in ?? () from C:\WINDOWS\SYSTEM32\dxgi.dll
+#10 0x00007ffa6e677137 in dxgi!CompatString () from C:\WINDOWS\SYSTEM32\dxgi.dll
+#11 0x00007ffa6e675f5b in dxgi!CompatString () from C:\WINDOWS\SYSTEM32\dxgi.dll
+#12 0x00007ffa6e661990 in ?? () from C:\WINDOWS\SYSTEM32\dxgi.dll
+#13 0x00007ff77da3c422 in Renderer::draw(PlayShared&, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, float, float) ()
+#14 0x00007ff77da03b21 in cmdPlay(char const*, int, bool, bool) ()
+#15 0x00007ff77da3ce82 in main ()
+A debugging session is active.
+
+	Inferior 1 [process 10792] will be killed.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]
