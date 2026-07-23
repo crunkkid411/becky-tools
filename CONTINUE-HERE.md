@@ -205,7 +205,7 @@ Status, checked 2026-07-20 — **the app half is mostly not built**:
 | H-4 | `apply_edit_batch` — a whole AI pass is ONE undo span | **BUILT (Go), deliberately not called raw from C++.** `cmd/clip/edit_batch.go` (one `pushUndoLocked` before the op loop), dispatch `bridge.go:223-232`, tests in `edit_batch_test.go`. The C++ side never calls the verb directly — it doesn't need to: every approved chat edit routes `applyActions` → `ApplyEditBatch`, so Jordan already gets one-press undo. The raw verb only matters for a future planner. |
 | H-5 | `event` stream announcing AI activity **without blocking Jordan's editing** | **BUILT, both sides.** Go: `app.go:121-136` (`EventEmitter`/`emitEvent`), `app.go:1336/1347/1350`, NDJSON writer `main.go:195`. C++: reader branch `main.cpp:186-213`, capped 50-deep deque, passive render in the frame loop. |
 | H-6 | plain-language intent in chat → timeline edits he can see/adjust/undo, via the existing `ask`/`apply_proposal` seam (**never fork it**) | **BUILT, both sides, seam NOT forked.** Go `app.go:1336-1350` + `bridge.go:212-222`; C++ ask / apply / reject + the proposal card. |
-| H-7 | forensic path in-app: query → qmd recall → becky-judge → becky-hits reel on the timeline | **THE ONLY ONE ACTUALLY MISSING.** No `forensic_query` verb (`bridge.go` has 45 verbs, none forensic); `becky-judge`/`becky-hits`/`forensic` = 0 hits in `main.cpp`. Reachable today only by an outside agent building the reel first, then `load_reel` / `BECKY_REVIEW_REEL`. |
+| H-7 | forensic path in-app: query → qmd recall → becky-judge → becky-hits reel on the timeline | **DONE 2026-07-22.** `forensic_query` (Go, landed 2026-07-21) runs becky-judge → becky-hits and lands the reel via `LoadReel`; the C++ entry point — an amber Forensic button in the ask-becky panel — landed 2026-07-22 (`c58b2b5`), same async shape as `apply_proposal`. Live-proven: 2 real judged hits on the `E:\TakingBack2007` corpus. |
 
 > **Corrected 2026-07-20 PM by a full code audit.** The three "not found" entries above were
 > wrong — H-5 and H-6 are real and H-4 is a defensible deviation, verified in BOTH languages.
@@ -339,25 +339,42 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    longest line 28 chars, narrowest cue 234ms**; "a thousand videos" is one cue
    again and "the fundamentals learned | against another creator" replaced the 33ms
    strand.
-2. **H-6/H-7 are the product.** H-4 (`apply_edit_batch`) and H-6 (`ask` ->
-   proposal -> apply) are BUILT and wired both sides. H-5 (activity stream)
-   landed 2026-07-20. **H-7's Go half landed 2026-07-21**: the `forensic_query`
-   verb runs becky-judge → becky-hits against the open folder and lands the
-   reel + Q&A cards via `LoadReel` (one undo span), with H-5 events narrating.
-   **Left: the C++ entry point** — a chat route or button in main.cpp that
-   calls `engineCall("forensic_query", {query})` and `loadTimelineView`s the
-   reply, same wiring shape as `apply_proposal` (main.cpp:4714). Spec:
-   `HANDOFF-VIDEOAGENT-SEAM.md` + `research/videoagent-integration.md`.
-3. **`GUI-CHECKLIST-STATUS.md`** has all 120 acceptance items audited against the
+2. ~~**H-6/H-7 are the product.**~~ **DONE 2026-07-22.** H-4, H-5 and H-6 were
+   already built and wired both sides. **H-7's C++ entry point landed** — the
+   amber Forensic button in the ask-becky panel calls
+   `engineCall("forensic_query", {query})` async, same shape as
+   `apply_proposal` (`c58b2b5`). The judge now gets the case guide (rubric +
+   aliases) and the qmd `_md` index was backfilled (58 srt→md, was 3 weeks
+   stale) — live-proven on 2 real judged hits on the `E:\TakingBack2007`
+   corpus (`ac74c09`). Recall quality is still rough — see item 3 below.
+3. **qmd forensic search needs tightening.** It works (H-7 above), but: smart
+   search is slow (16.6s typical success, one 25s timeout observed); a plain
+   multi-word search returns useless 10k-hit blobs (no stopword/phrase
+   relevance); recall breadth is capped at qmd's top-20 hits. None of this
+   blocks H-7 — it limits how good its answers are.
+4. **Nothing auto-converts a new `.srt` to the qmd `_md` index.** Today's
+   backfill (58 files, was 3 weeks stale) fixed the immediate gap, but the
+   index will silently go stale again the same way — a conversion step
+   belongs in the transcribe workflow or the capture monitor.
+5. **`GUI-CHECKLIST-STATUS.md`** has all 120 acceptance items audited against the
    code — 69 DONE / 31 PARTIAL / 11 ABSENT / 9 needing a human eye — with a
    ranked top-10 and the exact function each change belongs in. Items 1, 2, 3 and
    5 of that top-10 are now done; **#4 (ruler drag = pan, click = playhead+stock)
    is the next one.**
-4. Known-but-unfixed, from the audit: Play/Pause and the 3-state Overlay button
+6. Known-but-unfixed, from the audit: Play/Pause and the 3-state Overlay button
    change label WIDTH, so every button right of them shifts on each click (he
    stated "buttons must never move" twice). Redo exists in the engine but has no
    key or button in the app. `g_scrollSec` is clamped every frame, so a delete
    that shrinks the reel can drag the view sideways.
+7. `cmd/tts`'s `TestRun_DegradesWhenNoModel` fails machine-dependently on this
+   box (pre-existing) — the local TTS model is present here, so the
+   "degrades when no model" case inverts. Not a regression, just noise in this
+   machine's `go test`.
+8. **Fleet lane status (2026-07-22):** "Overnight Autopilot Guard" was
+   re-armed (its schedule had expired); a new "Becky Claude Deadman" task
+   (every 2h) removes `X:\AI-2\fleet\PAUSE` if the repo has had no commits for
+   2h — that file is the lane switch between the Claude agents and the free
+   fleet. It is currently PRESENT, so the free fleet is standing down.
 
 ## Jordan's real footage to test with
 

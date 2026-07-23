@@ -6,12 +6,31 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### Current state of master (as of 2026-07-20 PM, `2c6fb53`)
+### Current state of master (as of 2026-07-22 18:00, `ecc35ec`)
 
 Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
 blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
-FAIL is pre-existing/environmental (the local TTS model is present, so "degrades when no model"
-inverts); `build-all-tools.bat` builds all `.exe`s. Recent landings (details in `HANDOFF-LOG.md`):
+FAIL is pre-existing/environmental and machine-dependent (the local TTS model is present, so
+"degrades when no model" inverts); `build-all-tools.bat` builds all `.exe`s, INCLUDING the
+`becky-review-engine.exe` alias (its own build script silently didn't, once — see below). Recent
+landings (details in `HANDOFF-LOG.md`):
+
+- **The 20-hour Becky Review 3 hardening run (2026-07-21 22:00 → 2026-07-22 18:00, cloud →
+  free-fleet → local, → `ecc35ec`):** a cloud branch merged H-1's shared-state verbs and H-7's Go
+  half (`c71c9fd`); the build script itself was broken — `build-all-tools.bat` had literal `0x08`
+  backspace bytes eating `bin\becky`, so `becky-review-engine.exe` never rebuilt (`aff70ee`,
+  fixed). Captions actually fixed this time (0 one-word lines, was 8, `a263f81`); a "missing
+  waveform" turned out to be a clip with no audio track, not a bug (`b3ae48b`). **H-7 shipped
+  end-to-end** — an amber Forensic button runs the whole pipeline in-app (`c58b2b5`), and the
+  judge now gets the case guide plus a backfilled qmd index, proven on 2 real judged hits
+  (`ac74c09`). Renders are now hard-blocked from ever landing on the `E:` evidence drive
+  (`reel.ProtectedDrive`, 5 tests, `96caf1e`). The free-fleet day shift then landed 5 more
+  UI-freeze/UX fixes (transcript view, a selection-sync crash, the Load Reel freeze, 4 remaining
+  UI-thread freezes). The evening close-out fixed all 4 bugs the AM driver found, including
+  **the 0xc0000409 crash root cause** — an ImGui style-stack underflow from the 2x button, not a
+  buffer overrun (`ecc35ec`). **Verified end state:** deployed from `ecc35ec` on the real
+  727-video library, idle CPU 1.4% (was 192%), full 12-point driver checklist passes. Open items
+  in `CONTINUE-HERE.md`.
 
 - **Becky Review 3 idle-CPU root cause + Segoe UI font (2026-07-20 PM, local, `2c6fb53`):** the
   app burned **490% of one core sitting idle** because the video pane repositioned and

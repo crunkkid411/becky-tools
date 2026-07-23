@@ -10,6 +10,63 @@
 
 ---
 
+## The 20-hour Becky Review 3 hardening run — cloud merge to H-7 wired to the abort() root cause (2026-07-21 22:00 → 2026-07-22 18:00, cloud → free-fleet → local, → `master` `ecc35ec`)
+
+Twenty hours across three shifts (cloud handoff merge, then a free-fleet day shift, then a local
+driver close-out), every cycle build-gated, all landed on `master` in order.
+
+**Cloud branch merge + local finishing (22:00–~06:00):**
+1. `c71c9fd` — cloud branch merged: H-1 shared-state verbs, H-7's Go half (`forensic_query`), the
+   caption split fix, CI fixes, mpv-replacement spec docs.
+2. `aff70ee` — **the build script itself was broken.** `build-all-tools.bat` had literal `0x08`
+   backspace bytes where `bin\becky` should read, so `becky-review-engine.exe` NEVER rebuilt —
+   the CONTINUE-HERE rule-7 trap ("if a Go change doesn't show up in the app, check the alias"),
+   except this time it was live inside the script meant to build the alias.
+3. `a263f81` — caption strands fixed for real: 0 one-word lines on `post_constantly` (was 8),
+   three root causes in `internal/subs`, value-asserting regression tests.
+4. `b3ae48b` — the "missing waveform" was a false alarm: the boot demo reel's `proxyA.mp4` has no
+   audio track. `peaksWorker` silent failures now log to `crash.log`; a no-audio clip draws a dim
+   "no audio / no waveform" tag instead of looking broken.
+5. `c58b2b5` — H-7 lands: an amber **Forensic** button in the ask-becky panel runs the whole
+   forensic pipeline in-app (async, same shape as `apply_proposal`).
+6. `ac74c09` — `forensic_query` now hands the judge the case guide (rubric + aliases resolution
+   chain); the qmd `_md` index was backfilled (58 srt→md conversions, was 3 weeks stale). Live
+   proof: 2 real judged hits on the `E:\TakingBack2007` corpus.
+7. `96caf1e` — renders can NEVER land on the `E:` evidence drive: `reel.ProtectedDrive`, every
+   fallback tier refuses `E:`, 5 value tests including an exact reproduction of the incident; the
+   stray test render that caused it is quarantined to
+   `becky-reaper-work/verify/e2e-render-quarantine`.
+
+**Free-fleet day shift** (the deadman failover unpaused it 06:47 when the Claude lane hit session
+limits; 21 build-gated cycles): `2576890` B-8 transcript view now flows like a document, not a
+boxed list; `9ae0112` a selection-sync thread that fails to spawn no longer kills the session;
+`7cfabb7` cycle 13/15/19 fixes landed (verified but never committed); `8c8d18a` Load Reel no
+longer freezes the window for up to 30s; `b4061be` the 4 remaining UI-thread engine freezes
+cycle 18's review found, killed.
+
+**Evening close-out** — all 4 of the AM driver's found bugs closed, each with driven screenshot
+evidence:
+- `c17cc4b` — real-corpus waveforms: `decodeWindow` bounded, partial credit, one bad source no
+  longer blinds the rest.
+- `79551e9` — preview-clip edits auto-promote to engine ids (Split/Delete/Undo/Redo now work on a
+  single-click or search-hit clip); the Windows key-latch focus bleed drained (typing + Enter in
+  search no longer toggles playback); the render badge mirrors the engine's real destination
+  decision (selection-aware, E:-aware); position readouts show hundredths so +1f visibly moves;
+  the keyword-fallback note reworded so it doesn't read as a stale error.
+- `ecc35ec` — **the 0xc0000409 crash, root-caused.** The 2x button pushed an ImGui highlight
+  style only when 2x was on, and popped it on the flipped state — underflowing the style stack
+  into `abort()`. Never a buffer overrun. Exact repro now 10/10 clean; a SIGABRT flight recorder
+  + linker map stay in so any future abort names its culprit.
+
+**Verified end state:** app + engine deployed from `master` `ecc35ec` (17:49), running against
+the real 727-video library; idle CPU 1.4% (was 192% at 4 AM — today's GPU work fixed it);
+captions-via-saved-reel verified working; the full 12-point driver checklist now passes or is
+verified.
+
+**Open items** refreshed in `CONTINUE-HERE.md`'s "what's left" list: qmd search latency/
+relevance, the srt→`_md` auto-convert gap, the `cmd/tts` machine-dependent test, and the fleet
+lane status (Overnight Autopilot Guard, the new Becky Claude Deadman task, PAUSE currently set).
+
 ## Captions un-stranded + H-1/H-7 Go halves + the mpv-replacement handoff (2026-07-21, cloud, `claude/continue-here-review-pgf85b`)
 
 Cloud pass over CONTINUE-HERE.md's "What's left", everything the cloud lane can do; all five
