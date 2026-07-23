@@ -37,6 +37,13 @@ extern "C" {
 #include <libavutil/hwcontext_d3d11va.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
+// 2x speed audio (2026-07-23): atempo is a real WSOLA-family time-stretch
+// (pitch-preserved), already inside the avfilter closure the app is built
+// against - reusing it beats hand-rolling DSP. Only pulled in for rate!=1.0;
+// the rate==1.0 path never touches this graph.
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersrc.h>
+#include <libavfilter/buffersink.h>
 }
 
 // main.cpp's crashLog is static (internal linkage); it exports this bridge.
@@ -395,6 +402,7 @@ struct Prog {
     int64_t totalFrames = 0;
     AVRational fps = {30000, 1001};
     bool reel = false;             // true: reel mode (audio + playing possible)
+    double rate = 1.0;             // playback speed at this generation (2x audio, step 2)
 };
 
 static std::mutex g_progMx;
@@ -417,14 +425,27 @@ static double  g_anchorMs = 0;
 static std::atomic<int64_t> g_audioFramesConsumed{0}; // WASAPI render thread
 
 // current desired output frame
+//
+// 2x speed audio (2026-07-23): this used to gate the audio-driven clock on
+// `g_rate == 1.0` because rate!=1.0 played silent (no time-stretch, WASAPI
+// just wasn't fed). Now audioDecLoop feeds time-stretched (atempo) samples at
+// ANY rate the UI offers, so the audio-consumed clock is valid whenever WASAPI
+// is up, period - the `* g_rate` term is what makes it correct at 2x: atempo
+// compresses `g_rate` seconds of source into 1 real second, so each real
+// second of samples WASAPI actually consumes corresponds to `g_rate` source
+// seconds, same relationship the QPC fallback branch below already used. At
+// rate==1.0 this is `x * 1.0` - bit-identical to the old formula, so the
+// measured 1x audio-driven sync is untouched. Same shape at all 4 call sites
+// (wantNow/exitReel/setRate/clockSec) on purpose - one clock, computed
+// identically everywhere it's read.
 static int64_t wantNow() {
     std::lock_guard<std::mutex> lk(g_progMx);
     if (!g_prog.reel || !g_playing.load()) return g_scrubWant.load();
     double fpsv = av_q2d(g_prog.fps);
     int64_t f;
-    if (g_rate == 1.0 && g_audioUp.load()) {
+    if (g_audioUp.load()) {
         int64_t cons = g_audioFramesConsumed.load() - g_audioBaseFrames;
-        f = g_anchorFrame + (int64_t)((double)cons / 48000.0 * fpsv);
+        f = g_anchorFrame + (int64_t)((double)cons / 48000.0 * fpsv * g_rate);
     } else {
         f = g_anchorFrame + (int64_t)((nowMs() - g_anchorMs) / 1000.0 * fpsv * g_rate);
     }
@@ -733,7 +754,58 @@ static void audioDecLoop() {
                     }
                 }
             }
-            int64_t pushed = 0;
+            // 2x speed audio (2026-07-23): time-stretch via libavfilter's atempo
+            // (WSOLA-family, pitch-preserved) - reuse, not hand-rolled DSP. Only
+            // built when this generation's rate isn't 1.0; okA-false or graph-
+            // build-failure both degrade the same way the rest of this function
+            // already does on a bad source: fedIn stays 0 and the pad-to-
+            // expectedOut step below fills the segment with silence instead of
+            // crashing or desyncing it.
+            double curRate = prog.rate;
+            AVFilterGraph* fgraph = nullptr;
+            AVFilterContext* fsrc = nullptr;
+            AVFilterContext* fsink = nullptr;
+            bool tempoOn = false;
+            if (okA && curRate != 1.0) {
+                fgraph = avfilter_graph_alloc();
+                if (fgraph) {
+                    char args[160];
+                    snprintf(args, sizeof args,
+                             "time_base=1/%d:sample_rate=%d:sample_fmt=flt:channel_layout=stereo",
+                             RATE, RATE);
+                    char targs[32];
+                    snprintf(targs, sizeof targs, "%.6f", curRate);
+                    AVFilterContext* fatempo = nullptr;
+                    if (avfilter_graph_create_filter(&fsrc, avfilter_get_by_name("abuffer"), "src", args, nullptr, fgraph) >= 0 &&
+                        avfilter_graph_create_filter(&fsink, avfilter_get_by_name("abuffersink"), "sink", nullptr, nullptr, fgraph) >= 0 &&
+                        avfilter_graph_create_filter(&fatempo, avfilter_get_by_name("atempo"), "tempo", targs, nullptr, fgraph) >= 0 &&
+                        avfilter_link(fsrc, 0, fatempo, 0) >= 0 &&
+                        avfilter_link(fatempo, 0, fsink, 0) >= 0 &&
+                        avfilter_graph_config(fgraph, nullptr) >= 0) {
+                        tempoOn = true;
+                    }
+                    if (!tempoOn) { avfilter_graph_free(&fgraph); fgraph = nullptr; fsrc = fsink = nullptr; }
+                }
+            }
+            // pushToRing: the exact wait/chunk/backpressure loop the 1x path has
+            // always used, factored out ONLY here so the atempo output path (new
+            // this session) and its EOF flush can share it. The 1x path below is
+            // untouched - it never calls this helper.
+            auto pushToRing = [&](const float* d, int64_t n) -> int64_t {
+                int64_t done = 0;
+                while (done < n && !g_quit.load() && g_progGen.load() == myGen) {
+                    int64_t chunk = n - done; if (chunk > 2048) chunk = 2048;
+                    while (g_aring.writable() < chunk * CH && !g_quit.load() &&
+                           g_progGen.load() == myGen) Sleep(2);
+                    if (g_progGen.load() != myGen) break;
+                    g_aring.push(d + done * CH, chunk * CH);
+                    done += chunk;
+                }
+                return done;
+            };
+            int64_t fedIn = 0;       // input-domain (post-swr, pre-atempo) samples read - drives the stop condition
+            int64_t ringPushed = 0;  // OUTPUT-domain samples actually written to the ring
+            int64_t framePts = 0;    // monotonic sample-domain pts fed into the filter
             if (okA) {
                 av_seek_frame(fmt, -1, (int64_t)(segIn * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
                 AVPacket* pkt = av_packet_alloc();
@@ -741,7 +813,7 @@ static void audioDecLoop() {
                 std::vector<float> tmp;
                 AVRational atb = fmt->streams[astream]->time_base;
                 bool leadDone = false;
-                while (pushed < needSamples && !g_quit.load() &&
+                while (fedIn < needSamples && !g_quit.load() &&
                        g_progGen.load() == myGen && g_playing.load()) {
                     int r = avcodec_receive_frame(actx, f);
                     if (r == AVERROR(EAGAIN)) {
@@ -770,32 +842,90 @@ static void audioDecLoop() {
                         leadDone = true;
                     }
                     int64_t take = got - skip;
-                    if (take > needSamples - pushed) take = needSamples - pushed;
+                    if (take > needSamples - fedIn) take = needSamples - fedIn;
                     const float* sp = tmp.data() + skip * CH;
-                    int64_t done = 0;
-                    while (done < take && !g_quit.load() && g_progGen.load() == myGen) {
-                        int64_t chunk = take - done; if (chunk > 2048) chunk = 2048;
-                        while (g_aring.writable() < chunk * CH && !g_quit.load() &&
-                               g_progGen.load() == myGen) Sleep(2);
-                        if (g_progGen.load() != myGen) break;
-                        g_aring.push(sp + done * CH, chunk * CH);
-                        done += chunk;
+                    if (!tempoOn) {
+                        // UNCHANGED 1x path - byte-identical to before this change.
+                        int64_t done = 0;
+                        while (done < take && !g_quit.load() && g_progGen.load() == myGen) {
+                            int64_t chunk = take - done; if (chunk > 2048) chunk = 2048;
+                            while (g_aring.writable() < chunk * CH && !g_quit.load() &&
+                                   g_progGen.load() == myGen) Sleep(2);
+                            if (g_progGen.load() != myGen) break;
+                            g_aring.push(sp + done * CH, chunk * CH);
+                            done += chunk;
+                        }
+                        fedIn += done;
+                        ringPushed += done;
+                    } else {
+                        // Feed the pre-atempo chunk into the filter, then drain
+                        // whatever output it has ready straight to the ring.
+                        AVFrame* inF = av_frame_alloc();
+                        inF->format = AV_SAMPLE_FMT_FLT;
+                        inF->sample_rate = RATE;
+                        AVChannelLayout stereoL = AV_CHANNEL_LAYOUT_STEREO;
+                        av_channel_layout_copy(&inF->ch_layout, &stereoL);
+                        inF->nb_samples = (int)take;
+                        inF->time_base = AVRational{ 1, RATE };
+                        inF->pts = framePts;
+                        framePts += take;
+                        if (av_frame_get_buffer(inF, 0) >= 0) {
+                            memcpy(inF->data[0], sp, (size_t)take * CH * sizeof(float));
+                            av_buffersrc_add_frame(fsrc, inF);
+                        }
+                        av_frame_free(&inF);
+                        AVFrame* outF = av_frame_alloc();
+                        while (av_buffersink_get_frame(fsink, outF) >= 0) {
+                            ringPushed += pushToRing((const float*)outF->data[0], outF->nb_samples);
+                            av_frame_unref(outF);
+                        }
+                        av_frame_free(&outF);
+                        fedIn += take;
                     }
-                    pushed += done;
+                }
+                if (tempoOn) {
+                    // Flush: atempo buffers internally, so the tail of a segment's
+                    // audio only appears after EOF is signalled to the source.
+                    av_buffersrc_add_frame_flags(fsrc, nullptr, 0);
+                    AVFrame* outF = av_frame_alloc();
+                    while (av_buffersink_get_frame(fsink, outF) >= 0) {
+                        ringPushed += pushToRing((const float*)outF->data[0], outF->nb_samples);
+                        av_frame_unref(outF);
+                    }
+                    av_frame_free(&outF);
                 }
                 av_packet_free(&pkt);
                 av_frame_free(&f);
             }
-            // silence-pad the remainder so the NEXT segment stays sample-exact
+            if (curRate != 1.0) {
+                // Evidence trail for "2x plays silent" - one line per segment, so a
+                // reviewer can grep crash.log and see real (non-silence) samples
+                // actually crossed the atempo graph, not just that the code ran.
+                // tempoOn=0 means the graph failed to build and this segment fell
+                // back to silence - visible here instead of just "sounds quiet".
+                char buf[192];
+                snprintf(buf, sizeof buf,
+                         "engine: 2x-audio seg rate=%.2f tempoOn=%d fedIn=%lld ringPushed=%lld expectedOut=%lld",
+                         curRate, tempoOn ? 1 : 0, (long long)fedIn, (long long)ringPushed,
+                         (long long)llround((double)needSamples / curRate));
+                crashLog(buf);
+            }
+            if (fgraph) { avfilter_graph_free(&fgraph); fgraph = nullptr; fsrc = fsink = nullptr; }
+            // silence-pad the remainder so the NEXT segment stays sample-exact.
+            // expectedOut == needSamples whenever tempoOn is false (curRate==1.0
+            // never reaches the ternary's true side), so this reduces to exactly
+            // the original 1x padding math - ringPushed is fedIn's twin in that
+            // branch (see the "UNCHANGED 1x path" comment above).
+            int64_t expectedOut = tempoOn ? llround((double)needSamples / curRate) : needSamples;
             if (g_progGen.load() == myGen && g_playing.load()) {
                 std::vector<float> zeros(2048 * CH, 0.0f);
-                while (pushed < needSamples && !g_quit.load() && g_progGen.load() == myGen) {
-                    int64_t chunk = needSamples - pushed; if (chunk > 2048) chunk = 2048;
+                while (ringPushed < expectedOut && !g_quit.load() && g_progGen.load() == myGen) {
+                    int64_t chunk = expectedOut - ringPushed; if (chunk > 2048) chunk = 2048;
                     while (g_aring.writable() < chunk * CH && !g_quit.load() &&
                            g_progGen.load() == myGen) Sleep(2);
                     if (g_progGen.load() != myGen) break;
                     g_aring.push(zeros.data(), chunk * CH);
-                    pushed += chunk;
+                    ringPushed += chunk;
                 }
             }
             if (swr) swr_free(&swr);
@@ -804,11 +934,13 @@ static void audioDecLoop() {
         }
         // chain finished (or interrupted): wait for a new generation/play state
         while (!g_quit.load() && g_progGen.load() == myGen && g_playing.load()) {
-            // playback end detection: all samples consumed -> ended
+            // playback end detection: all samples consumed -> ended. * g_rate for
+            // the same reason as wantNow's comment: at 2x, atempo means each real
+            // second of consumed audio is 2 source seconds.
             std::lock_guard<std::mutex> lk(g_progMx);
             double fpsv = av_q2d(g_prog.fps);
             int64_t f = g_anchorFrame +
-                (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv);
+                (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv * g_rate);
             if (g_prog.reel && f >= g_prog.totalFrames - 1) {
                 g_ended.store(true);
             }
@@ -903,6 +1035,7 @@ void enterReel(const std::vector<EngineSeg>& segs, double fps, double startSec, 
         g_prog.totalFrames = acc;
         g_prog.reel = true;
         g_rate = rate;
+        g_prog.rate = rate;
         g_anchorFrame = llround(startSec * fps);
         if (g_anchorFrame < 0) g_anchorFrame = 0;
         if (g_anchorFrame >= acc) g_anchorFrame = acc - 1;
@@ -911,7 +1044,9 @@ void enterReel(const std::vector<EngineSeg>& segs, double fps, double startSec, 
         g_scrubWant.store(g_anchorFrame);
         g_ended.store(false);
         g_playing.store(true);
-        g_audioActive.store(rate == 1.0 && g_audioUp.load());
+        // any rate plays with audio now (atempo time-stretches it) - the old
+        // `rate == 1.0` gate silenced 2x on purpose before this existed.
+        g_audioActive.store(g_audioUp.load());
     }
     g_progGen.fetch_add(1);
     SetEvent(g_wake);
@@ -921,11 +1056,11 @@ void exitReel() {
     {
         std::lock_guard<std::mutex> lk(g_progMx);
         if (!g_prog.reel) return;
-        // freeze the playhead where it is
+        // freeze the playhead where it is (see wantNow's comment for the * g_rate)
         double fpsv = av_q2d(g_prog.fps);
         int64_t f;
-        if (g_rate == 1.0 && g_audioUp.load())
-            f = g_anchorFrame + (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv);
+        if (g_audioUp.load())
+            f = g_anchorFrame + (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv * g_rate);
         else
             f = g_anchorFrame + (int64_t)((nowMs() - g_anchorMs) / 1000.0 * fpsv * g_rate);
         if (f >= g_prog.totalFrames) f = g_prog.totalFrames - 1;
@@ -956,22 +1091,33 @@ void seekReel(double compSec) {
 }
 
 void setRate(double rate) {
-    std::lock_guard<std::mutex> lk(g_progMx);
-    if (!g_prog.reel) { g_rate = rate; return; }
-    // re-anchor at the current position under the old rate first
-    double fpsv = av_q2d(g_prog.fps);
-    int64_t f;
-    if (g_rate == 1.0 && g_audioUp.load())
-        f = g_anchorFrame + (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv);
-    else
-        f = g_anchorFrame + (int64_t)((nowMs() - g_anchorMs) / 1000.0 * fpsv * g_rate);
-    g_anchorFrame = f;
-    g_audioBaseFrames = g_audioFramesConsumed.load();
-    g_anchorMs = nowMs();
-    g_rate = rate;
-    // ponytail: rate != 1.0 plays SILENT on the QPC clock (no time-stretch
-    // tonight); upgrade path is a resampler stage in audioDecLoop.
-    g_audioActive.store(rate == 1.0 && g_audioUp.load() && g_playing.load());
+    bool bumpGen = false;
+    {
+        std::lock_guard<std::mutex> lk(g_progMx);
+        if (!g_prog.reel) { g_rate = rate; g_prog.rate = rate; return; }
+        // re-anchor at the current position under the old rate first
+        double fpsv = av_q2d(g_prog.fps);
+        int64_t f;
+        if (g_audioUp.load())
+            f = g_anchorFrame + (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv * g_rate);
+        else
+            f = g_anchorFrame + (int64_t)((nowMs() - g_anchorMs) / 1000.0 * fpsv * g_rate);
+        g_anchorFrame = f;
+        g_audioBaseFrames = g_audioFramesConsumed.load();
+        g_anchorMs = nowMs();
+        g_rate = rate;
+        g_prog.rate = rate;
+        // any rate plays with audio now (atempo time-stretches it, see audioDecLoop).
+        g_audioActive.store(g_audioUp.load() && g_playing.load());
+        bumpGen = true;
+    }
+    // Bump the generation exactly like a seek: audioDecLoop (and the video ring)
+    // interrupt whatever they were mid-decode, reload prog (picking up the new
+    // rate), and restart cleanly from g_anchorFrame - the same "instant reseek"
+    // path already proven glitch-free by ordinary timeline scrubbing. Toggling
+    // 1x<->2x mid-play reuses that path instead of trying to hot-swap the
+    // atempo filter graph inside a live decode loop.
+    if (bumpGen) { g_progGen.fetch_add(1); SetEvent(g_wake); }
 }
 
 bool reelActive() {
@@ -985,8 +1131,8 @@ double clockSec() {
     if (!g_prog.reel || !g_playing.load()) return -1.0;
     double fpsv = av_q2d(g_prog.fps);
     double f;
-    if (g_rate == 1.0 && g_audioUp.load())
-        f = (double)g_anchorFrame + (double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv;
+    if (g_audioUp.load())
+        f = (double)g_anchorFrame + (double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv * g_rate;
     else
         f = (double)g_anchorFrame + (nowMs() - g_anchorMs) / 1000.0 * fpsv * g_rate;
     double maxF = (double)(g_prog.totalFrames - 1);
