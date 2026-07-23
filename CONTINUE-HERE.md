@@ -395,11 +395,16 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    ranked top-10 and the exact function each change belongs in. Items 1, 2, 3 and
    5 of that top-10 are now done; **#4 (ruler drag = pan, click = playhead+stock)
    is the next one.**
-6. Known-but-unfixed, from the audit: Play/Pause and the 3-state Overlay button
-   change label WIDTH, so every button right of them shifts on each click (he
-   stated "buttons must never move" twice). Redo exists in the engine but has no
-   key or button in the app. `g_scrollSec` is clamped every frame, so a delete
-   that shrinks the reel can drag the view sideways.
+6. ~~Known-but-unfixed, from the audit: Play/Pause and the 3-state Overlay button
+   change label WIDTH...~~ **STALE, verified fixed 2026-07-23 (code-checked, not
+   doc-trusted).** A `fixedButton()` helper (main.cpp ~L842) sizes every toggling
+   button to its widest possible label and is already used on Play/Pause (L6060),
+   Overlay (L6099), Skip Quiet (L6203), Render Selection, and both extend buttons
+   - none of them shift their neighbors anymore. Redo has both a toolbar button
+   (L6166, `ICON_REDO`) and key chords (Ctrl+Y / Ctrl+Shift+Z, L5080-5081) - already
+   wired. `g_scrollSec`'s clamp (L3029) is gated `g_gest.kind == 0` (only applies
+   with no active gesture), so a mid-drag/delete no longer drags the view sideways.
+   This whole item appears to predate a later fix pass; do not re-implement it.
 7. `cmd/tts`'s `TestRun_DegradesWhenNoModel` fails machine-dependently on this
    box (pre-existing) — the local TTS model is present here, so the
    "degrades when no model" case inverts. Not a regression, just noise in this
@@ -409,8 +414,9 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    (every 2h) removes `X:\AI-2\fleet\PAUSE` if the repo has had no commits for
    2h — that file is the lane switch between the Claude agents and the free
    fleet. It is currently PRESENT, so the free fleet is standing down.
-9. **2x speed plays silent.** The new engine has no time-stretch yet; QPC-clocked 2x just
-   skips audio. Upgrade path is a time-stretch on the WASAPI output, not a new architecture.
+9. ~~**2x speed plays silent.**~~ **FIXED 2026-07-23 (`e7ee4d7`), verified in code.**
+   `engine.cpp` runs a libavfilter `atempo` graph in `audioDecLoop` (~L757-903);
+   any playback rate now plays time-stretched audio, not silence.
 10. **No software-decode draw path.** The engine assumes D3D11VA hardware decode; it has never
     failed on this machine, but there is no fallback frame path if it ever does.
 11. **FFmpeg DLL closure needs slimming.** The app dir ships the full 96-DLL MSYS2 build
