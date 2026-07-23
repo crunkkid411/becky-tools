@@ -108,20 +108,16 @@ static bool createHwDevice() {
 // get_format: pick D3D11 and build OUR frames ctx so the decoder's pool
 // textures carry D3D11_BIND_SHADER_RESOURCE - the NV12->BGRA convert pass
 // samples the pool slice directly (zero copies on the video path, spec s.2).
-static enum AVPixelFormat pick_d3d11(AVCodecContext* c, const enum AVPixelFormat* fmts) {
-    for (const enum AVPixelFormat* p = fmts; *p != AV_PIX_FMT_NONE; p++) {
-        if (*p != AV_PIX_FMT_D3D11) continue;
-        AVBufferRef* fref = nullptr;
-        if (avcodec_get_hw_frames_parameters(c, c->hw_device_ctx, AV_PIX_FMT_D3D11, &fref) < 0)
-            break;
-        AVHWFramesContext* fc = (AVHWFramesContext*)fref->data;
-        AVD3D11VAFramesContext* hf = (AVD3D11VAFramesContext*)fc->hwctx;
-        hf->BindFlags |= D3D11_BIND_DECODER | D3D11_BIND_SHADER_RESOURCE;
-        if (av_hwframe_ctx_init(fref) < 0) { av_buffer_unref(&fref); break; }
-        c->hw_frames_ctx = fref;
-        return AV_PIX_FMT_D3D11;
-    }
-    crashLog("engine: d3d11 not usable for this stream, software fallback");
+// Copy-out design (probe-proven): the decoder pool textures need NO special
+// bind flags because ringStore copies the slice into a scratch NV12 texture
+// first. Per-plane SRVs over the decoder's ARRAY texture were REJECTED by this
+// driver (measured 2026-07-23: CreateShaderResourceView failed) - plain
+// Texture2D SRVs over a copied non-array NV12 texture are what the probe
+// proved working.
+static enum AVPixelFormat pick_d3d11(AVCodecContext*, const enum AVPixelFormat* fmts) {
+    for (const enum AVPixelFormat* p = fmts; *p != AV_PIX_FMT_NONE; p++)
+        if (*p == AV_PIX_FMT_D3D11) return *p;
+    crashLog("engine: d3d11 not offered for this stream, software fallback");
     return fmts[0];
 }
 
@@ -219,13 +215,12 @@ static const char* kConvSrc =
 "  VSOut o; o.pos = float4(p * float2(2, -2) + float2(-1, 1), 0, 1);\n"
 "  o.uv = p * uvScale; return o;\n"
 "}\n"
-"Texture2DArray texY : register(t0);\n"
-"Texture2DArray texUV : register(t1);\n"
+"Texture2D texY : register(t0);\n"
+"Texture2D texUV : register(t1);\n"
 "SamplerState smp : register(s0);\n"
-"cbuffer cb2 : register(b1) { float slice; float3 pad2; }\n"
 "float4 psmain(VSOut i) : SV_Target {\n"
-"  float y = (texY.Sample(smp, float3(i.uv, slice)).r - 16.0/255.0) * (255.0/219.0);\n"
-"  float2 c = texUV.Sample(smp, float3(i.uv, slice)).rg;\n"
+"  float y = (texY.Sample(smp, i.uv).r - 16.0/255.0) * (255.0/219.0);\n"
+"  float2 c = texUV.Sample(smp, i.uv).rg;\n"
 "  float u = (c.r - 128.0/255.0) * (255.0/224.0);\n"
 "  float v = (c.g - 128.0/255.0) * (255.0/224.0);\n"
 "  float3 rgb = float3(y + 1.5748*v, y - 0.1873*u - 0.4681*v, y + 1.8556*u);\n"
@@ -287,7 +282,11 @@ static std::atomic<uint32_t> g_ringGen{1};
 
 // Convert the decoded frame into slot's BGRA texture (decode thread only).
 static bool ringStore(AVFrame* f, int64_t idx) {
-    if (f->format != AV_PIX_FMT_D3D11) return false; // sw fallback: no draw path yet
+    if (f->format != AV_PIX_FMT_D3D11) {
+        static bool once = false;
+        if (!once) { crashLog("engine: frame not d3d11 (sw fallback has no draw path yet)"); once = true; }
+        return false;
+    }
     ID3D11Texture2D* src = (ID3D11Texture2D*)f->data[0];
     UINT slice = (UINT)(intptr_t)f->data[1];
     RingSlot& slot = g_ring[idx % RING];
@@ -303,7 +302,11 @@ static bool ringStore(AVFrame* f, int64_t idx) {
         td.Usage = D3D11_USAGE_DEFAULT;
         td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
         td.MiscFlags = D3D11_RESOURCE_MISC_SHARED; // legacy shared, no keyed mutex (probe lesson)
-        if (FAILED(g_decDev->CreateTexture2D(&td, nullptr, &slot.tex))) return false;
+        if (FAILED(g_decDev->CreateTexture2D(&td, nullptr, &slot.tex))) {
+            static bool once = false;
+            if (!once) { crashLog("engine: ring CreateTexture2D failed"); once = true; }
+            return false;
+        }
         g_decDev->CreateRenderTargetView(slot.tex, nullptr, &slot.rtv);
         IDXGIResource* res = nullptr;
         slot.shared = nullptr;
@@ -313,26 +316,56 @@ static bool ringStore(AVFrame* f, int64_t idx) {
         }
         slot.w = w; slot.h = h;
         slot.gen = g_ringGen.fetch_add(1) + 1;
-        if (!slot.rtv || !slot.shared) return false;
+        if (!slot.rtv || !slot.shared) {
+            static bool once = false;
+            if (!once) { crashLog("engine: ring rtv/shared-handle creation failed"); once = true; }
+            return false;
+        }
     }
     D3D11_TEXTURE2D_DESC sd; src->GetDesc(&sd);
-    // per-slice SRVs over the decoder pool texture (needs SHADER_RESOURCE bind,
-    // supplied by our frames ctx in pick_d3d11)
-    D3D11_SHADER_RESOURCE_VIEW_DESC sv = {};
-    sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-    sv.Texture2DArray.MipLevels = 1;
-    sv.Texture2DArray.FirstArraySlice = 0; // slice picked in-shader (SampleLevel z)
-    sv.Texture2DArray.ArraySize = sd.ArraySize;
-    ID3D11ShaderResourceView *srvY = nullptr, *srvUV = nullptr;
-    sv.Format = DXGI_FORMAT_R8_UNORM;
-    if (FAILED(g_decDev->CreateShaderResourceView(src, &sv, &srvY))) return false;
-    sv.Format = DXGI_FORMAT_R8G8_UNORM;
-    if (FAILED(g_decDev->CreateShaderResourceView(src, &sv, &srvUV))) { srvY->Release(); return false; }
+    // Copy the decoder slice into the scratch NV12 texture, then sample THAT.
+    // (Per-plane SRVs directly on the decoder's array texture were rejected by
+    // this driver - the probe-proven path is copy first, plain Texture2D SRVs.)
+    static ID3D11Texture2D* scratch = nullptr;
+    static ID3D11ShaderResourceView* scrY = nullptr;
+    static ID3D11ShaderResourceView* scrUV = nullptr;
+    static UINT scrW = 0, scrH = 0;
+    if (!scratch || scrW != sd.Width || scrH != sd.Height) {
+        if (scrY) { scrY->Release(); scrY = nullptr; }
+        if (scrUV) { scrUV->Release(); scrUV = nullptr; }
+        if (scratch) { scratch->Release(); scratch = nullptr; }
+        D3D11_TEXTURE2D_DESC td2 = {};
+        td2.Width = sd.Width; td2.Height = sd.Height;
+        td2.MipLevels = 1; td2.ArraySize = 1;
+        td2.Format = sd.Format; // NV12 / P010
+        td2.SampleDesc.Count = 1;
+        td2.Usage = D3D11_USAGE_DEFAULT;
+        td2.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(g_decDev->CreateTexture2D(&td2, nullptr, &scratch))) {
+            static bool once = false;
+            if (!once) { crashLog("engine: scratch NV12 texture create failed"); once = true; }
+            return false;
+        }
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv = {};
+        sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sv.Texture2D.MipLevels = 1;
+        sv.Format = DXGI_FORMAT_R8_UNORM;
+        g_decDev->CreateShaderResourceView(scratch, &sv, &scrY);
+        sv.Format = DXGI_FORMAT_R8G8_UNORM;
+        g_decDev->CreateShaderResourceView(scratch, &sv, &scrUV);
+        if (!scrY || !scrUV) {
+            static bool once = false;
+            if (!once) { crashLog("engine: scratch NV12 SRV create failed"); once = true; }
+            return false;
+        }
+        scrW = sd.Width; scrH = sd.Height;
+        crashLog("engine: scratch NV12 " + std::to_string(scrW) + "x" + std::to_string(scrH) + " ready");
+    }
+    g_decCtx->CopySubresourceRegion(scratch, 0, 0, 0, 0, src, slice, nullptr);
+    ID3D11ShaderResourceView *srvY = scrY, *srvUV = scrUV;
 
     float cb0[4] = { (float)w / sd.Width, (float)h / sd.Height, 0, 0 };
-    float cb1[4] = { (float)slice, 0, 0, 0 };
     g_decCtx->UpdateSubresource(g_convCB0, 0, nullptr, cb0, 0, 0);
-    g_decCtx->UpdateSubresource(g_convCB1, 0, nullptr, cb1, 0, 0);
     D3D11_VIEWPORT vp = { 0, 0, (float)w, (float)h, 0, 1 };
     g_decCtx->RSSetViewports(1, &vp);
     g_decCtx->OMSetRenderTargets(1, &slot.rtv, nullptr);
@@ -343,14 +376,12 @@ static bool ringStore(AVFrame* f, int64_t idx) {
     g_decCtx->PSSetShader(g_convPS, nullptr, 0);
     ID3D11ShaderResourceView* srvs[2] = { srvY, srvUV };
     g_decCtx->PSSetShaderResources(0, 2, srvs);
-    g_decCtx->PSSetConstantBuffers(1, 1, &g_convCB1);
     g_decCtx->PSSetSamplers(0, 1, &g_convSamp);
     g_decCtx->Draw(3, 0);
     ID3D11ShaderResourceView* nul[2] = { nullptr, nullptr };
     g_decCtx->PSSetShaderResources(0, 2, nul);
     ID3D11RenderTargetView* nulRt = nullptr;
     g_decCtx->OMSetRenderTargets(1, &nulRt, nullptr);
-    srvY->Release(); srvUV->Release();
     g_decCtx->Flush(); // submit before publishing (cross-device visibility)
     slot.frame.store(idx, std::memory_order_release);
     return true;
@@ -963,8 +994,11 @@ ID3D11ShaderResourceView* currentFrameSRV(ID3D11Device* appDev, int* w, int* h) 
             if (s.appSrv) { s.appSrv->Release(); s.appSrv = nullptr; }
             if (s.appTex) { s.appTex->Release(); s.appTex = nullptr; }
             if (!s.shared) return nullptr;
-            if (FAILED(appDev->OpenSharedResource(s.shared, __uuidof(ID3D11Texture2D), (void**)&s.appTex)))
+            if (FAILED(appDev->OpenSharedResource(s.shared, __uuidof(ID3D11Texture2D), (void**)&s.appTex))) {
+                static bool once = false;
+                if (!once) { crashLog("engine: app-side OpenSharedResource failed"); once = true; }
                 return nullptr;
+            }
             if (FAILED(appDev->CreateShaderResourceView(s.appTex, nullptr, &s.appSrv))) {
                 s.appTex->Release(); s.appTex = nullptr;
                 return nullptr;

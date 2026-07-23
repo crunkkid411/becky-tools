@@ -11,7 +11,9 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public class Drv {
-  [DllImport("user32.dll")] public static extern IntPtr FindWindowW(string c, string t);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
@@ -19,6 +21,21 @@ public class Drv {
   public struct RECT { public int L, T, R, B; }
   public const uint KEYUP = 0x2;
   public static void Tap(byte vk) { keybd_event(vk, 0, 0, UIntPtr.Zero); keybd_event(vk, 0, KEYUP, UIntPtr.Zero); }
+  // Find the LARGEST visible top-level window of a pid (the app's main window).
+  public static IntPtr found;
+  public static uint targetPid;
+  public static IntPtr FindMain(uint pid) {
+    targetPid = pid; found = IntPtr.Zero;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p; GetWindowThreadProcessId(h, out p);
+      if (p == targetPid && IsWindowVisible(h)) {
+        RECT r; GetWindowRect(h, out r);
+        if ((r.R - r.L) > 400 && (r.B - r.T) > 300) { found = h; return false; }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 '@
 Add-Type -AssemblyName System.Drawing
@@ -51,7 +68,7 @@ Log "launched pid=$($p.Id)"
 $h = [IntPtr]::Zero
 for ($i = 0; $i -lt 60; $i++) {
   Start-Sleep -Milliseconds 500
-  $h = [Drv]::FindWindowW($null, 'Becky Review (native)')
+  $h = [Drv]::FindMain([uint32]$p.Id)
   if ($h -ne [IntPtr]::Zero) { break }
 }
 if ($h -eq [IntPtr]::Zero) { Log 'FAIL: window never appeared'; exit 1 }
