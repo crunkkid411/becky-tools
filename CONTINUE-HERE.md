@@ -366,15 +366,30 @@ in `drainAsync` or the proposal path, fix this FIRST, with a test.
    aliases) and the qmd `_md` index was backfilled (58 srt→md, was 3 weeks
    stale) — live-proven on 2 real judged hits on the `E:\TakingBack2007`
    corpus (`ac74c09`). Recall quality is still rough — see item 3 below.
-3. **qmd forensic search needs tightening.** It works (H-7 above), but: smart
-   search is slow (16.6s typical success, one 25s timeout observed); a plain
-   multi-word search returns useless 10k-hit blobs (no stopword/phrase
-   relevance); recall breadth is capped at qmd's top-20 hits. None of this
-   blocks H-7 — it limits how good its answers are.
-4. **Nothing auto-converts a new `.srt` to the qmd `_md` index.** Today's
-   backfill (58 files, was 3 weeks stale) fixed the immediate gap, but the
-   index will silently go stale again the same way — a conversion step
-   belongs in the transcribe workflow or the capture monitor.
+3. ~~**qmd forensic search needs tightening.**~~ **FIXED 2026-07-23 (local,
+   `659b9c5`), live-verified by driving the real app.** `qmd.Search`'s hybrid
+   path now sends a structured `lex: <query>\nvec: <query>` document instead
+   of a bare query, skipping qmd's LLM query-expansion pass — measured 4.9s vs
+   16.5-18.6s (the reported "16.6s typical, one 25s timeout" was exactly that
+   expansion cost blowing past the native UI's 25s wait). `footage.GrepTranscripts`/
+   `GrepOrphans` now use AND semantics over a multi-word query's non-stopword
+   terms (single-word search unchanged): "cheated on by my wife" driven in the
+   live app went from a 10k-hit blob to **20 quotes in 282ms**; smart search on
+   the same query: **14 quotes, hybrid mode, 910ms**. Recall breadth (top-20
+   cap) is still there — not re-touched.
+4. ~~**Nothing auto-converts a new `.srt` to the qmd `_md` index.**~~ **FIXED
+   2026-07-23 (local, `659b9c5`).** New `internal/qmdindex` converts a
+   transcript into qmd's `.md` locator format; wired into `transcribeOne`
+   (converts the instant a transcript completes) and into `ForensicQuery` (a
+   catch-up `Sweep` before every judge run, for transcripts that land any other
+   way). Locators are matched by their frontmatter `source:` field, not
+   filename, so an earlier converter generation's different naming scheme
+   (the 2026-07-22 manual backfill) is recognized and updated in place —
+   caught live: an early version of this matched by filename and wrote 1128
+   duplicates in one Sweep before the fix. Live-verified on the real corpus:
+   found and correctly indexed 114 transcripts that had piled up since the
+   backfill, 0 duplicates, idempotent on re-run (`qmd update` confirmed
+   "113 new, 1 updated, 1193 unchanged").
 5. **`GUI-CHECKLIST-STATUS.md`** has all 120 acceptance items audited against the
    code — 69 DONE / 31 PARTIAL / 11 ABSENT / 9 needing a human eye — with a
    ranked top-10 and the exact function each change belongs in. Items 1, 2, 3 and
