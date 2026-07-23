@@ -360,7 +360,7 @@ static void editLog(const std::string& line) {
 // I-5 evidence trail, OPT-IN via BECKY_REVIEW_SCRUB_LOG=<path> (unset = zero
 // overhead, no file touched). Logs every requestCompose() call (UI thread, one
 // per frame whose curSec changed) and every composeOnDecodeThread() completion
-// (decode thread, the actual mpv seek) with wall-clock timestamps, so "a new
+// (decode thread, the actual engine seek) with wall-clock timestamps, so "a new
 // frame per mouse event during scrub" is a grepped, correlated timestamp series
 // - request cadence vs. decode-thread completion cadence - not a claim.
 static std::ofstream g_scrubLog;
@@ -1460,7 +1460,6 @@ static OverlayState g_overlay;
 // out of sync with "off".
 static int g_ovMode = 1;
 static std::atomic<bool> g_ovEngineEnabled{ true }; // last "enabled" value pushed to the engine
-static bool g_ovShowingInMpv = false; // whether mpv currently has an osd-overlay up
 
 static void relabel(int tr) {
     const char* p = tr == 0 ? "clip " : "pip ";
@@ -1588,7 +1587,6 @@ static void imguiOutlinedText(ImDrawList* dl, ImVec2 pos, float fontSize,
                 dl->AddText(font, fontSize, ImVec2(pos.x + dx, pos.y + dy), black, text);
     dl->AddText(font, fontSize, pos, white, text);
 }
-static void mpvClearOverlay() { g_ovShowingInMpv = false; } // state only; nothing external to clear
 static void drawOverlayImGui(const Clip* cur, ImVec2 origin, ImVec2 size) {
     if (g_ovMode != 2 || !cur) return;
     std::vector<std::string> lines = overlayLines(*cur);
@@ -1626,7 +1624,6 @@ static void setOverlayMode(int m) {
             if (r.value("ok", false)) g_ovEngineEnabled.store(wantEnabled);
         }).detach();
     }
-    if (m != 2) mpvClearOverlay();
 }
 
 static void splitTrack(int tr, double t) {
@@ -1676,8 +1673,8 @@ static void recomputeDur() {
 // rather than queue it) is unchanged from the GStreamer build - review cycle-4's #1
 // finding was that this used to run synchronously on the UI thread every frame curSec
 // changed, the P1 violation behind B18/B22/B23. A burst of scrub/split/seek events still
-// can never back up behind stale decode work; only the body (an mpv IPC command instead
-// of a GStreamer pull) changed for D-1.
+// can never back up behind stale decode work; only the body (now a call into the
+// in-process engine, engineShowFrame, instead of a GStreamer pull) changed for D-1.
 static std::mutex g_decReqMx;
 static std::condition_variable g_decReqCv;
 static std::string g_decReqSource;
@@ -1713,10 +1710,10 @@ static void decodeWorker() {
     }
 }
 // UI-thread entry point: NON-BLOCKING. Resolves which clip/source-time t maps to (a cheap
-// array scan over g_track[0], no I/O) and hands it to the decode thread; never touches
-// mpv's pipe directly from the UI thread. `exact` is false for continuous churn (playing,
-// or an active scrub-drag) and true once it settles - see mpvSeekExact's comment for why
-// this distinction is load-bearing, not cosmetic (I-5).
+// array scan over g_track[0], no I/O) and hands it to the decode thread; never calls into
+// the engine directly from the UI thread. `exact` is false for continuous churn (playing,
+// or an active scrub-drag) and true once it settles - see engineShowFrame's comment for
+// why this distinction is load-bearing, not cosmetic (I-5).
 static void requestCompose(double t, bool exact) {
     Clip* ca = nullptr;
     for (auto& c : g_track[0]) { double d = c.out - c.in; if (t >= c.compStart && t < c.compStart + d) { ca = &c; break; } }
@@ -1731,9 +1728,9 @@ static void requestCompose(double t, bool exact) {
 }
 
 // --------------- D-9 (step 6 rewrite): REAL playback with AUDIO - the engine plays the reel ---------------
-// The segment list goes to the in-process engine STRAIGHT FROM g_track[0] - the
-// mpv EDL temp file, its CRLF trap, and the time-pos observe/extrapolate dance
-// are all gone. Composition time IS the engine's clock (audio-master).
+// The segment list goes to the in-process engine STRAIGHT FROM g_track[0] - the old
+// mpv EDL temp file, its CRLF trap, and the time-pos observe/extrapolate dance are all
+// gone. Composition time IS the engine's clock (audio-master).
 // SCOPE unchanged: reel mode is for PLAYBACK ONLY; paused scrubbing keeps the
 // per-clip frame-exact path (engineShowFrame).
 static uint64_t g_edlSigLoaded = 0;
@@ -1796,7 +1793,7 @@ static int g_zoomReq = 0;
 static double g_scrollSec = 0;
 static bool g_visible = true;
 static bool g_playingExt = false;
-// (g_playRate - D-4's 2x playback - now lives up with the mpv globals; see D-9.)
+// (g_playRate - D-4's 2x playback - now lives up with the engine globals; see D-9.)
 static double g_stockSec = -1;
 static bool g_stockFlash = false;
 // Where the CURRENT run of playback began (item 59: "press 'pause' and playhead
@@ -2126,9 +2123,10 @@ static void loadTimelineView(const json& tv) {
 }
 
 // --------------- D3D11 display ---------------
-// (the video FRAME itself is no longer a D3D11 texture ImGui draws - mpv paints
-// directly into its own --wid child hwnd, see MpvEmbed above; this swapchain is
-// only the ImGui/UI surface now.)
+// (mpv is gone - step 6 of the video-engine swap. The video frame is a D3D11
+// texture again, decoded by engine.cpp and drawn by ImGui via currentFrameSRV()
+// into THIS same swap chain - see the video pane in the render loop. No child
+// hwnd, no separate paint surface.)
 static ID3D11Device* g_dev = nullptr; static ID3D11DeviceContext* g_ctx = nullptr; static IDXGISwapChain* g_swap = nullptr;
 static ID3D11RenderTargetView* g_rtv = nullptr;
 static int g_W = 1280, g_H = 800;
@@ -2177,16 +2175,24 @@ static bool CreateD3D(HWND h) {
 #endif
     // BITBLT swap chain (DXGI_SWAP_EFFECT_DISCARD), deliberately NOT flip-model.
     //
-    // THE CPU-SPIN ROOT CAUSE (measured 2026-07-20): this window hosts mpv in an
-    // OVERLAPPING --wid child HWND (see g_mpvHwnd / MpvEmbed). A flip-model swap chain
-    // (FLIP_DISCARD, the previous setting) cannot be composited cheaply against an
-    // overlapping child window - DWM drops to a continuous per-frame redraw path that
-    // spun ~12 Windows thread-pool threads at ~345% CPU with the app sitting IDLE and
-    // even EMPTY (no reel). That spin starved mpv's decode to ~10-15 fps on a 29.97fps
-    // clip and made a plain click feel slow. Proof it was the compositor, not our code:
-    // idle CPU was 345% with the window visible and 29% the instant it was minimized
-    // (the render loop skips drawing when hidden). Bitblt composites with child windows
-    // without that spin.
+    // THE CPU-SPIN ROOT CAUSE, HISTORICAL (measured 2026-07-20, when mpv still owned
+    // an OVERLAPPING --wid child HWND): a flip-model swap chain (FLIP_DISCARD, the
+    // setting at the time) cannot be composited cheaply against an overlapping child
+    // window - DWM dropped to a continuous per-frame redraw path that spun ~12 Windows
+    // thread-pool threads at ~345% CPU with the app sitting IDLE and even EMPTY (no
+    // reel). That spin starved mpv's decode to ~10-15 fps on a 29.97fps clip and made a
+    // plain click feel slow. Proof it was the compositor, not our code: idle CPU was
+    // 345% with the window visible and 29% the instant it was minimized (the render
+    // loop skips drawing when hidden). Bitblt composites with child windows without
+    // that spin.
+    //
+    // mpv (and its child hwnd) is gone since the step-6 engine swap - the video frame
+    // is now an in-process D3D11 texture drawn into THIS swap chain, so the specific
+    // overlapping-hwnd trigger no longer exists. Kept on BITBLT anyway: nothing has
+    // re-measured flip-model + FRAME_LATENCY_WAITABLE_OBJECT against the new
+    // texture-in-same-swapchain design, so switching back is an unverified change, not
+    // a settled one. If idle-CPU work ever revisits this, that measurement is the
+    // open question, not a re-run of the old repro.
     //
     // Cost: bitblt cannot use FRAME_LATENCY_WAITABLE_OBJECT, so g_frameWait stays null
     // and vsync pacing comes from Present(1,0) alone - one extra frame of latency. That
@@ -2826,25 +2832,20 @@ static void rebuildDerivedCaptions() {
 }
 
 // The caption under the playhead, drawn ON the video at the placement the burn-in
-// will use - so the thing Jordan drags is the thing he gets. mpv owns the video
-// surface (its --wid child hwnd paints independently of our D3D11/ImGui surface),
-// so an ImGui overlay physically cannot appear over the frame; osd-overlay is the
-// only route, exactly as the provenance overlay already does. That one is id 9001,
-// this is 9002, so the two never clobber each other.
+// will use - so the thing Jordan drags is the thing he gets. Step 6 draws these
+// straight onto the pane with ImGui, in the same swap chain as the video texture
+// (no child hwnd, no OSD round-trip needed - that was the pre-step-6 mpv approach).
 //
-// The ASS canvas is declared 384x288 because that is the PlayRes ffmpeg's SRT-to-ASS
-// conversion uses (ff_ass_subtitle_header_default) - which makes MarginV, FontSize
-// and Outline mean the SAME thing here as in becky-subtitle's force_style, rather
-// than an eyeballed lookalike. mpv fits that canvas to the pane, so for footage that
-// fills the pane vertically (portrait clips in this wide pane - the normal case) the
-// preview height is exact. Letterboxed footage (source WIDER than the pane) would sit
-// slightly low, since the canvas then spans the black bars too.
+// The ASS canvas is still declared 384x288 because that is the PlayRes ffmpeg's
+// SRT-to-ASS conversion uses (ff_ass_subtitle_header_default) - which makes MarginV,
+// FontSize and Outline mean the SAME thing here as in becky-subtitle's force_style,
+// rather than an eyeballed lookalike, and g_capMarginV means exactly what it meant
+// under the old mpv OSD: one canvas unit maps to paneH/288 pixels, fs12 maps to
+// 12*paneH/288 pixels. For footage that fills the pane vertically (portrait clips in
+// this wide pane - the normal case) the preview height is exact. Letterboxed footage
+// (source WIDER than the pane) would sit slightly low, since the canvas then spans
+// the black bars too.
 static bool g_capOsdShowing = false;
-static void mpvClearCaptionOsd() { g_capOsdShowing = false; } // state only now
-// Step 6: captions draw straight onto the pane with ImGui (same cue-lookup
-// logic the mpv OSD used; the 288-tall ASS canvas convention is kept so
-// g_capMarginV means exactly what it meant before - one canvas unit maps to
-// paneH/288 pixels, and fs12 on that canvas maps to 12*paneH/288 pixels).
 static void drawCaptionsImGui(double t, ImVec2 origin, ImVec2 size) {
     if (g_caps.empty()) { g_capOsdShowing = false; return; }
     const Caption* cur = nullptr;
@@ -4636,8 +4637,8 @@ int main(int argc, char** argv) {
     scrubLogInit();
     // #0 CRITICAL: SEH-guarded - a gst_init crash must never take the window down with it.
     // GStreamer is only used by peaksProcessBatch now (one-time per-source audio decode into
-    // the .bpk peak cache, E-2) - the video player is mpv (D-1, launched after the
-    // window exists, below).
+    // the .bpk peak cache, E-2) - the video player is the in-process engine (D-1/step 6,
+    // brought up after the window exists, below).
     g_gstAvailable.store(gstInitSEH(argc, argv) != 0);
     // cycle 23: waveforms decode via ffmpeg now (see decodeWindow) - gst is a
     // legacy runtime dependency only, its failure no longer costs any feature.
@@ -4650,7 +4651,7 @@ int main(int argc, char** argv) {
         SYSTEM_INFO si; GetSystemInfo(&si);
         return std::max(1, (int)si.dwNumberOfProcessors / 2);
     }()) + " workers");
-    std::thread(decodeWorker).detach();   // P1 fix: owns the mpv IPC dispatch, off the UI thread
+    std::thread(decodeWorker).detach();   // P1 fix: owns the engine seek dispatch, off the UI thread
     std::thread(editWorker).detach();     // A-4 fix: owns split/delete/trim/undo engine round-trips, off the UI thread
     std::thread(searchWorker).detach();   // I-* fix: owns search/qmd_search engine round-trips, off the UI thread
 
@@ -4676,7 +4677,7 @@ int main(int argc, char** argv) {
     // the FIRST ShowWindow of a process ignores its nCmdShow argument whenever the
     // launching process supplied STARTUPINFO with STARTF_USESHOWWINDOW (every
     // .bat / shortcut / Start-Process launcher does). The window was created,
-    // D3D/mpv came up and the render loop ran - but WS_VISIBLE was never set, so
+    // D3D/the video player came up and the render loop ran - but WS_VISIBLE was never set, so
     // double-clicking the desktop button produced a live process and NOTHING on
     // screen. Only the first call is special-cased, so the second one always wins.
     ShowWindow(hwnd, SW_SHOWMAXIMIZED);
@@ -4860,7 +4861,7 @@ int main(int argc, char** argv) {
     }).detach();
 
     double lastComposed = -1; bool playing = false;
-    bool mpvArmedOnce = false;   // forces one dispatch the instant mpv finishes its async connect (see below)
+    bool engineArmedOnce = false;   // forces one dispatch the instant the engine finishes init (see below)
     bool wasComposeContinuous = false;   // I-5: was the PREVIOUS frame mid-churn (playing/dragging)?
     double lastComposeContinuousEmit = -1;   // I-5: last time a continuous-churn compose dispatched (throttle to ~60/s)
     LARGE_INTEGER fq, prev; QueryPerformanceFrequency(&fq); QueryPerformanceCounter(&prev);
@@ -5454,9 +5455,9 @@ int main(int argc, char** argv) {
 
         // D-9 (step 6 rewrite): PLAYBACK follows the ENGINE's clock - in-process,
         // continuous, audio-master (samples actually consumed by WASAPI). The whole
-        // time-pos observe/extrapolate/monotonic-guard dance existed because mpv
-        // reported position over a pipe at ~0.15s cadence; the engine's clock is a
-        // function call, so it is simply read every frame.
+        // time-pos observe/extrapolate/monotonic-guard dance existed because the old
+        // mpv build reported position over a pipe at ~0.15s cadence; the engine's
+        // clock is a function call, so it is simply read every frame.
         if (playing && !g_track[0].empty()) {
             if (!g_edlActive.load()) {
                 engineReelEnter(curSec);
@@ -5515,52 +5516,52 @@ int main(int argc, char** argv) {
         stageMark("tied-preview-restore");
 
         // P1 fix: never decode on the UI thread. Post the newest target to the decode
-        // thread (non-blocking); the decode thread issues the mpv seek and mpv paints
-        // its own child hwnd directly - there is no frame buffer for the UI thread to
-        // poll anymore (D-1: mpv owns the pixels), only the pane's position/size is
-        // pushed to it each frame below (center video pane block).
-        // mpvArmedOnce: mpv connects to its IPC pipe on its OWN thread, asynchronously
-        // (mpvLaunch never blocks the UI thread - see its comment). On a paused/static
-        // startup curSec never changes, so the ordinary "curSec != lastComposed" gate
-        // fires exactly once, at t=0 - before mpv is necessarily connected yet - and
-        // then never again, leaving the video pane permanently black even after mpv
-        // comes up a moment later. Force exactly one extra dispatch the first frame
-        // mpv reports available, so the pending clip always gets shown.
-        bool mpvReadyNow = engine::available();
+        // thread (non-blocking); the decode thread calls engineShowFrame, which draws
+        // into the shared-texture ring engine.cpp owns - there is no frame buffer for
+        // the UI thread to poll, only the pane's position/size is pushed to it each
+        // frame below (center video pane block).
+        // engineArmedOnce: engine::init() brings the decoder up asynchronously (device/
+        // shader init takes tens of ms - see main()'s "Step 6" comment). On a paused/
+        // static startup curSec never changes, so the ordinary "curSec != lastComposed"
+        // gate fires exactly once, at t=0 - before the engine is necessarily ready yet -
+        // and then never again, leaving the video pane permanently black even after the
+        // engine comes up a moment later. Force exactly one extra dispatch the first
+        // frame the engine reports available, so the pending clip always gets shown.
+        bool engineReadyNow = engine::available();
         // I-5 fix: curSec churns every single frame during "playing" (main()'s own
         // dt-driven tick above) and during an active scrub-drag (g_gest.kind==1) -
-        // both are continuous, so each gets a cheap keyframe seek (mpvSeekExact's
-        // comment has the full story on why "exact" every frame can permanently
-        // wedge the decode thread). The instant churn STOPS (this frame's continuous
-        // flag flips false vs. last frame's), force one more dispatch even if curSec
-        // happens to be unchanged, so the settle/release always lands an exact frame.
+        // both are continuous, so each gets a cheap keyframe seek (engineShowFrame's
+        // comment has the full story on why "exact" every frame is unnecessary here).
+        // The instant churn STOPS (this frame's continuous flag flips false vs. last
+        // frame's), force one more dispatch even if curSec happens to be unchanged, so
+        // the settle/release always lands an exact frame.
         bool composeContinuous = playing || g_gest.kind == 1;
         bool composeExact = !composeContinuous;
         bool composeSettling = wasComposeContinuous && !composeContinuous;
-        // I-5 fix, part 2 (found live via the same scrub-log evidence): a cheap
-        // keyframe seek still isn't FREE - mpv still has to do real decode work per
-        // seek, just less of it. This render loop is otherwise uncapped (no vsync
-        // wait), so during playback/drag it was still asking mpv for 200-1000+
-        // seeks/sec; the named pipe's kernel buffer absorbs a burst (WriteFile looks
-        // instant for a while) before mpv falls far enough behind to fill it, so the
-        // SAME permanent wedge (mpvWriteLine's WriteFile, no timeout) reappeared
-        // ~149 decodes in during a live re-test. Throttling continuous dispatch to
-        // ~60/sec - matching emitScrub's existing precedent for the exact same
-        // "engine seek" flood - caps the request rate at what mpv can actually keep
-        // up with; a settle/final dispatch (composeSettling) is never throttled.
+        // I-5 fix, part 2 (found live via the same scrub-log evidence, back when this
+        // was mpv over a named pipe): a cheap keyframe seek still isn't FREE - the
+        // decoder still has to do real work per seek, just less of it. This render loop
+        // is otherwise uncapped (no vsync wait), so during playback/drag it was asking
+        // for 200-1000+ seeks/sec. Throttling continuous dispatch to ~60/sec - matching
+        // emitScrub's existing precedent for the exact same "seek flood" shape - caps
+        // the request rate at what the decode thread can actually keep up with; a
+        // settle/final dispatch (composeSettling) is never throttled. (The mpv-era
+        // failure mode this originally guarded against - a named pipe's kernel buffer
+        // silently absorbing a burst until mpv's IPC wedged - no longer exists post
+        // step-6, but the same seek-cost argument still justifies the throttle.)
         if (g_edlActive.load()) {
-            // D-9: mpv is PLAYING the reel itself - it owns the position and paints its own
-            // frames. Dispatching scrub seeks here would drag playback backwards every frame
-            // and re-create the I-5 IPC flood. lastComposed is reset on exit (see above), so
-            // the first paused frame still gets its exact recompose.
+            // D-9: the engine is PLAYING the reel itself - it owns position and the
+            // painted frame. Dispatching scrub seeks here would drag playback backwards
+            // every frame and re-create the I-5 seek flood. lastComposed is reset on
+            // exit (see above), so the first paused frame still gets its exact recompose.
         } else if (composeContinuous && !composeSettling && nowSec() - lastComposeContinuousEmit < 0.016) {
             // skip this frame's dispatch - too soon since the last one
-        } else if (!g_track[0].empty() && (curSec != lastComposed || (mpvReadyNow && !mpvArmedOnce) || composeSettling)) {
+        } else if (!g_track[0].empty() && (curSec != lastComposed || (engineReadyNow && !engineArmedOnce) || composeSettling)) {
             requestCompose(curSec, composeExact); lastComposed = curSec;
             if (composeContinuous) lastComposeContinuousEmit = nowSec();
         }
         wasComposeContinuous = composeContinuous;
-        if (mpvReadyNow) mpvArmedOnce = true;
+        if (engineReadyNow) engineArmedOnce = true;
         if (g_resize) { resizeD3D(); g_resize = false; }
         stageMark("playback-engine-block");
 
@@ -6319,7 +6320,7 @@ int main(int argc, char** argv) {
             //
             // All of it was already written — the draggable threshold bar
             // (onThresholdBar), the quiet-range computation (recomputeQuiet), the
-            // dimming, and the seamless mpv skip during playback — and ALL of it
+            // dimming, and the seamless engine skip during playback — and ALL of it
             // sat behind g_thrOn, which was declared false and then NEVER ASSIGNED
             // ANYWHERE. Six reads, zero writes: a finished feature with no way to
             // turn it on. This button is that missing write.
