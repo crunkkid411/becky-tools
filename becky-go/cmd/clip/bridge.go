@@ -115,7 +115,12 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "add_clip":
 		// Optional "at": insert index (a clip added at the playhead lands after that clip);
 		// omitted -> append.
-		return a.AddClipAt(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argString(args, "label"), argIntDefault(args, "at", -1))
+		at := argIntDefault(args, "at", -1)
+		tl, err := a.AddClipAt(argString(args, "source"), argFloat(args, "in"), argFloat(args, "out"), argString(args, "label"), at)
+		if err != nil {
+			return nil, err
+		}
+		return addClipReply(tl, at), nil
 	case "add_external":
 		// Add a whole video dragged in from OUTSIDE the case folder (item 21): authorize
 		// the exact file, probe its duration, insert it (optional "at", else append).
@@ -258,6 +263,32 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 
 	default:
 		return nil, fmt.Errorf("unknown command %q", verb)
+	}
+}
+
+// addClipReply builds add_clip's WIRE reply: ONLY the one new clip, not the whole
+// timeline. review cycle 26/27 (I-2, BUILD_1.md SS3.4): add_clip used to return the
+// full TimelineView on every call - at 5,000 clips that is ~4.7MB of JSON the C++
+// side has to DOM-parse (measured ~45-48ms) AND rebuild its whole local track from,
+// on every single add, even though exactly one clip changed. AddClipAt inserts at
+// `at` (or appends when at<0/past the end), so the new clip sits at exactly that
+// resulting index in tl.Clips - no need to re-scan for it. The C++ side (main.cpp
+// applyAddClipDelta) inserts this one clip locally and repacks positions itself
+// (packTrack), so it never needs the other N-1 clips restated.
+func addClipReply(tl TimelineView, at int) map[string]any {
+	idx := len(tl.Clips) - 1
+	if at >= 0 && at < len(tl.Clips) {
+		idx = at
+	}
+	var clip ClipView
+	if idx >= 0 && idx < len(tl.Clips) {
+		clip = tl.Clips[idx]
+	}
+	return map[string]any{
+		"clip":         clip,
+		"index":        idx,
+		"clip_count":   len(tl.Clips),
+		"duration_sec": tl.DurationSec,
 	}
 }
 

@@ -521,9 +521,14 @@ static void editWorker() {
                                                    {"out", req.pOut}, {"label", req.pLabel} }, 6.0);
                 std::string newId;
                 if (ar.value("ok", false)) {
+                    // I-2 wire-protocol fix (cycle 27): add_clip's reply now carries
+                    // ONLY the new clip under "clip" (see becky-go bridge.go
+                    // addClipReply), not the whole "clips" array - this call always
+                    // appends (no "at" arg above), so the new clip's own id is right
+                    // there, no need to scan a full clip list for the last entry.
                     json ad = ar.value("data", json::object());
-                    if (ad.contains("clips") && ad["clips"].is_array() && !ad["clips"].empty())
-                        newId = ad["clips"].back().value("id", std::string());
+                    if (ad.contains("clip") && ad["clip"].is_object())
+                        newId = ad["clip"].value("id", std::string());
                 }
                 editLog("PROMOTE preview -> engine verb=" + req.verb +
                         " id=" + (newId.empty() ? std::string("(add_clip failed)") : newId));
@@ -2193,6 +2198,84 @@ static void loadTimelineView(const json& tv) {
     }
     // A-1: the timeline changed - re-derive the caption lane from the clips'
     // source transcripts (no-op when a hand-edited reel sidecar is loaded).
+    rebuildDerivedCaptions();
+}
+
+// I-2 wire-protocol fix (cycle 27, the "ONE THING" three straight adversarial
+// reviews flagged): add_clip's reply used to be a full TimelineView (loadTimelineView
+// above, clear + rebuild ALL clips) even though an add only ever changes ONE clip.
+// At 5,000 clips that full-timeline reply was ~4.7MB of JSON, costing ~45-48ms of
+// nlohmann DOM parse alone (measured cycle 26) PLUS an O(n) native rebuild
+// (peaksRequest/captions/packTrack over every clip) on every single add. The
+// engine (becky-go bridge.go addClipReply) now replies with ONLY the new clip -
+// this appends that one clip locally and repacks positions itself (packTrack is a
+// cheap O(n) loop over doubles already in memory, not JSON), instead of
+// clear-and-rebuilding the whole track from a full reply. Mirrors loadTimelineView's
+// per-clip field handling exactly (same colour/meta/peaks logic) so a delta-applied
+// clip is indistinguishable from one that came through a full reload.
+static void applyAddClipDelta(const json& d) {
+    if (!d.contains("clip") || !d["clip"].is_object()) return;
+    // DRIFT GUARD (found live this session): seekToSpan (single-click hit preview,
+    // C-4 - a completely separate, pre-existing feature) locally REPLACES g_track[0]
+    // with just the one audition clip, with no restore of its own - the old
+    // always-full-reload code silently healed this on the next add/split/undo/
+    // anything, because it re-synced from the engine's actual reel every time. This
+    // delta path does not reload, so applying it on top of a locally-corrupted
+    // track would compound the corruption (e.g. insert onto a 1-clip preview
+    // instead of the real 5,000). clip_count is the engine's authoritative total
+    // AFTER this add - if it doesn't match what a local append would produce, local
+    // state has drifted, so fall back to one real reload (same as before this
+    // session, just only paid on the rare divergent case instead of every add).
+    int expectCount = d.value("clip_count", -1);
+    if (expectCount >= 0 && (int)g_track[0].size() + 1 != expectCount) {
+        // Async, not a blocking engineCall - this runs on the UI thread (drainAsync
+        // callback), and the whole point of this session's fix is to stop blocking
+        // it on a full-timeline round trip. The rare divergent case still costs one
+        // full reload, it just never blocks input while it happens.
+        engineCallAsync("timeline", {}, 10.0, "Resyncing timeline...", [](const json& tv) {
+            if (tv.value("ok", false)) loadTimelineView(tv["data"]);
+        });
+        return;
+    }
+    const json& c = d["clip"];
+    double i = c.value("in", 0.0), o = c.value("out", 0.0);
+    std::string src = c.value("source", std::string());
+    if (o <= i || src.empty()) return;
+    // Same as loadTimelineView: an authoritative engine-confirmed add cancels any
+    // stale "Play tied clips" preview.
+    g_inTiedPreview = false; g_reelBeforePreview.clear();
+    std::string label = c.value("label", std::string());
+    if (label.empty()) label = baseName(src);
+    Clip cl; cl.in = i; cl.out = o; cl.compStart = 0.0; // packTrack below sets the real value
+    cl.label = label; cl.source = src; cl.id = c.value("id", std::string());
+    std::string hex = c.value("color", std::string());
+    if (hex.size() == 7 && hex[0] == '#') {
+        long v = strtol(hex.c_str() + 1, nullptr, 16);
+        cl.r = (uint8_t)((v >> 16) & 0xFF); cl.g = (uint8_t)((v >> 8) & 0xFF); cl.b = (uint8_t)(v & 0xFF);
+        g_srcRGB[srcColorKey(src)] = (uint32_t)v;   // B: previews reuse this colour
+    } else {
+        paintClipFromKnownSource(cl);
+    }
+    cl.ready = true;
+    cl.date = c.value("date", std::string());
+    cl.person = c.value("person", std::string());
+    cl.location = c.value("location", std::string());
+    cl.link = c.value("link", std::string());
+    cl.srcFps = c.value("source_fps", 0.0);
+
+    int idx = d.value("index", (int)g_track[0].size());
+    if (idx < 0 || idx > (int)g_track[0].size()) idx = (int)g_track[0].size();
+    g_track[0].insert(g_track[0].begin() + idx, cl);
+
+    packTrack(0); recomputeDur();
+    g_trackClipCountForLog.store(g_track[0].size(), std::memory_order_relaxed);
+    g_sel.clear();   // matches loadTimelineView - a track mutation clears selection
+    requestPeaksIfChanged(cl);
+    g_quietDirty = true;
+    // A-1: same as loadTimelineView - re-derive captions so the new clip's own
+    // transcript (if already cached) shows immediately. Still O(n) over the whole
+    // track (unlike everything else in this function) - not fixed this session,
+    // see the result file's follow-up notes.
     rebuildDerivedCaptions();
 }
 
@@ -4654,9 +4737,9 @@ static void runSearch(bool qmd) {
 }
 
 // add a search-hit's span as a clip to the timeline (C-4 double-click). The
-// engine is authoritative on success ("clips" = a TimelineView, same shape as
-// the "timeline" verb); a degraded/failed engine call still responds locally
-// so the UI never silently no-ops.
+// engine is authoritative on success ("clip" = just the ONE new clip, cycle 27's
+// I-2 wire-protocol fix - see applyAddClipDelta); a degraded/failed engine call
+// still responds locally so the UI never silently no-ops.
 // THE "EVERY NEW CLIP LAGS EVERYTHING" BUG. Jordan, feedback9, verbatim:
 // "every new clip on the timeline makes everything - even my mouse - lag super
 // bad for like 2 seconds."
@@ -4686,8 +4769,8 @@ static void addHitToTimeline(const Hit& h) {
                     "Adding " + label + " to the timeline...",
                     [src, a, b, label, t0](const json& r) {
         crashLog("I-2 add_clip source=" + label + " elapsedMs=" + std::to_string((nowSec() - t0) * 1000.0));
-        if (r.value("ok", false) && r.contains("data") && r["data"].contains("clips")) {
-            loadTimelineView(r["data"]);
+        if (r.value("ok", false) && r.contains("data") && r["data"].contains("clip")) {
+            applyAddClipDelta(r["data"]);
             return;
         }
         Clip cl; cl.in = a; cl.out = b; cl.source = src; cl.label = label;

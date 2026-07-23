@@ -73,10 +73,27 @@ func TestCallAddAndTimelineFlow(t *testing.T) {
 	if !r.OK {
 		t.Fatalf("add_clip failed: %s", r.Error)
 	}
+	// I-2 wire-protocol fix (cycle 27): add_clip's reply is now a delta - ONLY the
+	// one new clip, not the whole TimelineView (see bridge.go addClipReply). This
+	// is the exact shape main.cpp's applyAddClipDelta consumes.
+	var delta struct {
+		Clip      ClipView `json:"clip"`
+		Index     int      `json:"index"`
+		ClipCount int      `json:"clip_count"`
+	}
+	remarshal(t, r.Data, &delta)
+	if delta.Clip.ID == "" {
+		t.Fatalf("add_clip delta missing the new clip")
+	}
+	if delta.ClipCount != 1 {
+		t.Fatalf("want clip_count 1 after add, got %d", delta.ClipCount)
+	}
+
 	var tl TimelineView
+	r = callEnv(t, app, "timeline", "")
 	remarshal(t, r.Data, &tl)
 	if len(tl.Clips) != 1 {
-		t.Fatalf("want 1 clip after add, got %d", len(tl.Clips))
+		t.Fatalf("want 1 clip after add (via timeline verb), got %d", len(tl.Clips))
 	}
 
 	// overlay toggle through the bridge.
