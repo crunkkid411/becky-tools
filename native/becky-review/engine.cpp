@@ -937,12 +937,28 @@ static void audioDecLoop() {
             // playback end detection: all samples consumed -> ended. * g_rate for
             // the same reason as wantNow's comment: at 2x, atempo means each real
             // second of consumed audio is 2 source seconds.
-            std::lock_guard<std::mutex> lk(g_progMx);
-            double fpsv = av_q2d(g_prog.fps);
-            int64_t f = g_anchorFrame +
-                (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv * g_rate);
-            if (g_prog.reel && f >= g_prog.totalFrames - 1) {
-                g_ended.store(true);
+            //
+            // BUG FIX (2026-07-23, the "Not Responding" hang): Sleep(20) used to run
+            // INSIDE this lock_guard's scope, so every ~20ms this thread relocked
+            // g_progMx, computed a few doubles, then slept a FULL 20ms still holding
+            // it - only releasing for the instant between one iteration's closing
+            // brace and the next iteration's lock_guard construction. On a short reel
+            // (this loop is what's actually running for most of a short clip's
+            // "playing" time, once its tiny audio chain has already drained), that is
+            // enough to starve the UI thread's clockSec()/seekReel()/enterReel() calls
+            // - which need the SAME lock - for seconds at a time, confirmed live via
+            // stage-timer instrumentation (STAGE SLOW on exactly clockSec/seekReel,
+            // 1.6s-78s, while video kept decoding fine because the video thread never
+            // touches this lock). Fix: release the lock before sleeping, so the other
+            // 20ms out of every 20ms cycle is actually free for a waiter to take it.
+            {
+                std::lock_guard<std::mutex> lk(g_progMx);
+                double fpsv = av_q2d(g_prog.fps);
+                int64_t f = g_anchorFrame +
+                    (int64_t)((double)(g_audioFramesConsumed.load() - g_audioBaseFrames) / 48000.0 * fpsv * g_rate);
+                if (g_prog.reel && f >= g_prog.totalFrames - 1) {
+                    g_ended.store(true);
+                }
             }
             Sleep(20);
         }

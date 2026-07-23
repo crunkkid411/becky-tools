@@ -394,6 +394,30 @@ static void frameTraceTick(long frameIdx, double tSec, double deltaMs) {
     if (stall || (frameIdx % 600) == 0) g_frameTrace.flush();
 }
 
+// STAGE TIMER (2026-07-23, hunting the "Not Responding" finding from the prior
+// session's real-footage playback drive): frameTraceTick above only proves a
+// frame was slow, not WHERE the main thread spent the time inside it - and the
+// prior session's hang was never caught by a frame trace because
+// BECKY_REVIEW_FRAME_TRACE was not set during that run. This is always-on (no
+// env gate, like crashLog) but near-zero-cost when healthy: two QueryPerformance
+// reads per checkpoint, and a crashLog line (already flush-per-call) ONLY when a
+// span exceeds the threshold - so a normal 60fps session never writes a byte,
+// but the exact main-thread span that blocks for seconds (or minutes) gets a
+// name and a duration in crash.log. Marks are placed at the panel boundaries
+// (menu bar / left library-search-transcript / center video / right Q&A /
+// bottom timeline+waveforms / Render / Present) already used to lay out the
+// frame, so a hit narrows the hang to one panel's code, not just "somewhere".
+static void crashLog(const std::string& line);   // fwd decl - defined just below, needed by stageMark
+static double g_stageT = 0;
+static const char* g_stageName = "frame-top";
+static void stageMark(const char* name) {
+    double t = nowSec() * 1000.0;
+    double d = t - g_stageT;
+    if (d > 80.0) crashLog(std::string("STAGE SLOW [") + g_stageName + " -> " + name + "] " +
+                            std::to_string(d) + "ms");
+    g_stageT = t; g_stageName = name;
+}
+
 // Always-on crash diagnostic (no env gate - this is a safety net, not an opt-in
 // trace). Root cause of the recurring "becky-review.exe has stopped working"
 // (ucrtbase.dll, exception 0xC0000409) IS KNOWN from the undo-stack-underrun fix
@@ -4889,6 +4913,7 @@ int main(int argc, char** argv) {
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
         double dt = (double)(now.QuadPart - prev.QuadPart) / fq.QuadPart; prev = now;
         frameTraceTick(++frameIdx, nowSec() - traceT0, dt * 1000.0);
+        g_stageT = nowSec() * 1000.0; g_stageName = "peek-message";   // reset the stage clock each frame
 
         g_busyHint = playing || g_gest.kind != 0;
 
@@ -5413,6 +5438,7 @@ int main(int argc, char** argv) {
         // finished with their Clip* pointers, and every panel below re-reads
         // g_track from scratch.
         drainAsync();
+        stageMark("key-input+drainAsync");
 
         // WHERE THIS RUN OF PLAYBACK BEGAN (item 59). Detected centrally, as a
         // false->true transition, rather than assigned at each of the four places
@@ -5444,6 +5470,7 @@ int main(int argc, char** argv) {
                     g_edlSpeedSet = g_playRate;
                 }
             }
+            stageMark("reel-enter-or-edit");
 
             if (g_edlActive.load()) {
                 double tp = engine::clockSec();
@@ -5456,17 +5483,21 @@ int main(int argc, char** argv) {
             } else {
                 curSec += dt * g_playRate;   // engine down: degrade to the old tick
             }
+            stageMark("clock-sec");
 
             // E-10: below-threshold ranges are SKIPPED seamlessly during playback.
             if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; engineReelSeek(curSec); break; }
+            stageMark("quiet-range-skip");
             if (curSec >= g_compDur || engine::reelEnded()) {
                 curSec = 0; engineReelSeek(0);
             }
+            stageMark("loop-reseek");
         } else if (g_edlActive.load()) {
             // Stopped playing: hand the picture back to the frame-exact paused scrub path.
             engineReelExit();
             lastComposed = -1;      // force one exact recompose so the parked frame is frame-exact
             g_capOsdShowing = false;
+            stageMark("reel-exit");
         }
 
         // G-1 "Play tied clips" preview ends the instant playback stops (pause, arrow
@@ -5481,6 +5512,7 @@ int main(int argc, char** argv) {
             lastComposed = -1; g_quietDirty = true;
             for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
         }
+        stageMark("tied-preview-restore");
 
         // P1 fix: never decode on the UI thread. Post the newest target to the decode
         // thread (non-blocking); the decode thread issues the mpv seek and mpv paints
@@ -5530,6 +5562,7 @@ int main(int argc, char** argv) {
         wasComposeContinuous = composeContinuous;
         if (mpvReadyNow) mpvArmedOnce = true;
         if (g_resize) { resizeD3D(); g_resize = false; }
+        stageMark("playback-engine-block");
 
         ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
 
@@ -5689,6 +5722,7 @@ int main(int argc, char** argv) {
             }
             ImGui::EndMainMenuBar();
         }
+        stageMark("menu-bar");
 
         // ---- LAYOUT: four panels that TILE, with no two claiming the same pixel.
         //
@@ -6100,6 +6134,7 @@ int main(int argc, char** argv) {
             g_libFocused = libFocusedNow;
         }
         ImGui::End();
+        stageMark("left-panel");
 
         // ---- center video pane (step 6: the ENGINE's frame as a plain ImGui image) ----
         ImGui::SetNextWindowPos({ libW, topY }); ImGui::SetNextWindowSize({ vidW, topH });
@@ -6447,6 +6482,7 @@ int main(int argc, char** argv) {
             if (!g_renderMsg.empty() && nowSec() - g_renderMsgAt < 8.0) ImGui::TextDisabled("%s", g_renderMsg.c_str());
         }
         ImGui::End();
+        stageMark("center-video-pane");
 
         // ---- right panel: Q&A / ask-becky (G) ----
         ImGui::SetNextWindowPos({ libW + vidW, topY }); ImGui::SetNextWindowSize({ qaW, topH });
@@ -6821,6 +6857,7 @@ int main(int argc, char** argv) {
             s_qaBottomH = ImGui::GetCursorPosY() - footY0;
         }
         ImGui::End();
+        stageMark("right-panel-qa");
 
         // ---- bottom timeline ----
         // ---- the >1s work indicator (feedback5) ----
@@ -6953,6 +6990,7 @@ int main(int argc, char** argv) {
             drawTimeline(curSec, playing);
         }
         ImGui::End();
+        stageMark("bottom-timeline");
 
         } catch (const std::exception& e) {
             crashLog(std::string("UI frame: caught ") + e.what() + " - frame degraded, not crashing");
@@ -6961,11 +6999,13 @@ int main(int argc, char** argv) {
         }
 
         ImGui::Render();
+        stageMark("imgui-render");
         float clr[4] = { 0.06f, 0.07f, 0.09f, 1.0f };
         g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_ctx->ClearRenderTargetView(g_rtv, clr);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         g_swap->Present(0, 0);   // no driver vsync-wait (that busy-spun); DwmFlush at the loop top paces us
+        stageMark("present");
     }
 
     if (g_frameTrace.is_open()) {
