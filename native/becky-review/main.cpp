@@ -6319,9 +6319,20 @@ int main(int argc, char** argv) {
             if (ImGui::Button(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to start");
             ImGui::SameLine();
-            if (g_playRate > 1.5) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1));
-            if (ImGui::Button("2x")) g_playRate = (g_playRate > 1.5) ? 1.0 : 2.0;
-            if (g_playRate > 1.5) ImGui::PopStyleColor();
+            // BUG-1 ROOT CAUSE (the recurring 0xc0000409/ucrtbase!abort crash, SIGABRT
+            // stack: ImGui::PopStyleColor <- main). The push and pop were BOTH
+            // conditioned on g_playRate>1.5, but the Button call in between FLIPS
+            // g_playRate - so clicking 2x either popped a color that was never pushed
+            // (OFF->ON) or leaked one (ON->OFF). The one-off stack deficit then
+            // underflowed ImGui's global color stack on a later frame (observed at
+            // loop-to-start + Pause) and its assert aborted the whole app. Evaluate
+            // the condition ONCE so push and pop can never disagree.
+            {
+                const bool was2x = g_playRate > 1.5;
+                if (was2x) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1));
+                if (ImGui::Button("2x")) g_playRate = was2x ? 1.0 : 2.0;
+                if (was2x) ImGui::PopStyleColor();
+            }
             ImGui::SameLine();
             // D-6: 3-state provenance overlay toggle (off / on-hidden-in-preview DEFAULT /
             // on-previewed) - clicking cycles it; render always burns in whichever text
