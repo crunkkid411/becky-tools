@@ -1478,6 +1478,27 @@ struct Clip {
 static std::vector<Clip> g_track[2];
 static double g_compDur = 0;
 static bool g_group = true;
+
+// I-2 fix (cycle 26, root cause of the review's flagged 16ms->130-172ms add_clip
+// growth past ~5,000 clips): loadTimelineView reloads on EVERY single-clip edit
+// (add_clip/split/trim/label/undo/redo all return a fresh, full TimelineView) and
+// used to call peaksRequest for EVERY clip on the whole track on every single
+// reload - each individual call is cheap once warm (peaksWindowFilled's E-18/I-6
+// short-circuit above), but paying peaksEnsure's global-mutex lookup + that check
+// N times per edit, when an add_clip only ever changes ONE clip, is exactly the
+// O(n)-redone-per-edit cost the review measured. Cache the (source,in,out) last
+// requested per clip id; a reload skips the call entirely for any clip whose
+// window is unchanged since last time, so adding clip #5001 pays for one real
+// peaksRequest, not 5001. Keyed by id (not source+window alone) so a clip cannot
+// be mistaken for an unrelated one that happens to reuse the same window.
+static std::map<std::string, std::pair<std::string, std::pair<double, double>>> g_peaksRequestedFor;
+static void requestPeaksIfChanged(const Clip& c) {
+    auto it = g_peaksRequestedFor.find(c.id);
+    if (it != g_peaksRequestedFor.end() && it->second.first == c.source &&
+        it->second.second.first == c.in && it->second.second.second == c.out) return;
+    peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+    g_peaksRequestedFor[c.id] = { c.source, { c.in, c.out } };
+}
 // G-1 "Play tied clips" preview: g_track[0] doubles as both "the loaded edit reel"
 // and "whatever is currently being previewed" (the same pattern seekToSpan already
 // uses for search-hit auditions). Unlike a seekToSpan clip, a Q&A card's tied clips
@@ -2150,7 +2171,11 @@ static void loadTimelineView(const json& tv) {
     }
     g_sel.clear();
     // Windowed waveform decode: only what's on the timeline, newest first. (FB9 fix: keyed by SOURCE.)
-    for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+    // I-2 fix: skip clips whose (source,in,out) is unchanged since the last reload -
+    // see requestPeaksIfChanged above. This runs on EVERY edit reply, so this is the
+    // one call site that actually needed the dedup (the other 3 peaksRequest loops in
+    // this file run at boot / on rare preview toggles, not once per edit).
+    for (auto& c : g_track[0]) requestPeaksIfChanged(c);
     g_quietDirty = true;
     // D-6: mirror the engine's current overlay field toggles (edl.Overlay), so the
     // preview knows exactly which lines the render is about to burn in.

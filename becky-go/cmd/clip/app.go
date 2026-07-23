@@ -860,8 +860,16 @@ func (a *App) SetTrim(id string, in, out float64) (TimelineView, error) {
 	for i := range a.reel.Clips {
 		if a.reel.Clips[i].ID == id {
 			a.pushUndoLocked()
-			a.reel.Clips[i].In = clampNonNeg(in)
-			a.reel.Clips[i].Out = clampNonNeg(out)
+			// Copy-on-write: pushUndoLocked's snapshot is now an O(1) shallow copy of
+			// this slice header (see snapshotLocked) rather than a deep per-clip copy,
+			// so it shares this backing array. Writing the trim into a.reel.Clips[i] IN
+			// PLACE would silently mutate that snapshot's view of the same index too,
+			// corrupting undo. Build a fresh backing array before touching the element.
+			next := make([]edl.Clip, len(a.reel.Clips))
+			copy(next, a.reel.Clips)
+			next[i].In = clampNonNeg(in)
+			next[i].Out = clampNonNeg(out)
+			a.reel.Clips = next
 			return a.timelineLocked(), nil
 		}
 	}
@@ -905,9 +913,15 @@ func (a *App) Split(id string, atSource float64) (TimelineView, string, error) {
 		Label:  c.Label,
 		Meta:   c.Meta,
 	}
-	a.reel.Clips[idx].Out = atSource // left half keeps the id
+	// Copy-on-write: build the new slice from `left` (a modified COPY of c) instead
+	// of mutating a.reel.Clips[idx] in place - same undo-snapshot-aliasing hazard as
+	// SetTrim above, now that pushUndoLocked's snapshot is a shallow slice-header
+	// copy rather than a deep one.
+	left := c
+	left.Out = atSource // left half keeps the id
 	out := make([]edl.Clip, 0, len(a.reel.Clips)+1)
-	out = append(out, a.reel.Clips[:idx+1]...)
+	out = append(out, a.reel.Clips[:idx]...)
+	out = append(out, left)
 	out = append(out, right)
 	out = append(out, a.reel.Clips[idx+1:]...)
 	a.reel.Clips = out
@@ -921,7 +935,11 @@ func (a *App) SetLabel(id, text string) (TimelineView, error) {
 	for i := range a.reel.Clips {
 		if a.reel.Clips[i].ID == id {
 			a.pushUndoLocked()
-			a.reel.Clips[i].Label = strings.TrimSpace(text)
+			// Copy-on-write - see SetTrim's comment above.
+			next := make([]edl.Clip, len(a.reel.Clips))
+			copy(next, a.reel.Clips)
+			next[i].Label = strings.TrimSpace(text)
+			a.reel.Clips = next
 			return a.timelineLocked(), nil
 		}
 	}
@@ -1015,9 +1033,10 @@ func (a *App) timelineLocked() TimelineView {
 
 // ---- undo / redo (timeline history) ---------------------------------------
 
-// reelSnapshot is one undo/redo checkpoint: a deep copy of the clip list plus the
-// reel name and the id counter — enough to fully restore the timeline's CLIPS.
-// Overlay + markers are intentionally excluded so undo only ever changes clips.
+// reelSnapshot is one undo/redo checkpoint: the clip list (see snapshotLocked
+// for why this is a shared slice, not a deep copy) plus the reel name and the
+// id counter — enough to fully restore the timeline's CLIPS. Overlay + markers
+// are intentionally excluded so undo only ever changes clips.
 type reelSnapshot struct {
 	clips  []edl.Clip
 	name   string
@@ -1028,10 +1047,24 @@ type reelSnapshot struct {
 const maxUndoDepth = 200
 
 // snapshotLocked captures the current clip state. Caller holds a.mu.
+//
+// This is a SHALLOW copy of the slice header (O(1), no per-clip copy) — safe
+// ONLY because every clip mutator now either appends new clips at the tail
+// (AddClipAt's fast path — never touches an index an older snapshot can see)
+// or builds a brand-new backing array before installing it into a.reel.Clips
+// (RemoveClip/Reorder/ReorderMany/SetClips/Split/SetTrim/SetLabel all do
+// copy-on-write — see their comments). No mutator may EVER again write
+// a.reel.Clips[i].Field in place, or it will silently corrupt every older
+// snapshot sharing that backing array (restoreLocked always deep-copies ON
+// restore, so a restored timeline is independent either way).
+//
+// Before this fix, this was a full make+copy of the WHOLE clip list on EVERY
+// single edit — O(n) per edit, the root cause of add_clip latency growing to
+// 130-172ms past ~5,000 clips (2026-07-23 cycle-25 review). See
+// perf_add_clip_test.go for the regression guard (both the latency bound and
+// an explicit undo-non-aliasing check across SetLabel/SetTrim/Split).
 func (a *App) snapshotLocked() reelSnapshot {
-	cl := make([]edl.Clip, len(a.reel.Clips))
-	copy(cl, a.reel.Clips)
-	return reelSnapshot{clips: cl, name: a.reel.Name, nextID: a.nextID}
+	return reelSnapshot{clips: a.reel.Clips, name: a.reel.Name, nextID: a.nextID}
 }
 
 // pushUndoLocked records the CURRENT clip state before a mutation and drops any
