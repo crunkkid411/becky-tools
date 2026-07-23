@@ -10,6 +10,31 @@
 
 ---
 
+## Post-swap backlog round — undo at finger speed, 2x audio, search fixed (2026-07-23 02:10–03:20, local, two sonnet workers → `master` `ed4bcb1`)
+
+Two parallel workers on disjoint ground, both live-verified on the real reel/corpus:
+
+1. `7acd4b1` — undo/redo debounce 250ms → **60ms**: the 250ms was never chosen, it was mpv's
+   blocking IPC acting as an accidental throttle; measured engine round-trip is now 1.3–1.6ms.
+   Driven proof: 10 rapid Ctrl+Z at 90ms gaps = exactly 10 undos (was 3 of 6).
+2. `e7ee4d7` — 2x speed audio: was gated silent at any rate ≠ 1x; now runs through FFmpeg's
+   atempo (pitch-preserving) with the audio-consumed clock at all rates. 60.17s continuous 2x
+   run: **6.3ms drift** (bar was 33ms); 435/435 segments stretched, zero silence fallback;
+   mid-play 1x↔2x toggles clean; 1x sync re-verified bit-identical. Ears-check (pitch) awaits
+   Jordan. New DLL beside the exe: avfilter-11 (gitignored).
+3. `659b9c5` — forensic index can never silently go stale again: new `internal/qmdindex`
+   converts each finished transcript instantly + catch-up Sweep before every forensic run
+   (source-frontmatter matched, idempotent — a filename-matched first attempt wrote 1128 dupes
+   against the real corpus and was caught before landing). Found 114 transcripts that had piled
+   up since the 07-22 backfill. Same commit: plain multi-word search is AND-over-stopwords
+   ("cheated on by my wife": 10k-hit blob → 20 quotes in 282ms) and qmd hybrid search skips the
+   12–14s LLM query-expansion (structured lex/vec query; live 910ms, was 16.6s/timeouts).
+4. `ed4bcb1` — CONTINUE-HERE items marked done.
+
+Operational hazard, twice-confirmed tonight: concurrent agents on the SHARED checkout stepped on
+each other's uncommitted files (one silent revert, one 30-file commit sweep caught pre-push).
+Both workers recovered cleanly; rule stands — isolate in worktrees or stage only your own files.
+
 ## mpv is gone — native video engine replaces it, measured and deployed (2026-07-23 00:00–01:45, local, `local/video-engine` + `local/video-engine-swap` → `master` `c21537e`)
 
 The whole mpv-replacement mission from `HANDOFF-VIDEO-ENGINE.md` landed in one overnight push —
