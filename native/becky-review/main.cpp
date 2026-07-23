@@ -5941,7 +5941,11 @@ int main(int argc, char** argv) {
                         pos = wend;
                         ImVec2 sz = ImGui::CalcTextSize(word.c_str());
                         if (ImGui::GetContentRegionAvail().x < sz.x) ImGui::NewLine();
-                        if (isMatch) {
+                        // Highlight the MATCHED WORD, not the whole cue - a "real find"
+                        // (per the comment above) points at the hit, not a whole paragraph
+                        // it happens to live in. Found live: searching "cheated" lit up
+                        // all 15 words of the sentence it was in.
+                        if (isMatch && ciContains(word, within)) {
                             ImVec2 p0 = ImGui::GetCursorScreenPos();
                             dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0xFF, 0xD7, 0x00, 60), 2.0f);
                         }
