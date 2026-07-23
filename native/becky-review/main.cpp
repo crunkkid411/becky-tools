@@ -2296,6 +2296,10 @@ static void recomputeQuiet() {
 }
 
 // Load a TimelineView (from engine "timeline" verb) into the native track.
+// A-1: defined in the caption section below; loadTimelineView/seekToSpan re-derive
+// the caption lane from the clips' own source transcripts after every rebuild.
+static void rebuildDerivedCaptions();
+
 static void loadTimelineView(const json& tv) {
     // An authoritative reload always wins over a stale "Play tied clips" preview.
     g_inTiedPreview = false; g_reelBeforePreview.clear();
@@ -2343,6 +2347,9 @@ static void loadTimelineView(const json& tv) {
         g_overlay.position = ov.value("position", g_overlay.position);
         g_ovEngineEnabled = g_overlay.enabled;
     }
+    // A-1: the timeline changed - re-derive the caption lane from the clips'
+    // source transcripts (no-op when a hand-edited reel sidecar is loaded).
+    rebuildDerivedCaptions();
 }
 
 // --------------- D3D11 display ---------------
@@ -2782,6 +2789,20 @@ static double quantToFrame(double t) {
 struct Caption { double start = 0, end = 0; std::string text; };
 static std::vector<Caption> g_caps;
 static std::string g_capPath;        // the .srt on disk; "" = no reel loaded, lane hidden
+// A-1 (Jordan: "i don't see captions"): captions no longer require a saved reel
+// sidecar. Every timeline clip whose SOURCE video has a transcript (.srt beside
+// the source, e.g. E:\TakingBack2007\<video>.srt) shows its captions
+// automatically: the engine's transcript verb (the SAME parser the transcript
+// view and search already trust) is fetched once per source, cached here, and
+// each clip's cues are mapped through the clip's in/out offsets onto the
+// timeline. Cue times stay VERBATIM from the .srt - the only arithmetic is the
+// clip's own offset, and a cue straddling a cut is clamped to the clip so it
+// never paints over the neighbouring clip. A reel-stem sidecar .srt, when
+// present, still OVERRIDES all of this (it is the hand-edited, cut-snapped
+// artifact becky-subtitle wrote).
+static bool g_capSidecar = false;    // a real sidecar .srt was loaded; derived captions stand down
+static std::map<std::string, std::vector<Caption>> g_srcCues;  // source basename -> source-time cues
+static std::set<std::string> g_srcCuesInFlight;                // async transcript fetches running
 static std::string g_capErr;         // plain-language load/save problem, shown in the lane
 static int  g_capSel = -1;           // selected caption (white border)
 static int  g_capEdit = -1;          // caption whose text is being typed, -1 = none
@@ -2837,6 +2858,7 @@ static void loadCapStyle();   // defined just below - needs g_capPath, which thi
 static void loadCaptions(const std::string& reelPath) {
     g_caps.clear(); g_capErr.clear(); g_capPath.clear();
     g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
+    g_capSidecar = false;
     if (reelPath.empty()) return;
     std::string p = reelPath; fwslash(p);
     size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
@@ -2855,7 +2877,12 @@ static void loadCaptions(const std::string& reelPath) {
     g_capPath = p;
     loadCapStyle();                        // this reel's saved vertical placement
     std::ifstream f(p);
-    if (!f.good()) { g_capErr = "no captions yet - run becky-subtitle on this reel"; return; }
+    if (!f.good()) {
+        // A-1: no sidecar is NOT "no captions" any more - derive the lane from
+        // each clip's own source transcript instead (async; appears per source).
+        rebuildDerivedCaptions();
+        return;
+    }
     Caption cur; bool haveTime = false;
     auto flush = [&]() {
         capTrimRight(cur.text);
@@ -2880,6 +2907,10 @@ static void loadCaptions(const std::string& reelPath) {
         // a line before any "-->" is the cue number - ignored on purpose
     }
     flush();                               // a file with no trailing blank line still yields its last cue
+    // A-1: a sidecar that parsed to real cues is the hand-edited truth and wins;
+    // an empty/garbled one falls back to the derived per-source captions.
+    g_capSidecar = !g_caps.empty();
+    if (!g_capSidecar) rebuildDerivedCaptions();
 }
 
 // The vertical placement is PER REEL, and deliberately so - Jordan: "the default
@@ -2917,7 +2948,9 @@ static void saveCapStyle() {
 // conventionally time-ordered and a drag can reorder cues, so it sorts - and then
 // repairs g_capSel so the white border stays on the caption the user is holding.
 static void saveCaptions() {
-    if (g_capPath.empty()) return;
+    // A-1: derived captions with no reel loaded have nowhere to live on disk.
+    // The edit still shows this session; tell him why it won't survive a restart.
+    if (g_capPath.empty()) { g_capErr = "save a reel first - caption edits need a reel to live beside"; return; }
     Caption keep; bool haveKeep = false;
     if (g_capSel >= 0 && g_capSel < (int)g_caps.size()) { keep = g_caps[g_capSel]; haveKeep = true; }
     std::sort(g_caps.begin(), g_caps.end(),
@@ -2934,6 +2967,73 @@ static void saveCaptions() {
           << secToSrtTime(g_caps[i].start) << " --> " << secToSrtTime(g_caps[i].end) << "\r\n"
           << g_caps[i].text << "\r\n\r\n";
     g_capErr.clear();
+    // Editing a DERIVED caption materialises the whole set into the reel's
+    // sidecar - from here on the sidecar is the truth (same as a becky-subtitle
+    // run), so a later timeline reload must not clobber the hand edit.
+    g_capSidecar = true;
+}
+
+// A-1: build the caption lane from each clip's own source transcript. Runs on
+// the UI thread only (all callers are UI-thread: loadTimelineView/seekToSpan
+// directly, the transcript fetch via drainAsync) - so no locking here.
+// Transcripts arrive asynchronously; each arrival re-runs this, so captions
+// appear per source as its transcript lands, never blocking a frame.
+static void rebuildDerivedCaptions() {
+    if (g_capSidecar) return;                 // the hand-edited sidecar wins
+    g_caps.clear();
+    g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
+    bool waiting = false;
+    for (auto& c : g_track[0]) {
+        std::string name = baseName(c.source);
+        auto it = g_srcCues.find(name);
+        if (it == g_srcCues.end()) {
+            if (!g_srcCuesInFlight.count(name)) {
+                g_srcCuesInFlight.insert(name);
+                engineCallAsync("transcript", { {"name", name} }, 25.0, "loading captions",
+                    [name](const json& r) {
+                        g_srcCuesInFlight.erase(name);
+                        if (!r.value("ok", false)) {
+                            // NOT cached: the usual cause is boot ordering - the
+                            // forensic launcher loads the reel BEFORE open_folder
+                            // indexes the case folder, so the first transcript ask
+                            // lands on an engine that hasn't met the video yet.
+                            // Retry (bounded) until the index exists; only a real
+                            // answer is worth remembering.
+                            static std::map<std::string, int> retries;
+                            if (++retries[name] > 8) g_srcCues[name] = {};   // give up this session
+                            rebuildDerivedCaptions();
+                            return;
+                        }
+                        std::vector<Caption> cues;
+                        if (r.contains("data") && r["data"].is_array())
+                            for (auto& q : r["data"]) {
+                                Caption cp; cp.start = q.value("start", 0.0); cp.end = q.value("end", 0.0);
+                                cp.text = q.value("text", std::string());
+                                if (cp.end > cp.start && !cp.text.empty()) cues.push_back(cp);
+                            }
+                        // an empty ok-list is cached too - "this source has no
+                        // transcript" is an answer, asked exactly once
+                        g_srcCues[name] = std::move(cues);
+                        rebuildDerivedCaptions();
+                    });
+            }
+            waiting = true;
+            continue;
+        }
+        for (auto& q : it->second) {
+            if (q.end <= c.in || q.start >= c.out) continue;   // cue outside this clip's span
+            Caption cp;
+            cp.start = c.compStart + (std::max(q.start, c.in) - c.in);
+            cp.end   = c.compStart + (std::min(q.end,   c.out) - c.in);
+            cp.text = q.text;
+            if (cp.end > cp.start) g_caps.push_back(cp);
+        }
+    }
+    std::sort(g_caps.begin(), g_caps.end(),
+              [](const Caption& a, const Caption& b) { return a.start < b.start; });
+    if (!g_caps.empty()) g_capErr.clear();
+    else if (!waiting && !g_track[0].empty())
+        g_capErr = "no captions - no transcript found beside these clips' source videos";
 }
 
 // The caption under the playhead, drawn ON the video at the placement the burn-in
@@ -2958,7 +3058,9 @@ static void mpvClearCaptionOsd() {
 }
 static void mpvUpdateCaptionOsd(double t) {
     static std::string s_lastAss;
-    if (g_capPath.empty() || g_caps.empty() || !g_mpvAvailable.load()) { mpvClearCaptionOsd(); return; }
+    // A-1: derived captions overlay during playback too - the gate is "are there
+    // captions", not "is there a sidecar file".
+    if (g_caps.empty() || !g_mpvAvailable.load()) { mpvClearCaptionOsd(); return; }
     const Caption* cur = nullptr;
     for (auto& c : g_caps) if (t >= c.start && t < c.end) { cur = &c; break; }
     // Mid-drag there must always be a caption on screen to judge the placement by,
@@ -3063,7 +3165,9 @@ static void drawTimeline(double& curSec, bool& playing) {
     // InvisibleButton below, so one gesture handler drives both. With no reel
     // loaded (g_capPath empty) capH/capGap are 0 and the layout is byte-identical
     // to the pre-caption one.
-    bool showCaps = !g_capPath.empty() && lanesH > 90;
+    // A-1: derived captions (no sidecar, no reel) still get a lane - the lane
+    // shows whenever there ARE captions or a reel is loaded to explain itself on.
+    bool showCaps = (!g_capPath.empty() || !g_caps.empty()) && lanesH > 90;
     float capH = showCaps ? 36.0f : 0.0f;
     float capGap = showCaps ? 4.0f : 0.0f;
     float laneH = lanesH - capH - capGap;
@@ -4460,6 +4564,9 @@ static void seekToSpan(const std::string& source, double a, double b, bool start
     packTrack(0); recomputeDur();
     curSec = 0; playing = startPlaying; g_playingExt = playing; lastComposed = -1;
     g_quietDirty = true; peaksRequest(source, a - 1.0, b + 5.0);
+    // A-1: an audition clip gets its own source's captions too (mapped to the
+    // preview's 0-based time), instead of stale reel captions at wrong times.
+    rebuildDerivedCaptions();
 }
 // playWholeVideo puts a video's WHOLE span on the track (B-5 "spacebar plays the
 // selected row"). Duration comes from the engine probe; an unprobe-able source
