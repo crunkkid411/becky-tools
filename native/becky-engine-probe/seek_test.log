@@ -1,0 +1,7 @@
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+target=100 landed=100 pts=3.33667 (decoded_forward=41 frames, seek_ms=277.3, format=d3d11)
+target=101 landed=101 pts=3.37003 (decoded_forward=42 frames, seek_ms=241.2, format=d3d11)
+target=102 landed=102 pts=3.40340 (decoded_forward=43 frames, seek_ms=254.0, format=d3d11)
+target=1000 landed=1000 pts=33.36667 (decoded_forward=41 frames, seek_ms=259.3, format=d3d11)
+target=4499 landed=4499 pts=150.11663 (decoded_forward=60 frames, seek_ms=341.9, format=d3d11)
+seek-test: 5 targets, 0 failures
