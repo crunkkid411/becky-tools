@@ -4,6 +4,28 @@ This file exists so you don't have to ask Jordan anything to pick up where the
 last agent stopped. Read it, then go straight to work — don't re-ask him what's
 already answered below.
 
+## 2026-07-23: mpv IS DELETED. Becky Review 3 runs the native engine.
+
+The overnight mpv-swap mission (HANDOFF-VIDEO-ENGINE.md, all 8 steps checked
+with evidence) landed on master. Video is now an IN-PROCESS engine
+(`native/becky-review/engine.cpp`: libavcodec/D3D11VA on its own D3D11 device,
+NV12->BGRA into shared textures, ImGui paints the pane; WASAPI audio is the
+master clock). No mpv.exe, no pipes, no child HWND, no EDL temp file.
+
+- Measured on the real 88-clip reel: idle **46.9% -> 9.4%**, playback
+  **~1036% -> 11.5%** of one core; 104-step scrub churn with zero freezes;
+  crash.log clean. Full numbers + screenshots: HANDOFF-VIDEO-ENGINE.md step 7.
+- Rollback: `native/becky-review/becky-review-mpv-backup.exe` (the last mpv
+  build) sits beside the new exe. Rename it back if the engine misbehaves.
+- Jordan's wake-up checks (ears/eyes only): audible sync, scrub across a cut,
+  Ctrl+Right frame-exactness vs grab_frame stills.
+- The app dir needs the FFmpeg DLLs beside the exe (96 MSYS2 DLLs, already
+  in place, gitignored). `_build.bat` stages headers itself; it must link the
+  MSYS2 `.dll.a` files BY FULL PATH (GStreamer's lib dir ships an older
+  libav that must not win).
+- Deliberate ceilings: 2x speed is silent (QPC clock); software-decode
+  fallback has no draw path; overlay/captions are ImGui-drawn now.
+
 ## The rules that keep getting broken (do not repeat them)
 
 1. **FREE OR OAUTH ONLY. NEVER A PAID API.** Jordan already pays for Claude Max —

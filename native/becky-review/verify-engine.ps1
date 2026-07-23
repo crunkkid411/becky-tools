@@ -112,7 +112,17 @@ $churnCpu = CpuPct $p 3
 Log "post-churn CPU pct-of-one-core = $churnCpu"
 Shot $h 'engine_churn.png'
 
-# 5) play again and LEAVE RUNNING (Jordan wakes to it playing)
+# 5) edit ops against the engine: SPLIT at playhead, screenshot, UNDO (net zero)
+[void][Drv]::SetForegroundWindow($h)
+[Drv]::Tap(0x53)  # 'S' split
+Start-Sleep -Milliseconds 800
+Shot $h 'engine_split.png'
+[Drv]::Tap(0x5A)  # 'Z' undo
+Start-Sleep -Milliseconds 800
+Shot $h 'engine_undo.png'
+Log 'split+undo driven (net zero on the reel)'
+
+# 6) play again and LEAVE RUNNING (Jordan wakes to it playing)
 [void][Drv]::SetForegroundWindow($h)
 [Drv]::Tap(0x20)
 Log 'left PLAYING - app stays up'

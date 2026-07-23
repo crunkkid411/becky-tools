@@ -642,6 +642,8 @@ static void wasapiLoop() {
         up = true;
     } while (0);
     g_audioUp.store(up);
+    if (up) crashLog("engine: WASAPI up (48k float stereo shared, event-driven)");
+    else crashLog("engine: WASAPI unavailable - silent playback, QPC clock (degrade 2)");
     if (up) {
         std::vector<float> tmp(bufFrames * 2);
         while (!g_quit.load()) {
@@ -653,8 +655,13 @@ static void wasapiLoop() {
             BYTE* out = nullptr;
             if (FAILED(rc->GetBuffer(want, &out))) break;
             if (g_audioActive.load()) {
-                g_aring.pull((float*)out, (int64_t)want * 2);
+                int64_t got = g_aring.pull((float*)out, (int64_t)want * 2);
                 g_audioFramesConsumed.fetch_add(want);
+                static bool once = false;
+                if (!once && got > 0) {
+                    crashLog("engine: audio FLOWING (device consuming real samples)");
+                    once = true;
+                }
             } else {
                 memset(out, 0, (size_t)want * 8);
             }

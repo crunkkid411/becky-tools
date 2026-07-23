@@ -1,0 +1,7 @@
+=== enum 07/23/2026 01:25:27 ===
+target pid: 10268
+hwnd=26412180 class='b' title='B' visible=True
+hwnd=36242404 class='M' title='M' visible=False
+hwnd=29165120 class='I' title='D' visible=False
+count: 3
+ENUM_DONE
