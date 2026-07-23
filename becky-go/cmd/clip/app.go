@@ -32,6 +32,7 @@ import (
 	"becky-go/internal/edl"
 	"becky-go/internal/footage"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/qmd"
 	"becky-go/internal/sidecar"
 )
 
@@ -203,6 +204,11 @@ func defaultWorkDir() string {
 
 // ---- folder + index -------------------------------------------------------
 
+// warmQmd is the seam over qmd.Warm — production never reassigns it; the test
+// package's TestMain (clipcolor_test.go) stubs it to a no-op for the whole
+// binary so no test's OpenFolder shells the real qmd binary.
+var warmQmd = qmd.Warm
+
 // OpenFolder indexes a case folder (read-only) and makes it the media-serving
 // scope. It leaves the timeline untouched — the detective can keep their reel
 // while switching source folders. Returns the indexed videos for the UI.
@@ -239,6 +245,11 @@ func (a *App) OpenFolder(folder string) (FolderView, error) {
 	// Pay that cost here, in the background, right after indexing - not on
 	// Jordan's first search keystroke.
 	go footage.WarmTranscriptCache(idx)
+
+	// Same "pay it before Jordan types" pattern for the smart-search model
+	// (qmd.Warm's doc comment: no daemon to keep hot, but this pulls the
+	// embedding weights into the OS page cache before his first real query).
+	go warmQmd()
 
 	return a.folderView(), nil
 }

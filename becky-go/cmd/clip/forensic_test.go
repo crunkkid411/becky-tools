@@ -41,6 +41,16 @@ func swapForensicSeams(t *testing.T,
 	t.Cleanup(func() { runJudge, runHits = origJudge, origHits })
 }
 
+// fakeQmdUpdate stubs the qmd re-index seam to a no-op so a test never shells
+// the real qmd binary just because the catch-up sweep correctly found a
+// fixture transcript with no .md locator yet and converted it.
+func fakeQmdUpdate(t *testing.T) {
+	t.Helper()
+	orig := runQmdUpdate
+	runQmdUpdate = func() error { return nil }
+	t.Cleanup(func() { runQmdUpdate = orig })
+}
+
 // noGuideAnywhere makes guide resolution come up empty deterministically:
 // clears BECKY_JUDGE_GUIDE and points the hardcoded wiki default at a path
 // that does not exist (on Jordan's machine the real wiki guide DOES exist,
@@ -60,6 +70,7 @@ func TestForensicQueryRunsPipelineAndLoadsReel(t *testing.T) {
 	if _, err := app.OpenFolder(dir); err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
+	fakeQmdUpdate(t)
 	fakeForensicBins(t)
 	noGuideAnywhere(t)
 	// The case folder carries the conventional guide file — the judge MUST
@@ -135,13 +146,20 @@ func TestForensicQueryRunsPipelineAndLoadsReel(t *testing.T) {
 	if tl, changed := app.Undo(); !changed || len(tl.Clips) != 0 {
 		t.Errorf("undo -> changed=%v clips=%d, want one press back to the empty timeline", changed, len(tl.Clips))
 	}
-	// Events bracket the run: started → progress → done.
+	// Events bracket the run: started → progress (catch-up index sweep, the
+	// fixture's ring.srt has no .md locator yet) → progress (judged) → done.
 	mu.Lock()
 	got := strings.Join(events, ",")
 	mu.Unlock()
-	want := "started/forensic_query,progress/forensic_query,done/forensic_query"
+	want := "started/forensic_query,progress/forensic_query,progress/forensic_query,done/forensic_query"
 	if got != want {
 		t.Errorf("events = %q, want %q", got, want)
+	}
+
+	// The sweep actually wrote a real qmd locator for the fixture transcript.
+	mdFiles, err := os.ReadDir(filepath.Join(dir, "_md"))
+	if err != nil || len(mdFiles) != 1 {
+		t.Errorf("catch-up sweep should have written 1 .md locator into _md, got %v (err=%v)", mdFiles, err)
 	}
 }
 
@@ -163,6 +181,7 @@ func TestForensicQueryMissingBinaryIsPlainLanguage(t *testing.T) {
 	if _, err := app.OpenFolder(fixtureFolder(t)); err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
+	fakeQmdUpdate(t)
 	t.Setenv("BECKY_JUDGE", filepath.Join(t.TempDir(), "nope"))
 	_, err := app.ForensicQuery("harassment", "", "")
 	if err == nil || !strings.Contains(err.Error(), "becky-judge") {
@@ -177,6 +196,7 @@ func TestForensicQueryJudgeFailureDoesNotTouchTimeline(t *testing.T) {
 	if _, err := app.OpenFolder(dir); err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
+	fakeQmdUpdate(t)
 	fakeForensicBins(t)
 	swapForensicSeams(t,
 		func(_ context.Context, _, _, _, _, _, _ string) error {
@@ -266,6 +286,7 @@ func TestForensicQueryPassesCallerRubricAndAliases(t *testing.T) {
 	if _, err := app.OpenFolder(dir); err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
+	fakeQmdUpdate(t)
 	fakeForensicBins(t)
 	noGuideAnywhere(t)
 	// A folder guide exists but the caller's rubric must win.
@@ -308,6 +329,7 @@ func TestForensicQueryNotesWhenNoGuideAnywhere(t *testing.T) {
 	if _, err := app.OpenFolder(dir); err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
+	fakeQmdUpdate(t)
 	fakeForensicBins(t)
 	noGuideAnywhere(t)
 

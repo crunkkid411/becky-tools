@@ -177,13 +177,17 @@ func TestGrepTranscripts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Multi-word, both terms non-stopwords -> AND semantics: only the cue
+	// hitting BOTH terms matches ("I will pay you for the cat" has only "cat"
+	// and must NOT come back). This is the fix for the 10k-hit-blob bug: a
+	// multi-word query used to be OR (any term matches), which is exactly why
+	// "cheated on by my wife" matched every cue with a bare "by"/"my"/"on".
 	cands := GrepTranscripts(idx, []string{"cat", "Penguin"})
-	if len(cands) != 2 {
-		t.Fatalf("grep cat/Penguin = %d candidates, want 2: %+v", len(cands), cands)
+	if len(cands) != 1 {
+		t.Fatalf("grep cat+Penguin (AND) = %d candidates, want 1: %+v", len(cands), cands)
 	}
-	// The cue that hits BOTH terms ("bring me the cat Penguin") must rank first.
 	if cands[0].Text != "bring me the cat Penguin" {
-		t.Fatalf("top candidate = %q, want the two-term hit first", cands[0].Text)
+		t.Fatalf("top candidate = %q, want the two-term hit", cands[0].Text)
 	}
 	if cands[0].Timestamp != 20.0 || cands[0].Source == "" {
 		t.Fatalf("candidate timestamps/source must be verbatim from the cue; got %+v", cands[0])
@@ -192,7 +196,8 @@ func TestGrepTranscripts(t *testing.T) {
 		t.Fatalf("top candidate should record 2 matched terms, got %v", cands[0].Terms)
 	}
 
-	// Case-insensitive and OR semantics.
+	// Single-word search is UNCHANGED (case-insensitive, and AND-of-one-term is
+	// the same match set as the old OR behavior).
 	if got := GrepTranscripts(idx, []string{"DOG"}); len(got) != 1 || got[0].Name != "doorbell.mov" {
 		t.Fatalf("grep DOG = %+v, want 1 hit in doorbell.mov", got)
 	}
@@ -204,6 +209,44 @@ func TestGrepTranscripts(t *testing.T) {
 	// A miss yields an empty, non-nil slice.
 	if got := GrepTranscripts(idx, []string{"zzzz"}); got == nil || len(got) != 0 {
 		t.Fatalf("a miss should be empty non-nil, got %v", got)
+	}
+}
+
+// TestGrepTranscripts_MultiWordPhraseIsFocused is the exact regression from the
+// 10k-hit-blob bug report: "cheated on by my wife" used to match ~10,000 cues
+// because every common word ("on", "by", "my") matched independently (OR). It
+// must now return only cues that carry the DISTINCTIVE content words ("cheated"
+// and "wife"), not every cue that happens to contain a stopword.
+func TestGrepTranscripts_MultiWordPhraseIsFocused(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "confession.mp4"), "v")
+	writeFile(t, filepath.Join(root, "confession.srt"),
+		// The real hit: both "cheated" and "wife" in one cue.
+		"1\n00:00:05,000 --> 00:00:08,000\nI'm being cheated on by my wife and it hurts\n\n"+
+			// A stopword-only overlap: "on"/"by"/"my" all appear, neither content word does.
+			"2\n00:00:12,000 --> 00:00:15,000\nturn the light on and drive by my house please\n\n"+
+			// "cheated" without "wife" - a real word but not the full intent.
+			"3\n00:00:20,000 --> 00:00:23,000\nhe cheated at the card game again\n\n"+
+			// "wife" without "cheated" - same.
+			"4\n00:00:30,000 --> 00:00:33,000\nmy wife made dinner for everyone tonight\n\n")
+
+	idx, err := Index(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := GrepTranscripts(idx, []string{"cheated", "on", "by", "my", "wife"})
+	if len(got) != 1 {
+		t.Fatalf("phrase search returned %d cues, want 1 focused hit: %+v", len(got), got)
+	}
+	if got[0].Timestamp != 5.0 {
+		t.Fatalf("hit = %+v, want the 00:00:05 cue with both content words", got[0])
+	}
+
+	// A stopword-only query (all terms drop out of the AND set) degrades to
+	// matching any term, rather than permanently returning zero hits.
+	if got := GrepTranscripts(idx, []string{"on", "by", "my"}); len(got) == 0 {
+		t.Fatal("an all-stopword query should still degrade to matching SOMETHING, not go permanently silent")
 	}
 }
 

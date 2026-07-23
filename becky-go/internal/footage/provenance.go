@@ -21,13 +21,25 @@ func DateFromName(name string) string {
 	return d
 }
 
-// LinkFromName builds the canonical YouTube watch URL from a bracketed 11-char
-// "[VIDEOID]" token, or "" when the name carries none. The id is case-SENSITIVE,
-// so (unlike videoIDToken's lowercased match key) it is preserved verbatim.
-func LinkFromName(name string) string {
+// VideoIDFromName returns the bracketed 11-char YouTube video ID token from
+// name ("...[VIDEOID]...") or "" when the name carries none. The id is
+// case-SENSITIVE, so (unlike videoIDToken's lowercased match key) it is
+// preserved verbatim. Exposed bare (not just as part of a URL) for callers
+// that need the raw id, e.g. qmdindex's frontmatter.
+func VideoIDFromName(name string) string {
 	m := ytIDRe.FindStringSubmatch(name)
 	if m == nil {
 		return ""
 	}
-	return "https://www.youtube.com/watch?v=" + m[1]
+	return m[1]
+}
+
+// LinkFromName builds the canonical YouTube watch URL from a bracketed 11-char
+// "[VIDEOID]" token, or "" when the name carries none.
+func LinkFromName(name string) string {
+	id := VideoIDFromName(name)
+	if id == "" {
+		return ""
+	}
+	return "https://www.youtube.com/watch?v=" + id
 }

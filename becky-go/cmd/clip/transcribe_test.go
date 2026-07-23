@@ -51,6 +51,7 @@ func withFakeTranscribe(t *testing.T) *int {
 // flips to true, and the new cues are searchable — the whole showstopper fix in
 // one offline test.
 func TestTranscribeOneFlipsHasTranscript(t *testing.T) {
+	fakeQmdUpdate(t)
 	calls := withFakeTranscribe(t)
 	app, _ := openFixture(t) // ring.mp4 (has .srt) + kitchen.mov (no transcript)
 
@@ -110,6 +111,7 @@ func TestTranscribeUnknownVideoErrors(t *testing.T) {
 // lacking a transcript (ring.mp4 already has one), re-indexes, and reports the
 // counts; all videos end up with transcripts.
 func TestTranscribeAllOnlyMissingAndCounts(t *testing.T) {
+	fakeQmdUpdate(t)
 	calls := withFakeTranscribe(t)
 	app, _ := openFixture(t) // 2 videos: ring.mp4 (has), kitchen.mov (missing)
 
@@ -134,6 +136,7 @@ func TestTranscribeAllOnlyMissingAndCounts(t *testing.T) {
 // Errors and counted as Failed; the batch still completes (degrade-never-crash)
 // and re-indexes.
 func TestTranscribeAllDegradesOnFailure(t *testing.T) {
+	fakeQmdUpdate(t)
 	app, _ := openFixture(t)
 
 	// Add a third video missing a transcript so two are pending.
@@ -212,6 +215,7 @@ func TestReindexPicksUpExternalSidecar(t *testing.T) {
 // transcribe_all / reindex to their App methods and returns the {ok,data}
 // envelope.
 func TestBridgeTranscribeVerbs(t *testing.T) {
+	fakeQmdUpdate(t)
 	withFakeTranscribe(t)
 	app, _ := openFixture(t)
 

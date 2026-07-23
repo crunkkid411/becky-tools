@@ -49,6 +49,8 @@ import (
 	"time"
 
 	"becky-go/internal/proc"
+	"becky-go/internal/qmd"
+	"becky-go/internal/qmdindex"
 )
 
 // judgeTimeout bounds the becky-judge exec. The judge is an LLM pass over up
@@ -137,6 +139,13 @@ var runJudge = func(ctx context.Context, bin, folder, query, rubric, aliases, ou
 	return nil
 }
 
+// runQmdUpdate is the seam over qmd.Update (internal/qmd) — the external qmd
+// binary call that re-indexes its BM25/vector index after qmdindex writes
+// new/changed .md locator files. Same seam pattern as runJudge/runHits below:
+// production never reassigns it; tests fake it so `go test` never shells the
+// real qmd binary. Shared with transcribe.go's per-transcript conversion hook.
+var runQmdUpdate = qmd.Update
+
 // runHits is the seam over the real becky-hits exec:
 //
 //	becky-hits --hits <hitsPath> --folder <folder> --out <outPath>
@@ -165,12 +174,34 @@ func (a *App) ForensicQuery(query, rubric, aliases string) (ForensicResult, erro
 
 	a.mu.Lock()
 	folder := a.folder
+	idx := a.index
 	a.mu.Unlock()
 	if folder == "" {
 		return ForensicResult{}, fmt.Errorf("open a case folder first — the forensic search runs over its transcripts")
 	}
 
 	var notes []string
+
+	a.emitEvent("started", "forensic_query", "Forensic search: "+truncateText(query, 80))
+
+	// Catch-up sweep: a transcript that landed some other way (an external
+	// capture pipeline, a manual copy, anything older than this wiring) might
+	// have no qmd .md locator yet — the judge's Stage-1 recall would silently
+	// miss it, the exact failure mode that let the index go 3 weeks stale
+	// before the 2026-07-22 manual backfill (ac74c09). This is the automatic
+	// safety net: transcribeOne converts on the spot for transcripts THIS app
+	// just produced; this sweep catches everything else, every forensic run.
+	if converted, sweepErrs := qmdindex.Sweep(idx, qmdindex.MDDir(folder)); converted > 0 || len(sweepErrs) > 0 {
+		if converted > 0 {
+			a.emitEvent("progress", "forensic_query", fmt.Sprintf("Indexing %d transcript(s) that weren't in the search index yet…", converted))
+			if uerr := runQmdUpdate(); uerr != nil {
+				notes = append(notes, "qmd re-index after catch-up indexing failed: "+firstLine(uerr))
+			}
+		}
+		if len(sweepErrs) > 0 {
+			notes = append(notes, fmt.Sprintf("%d transcript(s) could not be indexed for search: %s", len(sweepErrs), firstLine(sweepErrs[0])))
+		}
+	}
 	if strings.TrimSpace(rubric) == "" {
 		rubric = resolveForensicGuide(folder)
 		if rubric == "" && strings.TrimSpace(aliases) == "" {
@@ -187,8 +218,6 @@ func (a *App) ForensicQuery(query, rubric, aliases string) (ForensicResult, erro
 	if err != nil {
 		return ForensicResult{}, err
 	}
-
-	a.emitEvent("started", "forensic_query", "Forensic search: "+truncateText(query, 80))
 
 	// Stage 1+2: recall + judge → the hit-list.
 	hitsPath := filepath.Join(folder, forensicHitsName)

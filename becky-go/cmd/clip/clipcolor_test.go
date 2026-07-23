@@ -9,12 +9,24 @@ import (
 // many app tests load reels/folders, which now persist clip colours - without
 // this every `go test` littered the developer's real %LOCALAPPDATA%\becky\colors
 // with files keyed to temp paths that can never be read again.
+//
+// It also stubs the qmd seams (warmQmd, runQmdUpdate) to no-ops for the whole
+// binary. Dozens of tests call OpenFolder (which backgrounds warmQmd) and
+// several exercise a real transcribe/forensic success path (which triggers
+// runQmdUpdate) — without this default every `go test` run would shell the
+// REAL qmd binary that many times, the exact "no test shells real X" rule
+// this package otherwise holds for becky-judge/becky-hits/becky-transcribe.
+// A test that specifically wants to assert on qmd-update behavior overrides
+// it locally (fakeQmdUpdate in forensic_test.go) and restores it via
+// t.Cleanup, which lands back on this no-op, not the real qmd.Update.
 func TestMain(m *testing.M) {
 	d, err := os.MkdirTemp("", "becky-colors-test")
 	if err == nil {
 		os.Setenv("LOCALAPPDATA", d)
 		defer os.RemoveAll(d)
 	}
+	warmQmd = func() {}
+	runQmdUpdate = func() error { return nil }
 	os.Exit(func() int { defer os.RemoveAll(d); return m.Run() }())
 }
 

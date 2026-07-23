@@ -139,6 +139,7 @@ func GrepTranscripts(index FolderIndex, terms []string) []Candidate {
 	if len(norm) == 0 {
 		return []Candidate{}
 	}
+	required := requiredTerms(norm)
 
 	out := []Candidate{}
 	for _, v := range index.Videos {
@@ -149,7 +150,7 @@ func GrepTranscripts(index FolderIndex, terms []string) []Candidate {
 		if err != nil {
 			continue // degrade: unreadable transcript contributes nothing
 		}
-		out = appendSegmentHits(out, sub.Segments, norm, v.Path, v.Name, DateFromName(v.Name))
+		out = appendSegmentHits(out, sub.Segments, norm, required, v.Path, v.Name, DateFromName(v.Name))
 	}
 
 	sortCandidates(out)
@@ -168,6 +169,7 @@ func GrepOrphans(index FolderIndex, terms []string) []Candidate {
 	if len(norm) == 0 {
 		return []Candidate{}
 	}
+	required := requiredTerms(norm)
 	out := []Candidate{}
 	for _, o := range index.Orphans {
 		sub, err := parseSubtitleCached(o.Path)
@@ -176,18 +178,82 @@ func GrepOrphans(index FolderIndex, terms []string) []Candidate {
 		}
 		// Source "" marks a transcript-only hit (no playable/extractable video). The
 		// date still comes from the ORIGINAL subtitle file name (Title has it stripped).
-		out = appendSegmentHits(out, sub.Segments, norm, "", o.Title, DateFromName(filepath.Base(o.Path)))
+		out = appendSegmentHits(out, sub.Segments, norm, required, "", o.Title, DateFromName(filepath.Base(o.Path)))
 	}
 	sortCandidates(out)
 	return out
+}
+
+// requiredTerms narrows a multi-word query to AND semantics over its
+// non-stopword ("significant") terms, so "cheated on by my wife" needs
+// "cheated" AND "wife" in the same cue instead of matching any cue that
+// merely contains a common word like "by" or "my" — every common word
+// matching independently is what turned a plain multi-word search into a
+// ~10,000-cue blob (every term matched OR). A single-word query is returned
+// UNCHANGED: AND of one term is byte-for-byte the same match set as the old
+// OR-of-one-term behavior, so single-word search is untouched by this fix. A
+// query that is entirely stopwords (rare — nobody forensically searches "of
+// the") degrades back to matching any term, since returning zero hits forever
+// would be worse than a broad result.
+func requiredTerms(norm []string) []string {
+	if len(norm) <= 1 {
+		return norm
+	}
+	sig := make([]string, 0, len(norm))
+	for _, t := range norm {
+		if !stopwords[t] {
+			sig = append(sig, t)
+		}
+	}
+	if len(sig) == 0 {
+		return norm
+	}
+	return sig
+}
+
+// stopwords are common English function words that carry no forensic search
+// intent on their own; requiredTerms drops them from the AND requirement.
+var stopwords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "as": true, "at": true,
+	"be": true, "been": true, "being": true, "but": true, "by": true,
+	"can": true, "could": true, "did": true, "do": true, "does": true, "doing": true,
+	"for": true, "from": true, "had": true, "has": true, "have": true, "having": true,
+	"he": true, "her": true, "hers": true, "him": true, "his": true, "how": true,
+	"i": true, "if": true, "in": true, "into": true, "is": true, "it": true, "its": true,
+	"just": true, "me": true, "my": true,
+	"no": true, "nor": true, "not": true,
+	"of": true, "on": true, "or": true, "our": true, "ours": true, "out": true, "over": true, "own": true,
+	"she": true, "so": true, "some": true,
+	"than": true, "that": true, "the": true, "their": true, "theirs": true, "them": true, "then": true,
+	"there": true, "these": true, "they": true, "this": true, "those": true, "through": true, "to": true, "too": true,
+	"under": true, "up": true, "very": true,
+	"was": true, "we": true, "were": true, "what": true, "when": true, "where": true, "which": true,
+	"who": true, "whom": true, "why": true, "will": true, "with": true, "would": true,
+	"you": true, "your": true, "yours": true,
+}
+
+// hasAllTerms reports whether every term in required also appears in hit.
+func hasAllTerms(hit, required []string) bool {
+	have := make(map[string]bool, len(hit))
+	for _, t := range hit {
+		have[t] = true
+	}
+	for _, t := range required {
+		if !have[t] {
+			return false
+		}
+	}
+	return true
 }
 
 // appendSegmentHits scans segs for the normalized terms and appends one Candidate
 // per matching cue (verbatim text + timestamps) to dst, returning the grown
 // slice. source/name set the Candidate's Source/Name (a video path+basename for
 // real transcripts, "" + Title for orphans). Shared by GrepTranscripts and
-// GrepOrphans so the match+score logic lives in exactly one place.
-func appendSegmentHits(dst []Candidate, segs []sidecar.Segment, norm []string, source, name, date string) []Candidate {
+// GrepOrphans so the match+score logic lives in exactly one place. required is
+// requiredTerms(norm) — every required term must hit the cue (AND); norm still
+// drives the score (more distinct term hits, including stopwords, ranks higher).
+func appendSegmentHits(dst []Candidate, segs []sidecar.Segment, norm, required []string, source, name, date string) []Candidate {
 	for _, seg := range segs {
 		hay := strings.ToLower(seg.Text)
 		var hitTerms []string
@@ -198,7 +264,7 @@ func appendSegmentHits(dst []Candidate, segs []sidecar.Segment, norm []string, s
 				occurrences += c
 			}
 		}
-		if len(hitTerms) == 0 {
+		if len(hitTerms) == 0 || !hasAllTerms(hitTerms, required) {
 			continue
 		}
 		dst = append(dst, Candidate{

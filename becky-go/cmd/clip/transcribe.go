@@ -43,6 +43,7 @@ import (
 	"becky-go/internal/captions"
 	"becky-go/internal/footage"
 	"becky-go/internal/proc"
+	"becky-go/internal/qmdindex"
 )
 
 // transcribeTimeout bounds one becky-transcribe exec. Transcription of a long
@@ -317,6 +318,22 @@ func (a *App) transcribeOne(transcribeBin string, v footage.Video, forceLocal bo
 	}
 	if !fileExists(srtOut) {
 		return fmt.Errorf("becky-transcribe produced no transcript at %s", srtOut)
+	}
+
+	// Keep the forensic search index in step with the transcript just
+	// produced — nothing else did this, and the index went 3 weeks stale
+	// once because of it (2026-07-22 backfill). Convert is fast, pure-Go and
+	// best-effort: a failure here must never fail the transcribe operation
+	// that already succeeded. The qmd re-index talks to an external binary,
+	// so it runs in the background, fire-and-forget (WarmTranscriptCache's
+	// pattern).
+	a.mu.Lock()
+	folder := a.folder
+	a.mu.Unlock()
+	if folder != "" {
+		if _, cerr := qmdindex.Convert(srtOut, qmdindex.MDDir(folder)); cerr == nil {
+			go func() { _ = runQmdUpdate() }()
+		}
 	}
 	return nil
 }
