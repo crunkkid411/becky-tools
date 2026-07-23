@@ -862,17 +862,311 @@ static void audioDecodeLoop(AVFormatContext* fmt, AudioDecoder* ad, AudioRing* r
     av_frame_free(&f);
 }
 
-static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSync) {
+// ---------------------------------------------------------------- step 5b: the reel
+// Segment list player (spec section 5): {source, in, out} in output order,
+// output-frame index is the one true timeline, cuts are frame-exact BY
+// CONSTRUCTION (segment N contributes exactly [round(in*fps), round(out*fps))
+// source frames). No EDL file, no mpv, no sub-frame rounding class of bug.
+
+struct Seg {
+    std::string src;
+    double in = 0, out = 0;
+    int64_t outStart = 0;      // first output frame of this segment
+    int64_t frames = 0;        // output frames this segment contributes
+    int64_t srcStartFrame = 0; // round(in * fps)
+};
+
+struct Reel {
+    std::vector<Seg> segs;
+    int64_t totalFrames = 0;
+    AVRational fps = {30000, 1001};
+    // output frame -> segment index (binary search over outStart)
+    int segOf(int64_t f) const {
+        int lo = 0, hi = (int)segs.size() - 1, best = 0;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (segs[mid].outStart <= f) { best = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return best;
+    }
+};
+
+// Minimal scanner for the becky reel JSON (clips[].source/in/out). The app has
+// a full model already; this parser is probe-only throwaway.
+static bool parseReel(const char* path, Reel& r) {
+    FILE* fp = fopen(path, "rb");
+    if (!fp) { fprintf(stderr, "reel: cannot open %s\n", path); return false; }
+    std::string js;
+    char buf[65536]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, fp)) > 0) js.append(buf, n);
+    fclose(fp);
+    size_t pos = 0;
+    int64_t outCursor = 0;
+    while ((pos = js.find("\"source\"", pos)) != std::string::npos) {
+        size_t q1 = js.find('"', js.find(':', pos) + 1);
+        size_t q2 = q1;
+        for (;;) { q2 = js.find('"', q2 + 1); if (q2 == std::string::npos || js[q2 - 1] != '\\') break; }
+        if (q1 == std::string::npos || q2 == std::string::npos) break;
+        std::string src = js.substr(q1 + 1, q2 - q1 - 1);
+        // unescape \\ and \/
+        std::string clean; clean.reserve(src.size());
+        for (size_t i = 0; i < src.size(); i++) {
+            if (src[i] == '\\' && i + 1 < src.size() && (src[i + 1] == '\\' || src[i + 1] == '/')) {
+                clean += src[i + 1]; i++;
+            } else clean += src[i];
+        }
+        size_t ip = js.find("\"in\"", q2);
+        size_t op = js.find("\"out\"", q2);
+        if (ip == std::string::npos || op == std::string::npos) break;
+        Seg s;
+        s.src = clean;
+        s.in = atof(js.c_str() + js.find(':', ip) + 1);
+        s.out = atof(js.c_str() + js.find(':', op) + 1);
+        s.outStart = outCursor;
+        s.srcStartFrame = llround(s.in * av_q2d(r.fps));
+        s.frames = llround((s.out - s.in) * av_q2d(r.fps));
+        if (s.frames <= 0) s.frames = 1;
+        outCursor += s.frames;
+        r.segs.push_back(s);
+        pos = op;
+    }
+    r.totalFrames = outCursor;
+    return !r.segs.empty();
+}
+
+// Decoder cache for reel playback: reels have few distinct sources.
+// ponytail: opens stay open (no LRU) - a becky reel references 1-6 files.
+struct SrcPool {
+    std::vector<std::pair<std::string, Decoder*>> open;
+    AVBufferRef* hwdev = nullptr;
+    AVD3D11VADeviceContext* hwLock = nullptr;
+    Decoder* get(const std::string& p) {
+        for (auto& e : open) if (e.first == p) return e.second;
+        Decoder* d = new Decoder();
+        if (!d->open(p.c_str(), hwdev)) { delete d; return nullptr; }
+        d->hwLock = hwLock;
+        open.push_back({p, d});
+        fprintf(stderr, "reel: opened source %s (%d total)\n", p.c_str(), (int)open.size());
+        return d;
+    }
+    ~SrcPool() { for (auto& e : open) { e.second->close(); delete e.second; } }
+};
+
+// Reel video decode thread: same ring/latest-chasing skeleton as decodeLoop,
+// but frame indices are OUTPUT frames mapped through the segment list; cut
+// boundaries are just "the mapping changed decoder/position" - the ring and
+// the frame loop never know a cut happened (spec section 5).
+static void reelDecodeLoop(Reel* reel, SrcPool* pool, PlayShared* s) {
+    AVPacket* pkt = av_packet_alloc();
+    AVFrame*  f = av_frame_alloc();
+    AVFrame* held[4] = {};
+    int heldIdx = 0;
+    auto holdFrame = [&](AVFrame* src) {
+        if (!held[heldIdx]) held[heldIdx] = av_frame_alloc();
+        av_frame_unref(held[heldIdx]);
+        av_frame_move_ref(held[heldIdx], src);
+        heldIdx = (heldIdx + 1) % 4;
+    };
+    AVRational fps = reel->fps;
+    int64_t next = -1000000; // next OUTPUT frame to produce
+    int curSeg = -1;
+    Decoder* dd = nullptr;
+    int64_t lastSrcFrame = -1000000;
+
+    // produce output frame F into the ring; returns 1 ok, 0 eof/skip, <0 err, -3 aborted
+    auto produce = [&](int64_t F) -> int {
+        int si = reel->segOf(F);
+        const Seg& sg = reel->segs[si];
+        int64_t srcFrame = sg.srcStartFrame + (F - sg.outStart);
+        Decoder* d = pool->get(sg.src);
+        if (!d) return 0; // unopenable source: skip (degrade ladder 4)
+        AVRational sfps = d->fmt->streams[d->vstream]->avg_frame_rate.num
+                        ? d->fmt->streams[d->vstream]->avg_frame_rate : fps;
+        int r;
+        if (si != curSeg || d != dd || srcFrame != lastSrcFrame + 1) {
+            int64_t ts = d->startTs + av_rescale_q(srcFrame, av_inv_q(sfps), d->tb);
+            int scanned = 0;
+            // abort window keyed to the OUTPUT want
+            r = seekExact(*d, pkt, f, ts, sfps, &scanned, &s->want, F);
+            if (r == SEEK_ABORTED) return -3;
+            if (r != 1) return r;
+            s->seeksDone++; s->framesDecoded += scanned;
+        } else {
+            r = nextFrame(*d, pkt, f);
+            if (r != 1) return r;
+            s->framesDecoded++;
+        }
+        if (si != curSeg) {
+            printf("boundary: video seg %d -> %d at output frame %lld (t=%.3fs, %s @ src frame %lld)\n",
+                   curSeg, si, (long long)F, F * av_q2d(av_inv_q(fps)),
+                   sg.src.c_str(), (long long)srcFrame);
+            fflush(stdout);
+        }
+        curSeg = si; dd = d; lastSrcFrame = srcFrame;
+        ringStore(*s, f, F);
+        holdFrame(f);
+        return 1;
+    };
+
+    while (!s->quit.load()) {
+        int64_t want = s->want.load();
+        int64_t lo = want - RING / 2; if (lo < 0) lo = 0;
+        int64_t hi = want + RING / 2;
+        if (reel->totalFrames > 0 && hi >= reel->totalFrames) hi = reel->totalFrames - 1;
+
+        if (next < lo - 45 || next > hi + 1 || next < 0) {
+            curSeg = -1; lastSrcFrame = -1000000; // force seek on jump
+            int r = produce(want);
+            if (r == -3) { next = -1000000; continue; }
+            if (r != 1) { WaitForSingleObject(s->wake, 20); continue; }
+            next = want + 1;
+            continue;
+        }
+        if (next > hi) {
+            int64_t missing = -1;
+            if ((int64_t)nowMs() - s->wantStampMs.load() > 150) {
+                for (int64_t i = lo; i < want; i++)
+                    if (s->ring[i % RING].frame.load(std::memory_order_acquire) != i) { missing = i; break; }
+            }
+            if (missing >= 0) {
+                curSeg = -1; lastSrcFrame = -1000000;
+                int r = produce(missing);
+                if (r == -3) { next = -1000000; continue; }
+                if (r == 1) { s->backfills++; next = missing + 1; continue; }
+            }
+            WaitForSingleObject(s->wake, 5);
+            continue;
+        }
+        int r = produce(next);
+        if (r == -3) { next = -1000000; continue; }
+        if (r == 0) { WaitForSingleObject(s->wake, 20); next = -1000000; continue; }
+        if (r < 0) { Decoder::err("reel decode", r); break; }
+        next++;
+    }
+    for (int i = 0; i < 4; i++) if (held[i]) av_frame_free(&held[i]);
+    av_packet_free(&pkt);
+    av_frame_free(&f);
+}
+
+// Reel audio thread: decode each segment's audio [in,out), butt-spliced at
+// exact sample counts (spec risk 1: crossfade-free splice at a sample
+// boundary). Pushes float stereo 48k into the same ring the WASAPI callback
+// pulls; the callback clock stays the master clock.
+static void reelAudioLoop(Reel* reel, AudioRing* ring, std::atomic<bool>* quit) {
+    const int RATE = 48000, CH = 2;
+    for (size_t si = 0; si < reel->segs.size() && !quit->load(); si++) {
+        const Seg& sg = reel->segs[si];
+        int64_t needSamples = llround((sg.out - sg.in) * RATE); // per channel
+        AVFormatContext* fmt = nullptr;
+        AudioDecoder ad;
+        if (avformat_open_input(&fmt, sg.src.c_str(), nullptr, nullptr) != 0 ||
+            avformat_find_stream_info(fmt, nullptr) < 0 || !ad.open(fmt)) {
+            // no audio for this segment: exact silence keeps the splice timing
+            fprintf(stderr, "reel audio: seg %zu has no usable audio, %lld samples of silence\n",
+                    si, (long long)needSamples);
+            std::vector<float> zeros(2048 * CH, 0.0f);
+            int64_t donez = 0;
+            while (donez < needSamples && !quit->load()) {
+                int64_t chunk = needSamples - donez; if (chunk > 2048) chunk = 2048;
+                while (ring->writable() < chunk * CH && !quit->load()) Sleep(2);
+                ring->push(zeros.data(), chunk * CH);
+                donez += chunk;
+            }
+            if (fmt) avformat_close_input(&fmt);
+            continue;
+        }
+        av_seek_frame(fmt, -1, (int64_t)(sg.in * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+        AVPacket* pkt = av_packet_alloc();
+        AVFrame* f = av_frame_alloc();
+        std::vector<float> tmp;
+        AVRational atb = fmt->streams[ad.astream]->time_base;
+        int64_t pushed = 0;
+        bool leadDone = false;
+        while (pushed < needSamples && !quit->load()) {
+            int r = avcodec_receive_frame(ad.actx, f);
+            if (r == AVERROR(EAGAIN)) {
+                int rr = av_read_frame(fmt, pkt);
+                if (rr < 0) break; // source ended early: pad below
+                if (pkt->stream_index != ad.astream) { av_packet_unref(pkt); continue; }
+                avcodec_send_packet(ad.actx, pkt);
+                av_packet_unref(pkt);
+                continue;
+            }
+            if (r < 0) break;
+            double st = (f->best_effort_timestamp == AV_NOPTS_VALUE)
+                      ? -1.0 : f->best_effort_timestamp * av_q2d(atb);
+            int64_t outSamples = swr_get_out_samples(ad.swr, f->nb_samples);
+            if (outSamples <= 0) { av_frame_unref(f); continue; }
+            if ((int64_t)tmp.size() < outSamples * CH) tmp.resize(outSamples * CH);
+            uint8_t* outPtrs[1] = { (uint8_t*)tmp.data() };
+            int got = swr_convert(ad.swr, outPtrs, (int)outSamples,
+                                  (const uint8_t**)f->data, f->nb_samples);
+            av_frame_unref(f);
+            if (got <= 0) continue;
+            int64_t skip = 0;
+            if (!leadDone) {
+                if (st >= 0 && st < sg.in) skip = llround((sg.in - st) * RATE);
+                if (skip >= got) { continue; } // whole frame before the cut
+                leadDone = true;
+            }
+            int64_t take = got - skip;
+            if (take > needSamples - pushed) take = needSamples - pushed;
+            const float* srcp = tmp.data() + skip * CH;
+            int64_t doneS = 0;
+            while (doneS < take && !quit->load()) {
+                int64_t chunk = take - doneS; if (chunk > 2048) chunk = 2048;
+                while (ring->writable() < chunk * CH && !quit->load()) Sleep(2);
+                ring->push(srcp + doneS * CH, chunk * CH);
+                doneS += chunk;
+            }
+            pushed += take;
+        }
+        if (pushed < needSamples && !quit->load()) {
+            // pad the tail so the NEXT segment still starts sample-exact
+            std::vector<float> zeros(2048 * CH, 0.0f);
+            while (pushed < needSamples && !quit->load()) {
+                int64_t chunk = needSamples - pushed; if (chunk > 2048) chunk = 2048;
+                while (ring->writable() < chunk * CH && !quit->load()) Sleep(2);
+                ring->push(zeros.data(), chunk * CH);
+                pushed += chunk;
+            }
+        }
+        printf("boundary: audio seg %zu done (%lld samples, spliced)\n", si, (long long)pushed);
+        fflush(stdout);
+        av_packet_free(&pkt);
+        av_frame_free(&f);
+        ad.close();
+        avformat_close_input(&fmt);
+    }
+    printf("reel audio: all segments pushed\n");
+    fflush(stdout);
+}
+
+static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSync, bool isReel) {
     if (!createD3D11Device()) return 2;
     AVBufferRef* hwdev = createHwDeviceFromD3D();
     if (!hwdev) { fprintf(stderr, "no hw device - --play needs the hw path\n"); return 2; }
 
-    Decoder d;
-    if (!d.open(path, hwdev)) return 2;
+    Reel reel;
+    if (isReel) {
+        if (!parseReel(path, reel)) { fprintf(stderr, "reel parse failed: %s\n", path); return 2; }
+        printf("reel: %zu segments, %lld output frames (%.1fs at %d/%d)\n",
+               reel.segs.size(), (long long)reel.totalFrames,
+               reel.totalFrames * av_q2d(av_inv_q(reel.fps)), reel.fps.num, reel.fps.den);
+    }
+
+    Decoder d; // reel mode: dims/fps reference only (first source)
+    if (!d.open(isReel ? reel.segs[0].src.c_str() : path, hwdev)) return 2;
     AVStream* st = d.fmt->streams[d.vstream];
     AVRational fps = st->avg_frame_rate.num ? st->avg_frame_rate : AVRational{30000, 1001};
-    g_totalFrames = st->nb_frames > 0 ? st->nb_frames
-                  : (int64_t)(d.fmt->duration / (double)AV_TIME_BASE * av_q2d(fps));
+    if (isReel) {
+        fps = reel.fps;
+        g_totalFrames = reel.totalFrames;
+    } else {
+        g_totalFrames = st->nb_frames > 0 ? st->nb_frames
+                      : (int64_t)(d.fmt->duration / (double)AV_TIME_BASE * av_q2d(fps));
+    }
     printf("play %s: %dx%d fps=%d/%d frames=%lld\n", path, d.width, d.height,
            fps.num, fps.den, (long long)g_totalFrames);
 
@@ -895,12 +1189,19 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
     bool paStarted = false;
     bool paInited = false;
     PaStream* paStream = nullptr;
-    if (avformat_open_input(&afmt, path, nullptr, nullptr) == 0 &&
+    bool audioSrcOk = isReel; // reel: reelAudioLoop handles per-segment audio/silence
+    if (!isReel &&
+        avformat_open_input(&afmt, path, nullptr, nullptr) == 0 &&
         avformat_find_stream_info(afmt, nullptr) >= 0 &&
         ad.open(afmt)) {
+        audioSrcOk = true;
+    }
+    if (audioSrcOk) {
         haveAudio = true;
         g_audioRing = &aring;
-        audioThread = std::thread(audioDecodeLoop, afmt, &ad, &aring, &audioQuit);
+        audioThread = isReel
+            ? std::thread(reelAudioLoop, &reel, &aring, &audioQuit)
+            : std::thread(audioDecodeLoop, afmt, &ad, &aring, &audioQuit);
         PaError paErr = Pa_Initialize();
         if (paErr == paNoError) {
             paInited = true;
@@ -966,7 +1267,12 @@ static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSy
     Renderer rend;
     if (!rend.init(hwnd, cw, ch)) return 2;
 
-    std::thread dec(decodeLoop, &d, &ps, fps, g_totalFrames);
+    SrcPool pool;
+    pool.hwdev = hwdev;
+    pool.hwLock = ps.d3dlock;
+    std::thread dec;
+    if (isReel) dec = std::thread(reelDecodeLoop, &reel, &pool, &ps);
+    else        dec = std::thread(decodeLoop, &d, &ps, fps, g_totalFrames);
 
     g_storm = Storm();
     g_storm.active = storm;
@@ -1255,8 +1561,8 @@ int main(int argc, char** argv) {
 
     if (!strcmp(mode, "decode")) return cmdDecode(file, frames);
     if (!strcmp(mode, "seek"))   return cmdSeekTest(file, fps, targets);
-    if (!strcmp(mode, "play"))   return cmdPlay(file, exitAfter, storm, reportSync);
-    fprintf(stderr, "mode %s not implemented yet (--play-reel gapless segment chain is out of scope tonight - "
-                    "use --play --report-sync for single-source audio/video sync proof)\n", mode);
+    if (!strcmp(mode, "play"))   return cmdPlay(file, exitAfter, storm, reportSync, false);
+    if (!strcmp(mode, "reel"))   return cmdPlay(file, exitAfter, storm, reportSync, true);
+    fprintf(stderr, "unknown mode %s\n", mode);
     return 2;
 }

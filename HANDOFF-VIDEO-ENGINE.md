@@ -116,14 +116,19 @@ prefix-sum mapping, pre-rolled next segment) with WASAPI audio as master clock.
 
     becky-engine-probe --play-reel "X:\Videos\2025\11_November\Rendered\post_constantly.reel.json" --report-sync
 
-- [x] (a) DONE / [ ] (b,c) reel-boundary half still open:
-  (a) audio plays in sync — PROVEN 2026-07-23 on the single-file path
-  (audio-master clock, WASAPI via PortAudio ported from native/audio-host):
-  `sync: window=65s audio=on underrun_frames=0 callbacks=12207
-  max_video_lag_frames=2` and `drift_ms max=0.01 avg=0.00 samples=125
-  (threshold 33.00) -> PASS` (sync_run4.log).
-  (b,c) `--play-reel` segment chain + gapless boundary proof: NOT DONE YET —
-  next work item before the step-6 swap.
+- [x] DONE (2026-07-23): all three parts measured on the REAL 88-clip reel
+  (`post_constantly.reel.json`, --play-reel, reel_run.log):
+  (a) `sync: window=65s audio=on underrun_frames=0 callbacks=12213
+  max_video_lag_frames=3` / `drift_ms max=0.01 avg=0.00 samples=124 -> PASS`;
+  (b) 36 video cut boundaries crossed in the window, `drawn==want` on every
+  per-second stat line (no frozen frame at any boundary), 38 audio segments
+  butt-spliced at exact sample counts (seg0 = 438838 samples = 9.142 s
+  at 48 kHz, matches out-in exactly);
+  (c) boundary log lines pasted in reel_run.log (video seg N->N+1 with
+  output frame + source frame; audio "seg N done (S samples, spliced)").
+  Caveat stated honestly: verified by instrumentation, not human ears -
+  the agent session has no visible desktop; audio DID play on the machine's
+  default output during the run. Jordan's ears are step 7.
 - Risk #1 from the spec lives here. If drift grows: the video scheduler is
   using the wrong clock — video schedules to audio samples consumed, never QPC,
   while audio is up.

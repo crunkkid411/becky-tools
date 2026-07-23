@@ -1,0 +1,147 @@
+d3d11 render+decode devices on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+reel: opened source X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 (1 total)
+reel: 88 segments, 4501 output frames (150.2s at 30000/1001)
+play X:\Videos\2025\11_November\Rendered\post_constantly.reel.json: 720x1280 fps=30000/1001 frames=4501
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+boundary: video seg -1 -> 0 at output frame 0 (t=0.000s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 25)
+sync: playback auto-started at frame 0 (audio=on)
+stat: drawn=26 want=26 fps=38.9 playing=1 seeks=1 aborts=0 dec=66 bf=0 lock=0.0 draw=0.0 pres=0.2
+stat: drawn=55 want=55 fps=32.5 playing=1 seeks=1 aborts=0 dec=96 bf=0 lock=0.0 draw=0.0 pres=48.5
+stat: drawn=85 want=85 fps=21.9 playing=1 seeks=1 aborts=0 dec=126 bf=0 lock=0.0 draw=0.0 pres=43.5
+stat: drawn=116 want=116 fps=22.1 playing=1 seeks=1 aborts=0 dec=157 bf=0 lock=0.0 draw=0.0 pres=43.6
+stat: drawn=147 want=147 fps=21.4 playing=1 seeks=1 aborts=0 dec=188 bf=0 lock=0.0 draw=0.0 pres=41.0
+boundary: audio seg 0 done (438838 samples, spliced)
+stat: drawn=177 want=177 fps=21.5 playing=1 seeks=1 aborts=0 dec=218 bf=0 lock=0.0 draw=0.0 pres=55.6
+boundary: audio seg 1 done (54454 samples, spliced)
+stat: drawn=208 want=208 fps=21.9 playing=1 seeks=1 aborts=0 dec=249 bf=0 lock=0.0 draw=0.0 pres=46.1
+stat: drawn=239 want=239 fps=22.0 playing=1 seeks=1 aborts=0 dec=280 bf=0 lock=0.0 draw=0.0 pres=48.0
+boundary: video seg 0 -> 1 at output frame 274 (t=9.142s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 383)
+boundary: audio seg 2 done (139339 samples, spliced)
+stat: drawn=270 want=270 fps=21.2 playing=1 seeks=2 aborts=0 dec=444 bf=0 lock=0.0 draw=0.0 pres=47.6
+boundary: video seg 1 -> 2 at output frame 308 (t=10.277s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 509)
+stat: drawn=301 want=301 fps=21.4 playing=1 seeks=3 aborts=0 dec=484 bf=0 lock=0.0 draw=0.0 pres=42.2
+boundary: audio seg 3 done (62462 samples, spliced)
+stat: drawn=332 want=332 fps=22.3 playing=1 seeks=3 aborts=0 dec=515 bf=0 lock=0.0 draw=0.0 pres=47.0
+boundary: audio seg 4 done (49650 samples, spliced)
+stat: drawn=362 want=362 fps=21.5 playing=1 seeks=3 aborts=0 dec=545 bf=0 lock=0.0 draw=0.0 pres=42.6
+boundary: video seg 2 -> 3 at output frame 395 (t=13.180s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 789)
+boundary: audio seg 5 done (83283 samples, spliced)
+stat: drawn=393 want=393 fps=21.7 playing=1 seeks=4 aborts=0 dec=615 bf=0 lock=0.0 draw=0.0 pres=49.8
+boundary: audio seg 6 done (48048 samples, spliced)
+stat: drawn=423 want=423 fps=21.5 playing=1 seeks=4 aborts=0 dec=640 bf=0 lock=0.0 draw=0.0 pres=47.5
+boundary: video seg 3 -> 4 at output frame 434 (t=14.481s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 931)
+boundary: video seg 4 -> 5 at output frame 465 (t=15.516s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1039)
+stat: drawn=454 want=454 fps=20.8 playing=1 seeks=6 aborts=0 dec=896 bf=0 lock=0.0 draw=0.0 pres=48.1
+boundary: audio seg 7 done (52853 samples, spliced)
+boundary: audio seg 8 done (19219 samples, spliced)
+stat: drawn=485 want=485 fps=21.2 playing=1 seeks=6 aborts=0 dec=927 bf=0 lock=0.0 draw=0.0 pres=47.1
+boundary: audio seg 9 done (38438 samples, spliced)
+boundary: video seg 5 -> 6 at output frame 517 (t=17.251s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1101)
+stat: drawn=516 want=516 fps=21.3 playing=1 seeks=7 aborts=0 dec=1059 bf=0 lock=0.0 draw=0.0 pres=48.2
+boundary: video seg 6 -> 7 at output frame 547 (t=18.252s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1154)
+stat: drawn=547 want=547 fps=21.0 playing=1 seeks=8 aborts=0 dec=1244 bf=0 lock=0.0 draw=0.0 pres=46.3
+boundary: video seg 7 -> 8 at output frame 580 (t=19.353s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1328)
+boundary: audio seg 10 done (132933 samples, spliced)
+stat: drawn=578 want=578 fps=21.2 playing=1 seeks=9 aborts=0 dec=1351 bf=0 lock=0.0 draw=0.0 pres=47.2
+boundary: video seg 8 -> 9 at output frame 592 (t=19.753s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1345)
+boundary: audio seg 11 done (41642 samples, spliced)
+boundary: video seg 9 -> 10 at output frame 616 (t=20.554s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1856)
+stat: drawn=610 want=610 fps=21.0 playing=1 seeks=11 aborts=0 dec=1586 bf=0 lock=0.0 draw=0.0 pres=49.2
+stat: drawn=641 want=641 fps=21.1 playing=1 seeks=11 aborts=0 dec=1617 bf=0 lock=0.0 draw=0.0 pres=46.6
+stat: drawn=672 want=672 fps=21.2 playing=1 seeks=11 aborts=0 dec=1648 bf=0 lock=0.0 draw=0.0 pres=41.7
+boundary: video seg 10 -> 11 at output frame 699 (t=23.323s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1943)
+boundary: audio seg 12 done (164965 samples, spliced)
+stat: drawn=703 want=703 fps=21.1 playing=1 seeks=12 aborts=0 dec=1872 bf=0 lock=0.0 draw=0.0 pres=49.0
+boundary: video seg 11 -> 12 at output frame 725 (t=24.191s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1487)
+stat: drawn=734 want=734 fps=20.5 playing=1 seeks=13 aborts=0 dec=2140 bf=0 lock=0.0 draw=0.0 pres=47.1
+boundary: audio seg 13 done (70470 samples, spliced)
+stat: drawn=765 want=765 fps=21.1 playing=1 seeks=13 aborts=0 dec=2171 bf=0 lock=0.0 draw=0.0 pres=49.3
+boundary: audio seg 14 done (67267 samples, spliced)
+stat: drawn=796 want=796 fps=21.5 playing=1 seeks=13 aborts=0 dec=2202 bf=0 lock=0.0 draw=0.0 pres=50.4
+boundary: video seg 12 -> 13 at output frame 828 (t=27.628s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 1742)
+stat: drawn=827 want=827 fps=21.3 playing=1 seeks=14 aborts=0 dec=2475 bf=0 lock=0.0 draw=0.0 pres=47.1
+boundary: audio seg 15 done (80080 samples, spliced)
+stat: drawn=858 want=858 fps=21.3 playing=1 seeks=14 aborts=0 dec=2504 bf=0 lock=0.0 draw=0.0 pres=49.6
+boundary: video seg 13 -> 14 at output frame 872 (t=29.096s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 2151)
+boundary: audio seg 16 done (68869 samples, spliced)
+stat: drawn=888 want=888 fps=20.7 playing=1 seeks=15 aborts=0 dec=2687 bf=0 lock=0.0 draw=0.0 pres=48.3
+boundary: video seg 14 -> 15 at output frame 914 (t=30.497s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 2210)
+stat: drawn=918 want=918 fps=20.8 playing=1 seeks=16 aborts=0 dec=2927 bf=0 lock=0.0 draw=0.0 pres=46.3
+boundary: audio seg 17 done (78478 samples, spliced)
+boundary: video seg 15 -> 16 at output frame 964 (t=32.165s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 2275)
+stat: drawn=949 want=949 fps=21.2 playing=1 seeks=17 aborts=0 dec=2983 bf=0 lock=0.0 draw=0.0 pres=48.7
+boundary: audio seg 18 done (33634 samples, spliced)
+stat: drawn=980 want=980 fps=21.6 playing=1 seeks=17 aborts=0 dec=3014 bf=0 lock=0.0 draw=0.0 pres=47.7
+boundary: video seg 16 -> 17 at output frame 1007 (t=33.600s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 2351)
+boundary: audio seg 19 done (75275 samples, spliced)
+stat: drawn=1011 want=1011 fps=21.1 playing=1 seeks=18 aborts=0 dec=3146 bf=0 lock=0.0 draw=0.0 pres=70.0
+boundary: audio seg 20 done (62462 samples, spliced)
+boundary: video seg 17 -> 18 at output frame 1056 (t=35.235s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 2772)
+stat: drawn=1042 want=1042 fps=20.7 playing=1 seeks=19 aborts=0 dec=3199 bf=0 lock=0.0 draw=0.0 pres=46.7
+boundary: video seg 18 -> 19 at output frame 1077 (t=35.936s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 2797)
+boundary: audio seg 21 done (46446 samples, spliced)
+stat: drawn=1073 want=1073 fps=21.2 playing=1 seeks=20 aborts=0 dec=3277 bf=0 lock=0.0 draw=0.0 pres=43.5
+boundary: audio seg 22 done (14414 samples, spliced)
+stat: drawn=1104 want=1104 fps=21.5 playing=1 seeks=20 aborts=0 dec=3308 bf=0 lock=0.0 draw=0.0 pres=47.0
+boundary: video seg 19 -> 20 at output frame 1124 (t=37.504s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3013)
+stat: drawn=1134 want=1134 fps=20.8 playing=1 seeks=21 aborts=0 dec=3351 bf=0 lock=0.0 draw=0.0 pres=47.9
+boundary: audio seg 23 done (108909 samples, spliced)
+boundary: video seg 20 -> 21 at output frame 1163 (t=38.805s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3149)
+stat: drawn=1165 want=1165 fps=21.6 playing=1 seeks=22 aborts=0 dec=3531 bf=0 lock=0.0 draw=0.0 pres=45.3
+boundary: audio seg 24 done (52853 samples, spliced)
+boundary: video seg 21 -> 22 at output frame 1192 (t=39.773s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3183)
+boundary: video seg 22 -> 23 at output frame 1201 (t=40.073s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3203)
+stat: drawn=1194 want=1194 fps=21.0 playing=1 seeks=24 aborts=0 dec=3946 bf=0 lock=0.0 draw=0.0 pres=47.7
+stat: drawn=1225 want=1225 fps=21.5 playing=1 seeks=24 aborts=0 dec=3977 bf=0 lock=0.0 draw=0.0 pres=45.6
+boundary: audio seg 25 done (99299 samples, spliced)
+boundary: video seg 23 -> 24 at output frame 1269 (t=42.342s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3279)
+stat: drawn=1256 want=1256 fps=21.8 playing=1 seeks=25 aborts=0 dec=4037 bf=0 lock=0.0 draw=0.0 pres=43.6
+stat: drawn=1286 want=1286 fps=21.6 playing=1 seeks=25 aborts=0 dec=4067 bf=0 lock=0.0 draw=0.0 pres=48.9
+boundary: audio seg 26 done (76877 samples, spliced)
+boundary: video seg 24 -> 25 at output frame 1302 (t=43.443s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3337)
+stat: drawn=1317 want=1317 fps=21.4 playing=1 seeks=26 aborts=0 dec=4185 bf=0 lock=0.0 draw=0.0 pres=47.2
+stat: drawn=1348 want=1348 fps=21.2 playing=1 seeks=26 aborts=0 dec=4216 bf=0 lock=0.0 draw=0.0 pres=42.6
+boundary: audio seg 27 done (105706 samples, spliced)
+boundary: video seg 25 -> 26 at output frame 1364 (t=45.512s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3468)
+stat: drawn=1379 want=1379 fps=21.5 playing=1 seeks=27 aborts=0 dec=4465 bf=0 lock=0.0 draw=0.0 pres=47.3
+boundary: audio seg 28 done (67267 samples, spliced)
+boundary: video seg 26 -> 27 at output frame 1412 (t=47.114s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3714)
+stat: drawn=1410 want=1410 fps=20.3 playing=1 seeks=28 aborts=0 dec=4710 bf=0 lock=0.0 draw=0.0 pres=43.9
+stat: drawn=1440 want=1440 fps=21.9 playing=1 seeks=28 aborts=0 dec=4740 bf=0 lock=0.0 draw=0.0 pres=43.2
+boundary: audio seg 29 done (76877 samples, spliced)
+boundary: video seg 27 -> 28 at output frame 1478 (t=49.316s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3853)
+stat: drawn=1471 want=1471 fps=21.4 playing=1 seeks=29 aborts=0 dec=4874 bf=0 lock=0.0 draw=0.0 pres=45.0
+stat: drawn=1501 want=1501 fps=21.9 playing=1 seeks=29 aborts=0 dec=4904 bf=0 lock=0.0 draw=0.0 pres=43.4
+boundary: video seg 28 -> 29 at output frame 1520 (t=50.717s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 3972)
+stat: drawn=1532 want=1532 fps=21.2 playing=1 seeks=30 aborts=0 dec=5157 bf=0 lock=0.0 draw=0.0 pres=42.9
+boundary: audio seg 30 done (172973 samples, spliced)
+boundary: video seg 29 -> 30 at output frame 1568 (t=52.319s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 4057)
+stat: drawn=1563 want=1563 fps=21.4 playing=1 seeks=31 aborts=0 dec=5245 bf=0 lock=0.0 draw=0.0 pres=44.0
+stat: drawn=1594 want=1594 fps=21.3 playing=1 seeks=31 aborts=0 dec=5276 bf=0 lock=0.0 draw=0.0 pres=43.4
+boundary: audio seg 31 done (88088 samples, spliced)
+stat: drawn=1624 want=1624 fps=21.7 playing=1 seeks=31 aborts=0 dec=5306 bf=0 lock=0.0 draw=0.0 pres=48.3
+boundary: audio seg 32 done (62462 samples, spliced)
+stat: drawn=1654 want=1654 fps=21.8 playing=1 seeks=31 aborts=0 dec=5336 bf=0 lock=0.0 draw=0.0 pres=42.7
+boundary: video seg 30 -> 31 at output frame 1676 (t=55.923s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 4174)
+stat: drawn=1685 want=1685 fps=21.3 playing=1 seeks=32 aborts=0 dec=5541 bf=0 lock=0.0 draw=0.0 pres=45.6
+boundary: video seg 31 -> 32 at output frame 1731 (t=57.758s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 4507)
+stat: drawn=1716 want=1716 fps=21.5 playing=1 seeks=33 aborts=0 dec=5579 bf=0 lock=0.0 draw=0.0 pres=47.6
+boundary: audio seg 33 done (115315 samples, spliced)
+stat: drawn=1747 want=1747 fps=22.1 playing=1 seeks=33 aborts=0 dec=5610 bf=0 lock=0.0 draw=0.0 pres=43.6
+boundary: video seg 32 -> 33 at output frame 1770 (t=59.059s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 4619)
+stat: drawn=1778 want=1778 fps=21.4 playing=1 seeks=34 aborts=0 dec=5760 bf=0 lock=0.0 draw=0.0 pres=44.3
+boundary: audio seg 34 done (115315 samples, spliced)
+stat: drawn=1809 want=1809 fps=21.7 playing=1 seeks=34 aborts=0 dec=5791 bf=0 lock=0.0 draw=0.0 pres=42.9
+boundary: video seg 33 -> 34 at output frame 1842 (t=61.461s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 4695)
+stat: drawn=1839 want=1839 fps=21.1 playing=1 seeks=35 aborts=0 dec=6016 bf=0 lock=0.0 draw=0.0 pres=58.6
+boundary: audio seg 35 done (110510 samples, spliced)
+stat: drawn=1871 want=1871 fps=22.1 playing=1 seeks=35 aborts=0 dec=6048 bf=0 lock=0.0 draw=0.0 pres=42.3
+boundary: video seg 34 -> 35 at output frame 1914 (t=63.864s, X:\Videos\2025\11_November\Rendered\FLYV9992_convertedsnow2.mp4 @ src frame 4771)
+stat: drawn=1902 want=1902 fps=21.2 playing=1 seeks=36 aborts=0 dec=6100 bf=0 lock=0.0 draw=0.0 pres=46.9
+stat: drawn=1932 want=1932 fps=21.6 playing=1 seeks=36 aborts=0 dec=6130 bf=0 lock=0.0 draw=0.0 pres=46.7
+boundary: audio seg 36 done (121722 samples, spliced)
+sync: window=65s audio=on underrun_frames=0 callbacks=12213 max_video_lag_frames=3
+sync: wall-vs-audio-clock drift_ms max=0.01 avg=0.00 samples=124 (threshold 33.00) -> PASS
+cpu: 179.2% of one core over 65.2 s (process total, all threads)
+boundary: audio seg 37 done (23848 samples, spliced)
+reel audio: all segments pushed
