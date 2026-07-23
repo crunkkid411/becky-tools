@@ -23,7 +23,8 @@ master clock). No mpv.exe, no pipes, no child HWND, no EDL temp file.
   in place, gitignored). `_build.bat` stages headers itself; it must link the
   MSYS2 `.dll.a` files BY FULL PATH (GStreamer's lib dir ships an older
   libav that must not win).
-- Deliberate ceilings: 2x speed is silent (QPC clock); software-decode
+- Deliberate ceilings: 2x speed audio time-stretches via libavfilter atempo
+  (pitch-preserved, not silent - verified `e7ee4d7`); software-decode
   fallback has no draw path; overlay/captions are ImGui-drawn now.
 
 ## The rules that keep getting broken (do not repeat them)
