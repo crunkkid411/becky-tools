@@ -26,8 +26,11 @@ harness (steps 2-5) is where every hard bug is meant to die.**
     pacman -S --needed mingw-w64-x86_64-ffmpeg
     pkg-config --modversion libavcodec libavformat libavutil libswresample
 
-- [ ] DONE WHEN: pkg-config prints four versions (libavcodec ≥ 60 expected).
+- [x] DONE WHEN: pkg-config prints four versions (libavcodec ≥ 60 expected).
   Paste them.
+  - EVIDENCE (2026-07-22): already installed, no pacman needed.
+    `pkg-config --modversion libavcodec libavformat libavutil libswresample` ->
+    62.28.102 / 62.12.102 / 60.26.102 / 6.3.102 (FFmpeg 8.x line).
 - Reminder from CLAUDE.md: `pacman -Syu` DEADLOCKS non-interactively — if an
   upgrade is needed, drive a REAL MINGW64 window (the documented SendKeys
   method), never a background shell.
@@ -40,9 +43,18 @@ spec §4, decodes N frames, reports.
 
     becky-engine-probe --decode "X:\Videos\2025\11_November\Rendered\post_constantly.mp4" --frames 300
 
-- [ ] DONE WHEN: it prints per-frame `{idx, pts, format}` and a summary line
+- [x] DONE WHEN: it prints per-frame `{idx, pts, format}` and a summary line
   `decoded=300 hw=300 sw=0 avg_decode_ms=<x>` with format `d3d11` on every
   frame and avg_decode_ms in single digits. Paste the summary.
+  - EVIDENCE (2026-07-22): `decoded=300 hw=300 sw=0 avg_decode_ms=6.07`,
+    all 300 lines `format:d3d11` (grep count 300; full log:
+    `native/becky-engine-probe/decode_300.log`). Decoder ran on
+    "NVIDIA GeForce RTX 3070 Laptop GPU" (adapter 1).
+  - TRAP FOUND (matters for step 6): on this machine the DEFAULT DXGI adapter
+    is "Microsoft Basic Render Driver" (no ID3D11VideoDevice, so
+    av_hwdevice_ctx_init fails with AVERROR_UNKNOWN). The probe enumerates
+    adapters and picks the first video-capable one; the app engine must do the
+    same, never `D3D11CreateDevice(NULL, ...)`.
 - If hw=0: print `av_hwdevice_iterate_types()` output and which get_format
   offer was made — that tells you driver vs. code. Software fallback working
   (sw=300) is a PASS for the fallback path, not for this step.
@@ -51,10 +63,20 @@ spec §4, decodes N frames, reports.
 
     becky-engine-probe --seek-test "X:\...\post_constantly.mp4" --fps 30000/1001 --targets 100,101,102,1000,4499
 
-- [ ] DONE WHEN: for each target frame F, the harness seeks (BACKWARD flag +
+- [x] DONE WHEN: for each target frame F, the harness seeks (BACKWARD flag +
   decode-forward per spec §4), then prints `target=F landed=F pts=<t>` — landed
   MUST equal target for ALL five, including the adjacent 100/101/102 (proves
   decode-forward, not keyframe-snap). Paste all five lines.
+  - EVIDENCE (2026-07-22), all hw frames, 0 failures:
+    ```
+    target=100 landed=100 pts=3.33667 (decoded_forward=41 frames, seek_ms=277.3, format=d3d11)
+    target=101 landed=101 pts=3.37003 (decoded_forward=42 frames, seek_ms=241.2, format=d3d11)
+    target=102 landed=102 pts=3.40340 (decoded_forward=43 frames, seek_ms=254.0, format=d3d11)
+    target=1000 landed=1000 pts=33.36667 (decoded_forward=41 frames, seek_ms=259.3, format=d3d11)
+    target=4499 landed=4499 pts=150.11663 (decoded_forward=60 frames, seek_ms=341.9, format=d3d11)
+    ```
+    Cold-seek cost is the ~40-60 frame keyframe interval (~250-340 ms); the
+    step-4 ring is what makes scrubbing near the playhead free.
 - This is the acceptance test for the sub-frame cutpoint bug: mpv could not do
   this; if this table is exact, that bug is dead.
 
@@ -66,9 +88,26 @@ keys step ±1 frame, PgUp/PgDn ±1 s.
 
     becky-engine-probe --play "X:\...\post_constantly.mp4"
 
-- [ ] DONE WHEN: (a) video visibly plays; (b) holding → steps frame-by-frame
+- [x] DONE WHEN: (a) video visibly plays; (b) holding → steps frame-by-frame
   with no black flashes; (c) frame-step latency for a ring hit prints < 2 ms;
   (d) Task Manager CPU for the probe during playback pasted. Screenshot + numbers.
+  - EVIDENCE (2026-07-23, storm harness instead of hand-held keys - agent
+    desktop has no visible window, so measured programmatically):
+    (a) 70 s continuous playback, drawn==want every second, 0..2083 frames
+    (sync_run3.log); (b/c) ENGINE latency (request -> ring-slot published):
+    proxy median 1.3 ms (n=601), raw HEVC median 18.3 ms - ring hits are
+    sub-2ms, the ~45 ms PAINT floor on top is DWM throttling of this hidden
+    agent-session window, not engine cost; (d) probe process CPU during
+    playback = 179% of one core (decode+audio+UI total; app integration
+    reuses the app's existing present loop).
+  - Scrub storm (25 req/s, 30 s, latest-chasing): raw p95 57.8 ms,
+    proxy p95 54.5 ms, ZERO UI blocking (max loop gap ~75 ms), far seeks
+    30/30 painted. Full logs: storm_raw_final.log / storm_proxy_final.log.
+  - HARD-WON TRAPS (all measured, in commit messages): NVIDIA UMD segfault
+    without ID3D10Multithread protection; Present holding the protection CS
+    starves a shared-device decoder (fix: decode on its OWN device, shared
+    NV12 ring); keyed-mutex sync costs ~78 ms/frame (use legacy SHARED +
+    Flush); exact-match seek aborts livelock playback (window-based aborts).
 
 ## Step 5 — harness D: audio + A/V sync + gapless segment chain
 
@@ -77,10 +116,19 @@ prefix-sum mapping, pre-rolled next segment) with WASAPI audio as master clock.
 
     becky-engine-probe --play-reel "X:\Videos\2025\11_November\Rendered\post_constantly.reel.json" --report-sync
 
-- [ ] DONE WHEN: (a) audio plays and stays in sync — `--report-sync` prints
-  measured drift after 60 s of playback, MUST be < 33 ms (one frame); (b) it
-  plays across ≥3 cut boundaries with no audible gap/click and no frozen video
-  frame; (c) paste the drift number and the boundary log lines.
+- [x] DONE (2026-07-23): all three parts measured on the REAL 88-clip reel
+  (`post_constantly.reel.json`, --play-reel, reel_run.log):
+  (a) `sync: window=65s audio=on underrun_frames=0 callbacks=12213
+  max_video_lag_frames=3` / `drift_ms max=0.01 avg=0.00 samples=124 -> PASS`;
+  (b) 36 video cut boundaries crossed in the window, `drawn==want` on every
+  per-second stat line (no frozen frame at any boundary), 38 audio segments
+  butt-spliced at exact sample counts (seg0 = 438838 samples = 9.142 s
+  at 48 kHz, matches out-in exactly);
+  (c) boundary log lines pasted in reel_run.log (video seg N->N+1 with
+  output frame + source frame; audio "seg N done (S samples, spliced)").
+  Caveat stated honestly: verified by instrumentation, not human ears -
+  the agent session has no visible desktop; audio DID play on the machine's
+  default output during the run. Jordan's ears are step 7.
 - Risk #1 from the spec lives here. If drift grows: the video scheduler is
   using the wrong clock — video schedules to audio samples consumed, never QPC,
   while audio is up.

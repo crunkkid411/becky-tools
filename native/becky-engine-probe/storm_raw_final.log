@@ -1,0 +1,55 @@
+d3d11 render+decode devices on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+storm: phase A (sequential steps)
+stat: drawn=12 want=12 fps=38.2 playing=0 seeks=1 aborts=0 dec=28 bf=0 lock=0.0 draw=0.0 pres=0.2
+stat: drawn=42 want=42 fps=31.4 playing=0 seeks=1 aborts=0 dec=58 bf=0 lock=0.0 draw=0.0 pres=43.2
+stat: drawn=72 want=72 fps=21.9 playing=0 seeks=1 aborts=0 dec=88 bf=0 lock=0.0 draw=0.0 pres=42.3
+storm: phase B (far random seeks)
+stat: drawn=90 want=90 fps=20.9 playing=0 seeks=1 aborts=0 dec=106 bf=0 lock=0.0 draw=0.0 pres=53.0
+stat: drawn=894 want=894 fps=21.1 playing=0 seeks=4 aborts=0 dec=337 bf=3 lock=0.0 draw=0.0 pres=47.9
+stat: drawn=2287 want=2287 fps=21.5 playing=0 seeks=7 aborts=0 dec=575 bf=6 lock=0.0 draw=0.0 pres=43.0
+stat: drawn=1500 want=1500 fps=21.3 playing=0 seeks=10 aborts=0 dec=740 bf=9 lock=0.0 draw=0.0 pres=44.1
+stat: drawn=4025 want=3240 fps=21.8 playing=0 seeks=14 aborts=0 dec=920 bf=12 lock=0.0 draw=0.0 pres=46.4
+stat: drawn=1722 want=2033 fps=21.6 playing=0 seeks=16 aborts=0 dec=1103 bf=15 lock=0.0 draw=0.0 pres=54.8
+stat: drawn=775 want=462 fps=17.9 playing=0 seeks=20 aborts=0 dec=1409 bf=18 lock=0.0 draw=0.0 pres=50.0
+stat: drawn=2092 want=2895 fps=19.6 playing=0 seeks=23 aborts=0 dec=1645 bf=21 lock=0.0 draw=0.0 pres=50.2
+stat: drawn=764 want=764 fps=20.9 playing=0 seeks=26 aborts=0 dec=1870 bf=24 lock=0.0 draw=0.0 pres=42.6
+stat: drawn=3985 want=3985 fps=20.2 playing=0 seeks=29 aborts=0 dec=2122 bf=27 lock=0.0 draw=0.0 pres=52.3
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=18.9 playing=0 seeks=31 aborts=0 dec=2267 bf=30 lock=0.0 draw=0.0 pres=51.6
+stat: drawn=1786 want=3725 fps=20.5 playing=0 seeks=36 aborts=3 dec=2564 bf=30 lock=0.0 draw=0.0 pres=46.7
+stat: drawn=3110 want=2264 fps=20.8 playing=0 seeks=49 aborts=5 dec=3346 bf=30 lock=0.0 draw=0.0 pres=48.9
+stat: drawn=243 want=2942 fps=21.2 playing=0 seeks=64 aborts=5 dec=4332 bf=30 lock=0.0 draw=0.0 pres=47.3
+stat: drawn=828 want=828 fps=19.3 playing=0 seeks=76 aborts=6 dec=5037 bf=30 lock=0.0 draw=0.0 pres=48.3
+stat: drawn=102 want=92 fps=19.1 playing=0 seeks=92 aborts=6 dec=5941 bf=30 lock=0.0 draw=0.0 pres=48.4
+stat: drawn=1202 want=2527 fps=20.0 playing=0 seeks=102 aborts=6 dec=6807 bf=30 lock=0.0 draw=0.0 pres=53.3
+stat: drawn=2745 want=2656 fps=20.2 playing=0 seeks=112 aborts=6 dec=7692 bf=30 lock=0.0 draw=0.0 pres=49.0
+stat: drawn=2981 want=1374 fps=20.5 playing=0 seeks=120 aborts=6 dec=8389 bf=30 lock=0.0 draw=0.0 pres=50.2
+stat: drawn=4328 want=4302 fps=20.6 playing=0 seeks=132 aborts=6 dec=9021 bf=30 lock=0.0 draw=0.0 pres=70.7
+stat: drawn=4305 want=3463 fps=19.4 playing=0 seeks=143 aborts=7 dec=9791 bf=30 lock=0.0 draw=0.0 pres=50.8
+stat: drawn=3983 want=1178 fps=19.3 playing=0 seeks=158 aborts=7 dec=10559 bf=30 lock=0.0 draw=0.0 pres=46.9
+stat: drawn=1910 want=1056 fps=20.1 playing=0 seeks=171 aborts=7 dec=11417 bf=30 lock=0.0 draw=0.0 pres=49.0
+stat: drawn=2351 want=2221 fps=19.9 playing=0 seeks=182 aborts=7 dec=12144 bf=30 lock=0.0 draw=0.0 pres=48.0
+stat: drawn=49 want=49 fps=20.5 playing=0 seeks=196 aborts=7 dec=12813 bf=30 lock=0.0 draw=0.0 pres=48.2
+stat: drawn=1221 want=1174 fps=20.5 playing=0 seeks=208 aborts=8 dec=13554 bf=30 lock=0.0 draw=0.0 pres=49.1
+stat: drawn=2594 want=1737 fps=20.3 playing=0 seeks=220 aborts=11 dec=14219 bf=30 lock=0.0 draw=0.0 pres=48.4
+stat: drawn=2207 want=2186 fps=20.5 playing=0 seeks=230 aborts=12 dec=14879 bf=30 lock=0.0 draw=0.0 pres=47.3
+stat: drawn=4345 want=4345 fps=19.9 playing=0 seeks=241 aborts=13 dec=15607 bf=30 lock=0.0 draw=0.0 pres=47.6
+stat: drawn=486 want=486 fps=20.6 playing=0 seeks=251 aborts=13 dec=16460 bf=30 lock=0.0 draw=0.0 pres=48.5
+stat: drawn=341 want=341 fps=20.8 playing=0 seeks=264 aborts=13 dec=17260 bf=30 lock=0.0 draw=0.0 pres=47.4
+stat: drawn=346 want=1000 fps=20.4 playing=0 seeks=278 aborts=13 dec=18067 bf=30 lock=0.0 draw=0.0 pres=47.8
+stat: drawn=3012 want=2699 fps=20.8 playing=0 seeks=293 aborts=13 dec=18850 bf=30 lock=0.0 draw=0.0 pres=45.8
+stat: drawn=3327 want=3640 fps=20.8 playing=0 seeks=305 aborts=13 dec=19666 bf=30 lock=0.0 draw=0.0 pres=45.6
+stat: drawn=591 want=991 fps=21.0 playing=0 seeks=318 aborts=14 dec=20425 bf=30 lock=0.0 draw=0.0 pres=48.9
+stat: drawn=2258 want=2993 fps=20.5 playing=0 seeks=328 aborts=14 dec=21149 bf=30 lock=0.0 draw=0.0 pres=47.5
+stat: drawn=3179 want=3899 fps=20.3 playing=0 seeks=337 aborts=16 dec=21916 bf=30 lock=0.0 draw=0.0 pres=48.8
+stat: drawn=2605 want=2500 fps=20.4 playing=0 seeks=349 aborts=17 dec=22652 bf=30 lock=0.0 draw=0.0 pres=45.8
+stat: drawn=2050 want=3622 fps=20.8 playing=0 seeks=358 aborts=18 dec=23415 bf=30 lock=0.0 draw=0.0 pres=45.9
+stat: drawn=3175 want=3215 fps=20.5 playing=0 seeks=373 aborts=18 dec=24180 bf=30 lock=0.0 draw=0.0 pres=52.9
+storm[A_seq_steps]: requests=90 painted=73 superseded=17 latency_ms median=42.4 p95=52.5 max=61.0
+storm[B_far_seeks]: requests=30 painted=30 superseded=0 latency_ms median=99.3 p95=166.3 max=168.9
+storm[C_scrub_storm]: requests=737 painted=92 superseded=645 latency_ms median=47.7 p95=57.8 max=62.3
+storm: ui_max_loop_gap_ms=79.5
+cpu: 184.9% of one core over 44.3 s (process total, all threads)
+engine-latency (request->ring published, present excluded): n=562 median=18.3 p95=161.7 max=21885049.0 ms

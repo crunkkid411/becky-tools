@@ -1,0 +1,127 @@
+=== RUN 1 ===
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+storm: phase A (sequential steps)
+stat: drawn=13 want=13 fps=18.6 playing=0
+stat: drawn=29 want=44 fps=16.5 playing=0
+stat: drawn=29 want=75 fps=15.3 playing=0
+stat: drawn=29 want=90 fps=16.0 playing=0
+stat: drawn=29 want=90 fps=16.9 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=1160 fps=13.0 playing=0
+stat: drawn=90 want=940 fps=15.4 playing=0
+stat: drawn=242 want=3565 fps=16.1 playing=0
+stat: drawn=242 want=1698 fps=12.5 playing=0
+stat: drawn=3240 want=1339 fps=15.6 playing=0
+stat: drawn=3240 want=4212 fps=15.8 playing=0
+stat: drawn=3240 want=2601 fps=16.9 playing=0
+stat: drawn=3240 want=3326 fps=16.7 playing=0
+stat: drawn=3240 want=2927 fps=16.5 playing=0
+stat: drawn=2400 want=2400 fps=15.8 playing=0
+stat: drawn=2400 want=203 fps=16.3 playing=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=16.5 playing=0
+stat: drawn=203 want=3084 fps=15.5 playing=0
+stat: drawn=203 want=195 fps=15.8 playing=0
+stat: drawn=203 want=1747 fps=17.5 playing=0
+stat: drawn=203 want=1424 fps=17.2 playing=0
+stat: drawn=92 want=4009 fps=17.0 playing=0
+stat: drawn=92 want=2643 fps=16.8 playing=0
+stat: drawn=92 want=3879 fps=16.5 playing=0
+stat: drawn=92 want=3143 fps=16.2 playing=0
+stat: drawn=92 want=4313 fps=15.5 playing=0
+stat: drawn=92 want=2182 fps=16.3 playing=0
+stat: drawn=92 want=1830 fps=16.3 playing=0
+stat: drawn=92 want=2363 fps=12.5 playing=0
+stat: drawn=92 want=1035 fps=15.8 playing=0
+stat: drawn=92 want=3296 fps=17.2 playing=0
+stat: drawn=92 want=1015 fps=16.7 playing=0
+stat: drawn=92 want=1711 fps=15.0 playing=0
+stat: drawn=92 want=1741 fps=15.4 playing=0
+stat: drawn=92 want=3291 fps=15.2 playing=0
+stat: drawn=92 want=342 fps=15.8 playing=0
+stat: drawn=92 want=3236 fps=10.4 playing=0
+stat: drawn=92 want=1581 fps=16.1 playing=0
+stat: drawn=92 want=1511 fps=16.7 playing=0
+stat: drawn=92 want=2148 fps=17.0 playing=0
+stat: drawn=92 want=87 fps=17.2 playing=0
+stat: drawn=92 want=3177 fps=16.2 playing=0
+stat: drawn=92 want=3067 fps=10.9 playing=0
+stat: drawn=92 want=2050 fps=16.1 playing=0
+stat: drawn=92 want=3440 fps=16.3 playing=0
+stat: drawn=92 want=3260 fps=17.0 playing=0
+storm[A_seq_steps]: requests=90 painted=17 superseded=73 latency_ms median=61.6 p95=1803.8 max=1803.8
+storm[B_far_seeks]: requests=30 painted=4 superseded=26 latency_ms median=321.1 p95=1596.3 max=1596.3
+storm[C_scrub_storm]: requests=738 painted=5 superseded=733 latency_ms median=61.4 p95=1354.3 max=1354.3
+storm: ui_max_loop_gap_ms=364.2
+cpu: 77.5% of one core over 48.6 s (process total, all threads)
+exit=0
+=== RUN 2 ===
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+storm: phase A (sequential steps)
+stat: drawn=13 want=13 fps=14.5 playing=0
+stat: drawn=21 want=39 fps=10.0 playing=0
+exit=1
+=== RUN 3 ===
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+storm: phase A (sequential steps)
+stat: drawn=13 want=13 fps=18.5 playing=0
+stat: drawn=27 want=44 fps=15.3 playing=0
+stat: drawn=27 want=76 fps=15.5 playing=0
+stat: drawn=27 want=90 fps=15.4 playing=0
+stat: drawn=27 want=90 fps=15.8 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=1160 fps=16.0 playing=0
+stat: drawn=90 want=405 fps=16.3 playing=0
+stat: drawn=90 want=242 fps=16.5 playing=0
+stat: drawn=1500 want=2223 fps=15.5 playing=0
+stat: drawn=3240 want=3240 fps=15.8 playing=0
+stat: drawn=3240 want=2033 fps=15.9 playing=0
+stat: drawn=3240 want=462 fps=15.9 playing=0
+stat: drawn=3240 want=3326 fps=15.8 playing=0
+stat: drawn=3240 want=2927 fps=16.1 playing=0
+stat: drawn=3240 want=2400 fps=16.3 playing=0
+stat: drawn=2400 want=203 fps=16.5 playing=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=16.4 playing=0
+stat: drawn=203 want=3111 fps=16.5 playing=0
+stat: drawn=2403 want=1205 fps=17.4 playing=0
+stat: drawn=2403 want=3037 fps=15.8 playing=0
+stat: drawn=2403 want=1471 fps=16.2 playing=0
+stat: drawn=39 want=4251 fps=16.0 playing=0
+stat: drawn=39 want=2643 fps=16.4 playing=0
+stat: drawn=39 want=3879 fps=16.1 playing=0
+stat: drawn=39 want=3143 fps=15.8 playing=0
+stat: drawn=39 want=4335 fps=15.6 playing=0
+stat: drawn=39 want=2134 fps=16.7 playing=0
+stat: drawn=39 want=1857 fps=16.2 playing=0
+stat: drawn=39 want=2423 fps=17.0 playing=0
+stat: drawn=39 want=982 fps=17.2 playing=0
+stat: drawn=0 want=47 fps=15.8 playing=0
+stat: drawn=0 want=3503 fps=16.5 playing=0
+stat: drawn=0 want=1713 fps=17.2 playing=0
+stat: drawn=0 want=1762 fps=16.2 playing=0
+stat: drawn=0 want=97 fps=16.5 playing=0
+stat: drawn=0 want=342 fps=16.3 playing=0
+stat: drawn=0 want=3242 fps=16.7 playing=0
+stat: drawn=0 want=2891 fps=16.5 playing=0
+stat: drawn=0 want=1510 fps=16.2 playing=0
+stat: drawn=0 want=2130 fps=17.0 playing=0
+stat: drawn=0 want=2404 fps=16.5 playing=0
+stat: drawn=0 want=3165 fps=16.5 playing=0
+stat: drawn=0 want=2408 fps=16.0 playing=0
+stat: drawn=0 want=2030 fps=15.8 playing=0
+stat: drawn=0 want=3511 fps=15.9 playing=0
+stat: drawn=0 want=3217 fps=16.0 playing=0
+stat: drawn=0 want=3217 fps=16.1 playing=0
+storm[A_seq_steps]: requests=90 painted=15 superseded=75 latency_ms median=61.5 p95=1962.2 max=1962.2
+storm[B_far_seeks]: requests=30 painted=5 superseded=25 latency_ms median=201.2 p95=1569.0 max=1569.0
+storm[C_scrub_storm]: requests=737 painted=5 superseded=732 latency_ms median=61.7 p95=62.1 max=62.1
+storm: ui_max_loop_gap_ms=208.8
+cpu: 78.8% of one core over 49.4 s (process total, all threads)
+exit=0

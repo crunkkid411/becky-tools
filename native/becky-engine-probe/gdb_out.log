@@ -1,0 +1,139 @@
+[New Thread 12132.0x12d0]
+[New Thread 12132.0x1ad4]
+[New Thread 12132.0x2bbc]
+[New Thread 12132.0x3b90]
+warning: onecore\windows\directx\database\helperlibrary\lib\directxdatabasehelper.cpp(652)\dxgi.dll!00007FFA6E68F221: (caller: 00007FFA6E68ED28) ReturnHr(1) tid(36dc) 80004002 No such interface supported
+[New Thread 12132.0x336c]
+[New Thread 12132.0x1cf0]
+[Thread 12132.0x1cf0 exited with code 0]
+[New Thread 12132.0x35fc]
+[New Thread 12132.0x14a8]
+[New Thread 12132.0x2994]
+[New Thread 12132.0x179c]
+[New Thread 12132.0x7f8]
+[New Thread 12132.0x205c]
+[New Thread 12132.0xb70]
+[New Thread 12132.0x2828]
+[New Thread 12132.0x2e1c]
+[New Thread 12132.0x2394]
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+audio: no audio stream found in X:\Videos\2025\11_November\Rendered\post_constantly.mp4, video-only
+[New Thread 12132.0x339c]
+[New Thread 12132.0x30f4]
+[New Thread 12132.0x1a58]
+[New Thread 12132.0x3c28]
+[New Thread 12132.0x144c]
+[New Thread 12132.0x34a8]
+[New Thread 12132.0xabc]
+[New Thread 12132.0x2590]
+[New Thread 12132.0x35d8]
+[New Thread 12132.0x2398]
+[New Thread 12132.0x2684]
+[New Thread 12132.0x3e88]
+[New Thread 12132.0x2294]
+[New Thread 12132.0x2e8c]
+[New Thread 12132.0x3e08]
+[New Thread 12132.0x3f50]
+[New Thread 12132.0x3184]
+[New Thread 12132.0x1d40]
+[New Thread 12132.0x3748]
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+storm: phase A (sequential steps)
+stat: drawn=1 want=1 fps=10.9 playing=0
+stat: drawn=14 want=14 fps=12.2 playing=0
+stat: drawn=28 want=28 fps=10.1 playing=0
+[New Thread 12132.0x2b48]
+[New Thread 12132.0x3a5c]
+stat: drawn=34 want=34 fps=5.5 playing=0
+warning: onecore\base\appmodel\runtime\winrt\lib\windows.applicationmodel.package.cpp(1008)\Windows.ApplicationModel.dll!00007FFA659138EF: (caller: 00007FFA658FCAFC) ReturnHr(1) tid(3b90) 80070002 The system cannot find the file specified.
+warning: onecore\base\appmodel\runtime\winrt\lib\windows.applicationmodel.package.cpp(512)\Windows.ApplicationModel.dll!00007FFA65913761: (caller: 00007FF9F9369E76) ReturnHr(2) tid(3b90) 80070002 The system cannot find the file specified.
+stat: drawn=50 want=50 fps=15.5 playing=0
+stat: drawn=67 want=67 fps=16.2 playing=0
+stat: drawn=85 want=85 fps=17.2 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=1160 fps=17.0 playing=0
+stat: drawn=90 want=405 fps=16.5 playing=0
+stat: drawn=90 want=2287 fps=16.4 playing=0
+stat: drawn=1500 want=1500 fps=17.3 playing=0
+stat: drawn=2223 want=4025 fps=16.8 playing=0
+stat: drawn=3240 want=1722 fps=13.1 playing=0
+stat: drawn=3240 want=775 fps=11.4 playing=0
+stat: drawn=3240 want=2092 fps=15.6 playing=0
+stat: drawn=3240 want=3437 fps=16.3 playing=0
+stat: drawn=3240 want=4302 fps=16.7 playing=0
+stat: drawn=2400 want=203 fps=17.2 playing=0
+stat: drawn=2400 want=203 fps=16.3 playing=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=17.0 playing=0
+stat: drawn=203 want=3764 fps=15.7 playing=0
+stat: drawn=203 want=3260 fps=17.0 playing=0
+stat: drawn=2403 want=254 fps=16.2 playing=0
+stat: drawn=2403 want=2971 fps=16.6 playing=0
+stat: drawn=2403 want=4193 fps=16.6 playing=0
+stat: drawn=205 want=205 fps=16.7 playing=0
+stat: drawn=92 want=39 fps=17.7 playing=0
+stat: drawn=92 want=1236 fps=12.4 playing=0
+stat: drawn=92 want=2527 fps=11.5 playing=0
+[Thread 12132.0x336c exited with code 0]
+stat: drawn=92 want=2753 fps=16.1 playing=0
+stat: drawn=92 want=385 fps=16.9 playing=0
+stat: drawn=92 want=1320 fps=16.4 playing=0
+stat: drawn=92 want=3665 fps=17.3 playing=0
+[Thread 12132.0x3a5c exited with code 0]
+stat: drawn=92 want=3279 fps=17.2 playing=0
+stat: drawn=92 want=3463 fps=16.2 playing=0
+stat: drawn=92 want=3953 fps=14.8 playing=0
+stat: drawn=92 want=5 fps=11.4 playing=0
+stat: drawn=92 want=3293 fps=15.8 playing=0
+stat: drawn=101 want=2394 fps=16.0 playing=0
+stat: drawn=101 want=2221 fps=17.1 playing=0
+stat: drawn=101 want=3367 fps=16.2 playing=0
+stat: drawn=0 want=3376 fps=16.9 playing=0
+stat: drawn=0 want=1104 fps=17.0 playing=0
+stat: drawn=0 want=2638 fps=17.0 playing=0
+stat: drawn=0 want=1705 fps=17.0 playing=0
+stat: drawn=0 want=1764 fps=16.1 playing=0
+stat: drawn=0 want=2147 fps=16.6 playing=0
+stat: drawn=97 want=3294 fps=16.5 playing=0
+stat: drawn=97 want=477 fps=16.2 playing=0
+stat: drawn=97 want=477 fps=16.6 playing=0
+storm[A_seq_steps]: requests=90 painted=90 superseded=0 latency_ms median=62.5 p95=176.7 max=446.6
+storm[B_far_seeks]: requests=30 painted=6 superseded=24 latency_ms median=288.1 p95=1590.3 max=1590.3
+storm[C_scrub_storm]: requests=473 painted=9 superseded=464 latency_ms median=59.7 p95=70.6 max=70.6
+storm: ui_max_loop_gap_ms=446.6
+[Thread 12132.0xabc exited with code 0]
+cpu: 78.0% of one core over 52.7 s (process total, all threads)
+[Thread 12132.0x12d0 exited with code 0]
+[Thread 12132.0x14a8 exited with code 0]
+[Thread 12132.0x1ad4 exited with code 0]
+[Thread 12132.0x35fc exited with code 0]
+[Thread 12132.0x3b90 exited with code 0]
+[Thread 12132.0x2bbc exited with code 0]
+[Thread 12132.0x2b48 exited with code 0]
+[Thread 12132.0x3f50 exited with code 0]
+[Thread 12132.0x3184 exited with code 0]
+[Thread 12132.0x3748 exited with code 0]
+[Thread 12132.0x1d40 exited with code 0]
+[Thread 12132.0x3e08 exited with code 0]
+[Thread 12132.0x2590 exited with code 0]
+[Thread 12132.0x2398 exited with code 0]
+[Thread 12132.0x2394 exited with code 0]
+[Thread 12132.0x2294 exited with code 0]
+[Thread 12132.0x35d8 exited with code 0]
+[Thread 12132.0x3e88 exited with code 0]
+[Thread 12132.0x2e8c exited with code 0]
+[Thread 12132.0x2e1c exited with code 0]
+[Thread 12132.0x144c exited with code 0]
+[Thread 12132.0x30f4 exited with code 0]
+[Thread 12132.0x2684 exited with code 0]
+[Thread 12132.0xb70 exited with code 0]
+[Thread 12132.0x34a8 exited with code 0]
+[Thread 12132.0x3c28 exited with code 0]
+[Thread 12132.0x339c exited with code 0]
+[Thread 12132.0x205c exited with code 0]
+[Thread 12132.0x2994 exited with code 0]
+[Thread 12132.0x179c exited with code 0]
+[Thread 12132.0x1a58 exited with code 0]
+[Thread 12132.0x7f8 exited with code 0]
+[Thread 12132.0x2828 exited with code 0]
+[Inferior 1 (process 12132) exited normally]

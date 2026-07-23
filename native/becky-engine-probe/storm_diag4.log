@@ -1,0 +1,26 @@
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+audio: no audio stream found in X:\AI-2\becky-wt-engine\native\becky-engine-probe\post_constantly.scrub.mp4, video-only
+play X:\AI-2\becky-wt-engine\native\becky-engine-probe\post_constantly.scrub.mp4: 304x540 fps=30000/1001 frames=4500
+storm: phase A (sequential steps)
+stat: drawn=13 want=13 fps=18.6 playing=0 seeks=1 aborts=0 dec=19 bf=0
+stat: drawn=18 want=44 fps=16.3 playing=0 seeks=1 aborts=0 dec=28 bf=0
+stat: drawn=18 want=75 fps=16.7 playing=0 seeks=1 aborts=0 dec=44 bf=0
+stat: drawn=18 want=90 fps=16.5 playing=0 seeks=1 aborts=0 dec=61 bf=0
+stat: drawn=18 want=90 fps=16.3 playing=0 seeks=1 aborts=0 dec=77 bf=0
+storm: phase B (far random seeks)
+stat: drawn=18 want=1160 fps=16.3 playing=0 seeks=1 aborts=0 dec=85 bf=0
+stat: drawn=894 want=405 fps=16.5 playing=0 seeks=5 aborts=0 dec=97 bf=0
+stat: drawn=2287 want=242 fps=16.5 playing=0 seeks=7 aborts=0 dec=105 bf=0
+stat: drawn=1500 want=2223 fps=16.2 playing=0 seeks=11 aborts=0 dec=114 bf=0
+stat: drawn=3240 want=3240 fps=16.3 playing=0 seeks=14 aborts=0 dec=123 bf=0
+stat: drawn=1722 want=2033 fps=16.8 playing=0 seeks=17 aborts=0 dec=131 bf=0
+stat: drawn=462 want=462 fps=15.9 playing=0 seeks=20 aborts=0 dec=140 bf=0
+stat: drawn=2895 want=3326 fps=16.3 playing=0 seeks=23 aborts=0 dec=148 bf=0
+stat: drawn=764 want=2927 fps=16.8 playing=0 seeks=26 aborts=0 dec=157 bf=0
+stat: drawn=3985 want=2400 fps=16.5 playing=0 seeks=29 aborts=0 dec=165 bf=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=16.2 playing=0 seeks=31 aborts=0 dec=174 bf=0
+stat: drawn=203 want=3084 fps=16.7 playing=0 seeks=35 aborts=0 dec=183 bf=0
+stat: drawn=203 want=195 fps=16.8 playing=0 seeks=43 aborts=0 dec=192 bf=0
+stat: drawn=203 want=1747 fps=16.3 playing=0 seeks=49 aborts=0 dec=203 bf=0
+cpu: 82.0% of one core over 20.0 s (process total, all threads)

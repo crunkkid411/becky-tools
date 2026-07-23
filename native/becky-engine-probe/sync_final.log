@@ -1,0 +1,24 @@
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+sync: playback auto-started at frame 0 (audio=on)
+stat: drawn=5 want=26 fps=18.0 playing=1
+stat: drawn=5 want=57 fps=16.5 playing=1
+stat: drawn=5 want=87 fps=15.8 playing=1
+stat: drawn=5 want=118 fps=16.0 playing=1
+stat: drawn=5 want=149 fps=13.8 playing=1
+stat: drawn=5 want=180 fps=15.4 playing=1
+stat: drawn=5 want=211 fps=17.0 playing=1
+stat: drawn=5 want=242 fps=17.4 playing=1
+stat: drawn=5 want=273 fps=16.3 playing=1
+stat: drawn=5 want=304 fps=15.0 playing=1
+stat: drawn=5 want=336 fps=16.5 playing=1
+stat: drawn=5 want=366 fps=15.8 playing=1
+stat: drawn=5 want=398 fps=16.0 playing=1
+stat: drawn=5 want=428 fps=17.0 playing=1
+stat: drawn=5 want=459 fps=13.0 playing=1
+stat: drawn=5 want=491 fps=15.3 playing=1
+stat: drawn=5 want=522 fps=15.8 playing=1
+stat: drawn=5 want=552 fps=17.0 playing=1
+stat: drawn=5 want=583 fps=16.5 playing=1
+cpu: 82.9% of one core over 20.0 s (process total, all threads)

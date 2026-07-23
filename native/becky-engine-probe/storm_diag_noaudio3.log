@@ -1,0 +1,16 @@
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+audio: no audio stream found in X:\Videos\2025\11_November\Rendered\post_constantly.mp4, video-only
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+storm: phase A (sequential steps)
+stat: drawn=8 want=8 fps=18.6 playing=0
+stat: drawn=26 want=26 fps=17.2 playing=0
+stat: drawn=44 want=44 fps=17.4 playing=0
+stat: drawn=62 want=62 fps=17.2 playing=0
+stat: drawn=79 want=79 fps=17.0 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=90 fps=16.2 playing=0
+stat: drawn=90 want=894 fps=16.5 playing=0
+stat: drawn=90 want=2287 fps=15.3 playing=0
+stat: drawn=242 want=1500 fps=16.4 playing=0
+stat: drawn=2223 want=4025 fps=17.0 playing=0
+stat: drawn=3240 want=1339 fps=16.5 playing=0
