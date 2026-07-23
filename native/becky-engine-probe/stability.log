@@ -1,0 +1,98 @@
+=== RUN 1 ===
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+storm: phase A (sequential steps)
+stat: drawn=7 want=7 fps=17.7 playing=0
+stat: drawn=25 want=25 fps=17.2 playing=0
+stat: drawn=42 want=42 fps=16.7 playing=0
+stat: drawn=60 want=60 fps=17.2 playing=0
+stat: drawn=77 want=77 fps=17.0 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=90 fps=16.7 playing=0
+stat: drawn=90 want=3327 fps=16.0 playing=0
+stat: drawn=90 want=940 fps=17.2 playing=0
+stat: drawn=242 want=3565 fps=16.8 playing=0
+stat: drawn=2223 want=1698 fps=16.9 playing=0
+stat: drawn=3240 want=3240 fps=13.7 playing=0
+stat: drawn=2033 want=2033 fps=60372.8 playing=0
+stat: drawn=462 want=462 fps=103301.8 playing=0
+stat: drawn=2895 want=2895 fps=121425.7 playing=0
+stat: drawn=764 want=764 fps=132332.6 playing=0
+stat: drawn=3985 want=3985 fps=132087.9 playing=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=132742.0 playing=0
+stat: drawn=3111 want=3111 fps=129985.9 playing=0
+stat: drawn=1245 want=1245 fps=128125.2 playing=0
+stat: drawn=3029 want=3029 fps=133018.9 playing=0
+stat: drawn=1473 want=1473 fps=129077.9 playing=0
+stat: drawn=3 want=3 fps=133852.2 playing=0
+stat: drawn=2582 want=2582 fps=133710.9 playing=0
+stat: drawn=2656 want=2656 fps=136658.0 playing=0
+stat: drawn=2979 want=2979 fps=109003.3 playing=0
+stat: drawn=3703 want=3703 fps=47405.0 playing=0
+stat: drawn=3272 want=3272 fps=79681.8 playing=0
+stat: drawn=3463 want=3463 fps=49932.7 playing=0
+stat: drawn=1220 want=1220 fps=117823.1 playing=0
+stat: drawn=1108 want=1108 fps=128489.8 playing=0
+stat: drawn=2120 want=2120 fps=130483.5 playing=0
+stat: drawn=0 want=0 fps=129776.0 playing=0
+stat: drawn=1206 want=1206 fps=128513.9 playing=0
+stat: drawn=2536 want=2536 fps=133587.7 playing=0
+stat: drawn=2150 want=2150 fps=129571.3 playing=0
+stat: drawn=4444 want=4481 fps=69703.2 playing=0
+stat: drawn=3259 want=3259 fps=98241.6 playing=0
+stat: drawn=286 want=286 fps=124990.1 playing=0
+stat: drawn=3200 want=3200 fps=134545.9 playing=0
+stat: drawn=3055 want=3055 fps=135904.1 playing=0
+stat: drawn=857 want=857 fps=133545.4 playing=0
+stat: drawn=2130 want=2130 fps=89170.5 playing=0
+stat: drawn=1073 want=1073 fps=70671.8 playing=0
+stat: drawn=3014 want=3014 fps=119450.5 playing=0
+stat: drawn=1437 want=1437 fps=130028.1 playing=0
+stat: drawn=2523 want=2523 fps=133177.2 playing=0
+storm[A_seq_steps]: requests=90 painted=90 superseded=0 latency_ms median=61.3 p95=76.9 max=79.2
+storm[B_far_seeks]: requests=30 painted=21 superseded=9 latency_ms median=2.4 p95=291.3 max=354.7
+storm[C_scrub_storm]: requests=697 painted=678 superseded=19 latency_ms median=1.1 p95=2.9 max=33.8
+storm: ui_max_loop_gap_ms=328.5
+cpu: 93.9% of one core over 47.2 s (process total, all threads)
+exit=0
+=== RUN 2 ===
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+audio: Speakers (Realtek(R) Audio) @ 48000 Hz stereo (WASAPI via PortAudio)
+storm: phase A (sequential steps)
+stat: drawn=6 want=6 fps=14.7 playing=0
+stat: drawn=22 want=22 fps=15.4 playing=0
+stat: drawn=38 want=38 fps=15.5 playing=0
+stat: drawn=55 want=55 fps=16.1 playing=0
+stat: drawn=70 want=70 fps=14.7 playing=0
+stat: drawn=86 want=86 fps=15.8 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=1160 fps=15.8 playing=0
+stat: drawn=90 want=405 fps=16.4 playing=0
+stat: drawn=90 want=2287 fps=17.0 playing=0
+stat: drawn=1500 want=1500 fps=16.9 playing=0
+stat: drawn=2223 want=4025 fps=14.0 playing=0
+stat: drawn=3240 want=1722 fps=13.8 playing=0
+stat: drawn=3240 want=775 fps=13.8 playing=0
+stat: drawn=3240 want=2601 fps=13.4 playing=0
+stat: drawn=3240 want=3326 fps=16.3 playing=0
+stat: drawn=3240 want=2927 fps=17.0 playing=0
+stat: drawn=2400 want=2400 fps=16.3 playing=0
+stat: drawn=2400 want=203 fps=15.8 playing=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=203 want=203 fps=16.5 playing=0
+stat: drawn=203 want=3967 fps=13.8 playing=0
+stat: drawn=203 want=3110 fps=12.5 playing=0
+stat: drawn=2403 want=2331 fps=15.1 playing=0
+stat: drawn=2403 want=307 fps=17.0 playing=0
+stat: drawn=2403 want=1709 fps=15.8 playing=0
+stat: drawn=2403 want=3157 fps=15.4 playing=0
+stat: drawn=205 want=161 fps=15.8 playing=0
+stat: drawn=92 want=57 fps=15.5 playing=0
+stat: drawn=92 want=521 fps=17.2 playing=0
+stat: drawn=92 want=2758 fps=16.7 playing=0
+stat: drawn=92 want=3791 fps=16.0 playing=0
+stat: drawn=92 want=2983 fps=17.0 playing=0
+stat: drawn=92 want=3103 fps=17.0 playing=0

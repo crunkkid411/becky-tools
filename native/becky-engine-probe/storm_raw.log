@@ -1,0 +1,60 @@
+d3d11 device on adapter 1: NVIDIA GeForce RTX 3070 Laptop GPU
+play X:\Videos\2025\11_November\Rendered\post_constantly.mp4: 1080x1920 fps=30000/1001 frames=4500
+storm: phase A (sequential steps)
+stat: drawn=6 want=6 fps=17.8 playing=0
+stat: drawn=23 want=23 fps=16.1 playing=0
+stat: drawn=39 want=39 fps=15.4 playing=0
+stat: drawn=56 want=56 fps=16.4 playing=0
+stat: drawn=73 want=73 fps=16.1 playing=0
+stat: drawn=89 want=89 fps=15.8 playing=0
+storm: phase B (far random seeks)
+stat: drawn=90 want=3327 fps=16.4 playing=0
+stat: drawn=90 want=405 fps=16.3 playing=0
+stat: drawn=90 want=242 fps=16.1 playing=0
+stat: drawn=90 want=2223 fps=16.0 playing=0
+stat: drawn=90 want=3240 fps=16.1 playing=0
+stat: drawn=3240 want=2033 fps=16.4 playing=0
+stat: drawn=3240 want=462 fps=16.0 playing=0
+stat: drawn=3240 want=2092 fps=15.9 playing=0
+stat: drawn=3240 want=3437 fps=15.8 playing=0
+stat: drawn=3240 want=4302 fps=16.1 playing=0
+stat: drawn=3240 want=203 fps=15.8 playing=0
+stat: drawn=3240 want=203 fps=15.6 playing=0
+storm: phase C (25 req/s scrub storm, 30 s)
+stat: drawn=3240 want=203 fps=15.6 playing=0
+stat: drawn=3240 want=3959 fps=15.9 playing=0
+stat: drawn=3240 want=3231 fps=16.0 playing=0
+stat: drawn=3240 want=1293 fps=16.2 playing=0
+stat: drawn=3240 want=183 fps=16.5 playing=0
+stat: drawn=3240 want=1779 fps=16.3 playing=0
+stat: drawn=3240 want=1523 fps=16.5 playing=0
+stat: drawn=84 want=112 fps=16.5 playing=0
+stat: drawn=93 want=1163 fps=16.3 playing=0
+stat: drawn=93 want=2582 fps=16.5 playing=0
+stat: drawn=93 want=2732 fps=17.0 playing=0
+stat: drawn=93 want=474 fps=16.3 playing=0
+stat: drawn=93 want=1374 fps=15.8 playing=0
+stat: drawn=93 want=3759 fps=17.4 playing=0
+stat: drawn=93 want=3279 fps=17.0 playing=0
+stat: drawn=93 want=3463 fps=16.5 playing=0
+stat: drawn=93 want=3950 fps=17.2 playing=0
+stat: drawn=93 want=1902 fps=16.3 playing=0
+stat: drawn=101 want=101 fps=17.2 playing=0
+stat: drawn=101 want=2294 fps=16.7 playing=0
+stat: drawn=101 want=1025 fps=16.7 playing=0
+stat: drawn=101 want=0 fps=17.0 playing=0
+stat: drawn=101 want=1125 fps=17.0 playing=0
+stat: drawn=101 want=3215 fps=16.5 playing=0
+stat: drawn=101 want=1737 fps=16.5 playing=0
+stat: drawn=101 want=2197 fps=17.4 playing=0
+stat: drawn=101 want=4439 fps=16.8 playing=0
+stat: drawn=3244 want=4385 fps=16.3 playing=0
+stat: drawn=97 want=402 fps=15.6 playing=0
+stat: drawn=97 want=333 fps=17.0 playing=0
+stat: drawn=97 want=363 fps=17.4 playing=0
+storm[A_seq_steps]: requests=90 painted=90 superseded=0 latency_ms median=61.1 p95=77.4 max=91.4
+storm[B_far_seeks]: requests=30 painted=1 superseded=29 latency_ms median=244.5 p95=244.5 max=244.5
+storm[C_scrub_storm]: requests=489 painted=8 superseded=481 latency_ms median=61.8 p95=1495.0 max=1495.0
+storm: ui_max_loop_gap_ms=92.3
+cpu: 81.7% of one core over 51.1 s (process total, all threads)
+EXIT=0

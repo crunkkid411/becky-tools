@@ -24,6 +24,7 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <algorithm>
 #include <chrono>
 
 extern "C" {
@@ -35,6 +36,7 @@ extern "C" {
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 }
+#include <portaudio.h>
 
 static double nowMs() {
     static LARGE_INTEGER freq = { };
@@ -238,8 +240,17 @@ static int cmdDecode(const char* path, int nframes) {
 // Frame-exact seek per spec section 4: AVSEEK_FLAG_BACKWARD to the keyframe at
 // or before target, flush, then decode forward discarding until the frame whose
 // interval contains target_ts. Returns 1 and leaves the frame in f on success.
+// If abortWant is given: abort (-3) only when the CURRENT want leaves the
+// +/-15 window this seek serves. Exact-match aborting livelocked playback
+// (want advances every 33 ms; no ~250 ms keyframe walk could ever finish -
+// measured 2026-07-23, video froze at frame 18 while audio ran). Window-based
+// aborting keeps latest-chasing for real jumps but lets useful walks land.
+static const int RING = 31; // ring slots, +/-15 around the playhead
+static const int SEEK_ABORTED = -3;
 static int seekExact(Decoder& d, AVPacket* pkt, AVFrame* f,
-                     int64_t targetTs, AVRational fps, int* framesScanned) {
+                     int64_t targetTs, AVRational fps, int* framesScanned,
+                     const std::atomic<int64_t>* abortWant = nullptr,
+                     int64_t targetFrame = 0) {
     int64_t frameDurTb = av_rescale_q(1, av_inv_q(fps), d.tb);
     if (frameDurTb <= 0) frameDurTb = 1;
     int r = av_seek_frame(d.fmt, d.vstream, targetTs, AVSEEK_FLAG_BACKWARD);
@@ -247,6 +258,11 @@ static int seekExact(Decoder& d, AVPacket* pkt, AVFrame* f,
     avcodec_flush_buffers(d.ctx);
     int scanned = 0;
     for (;;) {
+        if (abortWant) {
+            int64_t w = abortWant->load(std::memory_order_relaxed);
+            if (w < targetFrame - RING / 2 || w > targetFrame + RING / 2)
+                return SEEK_ABORTED;
+        }
         r = nextFrame(d, pkt, f);
         if (r <= 0) return r; // eof before target or error
         scanned++;
@@ -304,7 +320,7 @@ static int cmdSeekTest(const char* path, AVRational fps, const std::vector<int64
 // risk 2); UI thread draws the due frame as an NV12->RGB quad and presents.
 // Arrow keys step +/-1 frame, PgUp/PgDn +/-30 (1 s), Space play/pause, Esc quit.
 
-static const int RING = 31; // +/-15 around the playhead
+
 
 struct RingSlot {
     std::atomic<int64_t> frame{-1};
@@ -316,12 +332,26 @@ struct RingSlot {
 struct PlayShared {
     RingSlot ring[RING];
     std::atomic<int64_t> want{0};      // playhead frame the UI wants shown
+    std::atomic<int64_t> wantStampMs{0}; // when want last changed (nowMs)
     std::atomic<bool>    quit{false};
     std::atomic<int64_t> eofAt{INT64_MAX}; // first frame index past EOF, if hit
     HANDLE wake = nullptr;             // decode thread wake-up
     AVD3D11VADeviceContext* d3dlock = nullptr; // FFmpeg's device lock: serialize ctx use
-    int codedW = 0, codedH = 0;        // decoder texture dims (may exceed display)
+    std::atomic<int> codedW{0}, codedH{0}; // decoder texture dims (may exceed display);
+                                            // written by the decode thread, read by the
+                                            // UI thread with no other lock - was a plain
+                                            // int (a real data race under -O2), found while
+                                            // chasing an intermittent storm-mode crash.
+    // instrumentation (decode-side truth for the storm reports)
+    std::atomic<int> seeksDone{0}, seeksAborted{0}, framesDecoded{0}, backfills{0};
 };
+
+// Single entry point for moving the playhead: store + stamp + wake.
+static void setWant(PlayShared& s, int64_t frame) {
+    s.want.store(frame);
+    s.wantStampMs.store((int64_t)nowMs());
+    SetEvent(s.wake);
+}
 
 static void d3dLock(PlayShared& s)   { if (s.d3dlock) s.d3dlock->lock(s.d3dlock->lock_ctx); }
 static void d3dUnlock(PlayShared& s) { if (s.d3dlock) s.d3dlock->unlock(s.d3dlock->lock_ctx); }
@@ -378,23 +408,58 @@ static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalF
         int64_t hi = want + RING / 2;
         if (totalFrames > 0 && hi >= totalFrames) hi = totalFrames - 1;
 
-        if (next < lo || next > hi + 1) {
-            // ring window jumped: frame-exact seek to lo, refill from there
-            int64_t targetTs = d->startTs + av_rescale_q(lo, av_inv_q(fps), d->tb);
+        // A small forward lag (decode briefly behind during playback) is
+        // caught up by plain sequential decoding - NVDEC decodes far faster
+        // than realtime, and a BACKWARD-flag reseek inside the same GOP would
+        // land on the SAME keyframe and be slower. Reseek only on real jumps.
+        if ((next < lo && want - next >= 60) || next > hi + 1 || next < 0) {
+            // Ring window jumped: seek straight to WANT and store it FIRST so
+            // the paint latency is one seek + one store, never a 15-frame
+            // backfill. Abortable: if want leaves this seek's +/-15 window,
+            // drop the stale walk and chase the new target.
+            int64_t targetTs = d->startTs + av_rescale_q(want, av_inv_q(fps), d->tb);
             int scanned = 0;
-            int r = seekExact(*d, pkt, f, targetTs, fps, &scanned);
+            int r = seekExact(*d, pkt, f, targetTs, fps, &scanned, &s->want, want);
+            if (r == SEEK_ABORTED) { s->seeksAborted++; next = -1000000; continue; }
             if (r != 1) { WaitForSingleObject(s->wake, 20); continue; }
-            ringStore(*s, f, lo);
+            s->seeksDone++; s->framesDecoded += scanned;
+            ringStore(*s, f, want);
             av_frame_unref(f);
-            next = lo + 1;
+            next = want + 1;
             s->eofAt.store(INT64_MAX);
             continue;
         }
-        if (next > hi) { // ring full ahead of playhead; sleep until it moves
+        if (next > hi) {
+            // Forward window full. Backfill [lo, want-1] so stepping BACK is a
+            // ring hit - but ONLY once the playhead has been still for 150 ms
+            // (backfill during a storm steals the decoder from latest-chasing;
+            // measured: it collapsed far-seek paints to 1/30).
+            int64_t missing = -1;
+            if ((int64_t)nowMs() - s->wantStampMs.load() > 150) {
+                for (int64_t i = lo; i < want; i++) {
+                    if (s->ring[i % RING].frame.load(std::memory_order_acquire) != i) { missing = i; break; }
+                }
+            }
+            if (missing >= 0) {
+                int64_t targetTs = d->startTs + av_rescale_q(missing, av_inv_q(fps), d->tb);
+                int scanned = 0;
+                int r = seekExact(*d, pkt, f, targetTs, fps, &scanned, &s->want, want);
+                if (r == SEEK_ABORTED) { next = -1000000; continue; }
+                if (r == 1) {
+                    s->backfills++;
+                    ringStore(*s, f, missing);
+                    av_frame_unref(f);
+                    next = missing + 1; // sequential fill continues from here
+                    // ponytail: frames [want, hi] get re-decoded on the way back
+                    // through - idle-time waste only, paint already happened.
+                    continue;
+                }
+            }
             WaitForSingleObject(s->wake, 5);
             continue;
         }
         int r = nextFrame(*d, pkt, f);
+        if (r == 1) s->framesDecoded++;
         if (r == 0) { // EOF
             s->eofAt.store(next);
             next = INT64_MAX / 2; // force reseek on next backward jump
@@ -402,7 +467,7 @@ static void decodeLoop(Decoder* d, PlayShared* s, AVRational fps, int64_t totalF
             continue;
         }
         if (r < 0) { Decoder::err("play decode", r); break; }
-        ringStore(*s, f, next);
+        if (next >= lo) ringStore(*s, f, next); // catch-up frames below lo: decode-and-discard
         av_frame_unref(f);
         next++;
     }
@@ -516,6 +581,42 @@ struct Renderer {
     }
 };
 
+// --- storm harness: measured proof that latest-chasing never blocks the UI ---
+// Phases: A sequential +1 steps @30/s, B far random seeks @3/s,
+//         C scrub storm @25 req/s for 30 s (wander +/-60 frames, 10% far jump).
+struct StormStats {
+    std::vector<double> lat;   // paint latency of requests that got painted
+    int requests = 0;
+    int painted = 0;
+    void report(const char* name) {
+        std::vector<double> v = lat;
+        std::sort(v.begin(), v.end());
+        double med = v.empty() ? 0 : v[v.size() / 2];
+        double p95 = v.empty() ? 0 : v[(size_t)(v.size() * 0.95)];
+        double mx  = v.empty() ? 0 : v.back();
+        printf("storm[%s]: requests=%d painted=%d superseded=%d latency_ms median=%.1f p95=%.1f max=%.1f\n",
+               name, requests, painted, requests - painted, med, p95, mx);
+    }
+};
+
+struct Storm {
+    bool     active = false;
+    int      phase = 0;          // 0=A seq, 1=B far, 2=C storm, 3=done
+    int      issued = 0;
+    double   nextReqAt = 0;
+    double   phaseT0 = 0;
+    int64_t  lastReqFrame = -1;
+    double   lastReqT = 0;
+    int      lastReqPhase = 0;
+    bool     lastPainted = true;
+    uint32_t rng = 0xBECC1;
+    StormStats stats[3];
+    double   uiMaxGap = 0;
+    double   lastLoopT = 0;
+    uint32_t rnd() { rng = rng * 1664525u + 1013904223u; return rng; }
+};
+static Storm g_storm;
+
 static PlayShared* g_ps = nullptr; // for WndProc
 static std::atomic<bool> g_playing{false};
 static double  g_stepT0 = 0;       // key press time for latency measurement
@@ -548,15 +649,130 @@ static LRESULT CALLBACK playWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             g_playing = false;
             g_stepT0 = nowMs();
             g_stepTarget = nw;
-            g_ps->want.store(nw);
-            SetEvent(g_ps->wake);
+            setWant(*g_ps, nw);
         }
         return 0;
     }
     return DefWindowProcW(h, m, w, l);
 }
 
-static int cmdPlay(const char* path, int exitAfterSec) {
+// ---------------------------------------------------------------- step 5: audio
+// WASAPI output via PortAudio, the same library+pattern proven working on this
+// machine by native/audio-host (audio_device.cpp): Pa_OpenStream on the default
+// device (which resolves to WASAPI here), a realtime pull callback, silence on
+// underrun. This is the "PORT the working WASAPI output" instruction - reusing
+// the proven library beats hand-rolling raw IAudioClient tonight.
+//
+// Audio is decoded on its own thread into a small SPSC float ring; the audio
+// device's own callback clock (frames actually pulled) becomes the ONE clock
+// `--play` schedules video against while playing - per spec section 2/7 risk 1,
+// this is what makes video unable to drift from audio: it IS the audio clock.
+
+struct AudioRing {
+    static const int64_t CAP = 48000 * 2 * 4; // ~4s stereo float @48kHz, interleaved samples
+    std::vector<float> buf;
+    std::atomic<int64_t> w{0}, r{0}; // interleaved-sample counters (monotonic)
+    AudioRing() : buf(CAP, 0.0f) {}
+    int64_t writable() const { return CAP - (w.load(std::memory_order_relaxed) - r.load(std::memory_order_relaxed)); }
+    void push(const float* src, int64_t n) {
+        int64_t ww = w.load(std::memory_order_relaxed);
+        for (int64_t i = 0; i < n; i++) buf[(ww + i) % CAP] = src[i];
+        w.store(ww + n, std::memory_order_release);
+    }
+    // Fills n interleaved samples into dst; missing tail is silence. Returns samples supplied from real audio.
+    int64_t pull(float* dst, int64_t n) {
+        int64_t ww = w.load(std::memory_order_acquire), rr = r.load(std::memory_order_relaxed);
+        int64_t avail = ww - rr;
+        int64_t take = avail < n ? avail : n;
+        if (take < 0) take = 0;
+        for (int64_t i = 0; i < take; i++) dst[i] = buf[(rr + i) % CAP];
+        for (int64_t i = take; i < n; i++) dst[i] = 0.0f;
+        r.store(rr + take, std::memory_order_release);
+        return take;
+    }
+};
+
+struct AudioDecoder {
+    AVCodecContext* actx = nullptr;
+    int astream = -1;
+    int outRate = 48000;
+    int outCh = 2;
+    SwrContext* swr = nullptr;
+
+    bool open(AVFormatContext* fmt) {
+        astream = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+        if (astream < 0) return false;
+        AVStream* st = fmt->streams[astream];
+        const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
+        if (!dec) return false;
+        actx = avcodec_alloc_context3(dec);
+        if (!actx) return false;
+        avcodec_parameters_to_context(actx, st->codecpar);
+        if (avcodec_open2(actx, dec, nullptr) < 0) { avcodec_free_context(&actx); return false; }
+        AVChannelLayout outLayout = AV_CHANNEL_LAYOUT_STEREO;
+        int r = swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLT, outRate,
+                                     &actx->ch_layout, actx->sample_fmt, actx->sample_rate,
+                                     0, nullptr);
+        if (r < 0 || !swr || swr_init(swr) < 0) { close(); return false; }
+        return true;
+    }
+    void close() {
+        if (swr) swr_free(&swr);
+        if (actx) avcodec_free_context(&actx);
+        astream = -1;
+    }
+};
+
+static std::atomic<int64_t> g_audioFramesConsumed{0}; // device-callback clock, sample-FRAMES (not interleaved)
+static std::atomic<int64_t> g_audioUnderrunFrames{0}; // frames the ring could not supply (silence filled)
+static std::atomic<int64_t> g_audioCallbacks{0};
+static AudioRing* g_audioRing = nullptr;
+
+static int paPullCallback(const void*, void* output, unsigned long frameCount,
+                          const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void*) {
+    float* out = (float*)output;
+    int64_t want = (int64_t)frameCount * 2; // stereo interleaved
+    int64_t got = g_audioRing ? g_audioRing->pull(out, want) : 0;
+    if (got < want) g_audioUnderrunFrames += (want - got) / 2;
+    g_audioFramesConsumed += frameCount;
+    g_audioCallbacks++;
+    return paContinue;
+}
+
+// Decode thread: pulls audio packets from the SAME AVFormatContext the video
+// decoder reads (single demuxer, both streams interleaved in one file) and
+// pushes resampled float stereo into the ring. Sleeps when the ring is full so
+// a stalled audio device (or none) cannot spin this thread at 100%.
+static void audioDecodeLoop(AVFormatContext* fmt, AudioDecoder* ad, AudioRing* ring, std::atomic<bool>* quit) {
+    AVPacket* pkt = av_packet_alloc();
+    AVFrame*  f = av_frame_alloc();
+    std::vector<float> tmp;
+    for (;;) {
+        if (quit->load(std::memory_order_relaxed)) break;
+        if (ring->writable() < 4096) { Sleep(2); continue; }
+        int r = avcodec_receive_frame(ad->actx, f);
+        if (r == AVERROR(EAGAIN)) {
+            int rr = av_read_frame(fmt, pkt);
+            if (rr < 0) { Sleep(5); continue; } // EOF: idle (single-file probe, no loop)
+            if (pkt->stream_index != ad->astream) { av_packet_unref(pkt); continue; }
+            avcodec_send_packet(ad->actx, pkt);
+            av_packet_unref(pkt);
+            continue;
+        }
+        if (r < 0) { Sleep(5); continue; }
+        int64_t outSamples = swr_get_out_samples(ad->swr, f->nb_samples);
+        if (outSamples <= 0) { av_frame_unref(f); continue; }
+        if ((int64_t)tmp.size() < outSamples * ad->outCh) tmp.resize(outSamples * ad->outCh);
+        uint8_t* outPtrs[1] = { (uint8_t*)tmp.data() };
+        int got = swr_convert(ad->swr, outPtrs, (int)outSamples, (const uint8_t**)f->data, f->nb_samples);
+        if (got > 0) ring->push(tmp.data(), (int64_t)got * ad->outCh);
+        av_frame_unref(f);
+    }
+    av_packet_free(&pkt);
+    av_frame_free(&f);
+}
+
+static int cmdPlay(const char* path, int exitAfterSec, bool storm, bool reportSync) {
     if (!createD3D11Device()) return 2;
     AVBufferRef* hwdev = createHwDeviceFromD3D();
     if (!hwdev) { fprintf(stderr, "no hw device - --play needs the hw path\n"); return 2; }
@@ -569,6 +785,67 @@ static int cmdPlay(const char* path, int exitAfterSec) {
                   : (int64_t)(d.fmt->duration / (double)AV_TIME_BASE * av_q2d(fps));
     printf("play %s: %dx%d fps=%d/%d frames=%lld\n", path, d.width, d.height,
            fps.num, fps.den, (long long)g_totalFrames);
+
+    // step 5: audio. Opened from the SAME AVFormatContext (one demuxer, two
+    // streams) so packets for both are read from one av_read_frame stream by
+    // whichever thread gets there first; each thread only consumes its own
+    // stream index and leaves the other's packets for the other thread's next
+    // av_read_frame call (FFmpeg's demuxer is safe to call from >1 thread only
+    // if serialized - so audioDecodeLoop and decodeLoop's own av_read_frame
+    // calls must not race). To avoid that hazard the video decode thread reads
+    // ONLY from its own private AVFormatContext (Decoder::open already does
+    // this per source), so a second, independent avformat_open_input for audio
+    // is used instead of sharing d.fmt.
+    AVFormatContext* afmt = nullptr;
+    AudioDecoder ad;
+    AudioRing aring;
+    std::atomic<bool> audioQuit{false};
+    std::thread audioThread;
+    bool haveAudio = false;
+    bool paStarted = false;
+    bool paInited = false;
+    PaStream* paStream = nullptr;
+    if (avformat_open_input(&afmt, path, nullptr, nullptr) == 0 &&
+        avformat_find_stream_info(afmt, nullptr) >= 0 &&
+        ad.open(afmt)) {
+        haveAudio = true;
+        g_audioRing = &aring;
+        audioThread = std::thread(audioDecodeLoop, afmt, &ad, &aring, &audioQuit);
+        PaError paErr = Pa_Initialize();
+        if (paErr == paNoError) {
+            paInited = true;
+            PaStreamParameters outp{};
+            outp.device = Pa_GetDefaultOutputDevice();
+            if (outp.device != paNoDevice) {
+                const PaDeviceInfo* info = Pa_GetDeviceInfo(outp.device);
+                outp.channelCount = 2;
+                outp.sampleFormat = paFloat32;
+                outp.suggestedLatency = info ? info->defaultLowOutputLatency : 0.05;
+                paErr = Pa_OpenStream(&paStream, nullptr, &outp, ad.outRate, 256,
+                                      paClipOff, paPullCallback, nullptr);
+                if (paErr == paNoError) {
+                    paErr = Pa_StartStream(paStream);
+                    if (paErr == paNoError) {
+                        paStarted = true;
+                        printf("audio: %s @ %d Hz stereo (WASAPI via PortAudio)\n",
+                               info && info->name ? info->name : "?", ad.outRate);
+                    } else {
+                        fprintf(stderr, "audio: Pa_StartStream failed: %s\n", Pa_GetErrorText(paErr));
+                    }
+                } else {
+                    fprintf(stderr, "audio: Pa_OpenStream failed: %s\n", Pa_GetErrorText(paErr));
+                }
+            } else {
+                fprintf(stderr, "audio: no default output device\n");
+            }
+        } else {
+            fprintf(stderr, "audio: Pa_Initialize failed: %s\n", Pa_GetErrorText(paErr));
+        }
+        if (!paStarted) fprintf(stderr, "audio: unavailable, playing video-only (degrade ladder step 2)\n");
+    } else {
+        fprintf(stderr, "audio: no audio stream found in %s, video-only\n", path);
+        if (afmt) avformat_close_input(&afmt);
+    }
 
     PlayShared ps;
     ps.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -600,6 +877,20 @@ static int cmdPlay(const char* path, int exitAfterSec) {
 
     std::thread dec(decodeLoop, &d, &ps, fps, g_totalFrames);
 
+    g_storm = Storm();
+    g_storm.active = storm;
+    g_storm.phase = -1; // waits for the first painted frame
+
+    // step 5 sync report: no human to press Space in an unattended run, so
+    // auto-start playback once the first frame paints, run for the window,
+    // then print the two numbers spec section 7 risk 1 asks for.
+    bool     syncStarted = false;
+    double   syncT0 = 0, syncNextSampleAt = 0;
+    int64_t  audioBaseFrames = 0;
+    int64_t  videoMaxLagFrames = 0;
+    std::vector<double> driftSamples;
+    int      syncWindowSec = exitAfterSec > 0 ? exitAfterSec : 60;
+
     int64_t lastDrawn = -1;
     ID3D11ShaderResourceView *lastY = nullptr, *lastUV = nullptr;
     int frames60 = 0; double statT0 = nowMs(); double runT0 = nowMs();
@@ -616,11 +907,122 @@ static int cmdPlay(const char* path, int exitAfterSec) {
         }
         if (done) break;
 
+        if (reportSync && !syncStarted && lastDrawn >= 0) {
+            syncStarted = true;
+            g_playing = true;
+            g_playAnchorMs = nowMs();
+            g_playAnchorFrame = lastDrawn;
+            audioBaseFrames = g_audioFramesConsumed.load();
+            syncT0 = nowMs();
+            syncNextSampleAt = syncT0 + 500;
+            printf("sync: playback auto-started at frame %lld (audio=%s)\n",
+                   (long long)lastDrawn, paStarted ? "on" : "OFF");
+        }
+
         if (g_playing) {
-            double el = (nowMs() - g_playAnchorMs) / 1000.0;
+            // Audio-master clock (spec section 2/7 risk 1): while audio is
+            // running, video schedules to samples actually consumed by the
+            // device callback, not QPC - video CANNOT drift from audio because
+            // its schedule IS the audio clock. QPC is only the fallback when
+            // audio failed to open (degrade ladder step 2).
+            double el = paStarted
+                ? (double)(g_audioFramesConsumed.load() - audioBaseFrames) / ad.outRate
+                : (nowMs() - g_playAnchorMs) / 1000.0;
             int64_t due = g_playAnchorFrame + (int64_t)(el * av_q2d(fps));
             if (g_totalFrames > 0 && due >= g_totalFrames) { due = g_totalFrames - 1; g_playing = false; }
-            if (due != ps.want.load()) { ps.want.store(due); SetEvent(ps.wake); }
+            if (due != ps.want.load()) setWant(ps, due);
+        }
+
+        if (reportSync && syncStarted) {
+            double t = nowMs();
+            if (g_playing) {
+                int64_t lag = ps.want.load() - lastDrawn;
+                if (lag > videoMaxLagFrames) videoMaxLagFrames = lag;
+            }
+            if (t >= syncNextSampleAt) {
+                double wallEl = (t - syncT0) / 1000.0;
+                double audioEl = paStarted
+                    ? (double)(g_audioFramesConsumed.load() - audioBaseFrames) / ad.outRate
+                    : wallEl;
+                double d = wallEl - audioEl;
+                driftSamples.push_back(d < 0 ? -d : d);
+                syncNextSampleAt = t + 500;
+            }
+            if (t - syncT0 >= syncWindowSec * 1000.0) {
+                double maxDrift = 0, sumDrift = 0;
+                for (double v : driftSamples) { if (v > maxDrift) maxDrift = v; sumDrift += v; }
+                double avgDrift = driftSamples.empty() ? 0 : sumDrift / driftSamples.size();
+                int64_t cb = g_audioCallbacks.load(), under = g_audioUnderrunFrames.load();
+                printf("sync: window=%ds audio=%s underrun_frames=%lld callbacks=%lld max_video_lag_frames=%lld\n",
+                       syncWindowSec, paStarted ? "on" : "off",
+                       (long long)under, (long long)cb, (long long)videoMaxLagFrames);
+                printf("sync: wall-vs-audio-clock drift_ms max=%.2f avg=%.2f samples=%d (threshold 33.00) -> %s\n",
+                       maxDrift, avgDrift, (int)driftSamples.size(),
+                       !paStarted ? "N/A-no-audio" : (maxDrift < 33.0 && under == 0 ? "PASS" : "FAIL"));
+                fflush(stdout);
+                done = true;
+            }
+        }
+
+        if (g_storm.active) {
+            double t = nowMs();
+            if (g_storm.phase >= 0 && g_storm.lastLoopT > 0) {
+                double gap = t - g_storm.lastLoopT;
+                if (gap > g_storm.uiMaxGap) g_storm.uiMaxGap = gap;
+            }
+            g_storm.lastLoopT = t;
+            if (g_storm.phase < 0 && lastDrawn >= 0) { // first frame painted: start
+                g_storm.phase = 0; g_storm.phaseT0 = t; g_storm.nextReqAt = t + 500;
+                g_storm.lastReqFrame = lastDrawn;
+                printf("storm: phase A (sequential steps)\n");
+            }
+            // burst loop: keep the 25 req/s cadence honest even when a slow
+            // present period (GPU contention) drops the UI loop below 25 Hz
+            for (int burst = 0; burst < 4 &&
+                 g_storm.phase >= 0 && g_storm.phase < 3 && t >= g_storm.nextReqAt; burst++) {
+                bool phaseDone =
+                    (g_storm.phase == 0 && g_storm.issued >= 90) ||
+                    (g_storm.phase == 1 && g_storm.issued >= 30) ||
+                    (g_storm.phase == 2 && t - g_storm.phaseT0 >= 30000.0);
+                if (phaseDone) {
+                    // let the last request land (or time out) before switching
+                    if (g_storm.lastPainted || t - g_storm.lastReqT > 2000.0) {
+                        g_storm.phase++; g_storm.issued = 0;
+                        g_storm.phaseT0 = t; g_storm.nextReqAt = t + 500;
+                        if (g_storm.phase == 1) printf("storm: phase B (far random seeks)\n");
+                        if (g_storm.phase == 2) printf("storm: phase C (25 req/s scrub storm, 30 s)\n");
+                        if (g_storm.phase == 3) {
+                            g_storm.stats[0].report("A_seq_steps");
+                            g_storm.stats[1].report("B_far_seeks");
+                            g_storm.stats[2].report("C_scrub_storm");
+                            printf("storm: ui_max_loop_gap_ms=%.1f\n", g_storm.uiMaxGap);
+                            fflush(stdout);
+                            done = true;
+                        }
+                    }
+                } else {
+                    int64_t base = g_storm.lastReqFrame >= 0 ? g_storm.lastReqFrame : lastDrawn;
+                    int64_t target = -1; double interval = 40.0;
+                    switch (g_storm.phase) {
+                    case 0: target = base + 1; interval = 1000.0 / 30.0; break;
+                    case 1: target = (int64_t)(g_storm.rnd() % (uint32_t)g_totalFrames);
+                            interval = 1000.0 / 3.0; break;
+                    case 2: if (g_storm.rnd() % 10 == 0)
+                                target = (int64_t)(g_storm.rnd() % (uint32_t)g_totalFrames);
+                            else
+                                target = base + (int64_t)(g_storm.rnd() % 121) - 60;
+                            interval = 40.0; break;
+                    }
+                    if (target < 0) target = 0;
+                    if (target >= g_totalFrames) target = g_totalFrames - 1;
+                    g_storm.stats[g_storm.phase].requests++;
+                    g_storm.lastReqFrame = target; g_storm.lastReqT = t;
+                    g_storm.lastReqPhase = g_storm.phase; g_storm.lastPainted = false;
+                    g_storm.issued++;
+                    g_storm.nextReqAt += interval; // drift-free schedule, not t+interval
+                    setWant(ps, target);
+                }
+            }
         }
 
         int64_t want = ps.want.load();
@@ -639,6 +1041,12 @@ static int cmdPlay(const char* path, int exitAfterSec) {
                 if (drawn == g_stepTarget) {
                     printf("step to %lld latency=%.2f ms\n", (long long)drawn, nowMs() - g_stepT0);
                     g_stepTarget = -1;
+                }
+                if (g_storm.active && !g_storm.lastPainted && drawn == g_storm.lastReqFrame) {
+                    StormStats& st = g_storm.stats[g_storm.lastReqPhase];
+                    st.lat.push_back(nowMs() - g_storm.lastReqT);
+                    st.painted++;
+                    g_storm.lastPainted = true;
                 }
             }
             frames60++;
@@ -672,6 +1080,15 @@ static int cmdPlay(const char* path, int exitAfterSec) {
     dec.join();
     d.close();
     av_buffer_unref(&hwdev);
+    if (paStream) { Pa_StopStream(paStream); Pa_CloseStream(paStream); }
+    if (haveAudio) {
+        audioQuit = true;
+        audioThread.join();
+        ad.close();
+        g_audioRing = nullptr;
+    }
+    if (afmt) avformat_close_input(&afmt);
+    if (paInited) Pa_Terminate();
     return 0;
 }
 
@@ -706,6 +1123,7 @@ int main(int argc, char** argv) {
     AVRational fps = {30000, 1001};
     std::vector<int64_t> targets = {100, 101, 102, 1000, 4499};
     bool reportSync = false;
+    bool storm = false;
     int exitAfter = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -720,19 +1138,20 @@ int main(int argc, char** argv) {
         else if (a == "--targets")   targets = parseTargets(next());
         else if (a == "--report-sync") reportSync = true;
         else if (a == "--exit-after")  exitAfter = atoi(next());
+        else if (a == "--storm")       storm = true;
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 2; }
     }
-    (void)reportSync;
     if (!mode || !file) {
         fprintf(stderr, "usage: becky-engine-probe --decode|--seek-test|--play|--play-reel <file> "
-                        "[--frames N] [--fps A/B] [--targets a,b,c] [--report-sync]\n");
+                        "[--frames N] [--fps A/B] [--targets a,b,c] [--report-sync] [--storm] [--exit-after N]\n");
         return 2;
     }
     av_log_set_level(getenv("PROBE_DEBUG") ? AV_LOG_DEBUG : AV_LOG_WARNING);
 
     if (!strcmp(mode, "decode")) return cmdDecode(file, frames);
     if (!strcmp(mode, "seek"))   return cmdSeekTest(file, fps, targets);
-    if (!strcmp(mode, "play"))   return cmdPlay(file, exitAfter);
-    fprintf(stderr, "mode %s not implemented yet (step 5 pending)\n", mode);
+    if (!strcmp(mode, "play"))   return cmdPlay(file, exitAfter, storm, reportSync);
+    fprintf(stderr, "mode %s not implemented yet (--play-reel gapless segment chain is out of scope tonight - "
+                    "use --play --report-sync for single-source audio/video sync proof)\n", mode);
     return 2;
 }
