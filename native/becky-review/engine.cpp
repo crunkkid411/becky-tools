@@ -39,8 +39,9 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
-// main.cpp's crash logger (single translation-unit app; declared there).
-void crashLog(const std::string& s);
+// main.cpp's crashLog is static (internal linkage); it exports this bridge.
+void engineLog(const std::string& s);
+static void crashLog(const std::string& s) { engineLog(s); }
 
 namespace engine {
 

@@ -38,6 +38,7 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include "json.hpp"
+#include "engine.h" // the native video engine (mpv replacement, step 6)
 
 // HYBRID-GPU FIX (found 2026-07-22, chasing the reviewer's "idle CPU regressed to
 // 300-370%, higher even than the documented 46.9% post-fix baseline" report). The
@@ -407,6 +408,8 @@ static void crashLog(const std::string& line) {
     g_crashLog << nowSec() << " [tid " << GetCurrentThreadId() << " " << t_threadTag << "] " << line << "\n";
     g_crashLog.flush();
 }
+// Bridge for engine.cpp (crashLog above is static by design).
+void engineLog(const std::string& s) { crashLog(s); }
 static void crashLogInit() {
     char exe[MAX_PATH] = { 0 }; GetModuleFileNameA(nullptr, exe, MAX_PATH);
     std::string p(exe); auto pos = p.find_last_of("\\/");
@@ -589,310 +592,22 @@ static int gstInitSEH(int argc, char** argv) {
     }
 }
 
-// --------------- D-1: mpv embedded video pane (--wid child hwnd over JSON IPC) ---------------
-// Same subprocess+pipe shape as the Go engine seam (CreateProcessW + a pipe reader
-// thread), except mpv's IPC pipe is a NAMED pipe it creates itself (--input-ipc-
-// server) rather than inherited stdio handles. #0-style guard: if mpv.exe is
-// missing, CreateProcess fails, or the pipe never comes up, g_mpvAvailable stays
-// false and the video pane shows a plain degrade note instead of hanging or
-// crashing - mirrors gstInitSEH/g_gstAvailable exactly, just for a subprocess
-// failure mode instead of a native in-process one (no SEH needed here: CreateProcess
-// failing is an ordinary Win32 return value, not a hardware exception).
-static std::atomic<bool> g_mpvAvailable{ false };
-static HWND g_mpvHwnd = nullptr;
-// Whether the mpv child HWND is currently shown. Tracked so ShowWindow is called
-// ONLY on a transition - calling it (either SW_SHOWNA or SW_HIDE) every frame is
-// window-manager churn that costs real CPU for zero visible change. See the
-// "PERF" comment at the video pane for the full story.
-static bool g_mpvChildShown = false;
-static PROCESS_INFORMATION g_mpvProc{};
-static HANDLE g_mpvPipe = INVALID_HANDLE_VALUE;       // write side (mpvWriteLine only)
-static HANDLE g_mpvPipeRead = INVALID_HANDLE_VALUE;   // read side (mpvReaderThread only)
-static std::string g_mpvPipeName;
-static std::mutex g_mpvWriteMx;
-static std::string g_mpvLoadedSource;   // which source file mpv currently has open (fwslash'd)
-// D-9: g_mpvLoadedSource is written by the decode thread (mpvSeekExact) AND by the
-// UI thread when it hands mpv the whole-reel EDL (mpvEdlEnter) - guard it.
-static std::mutex g_mpvSrcMx;
-
-// --------------- D-9: mpv actually PLAYS (this is where the audio was missing) ---------------
-// The bug Jordan hit: mpv was launched --pause=yes and NOTHING ever unpaused it, so it
-// was only ever a frame SCRUBBER - the app simulated playback itself (curSec += dt) and
-// commanded a per-frame hr-seek. A paused mpv decodes stills and emits NO AUDIO, which is
-// the entire "Becky Review 3 has no audio" report. Fix (mirroring becky-timeline's split,
-// where mpv is the preview and genuinely plays): hand mpv the whole reel as an EDL and let
-// it PLAY, then sync the app clock FROM mpv's time-pos instead of commanding it. A/V sync
-// and the source's true rate (29.97 = 30000/1001) then come from mpv's own clock for free.
-// g_edlActive lives up here (not with the EDL code below, which needs g_track) so
-// mpvSeekExact can cheaply refuse to fight playback with scrub seeks.
-static std::atomic<bool> g_edlActive{ false };
-static std::atomic<double> g_mpvTimePos{ -1.0 };
-static const int kObsTimePos = 77;   // observe_property id for time-pos
-// D-4's 2x playback rate. Moved up here from the view/gesture block (it used to sit next
-// to g_playingExt) purely so the EDL playback code below can pass it to mpv as "speed" -
-// same variable, same meaning, just declared before its first use now.
+// --------------- D-1 (step 6 rewrite): native in-process video engine ---------------
+// mpv is GONE: no subprocess, no child HWND, no named pipes, no EDL temp file.
+// engine.cpp (SPEC-BECKY-VIDEO-ENGINE.md) decodes with libavcodec/D3D11VA on
+// its OWN device, converts NV12->BGRA into a shared-texture ring, and the pane
+// draws it as a plain ImGui::Image. Audio is WASAPI shared, audio-clock master.
+// Scrub/seek/play are plain function calls - the whole IPC failure class
+// (blocked pipe writes, seek floods, time-pos lag) no longer exists.
+static std::atomic<bool> g_edlActive{ false };   // engine reel playback active
 static double g_playRate = 1.0;
 
-// I-5/I-8 root cause (found live this session via BECKY_REVIEW_SCRUB_LOG): this
-// used to be a plain synchronous WriteFile with no timeout. mpv's named pipe has
-// a finite kernel buffer; if mpv falls behind draining it (a burst of seek
-// commands, or the whole app doing 200+ requestCompose dispatches/sec on an
-// uncapped render loop), the buffer fills and WriteFile blocks FOREVER once it
-// does. decodeWorker is the ONLY thread that ever calls this, so one blocked
-// write wedges it permanently: curSec/the UI keep working, but the video pane
-// silently freezes on its last frame for the rest of the session - no crash, no
-// error, reproduced live twice (once after ~2s of simulated playback, again
-// after ~150 keyframe seeks even with the I-5 throttle in main() already in
-// place). g_mpvPipe is opened FILE_FLAG_OVERLAPPED (mpvConnectOne) specifically
-// so this can bound the wait: a write that doesn't land within 250ms is
-// cancelled and dropped rather than blocking - safe because requestCompose
-// always posts the LATEST wanted position (P1/P5 coalescing), so a dropped
-// stale command is harmless; the next successful write catches up.
-static bool mpvWriteLine(const std::string& line) {
-    if (g_mpvPipe == INVALID_HANDLE_VALUE) return false;
-    std::lock_guard<std::mutex> lk(g_mpvWriteMx);
-    std::string s = line; s += "\n";
-    OVERLAPPED ov{};
-    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov.hEvent) return false;
-    DWORD written = 0;
-    bool ok = WriteFile(g_mpvPipe, s.data(), (DWORD)s.size(), &written, &ov) != 0;
-    if (!ok) {
-        if (GetLastError() == ERROR_IO_PENDING) {
-            DWORD w = WaitForSingleObject(ov.hEvent, 250);
-            if (w == WAIT_OBJECT_0) {
-                ok = GetOverlappedResult(g_mpvPipe, &ov, &written, FALSE) != 0;
-            } else {
-                CancelIoEx(g_mpvPipe, &ov);
-                crashLog("mpv: IPC write timed out (250ms) - command dropped, not blocking decodeWorker forever");
-            }
-        } else {
-            ok = false;
-        }
-    }
-    CloseHandle(ov.hEvent);
-    return ok;
-}
-static bool mpvCommand(const json& cmdArr) {
-    json j; j["command"] = cmdArr;
-    return mpvWriteLine(j.dump());
-}
-// D-9: mpv's own playback clock. time-pos arrives as an unsolicited "property-change"
-// event on whichever connection issued the observe_property - that is g_mpvPipe
-// (everything goes out through mpvWriteLine), so mpvWriteSideDrainThread is what
-// actually feeds this; mpvReaderThread feeds it too, harmlessly, so neither drain
-// thread has to care which one mpv picked.
-static void mpvHandleIpcLine(const std::string& line) {
-    if (line.find("time-pos") == std::string::npos) return;   // cheap reject - most lines are command acks
-    try {
-        json j = json::parse(line);
-        if (j.value("event", std::string()) != "property-change") return;
-        if (j.value("name", std::string()) != "time-pos") return;
-        auto it = j.find("data");
-        if (it != j.end() && it->is_number()) g_mpvTimePos.store(it->get<double>());
-    } catch (...) {
-        // Garbage/partial line - ignore. A drain thread must never throw: it is the
-        // thread that detects mpv dying, and losing it silently freezes the pane.
-    }
-}
-// Splits a raw pipe chunk into whole lines, carrying the partial tail to the next read
-// (IPC replies are newline-delimited but arrive chunked, so a naive per-chunk parse
-// would drop or corrupt roughly every event that straddles a boundary).
-static void mpvFeedIpcChunk(std::string& acc, const char* buf, size_t n) {
-    acc.append(buf, n);
-    size_t pos;
-    while ((pos = acc.find('\n')) != std::string::npos) {
-        mpvHandleIpcLine(acc.substr(0, pos));
-        acc.erase(0, pos + 1);
-    }
-    if (acc.size() > (1u << 20)) acc.clear();   // runaway guard - never grow unbounded
-}
-// Reader thread: drains mpv's IPC replies/events (we don't need to correlate
-// request ids - every command here is fire-and-forget). Its real job is
-// detecting mpv exiting/crashing so the video pane degrades visibly instead of
-// silently freezing on the last frame it ever showed. Reads on g_mpvPipeRead, a
-// DUPLICATE of the connect handle: a synchronous named-pipe HANDLE shared between
-// a thread parked in a blocking ReadFile and another thread calling WriteFile
-// deadlocks the writer on the handle's own I/O lock (observed live - the loadfile
-// command never reached mpv until this split) - two HANDLE values on the same
-// pipe instance, one per direction, is the fix (mirrors the engine seam's
-// separate hin/hout pipes, just via DuplicateHandle instead of two CreatePipes).
-static void mpvReaderThread() {
-    t_threadTag = "mpvReader";
-    char buf[8192];
-    std::string acc;
-    for (;;) {
-        DWORD n = 0;
-        if (!ReadFile(g_mpvPipeRead, buf, sizeof buf, &n, nullptr) || n == 0) break;
-        mpvFeedIpcChunk(acc, buf, n);
-    }
-    crashLog("mpv: IPC pipe closed (mpv exited) - video decode disabled, window still open");
-    g_mpvAvailable.store(false);
-}
-// I-5/I-8 root cause, part 2 (found live re-testing the WriteFile-timeout fix
-// above: EVERY write still timed out at exactly the 250ms bound, not just under
-// a torture-test burst - too consistent to be mpv genuinely slow). mpv's JSON IPC
-// sends a reply for every command back on the SAME connection that sent it -
-// g_mpvPipe (the write connection) and g_mpvPipeRead (the read connection,
-// mpvReaderThread above) are two SEPARATE client connections (see
-// mpvConnectThread's comment), so a reply to a "seek"/"loadfile" sent on
-// g_mpvPipe comes back on g_mpvPipe, not g_mpvPipeRead - and nothing was ever
-// draining it. Hundreds of unread replies fill that connection's own pipe
-// buffer; once full, mpv's write-the-reply-back call blocks, which (mpv
-// handles one client connection on one thread) stops it from ever reading our
-// NEXT command - the real reason mpvWriteLine's WriteFile stopped landing.
-// This mirrors mpvReaderThread exactly, just on the write connection, using an
-// OVERLAPPED read since g_mpvPipe was opened FILE_FLAG_OVERLAPPED for the
-// timeout fix (a plain synchronous ReadFile on an overlapped handle with no
-// OVERLAPPED struct fails immediately, it does not block).
-static void mpvWriteSideDrainThread() {
-    t_threadTag = "mpvWriteDrain";
-    char buf[8192];
-    std::string acc;
-    OVERLAPPED ov{}; ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov.hEvent) return;
-    for (;;) {
-        DWORD n = 0;
-        BOOL ok = ReadFile(g_mpvPipe, buf, sizeof buf, &n, &ov);
-        if (!ok) {
-            if (GetLastError() != ERROR_IO_PENDING) break;
-            if (!GetOverlappedResult(g_mpvPipe, &ov, &n, TRUE)) break;
-        }
-        if (n == 0) break;
-        mpvFeedIpcChunk(acc, buf, n);   // D-9: this is the connection time-pos arrives on
-        ResetEvent(ov.hEvent);
-    }
-    CloseHandle(ov.hEvent);
-}
-static HANDLE mpvConnectOne(bool overlapped) {
-    HANDLE h = INVALID_HANDLE_VALUE;
-    DWORD flags = overlapped ? FILE_FLAG_OVERLAPPED : 0;
-    for (int attempt = 0; attempt < 50 && h == INVALID_HANDLE_VALUE; attempt++) {
-        h = CreateFileA(g_mpvPipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, flags, nullptr);
-        if (h == INVALID_HANDLE_VALUE) Sleep(100);
-    }
-    return h;
-}
-// Connects to the IPC pipe mpv creates a moment after launch (retried off the UI
-// thread so a slow/failed mpv startup can never block window-open or the render
-// loop - the exact P1 lesson this file already learned from gst_init). Opens TWO
-// independent client connections (mpv's named-pipe IPC server accepts multiple
-// simultaneous clients, one pipe instance each) rather than sharing one HANDLE
-// across the permanently-blocking reader and the writer: a DuplicateHandle of one
-// synchronous connection was tried first and still deadlocked the writer, so the
-// write side gets its own real connection instead - proven live via a manual
-// second-connection test that loaded a file cleanly while the first connection
-// was stuck. On success, becomes the reader thread.
-static void mpvConnectThread() {
-    t_threadTag = "mpvConnect";
-    g_mpvPipeRead = mpvConnectOne(false);
-    if (g_mpvPipeRead == INVALID_HANDLE_VALUE) {
-        crashLog("mpv: IPC read-pipe connect failed after 5s - video decode disabled, window still open");
-        return;
-    }
-    // I-5/I-8 fix: OVERLAPPED so mpvWriteLine can bound its wait instead of a
-    // synchronous WriteFile blocking forever when mpv falls behind (see its comment).
-    g_mpvPipe = mpvConnectOne(true);
-    if (g_mpvPipe == INVALID_HANDLE_VALUE) {
-        crashLog("mpv: IPC write-pipe connect failed after 5s - video decode disabled, window still open");
-        CloseHandle(g_mpvPipeRead); g_mpvPipeRead = INVALID_HANDLE_VALUE;
-        return;
-    }
-    g_mpvAvailable.store(true);
-    crashLog("mpv: launched + IPC connected, video decode available");
-    std::thread(mpvWriteSideDrainThread).detach();
-    mpvReaderThread();
-}
-static bool mpvLaunch(HWND parent) {
-    static const wchar_t* kClass = L"beckyMpvHost";
-    WNDCLASSEXW wc{ sizeof wc };
-    wc.lpfnWndProc = DefWindowProcW;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = kClass;
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    RegisterClassExW(&wc);
-    g_mpvHwnd = CreateWindowExW(0, kClass, L"", WS_CHILD, 0, 0, 16, 16, parent, nullptr, wc.hInstance, nullptr);
-    if (!g_mpvHwnd) { crashLog("mpv: child hwnd create failed - video decode disabled, window still open"); return false; }
-
-    std::string exe = "X:/AI-2/becky-tools/native/becky-review/runtime/mpv/mpv.exe";
-    if (!std::ifstream(exe)) {
-        crashLog("mpv: mpv.exe not found at " + exe + " (run fetch-mpv.ps1) - video decode disabled, window still open");
-        return false;
-    }
-    char pipeName[64]; snprintf(pipeName, sizeof pipeName, "beckyreviewmpv%lu", (unsigned long)GetCurrentProcessId());
-    g_mpvPipeName = std::string("\\\\.\\pipe\\") + pipeName;
-
-    std::wstring wex(exe.begin(), exe.end());
-    wchar_t wpipe[64]; MultiByteToWideChar(CP_UTF8, 0, pipeName, -1, wpipe, 64);
-    std::wstring cmd = L"\"" + wex + L"\""
-        L" --wid=" + std::to_wstring((unsigned long long)(uintptr_t)g_mpvHwnd) +
-        L" --input-ipc-server=\\\\.\\pipe\\" + wpipe +
-        L" --hr-seek=yes --hwdec=auto-safe --keep-open=yes --idle=yes"
-        L" --force-window=yes --no-osc --osc=no --sub-auto=no --sid=no"
-        L" --no-config --pause=yes --no-terminal --really-quiet"
-        // mpv must ignore the mouse entirely: the app drives it over IPC only, and
-        // the caption placement drag happens ON TOP of this window (see the video
-        // pane block). Without this, mpv's own default bindings would react to the
-        // very clicks that drag is made of.
-        L" --input-cursor=no --input-vo-keyboard=no"
-        L" --cache=yes --demuxer-readahead-secs=20";
-
-    STARTUPINFOW si{ sizeof si }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
-    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &g_mpvProc)) {
-        crashLog("mpv: CreateProcess failed - video decode disabled, window still open");
-        DestroyWindow(g_mpvHwnd); g_mpvHwnd = nullptr;
-        return false;
-    }
-    std::thread(mpvConnectThread).detach();
-    return true;
-}
-// Non-blocking: called from the decode thread (same dispatch site the old
-// GStreamer pull used). Atomic loadfile+start= on a source change (never
-// load-then-seek - the exact race this file already root-caused once for
-// search-hit clicks); a plain exact seek when only the position moved within
-// the already-loaded source (the common case during scrub/playhead-tick).
-// I-5 fix (root-caused live this session via BECKY_REVIEW_SCRUB_LOG): mpv's
-// "exact" seek flag is a real decode-forward-from-keyframe operation, not a
-// cheap pointer move - sending one every frame during a scrub-drag or the
-// app's own simulated playback (curSec += dt each frame, see main()'s
-// "playing" tick) floods mpv's IPC command queue faster than it can decode
-// them. mpvWriteLine's WriteFile is a plain synchronous named-pipe write with
-// no timeout, held under g_mpvWriteMx - once that pipe's kernel buffer fills
-// because mpv is still busy on an earlier "exact" seek, WriteFile blocks
-// FOREVER, wedging decodeWorker (and, via the shared mutex, any other mpv
-// command) permanently: curSec/the UI keep working, but the video pane freezes
-// on its last frame for the rest of the session, silently, with no crash and
-// no log - live-reproduced by a 25-step scrub-drag after ~2s of playback
-// (BECKY_REVIEW_FRAME_TRACE showed the UI thread never stalled; the DECODE
-// side of BECKY_REVIEW_SCRUB_LOG simply stopped appearing forever). BUILD_1.md
-// I-5 already specifies the fix: "keyframe seek while dragging, exact on
-// release" - cheap keyframe seeks can't back up mpv's queue the way exact
-// seeks can. main() now passes exact=false for every continuous churn
-// (playing, or an active scrub-drag) and exact=true only once things settle
-// (paused, single click-to-seek, frame-step, or the frame right after a drag
-// releases/playback stops) - the same distinction generalized to both
-// contract lines that flood curSec continuously, not just the literal drag.
-static void mpvSeekExact(const std::string& source, double srcSec, bool exact) {
-    if (!g_mpvAvailable.load()) return;
-    // D-9: while mpv is PLAYING the reel EDL it owns the position - a scrub seek here
-    // would yank playback backwards every frame and re-create exactly the IPC flood
-    // I-5 root-caused. main() also gates compose dispatch on this; belt and braces.
-    if (g_edlActive.load()) return;
-    std::string src = source; fwslash(src);
-    std::lock_guard<std::mutex> lk(g_mpvSrcMx);
-    if (src != g_mpvLoadedSource) {
-        // pause=yes is NOT redundant with the launch flag (D-9): once playback has
-        // genuinely unpaused mpv for the reel EDL, a later scrub loadfile comes back
-        // PLAYING unless it says otherwise - observed live (paused app, mpv happily
-        // rolling on through the raw source with audio). Scrubbing is by definition a
-        // paused, frame-exact operation, so pin it here rather than relying on state.
-        char startOpt[64]; snprintf(startOpt, sizeof startOpt, "start=%.6f,pause=yes", srcSec);
-        mpvCommand(json::array({ "loadfile", src, "replace", 0, std::string(startOpt) }));
-        mpvCommand(json::array({ "set_property", "pause", true }));
-        g_mpvLoadedSource = src;
-    } else {
-        mpvCommand(json::array({ "seek", srcSec, "absolute", exact ? "exact" : "keyframes" }));
-    }
+// Show one exact frame of one source, paused (replaces mpvSeekExact; the
+// engine chases the newest request internally, so the exact flag is moot).
+static void engineShowFrame(const std::string& source, double srcSec, bool /*exact*/) {
+    if (!engine::available()) return;
+    if (g_edlActive.load()) return; // while the reel plays, the engine owns position
+    engine::showSource(source, srcSec);
 }
 
 // ===== I-8 / §3.4 P3: Bounded background worker pool =====
@@ -1794,34 +1509,34 @@ static std::vector<std::string> overlayLines(const Clip& c) {
     if (g_overlay.showLink && !c.link.empty()) lines.push_back(c.link);
     return lines;
 }
-// Pushes (or clears) the preview overlay into mpv via its "osd-overlay" IPC
-// command (ass-events format) - mpv owns the video's own compositor surface (its
-// --wid child hwnd paints independently of our D3D11/ImGui surface), so this is
-// the only way preview text can actually appear ON the frame rather than being
-// drawn under it by ImGui. Fire-and-forget, same as every other mpvCommand call
-// in this file: a failure (old mpv build, IPC hiccup) just leaves the preview
-// showing no overlay, never a crash - render stays ground truth regardless.
-static void mpvClearOverlay() {
-    if (!g_ovShowingInMpv) return;
-    mpvCommand(json::array({ "osd-overlay", 9001, "none", "", 0, 0, 0 }));
-    g_ovShowingInMpv = false;
+// Step 6: the engine's frame is a plain ImGui::Image now, so the provenance
+// overlay is drawn straight onto the pane by ImGui - the OSD/ASS round trip
+// through mpv no longer exists. Outline = 4 offset shadow draws (cheap, crisp).
+static void imguiOutlinedText(ImDrawList* dl, ImVec2 pos, float fontSize,
+                              const char* text) {
+    ImFont* font = ImGui::GetFont();
+    const ImU32 black = IM_COL32(0, 0, 0, 255), white = IM_COL32(255, 255, 255, 255);
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++)
+            if (dx || dy)
+                dl->AddText(font, fontSize, ImVec2(pos.x + dx, pos.y + dy), black, text);
+    dl->AddText(font, fontSize, pos, white, text);
 }
-static void mpvUpdateOverlay(const Clip* cur) {
-    static std::string s_lastAss;
-    if (g_ovMode != 2 || !cur || !g_mpvAvailable.load()) { mpvClearOverlay(); return; }
+static void mpvClearOverlay() { g_ovShowingInMpv = false; } // state only; nothing external to clear
+static void drawOverlayImGui(const Clip* cur, ImVec2 origin, ImVec2 size) {
+    if (g_ovMode != 2 || !cur) return;
     std::vector<std::string> lines = overlayLines(*cur);
-    if (lines.empty()) { mpvClearOverlay(); return; }
-    std::string body;
-    for (size_t i = 0; i < lines.size(); i++) {
-        if (i) body += "\\N";
-        body += assEscape(lines[i]);
+    if (lines.empty()) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float fs = ImGui::GetFontSize() * 1.25f;
+    bool top = (g_overlay.position == "top");
+    float y = top ? origin.y + 8.0f : origin.y + size.y - 8.0f - fs * (float)lines.size() * 1.15f;
+    for (auto& ln : lines) {
+        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0, ln.c_str());
+        imguiOutlinedText(dl, ImVec2(origin.x + 8.0f, y), fs, ln.c_str());
+        (void)ts;
+        y += fs * 1.15f;
     }
-    const char* anchor = (g_overlay.position == "top") ? "\\an7" : "\\an1";
-    std::string ass = std::string("{") + anchor + "\\fs28\\b1\\bord2\\shad0\\1c&HFFFFFF&\\3c&H000000&}" + body;
-    if (ass == s_lastAss && g_ovShowingInMpv) return; // unchanged text - skip the IPC round trip
-    s_lastAss = ass;
-    mpvCommand(json::array({ "osd-overlay", 9001, "ass-events", ass, 0, 0, 0 }));
-    g_ovShowingInMpv = true;
 }
 // Cycles/sets the 3-state preview toggle and keeps the engine's Overlay.Enabled
 // in sync: "off" must disable the render burn-in too (D-6's third state means no
@@ -1907,7 +1622,7 @@ static bool g_decQuit = false;
 
 static void composeOnDecodeThread(const std::string& source, double srcSec, double compT, bool exact) {
     double t0 = nowSec();
-    mpvSeekExact(source, srcSec, exact);
+    engineShowFrame(source, srcSec, exact);
     scrubLog("DECODE compT=" + std::to_string(compT) + " srcSec=" + std::to_string(srcSec) +
         " exact=" + (exact ? "1" : "0") + " seekMs=" + std::to_string((nowSec() - t0) * 1000.0));
 }
@@ -1949,27 +1664,17 @@ static void requestCompose(double t, bool exact) {
     g_decReqCv.notify_one();
 }
 
-// --------------- D-9: REAL playback with AUDIO - the reel handed to mpv as an EDL ---------------
-// Why an EDL and not 88 hand-driven seeks: mpv natively supports an EDL (a playlist of
-// in/out segments across files) as a single virtual file. Writing the reel as one lets
-// mpv play the WHOLE edit seamlessly, with audio and correct A/V sync, and makes EDL time
-// identical to composition time - so curSec maps 1:1 onto mpv's time-pos with no mapping
-// layer. Verified against runtime/mpv/mpv.exe (v0.41.0) on the 88-cut post_constantly reel
-// before this was written: duration 150s (matches the summed clip lengths), audio track
-// present, and the per-process Windows peak meter reads real signal.
-//
-// SCOPE, deliberately: the EDL is used for PLAYBACK ONLY. Paused scrubbing keeps the
-// existing per-clip atomic loadfile+start= path untouched, because that is what makes
-// frame-exact editing and cut-point snapping work today and it is not worth risking.
-// Entering/leaving playback is the only thing that reloads.
-static std::string g_edlPath;
+// --------------- D-9 (step 6 rewrite): REAL playback with AUDIO - the engine plays the reel ---------------
+// The segment list goes to the in-process engine STRAIGHT FROM g_track[0] - the
+// mpv EDL temp file, its CRLF trap, and the time-pos observe/extrapolate dance
+// are all gone. Composition time IS the engine's clock (audio-master).
+// SCOPE unchanged: reel mode is for PLAYBACK ONLY; paused scrubbing keeps the
+// per-clip frame-exact path (engineShowFrame).
 static uint64_t g_edlSigLoaded = 0;
-static double g_edlSeekTarget = -1;   // >=0 while a seek is issued but mpv hasn't reported it yet
-static double g_edlSeekAt = 0;
 static double g_edlSpeedSet = -1;
 
-// FNV-1a over (source, in, out) of every clip: detects a mid-playback edit so the EDL can
-// be rebuilt. A hash, not a string, because this runs every frame during playback.
+// FNV-1a over (source, in, out) of every clip: detects a mid-playback edit so the
+// engine's segment list can be rebuilt. A hash because this runs every frame.
 static uint64_t edlTrackSig() {
     uint64_t h = 1469598103934665603ull;
     auto mix = [&h](const void* p, size_t n) {
@@ -1980,80 +1685,36 @@ static uint64_t edlTrackSig() {
     return h;
 }
 
-static bool edlWrite(std::string& outPath) {
-    if (g_track[0].empty()) return false;
-    if (g_edlPath.empty()) {
-        char tmp[MAX_PATH]; DWORD n = GetTempPathA(MAX_PATH, tmp);
-        std::string dir = (n > 0 && n < MAX_PATH) ? std::string(tmp, n) : std::string(".\\");
-        g_edlPath = dir + "becky-review-" + std::to_string((unsigned long)GetCurrentProcessId()) + ".edl";
-    }
-    std::string body = "# mpv EDL v0\n";
-    char b[64];
-    for (auto& c : g_track[0]) {
-        double len = c.out - c.in;
-        if (len <= 0) continue;
-        std::string src = c.source; fwslash(src);
-        // %<byteLen>%<path> is mpv's EDL quoting - mandatory here because Windows paths
-        // can contain the ',' that otherwise separates the fields.
-        snprintf(b, sizeof b, "%%%d%%", (int)src.size());
-        body += b; body += src;
-        snprintf(b, sizeof b, ",%.6f,%.6f\n", c.in, len);
-        body += b;
-    }
-    // BINARY on purpose. A text-mode ofstream writes CRLF on Windows, and mpv's EDL
-    // header match then fails outright - "Failed to recognize file format", reproduced
-    // directly against runtime/mpv/mpv.exe before this was written. Do not "clean this up".
-    std::ofstream f(g_edlPath, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(body.data(), (std::streamsize)body.size());
-    f.close();
-    outPath = g_edlPath;
-    return true;
-}
+static double reelFps(); // defined later (needs the async ffprobe state)
 
-// Hands mpv the current reel and starts it PLAYING at compT. Also used to re-enter after a
-// mid-playback edit (rebuild + resume at the same spot). Degrades silently if mpv is down
-// or the EDL can't be written - main() then falls back to the old simulated tick.
-static void mpvEdlEnter(double compT) {
-    if (!g_mpvAvailable.load() || g_track[0].empty()) return;
-    std::string path;
-    if (!edlWrite(path)) { crashLog("mpv: EDL write failed - falling back to simulated playback (no audio)"); return; }
-    fwslash(path);
-    static bool s_observed = false;
-    if (!s_observed) { mpvCommand(json::array({ "observe_property", kObsTimePos, "time-pos" })); s_observed = true; }
-    if (compT < 0) compT = 0;
-    char opt[160];
-    snprintf(opt, sizeof opt, "start=%.6f,pause=no,speed=%.4f", compT, g_playRate);
-    {
-        std::lock_guard<std::mutex> lk(g_mpvSrcMx);
-        // Leave the EDL path here so that on exit the next scrub compose sees a DIFFERENT
-        // source and does its normal atomic loadfile+start= back onto the real clip - the
-        // frame-exact paused path needs no special-casing at all.
-        g_mpvLoadedSource = path;
+// Hands the engine the current reel and starts it PLAYING at compT. Also used to
+// re-enter after a mid-playback edit (rebuild + resume at the same spot).
+static void engineReelEnter(double compT) {
+    if (!engine::available() || g_track[0].empty()) return;
+    std::vector<EngineSeg> segs;
+    segs.reserve(g_track[0].size());
+    for (auto& c : g_track[0]) {
+        if (c.out - c.in <= 0) continue;
+        segs.push_back(EngineSeg{ c.source, c.in, c.out });
     }
-    mpvCommand(json::array({ "loadfile", path, "replace", 0, std::string(opt) }));
-    mpvCommand(json::array({ "set_property", "pause", false }));   // belt and braces vs. the per-file option
+    if (segs.empty()) return;
+    if (compT < 0) compT = 0;
+    engine::enterReel(segs, reelFps(), compT, g_playRate);
     g_edlSigLoaded = edlTrackSig();
     g_edlSpeedSet = g_playRate;
-    g_mpvTimePos.store(-1.0);
-    g_edlSeekTarget = compT; g_edlSeekAt = nowSec();
     g_edlActive.store(true);
 }
 
-static void mpvEdlExit() {
+static void engineReelExit() {
     if (!g_edlActive.load()) return;
     g_edlActive.store(false);
-    mpvCommand(json::array({ "set_property", "pause", true }));
-    g_mpvTimePos.store(-1.0);
+    engine::exitReel();
     g_edlSigLoaded = 0;
-    g_edlSeekTarget = -1;
 }
 
-static void mpvEdlSeek(double compT) {
+static void engineReelSeek(double compT) {
     if (!g_edlActive.load()) return;
-    mpvCommand(json::array({ "seek", compT, "absolute", "exact" }));
-    g_edlSeekTarget = compT; g_edlSeekAt = nowSec();
-    g_mpvTimePos.store(-1.0);
+    engine::seekReel(compT);
 }
 
 // --------------- NDJSON out to the engine is over the subprocess; UI sends via engineCall ---------------
@@ -3072,20 +2733,16 @@ static void rebuildDerivedCaptions() {
 // preview height is exact. Letterboxed footage (source WIDER than the pane) would sit
 // slightly low, since the canvas then spans the black bars too.
 static bool g_capOsdShowing = false;
-static void mpvClearCaptionOsd() {
-    if (!g_capOsdShowing) return;
-    mpvCommand(json::array({ "osd-overlay", 9002, "none", "", 0, 0, 0 }));
-    g_capOsdShowing = false;
-}
-static void mpvUpdateCaptionOsd(double t) {
-    static std::string s_lastAss;
-    // A-1: derived captions overlay during playback too - the gate is "are there
-    // captions", not "is there a sidecar file".
-    if (g_caps.empty() || !g_mpvAvailable.load()) { mpvClearCaptionOsd(); return; }
+static void mpvClearCaptionOsd() { g_capOsdShowing = false; } // state only now
+// Step 6: captions draw straight onto the pane with ImGui (same cue-lookup
+// logic the mpv OSD used; the 288-tall ASS canvas convention is kept so
+// g_capMarginV means exactly what it meant before - one canvas unit maps to
+// paneH/288 pixels, and fs12 on that canvas maps to 12*paneH/288 pixels).
+static void drawCaptionsImGui(double t, ImVec2 origin, ImVec2 size) {
+    if (g_caps.empty()) { g_capOsdShowing = false; return; }
     const Caption* cur = nullptr;
     for (auto& c : g_caps) if (t >= c.start && t < c.end) { cur = &c; break; }
-    // Mid-drag there must always be a caption on screen to judge the placement by,
-    // even when the playhead has landed in a gap between two cues.
+    // Mid-drag there must always be a caption on screen to judge placement by.
     if (!cur && g_capMarginDrag) {
         double best = 1e18;
         for (auto& c : g_caps) {
@@ -3093,23 +2750,25 @@ static void mpvUpdateCaptionOsd(double t) {
             if (d < best) { best = d; cur = &c; }
         }
     }
-    if (!cur) { mpvClearCaptionOsd(); s_lastAss.clear(); return; }
-    std::string body;
-    { // keep a wrapped cue's own line break; \N is the ASS hard break
-        std::string line;
-        for (char ch : cur->text) {
-            if (ch == '\n') { body += assEscape(line) + "\\N"; line.clear(); }
-            else if (ch != '\r') line += ch;
-        }
-        body += assEscape(line);
+    if (!cur) { g_capOsdShowing = false; return; }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float unit = size.y / (float)CAP_ASS_H;   // one ASS-canvas unit in pane pixels
+    float fs = 12.0f * unit;
+    if (fs < 9.0f) fs = 9.0f;
+    // split cue into lines
+    std::vector<std::string> lines;
+    { std::string line;
+      for (char ch : cur->text) {
+          if (ch == '\n') { lines.push_back(line); line.clear(); }
+          else if (ch != '\r') line += ch;
+      }
+      lines.push_back(line); }
+    float y = origin.y + size.y - (float)g_capMarginV * unit - fs * 1.15f * (float)lines.size();
+    for (auto& ln : lines) {
+        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0, ln.c_str());
+        imguiOutlinedText(dl, ImVec2(origin.x + (size.x - ts.x) * 0.5f, y), fs, ln.c_str());
+        y += fs * 1.15f;
     }
-    char hdr[128];
-    snprintf(hdr, sizeof hdr, "{\\an2\\pos(%d,%d)\\fs12\\bord1\\shad0\\1c&HFFFFFF&\\3c&H000000&}",
-             CAP_ASS_W / 2, CAP_ASS_H - g_capMarginV);
-    std::string ass = std::string(hdr) + body;
-    if (ass == s_lastAss && g_capOsdShowing) return;   // unchanged - skip the IPC round trip
-    s_lastAss = ass;
-    mpvCommand(json::array({ "osd-overlay", 9002, "ass-events", ass, CAP_ASS_W, CAP_ASS_H, 0 }));
     g_capOsdShowing = true;
 }
 
@@ -4874,10 +4533,9 @@ int main(int argc, char** argv) {
     ShowWindow(hwnd, SW_SHOWMAXIMIZED);
     UpdateWindow(hwnd);
 
-    // D-1: launch mpv AFTER the window is visible - CreateProcess itself is fast, but
-    // the IPC pipe connect retries on its own thread (mpvLaunch only spawns; it never
-    // blocks here), so a slow/missing mpv.exe can never delay the window Jordan sees.
-    if (!mpvLaunch(hwnd)) crashLog("mpv: launch failed - video decode disabled, window still opening");
+    // Step 6: bring up the in-process video engine AFTER the window is visible
+    // (device+shader init is tens of ms; media never blocks - decode threads).
+    if (!engine::init()) crashLog("engine: init failed - video decode disabled, window still opening");
 
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::StyleColorsDark();
 
@@ -5641,82 +5299,47 @@ int main(int argc, char** argv) {
             s_wasPlaying = playing;
         }
 
-        // D-9: PLAYBACK. This used to be the whole of "playing": a simulated clock
-        // (curSec += dt) driving per-frame hr-seeks into a permanently paused mpv - which
-        // is precisely why there was no audio. Now mpv genuinely plays the reel (EDL) and
-        // this block FOLLOWS mpv's clock instead of commanding it, so audio exists and A/V
-        // sync + the source's true frame rate come from mpv rather than a wall clock.
+        // D-9 (step 6 rewrite): PLAYBACK follows the ENGINE's clock - in-process,
+        // continuous, audio-master (samples actually consumed by WASAPI). The whole
+        // time-pos observe/extrapolate/monotonic-guard dance existed because mpv
+        // reported position over a pipe at ~0.15s cadence; the engine's clock is a
+        // function call, so it is simply read every frame.
         if (playing && !g_track[0].empty()) {
             if (!g_edlActive.load()) {
-                mpvEdlEnter(curSec);
-                // mpv drops OSD overlays when a new file is loaded, but the caption code
-                // skips its IPC push while it believes the same text is already up - so
-                // the caption would silently vanish for the rest of the cue. Forget that
-                // belief across every (re)load so the next frame re-pushes it.
+                engineReelEnter(curSec);
                 g_capOsdShowing = false;
             } else {
-                // An edit landed mid-playback (split/trim/delete/reorder, or the G-1 tied
-                // preview swapping the reel out): the EDL mpv holds is stale, so rebuild
-                // and resume at the same spot. curSec has already been ripple-compensated
-                // by the edit drain above, so re-entering here stays on the right frame.
-                if (edlTrackSig() != g_edlSigLoaded) { mpvEdlEnter(curSec); g_capOsdShowing = false; }
+                // An edit landed mid-playback: rebuild the engine's segment list and
+                // resume at the same (already ripple-compensated) spot.
+                if (edlTrackSig() != g_edlSigLoaded) { engineReelEnter(curSec); g_capOsdShowing = false; }
                 else if (g_playRate != g_edlSpeedSet) {
-                    mpvCommand(json::array({ "set_property", "speed", g_playRate }));
+                    engine::setRate(g_playRate);
                     g_edlSpeedSet = g_playRate;
                 }
             }
 
             if (g_edlActive.load()) {
-                double tp = g_mpvTimePos.load();
-                // Right after a seek/load, mpv keeps reporting the OLD position for a few
-                // frames. Hold the requested spot until its clock catches up (or 500ms
-                // passes) so the playhead never visibly snaps backwards then forwards.
-                bool seekPending = g_edlSeekTarget >= 0 &&
-                    (tp < 0 || (std::abs(tp - g_edlSeekTarget) > 1.0 && nowSec() - g_edlSeekAt < 0.5));
-                if (seekPending) curSec = g_edlSeekTarget;
-                else {
-                    g_edlSeekTarget = -1;
-                    if (tp >= 0) {
-                        // mpv pushes time-pos on its own cadence (measured ~0.15s), so taking
-                        // it raw makes the playhead visibly trail the picture and step rather
-                        // than glide. mpv stays the authority - every new value re-anchors -
-                        // and dt only smooths BETWEEN its updates. Clamped so that if mpv
-                        // stops reporting (stall/EOF) the playhead can't run away from it.
-                        static double s_lastTp = -1, s_tpAt = 0;
-                        if (tp != s_lastTp) { s_lastTp = tp; s_tpAt = nowSec(); }
-                        double ext = (nowSec() - s_tpAt) * g_playRate;
-                        if (ext > 0.5) ext = 0.5;
-                        double target = tp + ext;
-                        // Keep the playhead MONOTONIC during forward playback. The
-                        // extrapolation above overshoots between mpv's ~0.15s time-pos
-                        // updates; when the next (slightly-earlier) value arrives, re-
-                        // anchoring to it snapped the playhead BACK ~one frame - the
-                        // visible backward jitter Jordan reported. A genuine backward move
-                        // (a seek) is handled by the seekPending branch above, never here,
-                        // so holding is safe. Suppress only SMALL backslides (< 0.5s);
-                        // a larger one is a real discontinuity (loop/reload) and is followed.
-                        if (target < curSec && curSec - target < 0.5) target = curSec;
-                        curSec = target;
-                    } else curSec += dt * g_playRate;   // mpv hasn't reported yet - keep moving
+                double tp = engine::clockSec();
+                if (tp >= 0) {
+                    // tiny anti-jitter: never step BACK by less than half a frame
+                    if (!(tp < curSec && curSec - tp < 0.017)) curSec = tp;
+                } else {
+                    curSec += dt * g_playRate;   // engine clock not up yet - keep moving
                 }
             } else {
-                curSec += dt * g_playRate;   // mpv down / EDL unwritable: degrade to the old tick
+                curSec += dt * g_playRate;   // engine down: degrade to the old tick
             }
 
-            // E-10: below-threshold ranges are SKIPPED seamlessly during playback,
-            // never just dimmed-and-played (FB7: "the single biggest breakthrough").
-            // Now that mpv owns the position, the skip has to move MPV, not just curSec.
-            if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; mpvEdlSeek(curSec); break; }
-            if (curSec >= g_compDur) {
-                curSec = 0; mpvEdlSeek(0);
-                // --keep-open=yes pauses mpv at EOF, so looping has to un-pause it too.
-                if (g_edlActive.load()) mpvCommand(json::array({ "set_property", "pause", false }));
+            // E-10: below-threshold ranges are SKIPPED seamlessly during playback.
+            if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; engineReelSeek(curSec); break; }
+            if (curSec >= g_compDur || engine::reelEnded()) {
+                curSec = 0; engineReelSeek(0);
             }
         } else if (g_edlActive.load()) {
             // Stopped playing: hand the picture back to the frame-exact paused scrub path.
-            mpvEdlExit();
+            engineReelExit();
             lastComposed = -1;      // force one exact recompose so the parked frame is frame-exact
-            g_capOsdShowing = false; // the recompose reloads the real clip - re-push the caption
+            g_capOsdShowing = false;
         }
 
         // G-1 "Play tied clips" preview ends the instant playback stops (pause, arrow
@@ -5744,7 +5367,7 @@ int main(int argc, char** argv) {
         // then never again, leaving the video pane permanently black even after mpv
         // comes up a moment later. Force exactly one extra dispatch the first frame
         // mpv reports available, so the pending clip always gets shown.
-        bool mpvReadyNow = g_mpvAvailable.load();
+        bool mpvReadyNow = engine::available();
         // I-5 fix: curSec churns every single frame during "playing" (main()'s own
         // dt-driven tick above) and during an active scrub-drag (g_gest.kind==1) -
         // both are continuous, so each gets a cheap keyframe seek (mpvSeekExact's
@@ -5898,11 +5521,11 @@ int main(int argc, char** argv) {
                 float x = barW - chipW - pad;
                 if (!warnTxt.empty()) x -= ImGui::CalcTextSize(warnTxt.c_str()).x + pad * 3;
                 if (!g_engine.alive)          x -= ImGui::CalcTextSize("ENGINE DOWN").x + pad * 2;
-                if (!g_mpvAvailable.load())   x -= ImGui::CalcTextSize("MPV DOWN").x + pad * 2;
+                if (!engine::available())   x -= ImGui::CalcTextSize("VIDEO DOWN").x + pad * 2;
                 if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
 
                 if (!g_engine.alive) { ImGui::TextColored(ImVec4(1, 0.25f, 0.25f, 1), "ENGINE DOWN"); ImGui::SameLine(); }
-                if (!g_mpvAvailable.load()) { ImGui::TextColored(ImVec4(1, 0.25f, 0.25f, 1), "MPV DOWN"); ImGui::SameLine(); }
+                if (!engine::available()) { ImGui::TextColored(ImVec4(1, 0.25f, 0.25f, 1), "VIDEO DOWN"); ImGui::SameLine(); }
 
                 // one badge painter, used for the warning and the folder chip
                 auto badge = [&](const char* txt, uint32_t bg, const char* tip, const char* openPath) {
@@ -6347,82 +5970,39 @@ int main(int argc, char** argv) {
         }
         ImGui::End();
 
-        // ---- center video pane (D-1: mpv --wid child hwnd, not an ImGui image) ----
+        // ---- center video pane (step 6: the ENGINE's frame as a plain ImGui image) ----
         ImGui::SetNextWindowPos({ libW, topY }); ImGui::SetNextWindowSize({ vidW, topH });
         if (ImGui::Begin("video", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool haveClip = !g_track[0].empty();
-            if (g_mpvHwnd && g_mpvAvailable.load() && haveClip) {
-                // mpv paints this rect itself (GPU hwdec, its own compositor surface) -
-                // the app only has to keep the child hwnd positioned/sized to match the
-                // pane and reserve that space in the ImGui layout below it.
+            int vw = 0, vh = 0;
+            ID3D11ShaderResourceView* vsrv = engine::currentFrameSRV(g_dev, &vw, &vh);
+            if (engine::available() && haveClip) {
                 ImVec2 origin = ImGui::GetCursorScreenPos();
                 ImVec2 avail = ImGui::GetContentRegionAvail();
-                // Reserve room for BOTH control rows below the preview (Play/|<</2x/Overlay/
-                // Render/Render Selection, then Screenshot/Save Reel/Load Reel/Export EDL) plus
-                // the curSec/dur text line and the g_renderMsg status line - reserving only ONE
-                // row here (the bug found live this session) let the video Dummy eat the space
-                // row 2 and g_renderMsg needed, silently clipping them outside the fixed-height
-                // "video" window: Render/Transcribe/Screenshot never had a visible success/fail
-                // readout, which is exactly why B-2 could never be confirmed complete on screen.
+                // Reserve room for BOTH control rows below the preview plus the
+                // curSec/dur text line and the g_renderMsg status line (bug found
+                // live: reserving one row silently clipped the readouts).
                 float ctrlH = ImGui::GetTextLineHeightWithSpacing() * 2 + ImGui::GetFrameHeightWithSpacing() * 2;
                 float videoH = std::max(0.0f, avail.y - ctrlH);
-                // The mpv child is positioned in CLIENT coordinates. ImGui's
-                // "screen" coordinates are the main viewport's, which with the
-                // plain Win32/DX11 backend (no multi-viewport) is the client
-                // area itself - so ScreenToClient here subtracts the client
-                // origin a SECOND time and shoves the video up and to the left,
-                // over the library panel. Convert through the viewport instead,
-                // which is correct whether or not viewports are ever enabled.
-                ImVec2 vp = ImGui::GetMainViewport()->Pos;
-                POINT pt{ (LONG)(origin.x - vp.x), (LONG)(origin.y - vp.y) };
-                // PERF - THE IDLE-CPU ROOT CAUSE (measured 2026-07-20).
-                //
-                // This used to call MoveWindow(..., bRepaint=TRUE) AND ShowWindow EVERY
-                // FRAME, even when the pane had not moved by a single pixel. Moving and
-                // force-repainting an OVERLAPPING child HWND 60x/second makes DWM
-                // recomposite the whole video region every frame, and that work fans out
-                // across ~12 driver/compositor thread-pool threads. That is why the app
-                // burned 4-5 CPU cores sitting completely IDLE, why it collapsed to ~29%
-                // the instant the window was minimized (no frames -> no MoveWindow), and
-                // why neither the swap-chain model (flip vs bitblt) nor the frame pacing
-                // (Present(1,0) vs DwmFlush vs waitable timer) moved the number: none of
-                // them were the cause. It also starved mpv's own decode, which is what
-                // made a 29.97fps clip play back at ~10-15fps.
-                //
-                // Fix: touch the child window ONLY when its rect actually changes, and use
-                // SetWindowPos with NOREDRAW|NOCOPYBITS - mpv paints its own surface, so
-                // Windows never needs to invalidate or blit anything on its behalf. The
-                // parent redraws its whole client area every frame anyway, so nothing is
-                // left stale behind a move.
-                const int mvW = (int)avail.x, mvH = (int)videoH;
-                {
-                    static LONG lastX = -99999, lastY = -99999;
-                    static int  lastW = -1, lastH = -1;
-                    if (pt.x != lastX || pt.y != lastY || mvW != lastW || mvH != lastH) {
-                        lastX = pt.x; lastY = pt.y; lastW = mvW; lastH = mvH;
-                        char b[256];
-                        snprintf(b, sizeof b, "mpvrect: origin=(%.0f,%.0f) vp=(%.0f,%.0f) -> client=(%ld,%ld) size=(%dx%d)",
-                                 origin.x, origin.y, vp.x, vp.y, pt.x, pt.y, mvW, mvH);
-                        crashLog(b);
-                        SetWindowPos(g_mpvHwnd, nullptr, pt.x, pt.y, mvW, mvH,
-                                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
-                    }
+                if (vsrv && vw > 0 && vh > 0 && videoH > 8.0f) {
+                    // letterbox-fit the frame into the pane (mpv used to do this
+                    // inside its own surface; now it is two lines of math)
+                    float sc = std::min(avail.x / (float)vw, videoH / (float)vh);
+                    float fw = (float)vw * sc, fh = (float)vh * sc;
+                    ImVec2 at{ origin.x + (avail.x - fw) * 0.5f, origin.y + (videoH - fh) * 0.5f };
+                    ImGui::GetWindowDrawList()->AddRectFilled(origin, { origin.x + avail.x, origin.y + videoH }, IM_COL32(0, 0, 0, 255));
+                    ImGui::GetWindowDrawList()->AddImage((ImTextureID)vsrv, at, { at.x + fw, at.y + fh });
+                    // provenance overlay + captions, drawn by ImGui ON the frame
+                    drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh });
+                    drawCaptionsImGui(curSec, at, { fw, fh });
+                } else {
+                    ImGui::GetWindowDrawList()->AddRectFilled(origin, { origin.x + avail.x, origin.y + videoH }, IM_COL32(12, 12, 12, 255));
                 }
-                if (!g_mpvChildShown) { ShowWindow(g_mpvHwnd, SW_SHOWNA); g_mpvChildShown = true; }
                 ImGui::Dummy({ avail.x, videoH });
-                // D-6: push/refresh the provenance overlay into mpv's own surface for
-                // whichever clip is under the playhead right now - every frame is cheap
-                // (mpvUpdateOverlay no-ops unless the mode is "shown" or the text changed).
-                mpvUpdateOverlay(clipAtComp(0, curSec));
-                // The caption itself, at this reel's saved vertical placement.
-                mpvUpdateCaptionOsd(curSec);
 
                 // ---- drag a caption UP or DOWN to place ALL of them ----
-                // mpv's --wid child hwnd belongs to another PROCESS, so it swallows
-                // every mouse message over the video: ImGui never sees a click there
-                // and an InvisibleButton over the pane would never fire. Polling the
-                // OS cursor + button is the whole mechanism (mpv is launched with
-                // --input-cursor=no so it ignores the very same clicks).
+                // (kept on OS cursor polling - it already works and also fires when
+                // an ImGui popup would otherwise eat the click)
                 if (!g_capPath.empty() && videoH > 32) {
                     POINT cp; GetCursorPos(&cp); ScreenToClient(g_hwnd, &cp);
                     bool inPane = cp.x >= (LONG)origin.x && cp.x <= (LONG)(origin.x + avail.x) &&
@@ -6433,37 +6013,26 @@ int main(int argc, char** argv) {
                         g_capMarginDrag = true;
                         g_capMarginAtGrab = g_capMarginV;
                         g_capMarginGrabY = (double)cp.y;
-                        // The 288-tall ASS canvas is fitted to the pane's height, so
-                        // one screen pixel is 288/videoH of a MarginV unit.
                         g_capMarginUnitsPerPx = (double)CAP_ASS_H / (double)videoH;
                     } else if (g_capMarginDrag && btn) {
-                        // Drag UP (negative dy) must RAISE the captions, and MarginV
-                        // grows upward from the bottom edge - hence the minus.
                         double dy = (double)cp.y - g_capMarginGrabY;
                         int m = g_capMarginAtGrab - (int)std::llround(dy * g_capMarginUnitsPerPx);
                         if (m < 0) m = 0;
-                        if (m > CAP_ASS_H - 20) m = CAP_ASS_H - 20;   // keep it on screen
+                        if (m > CAP_ASS_H - 20) m = CAP_ASS_H - 20;
                         g_capMarginV = m;
                     } else if (g_capMarginDrag && !btn) {
                         g_capMarginDrag = false;
-                        saveCapStyle();          // one write per drag, not per frame
+                        saveCapStyle();
                         g_renderMsg = "Caption placement saved (MarginV " + std::to_string(g_capMarginV) + ")";
                         g_renderMsgAt = nowSec();
                     }
                 }
             } else {
-                // Hide ONLY on the transition, never every frame - see the PERF comment
-                // above. An unconditional per-frame ShowWindow(SW_HIDE) is the same
-                // window-manager churn as the per-frame MoveWindow, and it is why even an
-                // EMPTY app (no reel loaded, so this branch runs) still burned ~3.4 cores.
-                if (g_mpvHwnd && g_mpvChildShown) { ShowWindow(g_mpvHwnd, SW_HIDE); g_mpvChildShown = false; }
-                if (!g_mpvAvailable.load()) {
-                    ImGui::TextDisabled("video decode unavailable (mpv failed to start - shell/library/timeline still work)");
+                if (!engine::available()) {
+                    ImGui::TextDisabled("video decode unavailable (engine failed to start - shell/library/timeline still work)");
                 } else {
-                    ImGui::TextDisabled("video pane (mpv) - no clip loaded");
+                    ImGui::TextDisabled("video pane - no clip loaded");
                 }
-                mpvClearOverlay();
-                mpvClearCaptionOsd();
             }
             // %.2f: a one-frame step (~0.033s) must visibly move this number (bug 7).
             ImGui::Text("%.2f / %.1f s", curSec, g_compDur);
@@ -7274,10 +6843,7 @@ int main(int argc, char** argv) {
     }
 
     engineShutdown();
-    if (g_mpvPipe != INVALID_HANDLE_VALUE) CloseHandle(g_mpvPipe);
-    if (g_mpvPipeRead != INVALID_HANDLE_VALUE) CloseHandle(g_mpvPipeRead);
-    if (g_mpvProc.hProcess) { TerminateProcess(g_mpvProc.hProcess, 0); WaitForSingleObject(g_mpvProc.hProcess, 1500); CloseHandle(g_mpvProc.hProcess); CloseHandle(g_mpvProc.hThread); }
-    if (g_mpvHwnd) DestroyWindow(g_mpvHwnd);
+    engine::shutdown();
     // I-8: shut down the background pool; all worker threads join here.
     delete g_bgPool; g_bgPool = nullptr;
     ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
