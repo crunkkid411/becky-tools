@@ -1,0 +1,4 @@
+*.dll
+ffinc/
+engine_*.png
+verify-engine-log.txt
