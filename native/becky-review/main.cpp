@@ -1985,6 +1985,7 @@ static double g_lastScrubEmit = 0, g_lastViewEmit = 0;
 static double g_lastUndoQueued = -1;
 static double g_lastRedoQueued = -1;   // redo debounce, same reason as undo's
 static double g_lastSplitQueued = -1;  // split ('S') debounce, item 10 - same reason as undo's
+static double g_lastCapSplitQueued = -1;  // item 9 (round 2): caption split, same 'S' key, own debounce
 // Ctrl read from the SAME clock and BOTH bits as every other modifier here -
 // see the ctrlDown comment in the arrow handler for why that matters.
 static bool ctrlDownForRedo() { SHORT c = GetAsyncKeyState(VK_CONTROL); return (c & 0x8000) != 0 || (c & 1) != 0; }
@@ -5709,6 +5710,55 @@ int main(int argc, char** argv) {
                     editLog("QUEUE split id=" + c->id);
                 }
                 if (!playing) lastComposed = -1;
+            }
+            // Item 9 (round 2): caption split, same 'S' key as the clip split right
+            // above (own debounce, so a rapid clip split can't starve it or vice
+            // versa) - "function exactly like how clips on the timeline are moved
+            // [...] a split should take into consideration the timestamps of each
+            // word if available". They are not: Caption is {start,end,text}
+            // (main.cpp ~2814) and the .srt format itself carries no per-word
+            // timing anywhere in this pipeline - confirmed by reading the whole
+            // caption load/save path before writing this. Falls back to the time
+            // position, honestly, per the work order's own fallback clause - and
+            // still snaps to the nearest WORD BOUNDARY (never mid-word) using the
+            // elapsed-time fraction as a proxy for the elapsed-text fraction, which
+            // is the closest approximation available without real per-word timing.
+            //
+            // ImGui::IsKeyPressed, NOT a second GetAsyncKeyState('S') read: found
+            // live that GetAsyncKeyState's low bit is a ONE-TIME "pressed since the
+            // last call to GetAsyncKeyState for this key" flag - the clip-split
+            // check right above already consumed it for this frame, so a second
+            // raw read here always saw 0 and this branch silently never fired.
+            // ImGui's own key-edge tracking is independent bookkeeping (compares
+            // this frame's io state to last frame's), so it is unaffected by how
+            // many other call sites also asked about 'S' this same frame.
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false) && nowSec() - g_lastCapSplitQueued > kEditDebounceSec &&
+                g_capSel >= 0 && g_capSel < (int)g_caps.size()) {
+                g_lastCapSplitQueued = nowSec();
+                double t = editT();
+                Caption& cp = g_caps[g_capSel];
+                if (t > cp.start + 0.08 && t < cp.end - 0.08 && cp.text.find(' ') != std::string::npos) {
+                    double frac = (t - cp.start) / (cp.end - cp.start);
+                    size_t n = cp.text.size();
+                    size_t guess = (size_t)std::llround(frac * (double)n);
+                    if (guess > n) guess = n;
+                    size_t splitAt = std::string::npos;
+                    for (size_t d = 0; d <= n; d++) {
+                        if (d <= guess && cp.text[guess - d] == ' ') { splitAt = guess - d; break; }
+                        if (guess + d < n && cp.text[guess + d] == ' ') { splitAt = guess + d; break; }
+                    }
+                    if (splitAt != std::string::npos && splitAt > 0 && splitAt < n - 1) {
+                        Caption tail;
+                        tail.start = t; tail.end = cp.end;
+                        tail.text = cp.text.substr(splitAt + 1);
+                        cp.end = t;
+                        cp.text = cp.text.substr(0, splitAt);
+                        g_caps.insert(g_caps.begin() + g_capSel + 1, tail);
+                        saveCaptions();
+                        editLog("CAP split idx=" + std::to_string(g_capSel) + " at t=" + std::to_string(t) +
+                                " word-snap fallback (no per-word timestamps in this data model)");
+                    }
+                }
             }
             // Delete OR Escape. Jordan asked for Escape to delete the selected clip
             // too ("esc should also delete the selected clip", feedback4/lag) - on a
