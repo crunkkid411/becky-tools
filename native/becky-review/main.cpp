@@ -3200,19 +3200,37 @@ static void runCliCutCaptions(const std::string& reelPath) {
         if (!std::ifstream(exe)) {
             result = { {"ok", false}, {"error", "becky-subtitle.exe not found - run build-all-tools.bat"} };
         } else {
-            // --transcribe/--review keep their tool defaults (true/true, free-model-only
-            // per becky-subtitle's own --review-model help text) - this button asks for
-            // the real CLI-CUT result, not a stripped-down fast path.
-            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\"";
-            // Item 15: pass the reel's real frame rate so becky-subtitle SNAPS caption
-            // boundaries to whole frames (it warns "no frame rate known ... pass --fps"
-            // otherwise). reelFps() is the edit's own rate (29.97 for Jordan's footage).
+            // ITEM 15 ROOT CAUSE (2026-07-24): --review defaults ON and sends the captions in
+            // batches to FREE LLM models to regroup them. Those free models are now dead or
+            // throttled (tencent/hy3:free -> 404 "unavailable for free", gemma -> 429, the
+            // nvidia fallback -> 30-67s PER BATCH), so "get captions" hung for ~9 minutes,
+            // usually timed out, wrote NO srt, and the stale/derived captions stayed on the
+            // timeline (Jordan: "produces no transcript ... loads the filler/demo transcript").
+            // --review=false uses the DETERMINISTIC phrase-break, which already makes good
+            // cut-snapped TikTok captions in well under a second (verified on his real reel).
+            //
+            // We also pass --out = the EXACT .srt path loadCaptions() reads (reel path with its
+            // last extension stripped, + .srt) so the fresh file is the one the app picks up,
+            // and we delete any stale sidecar first so a previous run's captions can never win.
+            std::string srtOut = reelPath;
+            {
+                size_t dot = srtOut.find_last_of('.'), slash = srtOut.find_last_of("/\\");
+                if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) srtOut = srtOut.substr(0, dot);
+                const std::string rs = ".reel";
+                if (srtOut.size() > rs.size() && srtOut.compare(srtOut.size() - rs.size(), rs.size(), rs) == 0)
+                    std::remove((srtOut.substr(0, srtOut.size() - rs.size()) + ".srt").c_str());   // the .reel-stripped stale one
+                srtOut += ".srt";
+                std::remove(srtOut.c_str());                                                       // and this one
+            }
+            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\" --review=false --out \"" + srtOut + "\"";
+            // Pass the reel's real frame rate so captions SNAP to whole frames (else it warns
+            // "no frame rate known ... pass --fps"). reelFps() = the edit's own rate (29.97).
             double fps = reelFps();
             if (fps > 1.0) { char fbuf[48]; snprintf(fbuf, sizeof fbuf, " --fps %.6f", fps); cmd += fbuf; }
             std::string out;
-            // 600s: --transcribe can run becky-transcribe on any source with no sidecar
-            // yet ("this is the slow step", per the tool's own doc) plus a review pass.
-            bool ran = runPipeCapture(cmd, 600.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); });
+            // 300s is plenty now review is off; --transcribe (default) can still re-transcribe a
+            // source that has no word-level sidecar yet (the one genuinely slow, one-time step).
+            bool ran = runPipeCapture(cmd, 300.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); });
             bool haveReport = false;
             try { if (ran && !out.empty()) { json rep = json::parse(out); haveReport = rep.contains("srt"); } } catch (...) {}
             result = haveReport ? json{ {"ok", true} }
