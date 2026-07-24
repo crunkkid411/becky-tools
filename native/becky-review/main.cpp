@@ -5351,6 +5351,24 @@ int main(int argc, char** argv) {
         st.WindowPadding = ImVec2(12, 10);
         st.WindowBorderSize = 1.0f;        // a visible seam between the panels
         st.SeparatorTextBorderSize = 2.0f;
+
+        // ---- BR3-VISUAL-SPEC: the reference app's palette, not ImGui's default ----
+        // Default StyleColorsDark makes every plain button/input a blue-tinted
+        // control (ImGuiCol_Button ~0.26,0.59,0.98 @40%; FrameBg the same blue at
+        // 54%). That is the "ask-becky box is blue-tinted" bug and, per-widget,
+        // where a stray green PushStyleColor crept onto ordinary toolbar buttons -
+        // both read as an "accent" when they are supposed to be inert chrome. Green
+        // (#14FF39) and blue (#00AEEF) are RESERVED accents applied explicitly per
+        // control (pillButton, the 2x/Overlay/Skip-Quiet active states, Render
+        // Selection, Send) - every ordinary button and every text input falls back
+        // to this dark-neutral/dark-gray pair so it never competes with them.
+        st.Colors[ImGuiCol_Button]          = ImVec4(38 / 255.0f, 38 / 255.0f, 42 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_ButtonHovered]   = ImVec4(52 / 255.0f, 52 / 255.0f, 58 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_ButtonActive]    = ImVec4(30 / 255.0f, 30 / 255.0f, 34 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_FrameBg]         = ImVec4(30 / 255.0f, 30 / 255.0f, 33 / 255.0f, 1.0f);   // text inputs: dark gray, no tint
+        st.Colors[ImGuiCol_FrameBgHovered]  = ImVec4(40 / 255.0f, 40 / 255.0f, 44 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_FrameBgActive]   = ImVec4(46 / 255.0f, 46 / 255.0f, 51 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_Border]          = ImVec4(60 / 255.0f, 60 / 255.0f, 66 / 255.0f, 0.55f);
     }
 
     // ---- load the icon font (see the ICON_* block near fixedButton) ----
