@@ -865,8 +865,8 @@ static void endWork() {
 // both from C:\Windows\Fonts\segmdl2.ttf at 96px and looking at them, against
 // the canonical U+E10E/U+E10D pair, which they match exactly. Getting these two
 // backwards would be worse than shipping no icon at all.
-#define ICON_UNDO   "\xEE\x9E\xA7"   // U+E7A7 Undo  (arrow curving back left)
-#define ICON_REDO   "\xEE\x9E\xA6"   // U+E7A6 Redo  (arrow curving forward right)
+#define ICON_UNDO   "\xE2\x86\xBA"   // U+21BA anticlockwise circular arrow - matches becky-review-native
+#define ICON_REDO   "\xE2\x86\xBB"   // U+21BB clockwise circular arrow
 // Round 3 additions (BR3-ROUND3-VISUAL-WORKORDER items 2/9): a Split button
 // (the reference toolbar's scissors) and glyphs for the 3-state Overlay toggle
 // (item 9 - a glyph, not the words "Overlay: On (hidden)"). Byte sequences
@@ -5745,6 +5745,7 @@ int main(int argc, char** argv) {
                     0x1F4F7, 0x1F4F7, // camera    (Screenshot)
                     0x1F9F9, 0x1F9F9, // broom     (Trim silence)
                     0x1F441, 0x1F441, // eye       (overlay = on AND previewed)
+                    0x1F4C1, 0x1F4C1, // folder    (Open Folder button)
                     0
                 };
                 ImFontConfig ecfg;
@@ -5760,10 +5761,19 @@ int main(int argc, char** argv) {
             const char* symPath = "C:\\Windows\\Fonts\\seguisym.ttf";
             if (FILE* sf = fopen(symPath, "rb")) {
                 fclose(sf);
-                static const ImWchar kSymRange[] = { 0x2713, 0x2713, 0x2717, 0x2717, 0 };
+                static const ImWchar kSymRange[] = {
+                    0x2713, 0x2713,   // check
+                    0x2717, 0x2717,   // x
+                    0x21BA, 0x21BB,   // undo / redo (circular arrows) - match the reference
+                    0x25C0, 0x25C0,   // left triangle  (extend LEFT)
+                    0x25B6, 0x25B6,   // right triangle (extend RIGHT)
+                    0x23EE, 0x23EF,   // skip-to-start / play-pause
+                    0x27A4, 0x27A4,   // send arrowhead
+                    0
+                };
                 ImFontConfig scfg;
                 scfg.MergeMode = true;
-                ImGui::GetIO().Fonts->AddFontFromFileTTF(symPath, 18.0f, &scfg, kSymRange);
+                ImGui::GetIO().Fonts->AddFontFromFileTTF(symPath, 20.0f, &scfg, kSymRange);
             }
         }
         if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
@@ -6688,7 +6698,7 @@ int main(int argc, char** argv) {
             // dimmed grey is the wrong colour for the only disambiguator on the bar.
             ImGui::SameLine(0, 0); ImGui::Text(" 3");
             ImGui::Separator();
-            if (ImGui::MenuItem("Open Folder...", "Ctrl+O")) {
+            if (ImGui::MenuItem("\xF0\x9F\x93\x81 Open Folder", "Ctrl+O")) {   // folder emoji, matches becky-review-native
                 // Native folder dialog via the engine (pick_folder verb on Windows).
                 // Gap 4 fix: this was a 600s synchronous engineCall right on the menu
                 // handler - the dialog itself runs in the ENGINE's own process, so this
@@ -8158,7 +8168,7 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                if (fixedButton("<##extl", { "<" }) && canTrim && sc->in > oneFrame) {
+                if (fixedButton("[\xE2\x97\x80##extl", { "[\xE2\x97\x80" }) && canTrim && sc->in > oneFrame) {   // [<| reference tExtendL
                     // Item 4 fix lives in loadTimelineView (see its comment) - this
                     // press no longer deselects the clip it just operated on.
                     EditReq req; req.verb = "set_trim";
@@ -8169,7 +8179,7 @@ int main(int argc, char** argv) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame EARLIER (its own source rate)");
                 ImGui::SameLine();
-                if (fixedButton(">##extr", { ">" }) && canTrim) {
+                if (fixedButton("\xE2\x96\xB6]##extr", { "\xE2\x96\xB6]" }) && canTrim) {   // |>] reference tExtendR
                     EditReq req; req.verb = "set_trim";
                     req.args = { {"id", sc->id}, {"in", sc->in}, {"out", sc->out + oneFrame} };
                     req.kind = 2; req.t = curSec; req.group = g_group;
