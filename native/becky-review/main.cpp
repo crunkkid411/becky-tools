@@ -3050,6 +3050,59 @@ static void loadCaptions(const std::string& reelPath) {
     if (!g_capSidecar) rebuildDerivedCaptions();
 }
 
+// Item 8 (round 3): CLI-CUT captions - becky-subtitle.exe (becky-go/cmd/subtitle),
+// NOT the per-clip Parakeet transcript loadCaptions already falls back to above.
+// Jordan: the raw forensic transcript is too limited for real time-appropriate
+// TikTok captions - becky-subtitle snaps caption boundaries to the actual cut
+// points and (by default) has a free-model pass regroup lines onto phrase
+// breaks, which is the actual CLI-CUT look. It needs a reel.json on disk, so the
+// button first asks the engine to save the CURRENT reel (the same save_reel verb
+// the Save button already uses), then shells out to becky-subtitle --reel
+// <path>, and on success calls loadCaptions(reelPath) - which ALREADY knows
+// becky-subtitle's "<reel stem>.srt" naming convention (see its own comment
+// above), so no srt path needs to be threaded back through here at all.
+// Same async shape as engineCallAsync (thread -> g_asyncQ -> drainAsync on the
+// UI thread), reused directly since this is a plain external exe, not an
+// engine verb - AsyncReply doesn't care which one produced its json.
+static std::atomic<bool> g_cliCutBusy{ false };
+static void runCliCutCaptions(const std::string& reelPath) {
+    beginWork("Building CLI-CUT captions (becky-subtitle)...");
+    std::thread([reelPath]() {
+        t_threadTag = "cliCutSubtitle";
+        json result;
+        std::string exe = "X:/AI-2/becky-tools/becky-go/bin/becky-subtitle.exe";
+        if (!std::ifstream(exe)) {
+            result = { {"ok", false}, {"error", "becky-subtitle.exe not found - run build-all-tools.bat"} };
+        } else {
+            // --transcribe/--review keep their tool defaults (true/true, free-model-only
+            // per becky-subtitle's own --review-model help text) - this button asks for
+            // the real CLI-CUT result, not a stripped-down fast path.
+            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\"";
+            std::string out;
+            // 600s: --transcribe can run becky-transcribe on any source with no sidecar
+            // yet ("this is the slow step", per the tool's own doc) plus a review pass.
+            bool ran = runPipeCapture(cmd, 600.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); });
+            bool haveReport = false;
+            try { if (ran && !out.empty()) { json rep = json::parse(out); haveReport = rep.contains("srt"); } } catch (...) {}
+            result = haveReport ? json{ {"ok", true} }
+                                 : json{ {"ok", false}, {"error", "becky-subtitle did not report an .srt - run it by hand on this reel to see why"} };
+        }
+        endWork();
+        std::lock_guard<std::mutex> lk(g_asyncMx);
+        g_asyncQ.push_back(AsyncReply{ result, [reelPath](const json& r) {
+            g_cliCutBusy.store(false);
+            if (r.value("ok", false)) {
+                loadCaptions(reelPath);
+                g_capsOn = true;
+                g_renderMsg = "CLI-CUT captions built and loaded";
+            } else {
+                g_renderMsg = "CLI-CUT captions failed: " + r.value("error", std::string("?"));
+            }
+            g_renderMsgAt = nowSec();
+        } });
+    }).detach();
+}
+
 // The vertical placement is PER REEL, and deliberately so - Jordan: "the default
 // setting is correct MOST of the time...but it depends on how the speaker is
 // sitting". It lives beside the .srt as "<stem>.capstyle.json" so the burn-in can
