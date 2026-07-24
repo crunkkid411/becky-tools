@@ -6788,27 +6788,24 @@ int main(int argc, char** argv) {
                 // Item 6: clicking the preview screen toggles play/pause - exactly the
                 // same toggle the Play/Pause button below uses (stopPlayback's stock-
                 // return semantics, item 59), so a click and the button never disagree
-                // about where playback resumes/returns to. Gated on "didn't drag" so it
-                // can't fire underneath the caption-vertical-placement drag just below
-                // (that gesture already owns press-and-hold in this same pane).
+                // about where playback resumes/returns to. Gated on "didn't drag" -
+                // measured live (VIDCLICK DIAG) that g_capMarginDrag is the WRONG
+                // signal for that: the caption-drag code below sets it on ANY press in
+                // the pane via a raw GetAsyncKeyState poll, real drag or not, so it was
+                // permanently vetoing this toggle whenever a caption path was loaded.
+                // The distance check below is this code's OWN, correct "did the user
+                // actually drag" answer - it does not need the other gesture's flag.
                 {
                     static bool s_vidPressed = false;
                     static ImVec2 s_vidPressPos;
                     bool vidHovered = ImGui::IsItemHovered();
-                    bool mc = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-                    bool mr = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-                    if (mc || mr) crashLog("VIDCLICK DIAG hovered=" + std::to_string(vidHovered) +
-                        " clicked=" + std::to_string(mc) + " released=" + std::to_string(mr) +
-                        " sVidPressed=" + std::to_string(s_vidPressed) +
-                        " capMarginDrag=" + std::to_string(g_capMarginDrag));
-                    if (vidHovered && mc) {
+                    if (vidHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                         s_vidPressed = true; s_vidPressPos = ImGui::GetMousePos();
                     }
-                    if (s_vidPressed && mr) {
+                    if (s_vidPressed && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
                         ImVec2 rel = ImGui::GetMousePos();
                         float dx = rel.x - s_vidPressPos.x, dy = rel.y - s_vidPressPos.y;
-                        crashLog("VIDCLICK DIAG release dx=" + std::to_string(dx) + " dy=" + std::to_string(dy));
-                        if (!g_capMarginDrag && (dx * dx + dy * dy) < 16.0f) {
+                        if ((dx * dx + dy * dy) < 16.0f) {
                             if (playing) stopPlayback(curSec, playing, true);
                             else { playing = true; g_playingExt = true; }
                         }
