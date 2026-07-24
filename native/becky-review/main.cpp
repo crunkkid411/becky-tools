@@ -3170,7 +3170,13 @@ static double quantToFrame(double t) {
 // reload, so a caption follows its clip through reorder/trim/split with zero extra
 // work, and a per-caption edit (drag/resize/retype/merge/split) survives the reload
 // because it lives on the caption, keyed to the clip, not on a flat absolute .srt.
-struct Caption { double start = 0, end = 0; std::string text; std::string clipId; double srcIn = 0, srcOut = 0; };
+// CapWord is one word of a caption in SOURCE seconds. Carried so a caption SPLIT
+// lands the cut between words by their REAL timing (Jordan 2026-07-24: "we KNOW the
+// word level timestamps and it needs to split the captions accordingly"), not a
+// character position guessed from a time fraction. Empty for a loaded .srt (no
+// word timing) - the split falls back to the fraction guess there.
+struct CapWord { std::string word; double start = 0, end = 0; };
+struct Caption { double start = 0, end = 0; std::string text; std::string clipId; double srcIn = 0, srcOut = 0; std::vector<CapWord> words; };
 static std::vector<Caption> g_caps;
 // Clip ids whose captions have already been seeded (from a sidecar .srt or the
 // source transcript). A clip is seeded exactly once; after that, the ABSENCE of a
@@ -3231,6 +3237,22 @@ static void reanchorCap(Caption& cap) {
     cap.srcIn  = c->in + (cap.start - c->compStart);
     cap.srcOut = c->in + (cap.end   - c->compStart);
     if (cap.srcOut < cap.srcIn) std::swap(cap.srcIn, cap.srcOut);
+}
+
+// capTokenCount counts the space-separated words in a normalized caption line; used
+// to confirm the carried word timings still line up with the text before trusting
+// them for a word-aware split.
+static size_t capTokenCount(const std::string& s) {
+    size_t n = 0; bool in = false;
+    for (char c : s) { if (c == ' ') in = false; else if (!in) { in = true; n++; } }
+    return n;
+}
+// nthSpaceIndex returns the char index of the k-th space (1-based). Splitting the
+// text there puts exactly k words on the left. npos if there are fewer than k.
+static size_t nthSpaceIndex(const std::string& s, int k) {
+    int seen = 0;
+    for (size_t i = 0; i < s.size(); i++) if (s[i] == ' ' && ++seen == k) return i;
+    return std::string::npos;
 }
 
 // ---- caption undo/redo (issue 7) --------------------------------------------
@@ -3617,6 +3639,9 @@ static void rebuildDerivedCaptions() {
                             for (auto& q : r["data"]) {
                                 Caption cp; cp.srcIn = q.value("start", 0.0); cp.srcOut = q.value("end", 0.0);
                                 cp.text = q.value("text", std::string());
+                                if (q.contains("words") && q["words"].is_array())
+                                    for (auto& wj : q["words"])
+                                        cp.words.push_back({ wj.value("word", std::string()), wj.value("start", 0.0), wj.value("end", 0.0) });
                                 if (cp.srcOut > cp.srcIn && !cp.text.empty()) cues.push_back(cp);
                             }
                         // an empty ok-list is cached too - "this source has no
@@ -3636,6 +3661,7 @@ static void rebuildDerivedCaptions() {
             cp.srcIn  = std::max(q.srcIn,  clip.in);
             cp.srcOut = std::min(q.srcOut, clip.out);
             cp.text   = q.text;
+            cp.words  = q.words;   // word timings match cp.text; carried for a word-aware split
             if (projectCap(cp) == PROJ_VISIBLE) kept.push_back(cp);
         }
         g_capSeededClips.insert(clip.id);
@@ -6732,21 +6758,49 @@ int main(int argc, char** argv) {
                 double t = editT();
                 Caption& cp = g_caps[g_capSel];
                 if (t > cp.start + 0.08 && t < cp.end - 0.08 && cp.text.find(' ') != std::string::npos) {
-                    double frac = (t - cp.start) / (cp.end - cp.start);
-                    size_t n = cp.text.size();
-                    size_t guess = (size_t)std::llround(frac * (double)n);
-                    if (guess > n) guess = n;
-                    size_t splitAt = std::string::npos;
-                    for (size_t d = 0; d <= n; d++) {
-                        if (d <= guess && cp.text[guess - d] == ' ') { splitAt = guess - d; break; }
-                        if (guess + d < n && cp.text[guess + d] == ' ') { splitAt = guess + d; break; }
+                    double span = cp.end - cp.start;
+                    // Map the cut's COMPOSITION time to a SOURCE time inside this caption,
+                    // so it can be compared against the word timings (which are source time).
+                    double splitSrc = cp.srcIn + (span > 1e-9 ? (t - cp.start) / span : 0.0) * (cp.srcOut - cp.srcIn);
+                    size_t splitAt = std::string::npos;   // char index of the space to break at
+                    int    wordCut = -1;                  // # of words kept on the LEFT (word-aware only)
+                    // WORD-AWARE: when the carried word timings line up with the text, break at
+                    // the between-words boundary whose time is NEAREST the cut - each word lands
+                    // on the side of the cut it was actually spoken on (Jordan's rule). The cut
+                    // TIME is still the authority for the caption's on-screen span (below), so
+                    // nothing flashes; the words only decide which side of it they sit on.
+                    if (cp.words.size() >= 2 && capTokenCount(cp.text) == cp.words.size()) {
+                        double bestD = 1e18;
+                        for (size_t k = 1; k < cp.words.size(); k++) {
+                            double bt = 0.5 * (cp.words[k - 1].end + cp.words[k].start);
+                            double d = std::fabs(bt - splitSrc);
+                            if (d < bestD) { bestD = d; wordCut = (int)k; }
+                        }
+                        if (wordCut >= 1) splitAt = nthSpaceIndex(cp.text, wordCut);
                     }
-                    if (splitAt != std::string::npos && splitAt > 0 && splitAt < n - 1) {
+                    // FALLBACK (loaded .srt, or a text/word mismatch): the old time-fraction
+                    // guess snapped to the nearest space - the honest best without word timing.
+                    if (splitAt == std::string::npos) {
+                        wordCut = -1;
+                        size_t n = cp.text.size();
+                        size_t guess = (size_t)std::llround((t - cp.start) / (span > 1e-9 ? span : 1.0) * (double)n);
+                        if (guess > n) guess = n;
+                        for (size_t d = 0; d <= n; d++) {
+                            if (d <= guess && cp.text[guess - d] == ' ') { splitAt = guess - d; break; }
+                            if (guess + d < n && cp.text[guess + d] == ' ') { splitAt = guess + d; break; }
+                        }
+                    }
+                    if (splitAt != std::string::npos && splitAt > 0 && splitAt < cp.text.size() - 1) {
                         pushCapUndo();               // issue 7: a caption split is undoable
                         Caption tail;
                         tail.start = t; tail.end = cp.end;
                         tail.text = cp.text.substr(splitAt + 1);
                         tail.clipId = cp.clipId;     // both halves stay on the same clip
+                        // Partition the word timings too, so a SECOND split still knows them.
+                        if (wordCut >= 1 && wordCut < (int)cp.words.size()) {
+                            tail.words.assign(cp.words.begin() + wordCut, cp.words.end());
+                            cp.words.resize(wordCut);
+                        } else { cp.words.clear(); }   // fallback split: timings no longer align
                         cp.end = t;
                         cp.text = cp.text.substr(0, splitAt);
                         reanchorCap(cp);             // issues 1-3: each half re-binds so it follows the clip
@@ -6754,7 +6808,7 @@ int main(int argc, char** argv) {
                         g_caps.insert(g_caps.begin() + g_capSel + 1, tail);
                         saveCaptions();
                         editLog("CAP split idx=" + std::to_string(g_capSel) + " at t=" + std::to_string(t) +
-                                " word-snap fallback (no per-word timestamps in this data model)");
+                                (wordCut >= 1 ? " word-timed" : " fraction fallback (no per-word timing)"));
                     }
                 }
             }

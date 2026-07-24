@@ -20,12 +20,24 @@ import (
 	"becky-go/internal/subs"
 )
 
+// CaptionWord is one word of a cue, in the SOURCE's own seconds. The native
+// timeline carries these so that splitting a caption lands the cut BETWEEN words
+// by their real timing (Jordan: "we KNOW the word level timestamps and it needs to
+// split the captions accordingly") instead of guessing a character position from a
+// time fraction. Only present when the source had a word-level transcript.
+type CaptionWord struct {
+	Word  string  `json:"word"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+}
+
 // CaptionCue is one chunked caption in the SOURCE's own seconds (the derived lane
 // maps it onto each clip's window, the same way it mapped the raw transcript cues).
 type CaptionCue struct {
-	Start float64 `json:"start"`
-	End   float64 `json:"end"`
-	Text  string  `json:"text"`
+	Start float64       `json:"start"`
+	End   float64       `json:"end"`
+	Text  string        `json:"text"`
+	Words []CaptionWord `json:"words,omitempty"`
 }
 
 // CaptionChunks returns pace-based chunked captions for the source named `name`
@@ -65,7 +77,35 @@ func (a *App) CaptionChunks(name string) ([]CaptionCue, error) {
 			out = append(out, CaptionCue{Start: c.Start, End: c.End, Text: c.Text})
 		}
 	}
+	attachWords(out, words)
 	return out, nil
+}
+
+// attachWords maps each word onto the cue that owns it, so the caller can split a
+// cue on real word timing. The cues Build returns are contiguous and
+// non-overlapping (gap-filled, then overlap-clamped), so they TILE the source
+// timeline: a word belongs to the cue whose span contains its MIDPOINT, and
+// anything past the last cue's end (a zero-duration final word) belongs to the
+// last cue. Per-word mapping, so a stray count mismatch can never misalign the
+// rest of the lane.
+func attachWords(cues []CaptionCue, words []subs.Word) {
+	if len(cues) == 0 {
+		return
+	}
+	for _, wd := range words {
+		if strings.TrimSpace(wd.Word) == "" {
+			continue
+		}
+		mid := (wd.Start + wd.End) / 2
+		idx := len(cues) - 1 // tail default: past the last cue's end
+		for i := range cues {
+			if mid >= cues[i].Start && mid < cues[i].End {
+				idx = i
+				break
+			}
+		}
+		cues[idx].Words = append(cues[idx].Words, CaptionWord{Word: wd.Word, Start: wd.Start, End: wd.End})
+	}
 }
 
 // rawTranscriptCues is the fallback: the source's raw transcript segments (what the
