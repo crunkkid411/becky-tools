@@ -2091,6 +2091,23 @@ static int g_quietEpochSeen = -1;
 static std::vector<std::pair<double, double>> g_quietRanges;
 static double g_lastQuietEmit = 0, g_lastThrEmit = 0;
 
+// "Skip quiet parts" accuracy (Jordan, 2026-07-24): the old detector thresholded
+// the 8-bit waveform PEAK cache - a coarse, windowed, DISPLAY signal that
+// overestimates loudness and, worse, is filled lazily per-window so a clip whose
+// [in,out] window isn't fully cached reads as "not quiet" near its edges (his
+// exact symptom: complete silences near clip starts/ends never dimmed). The real
+// fix he asked for: use auto-editor's own per-frame volume, which is frame-accurate
+// to the source fps and is the SAME signal auto-editor thresholds when it cuts.
+// audio_levels (cmd/clip/audiolevels.go) runs `auto-editor levels ... --edit audio`
+// ONCE per source and returns {fps, levels[]} (each a normalized max|sample|/32767,
+// linear 0..1 - the same units g_thrLevel is in). Cached here; the live threshold
+// drag re-thresholds the cached array with zero re-decode. If auto-editor is missing
+// or a source hasn't reported yet, computeQuietRangesNow falls back to the old peak
+// method so the feature still works, just less precisely.
+struct SrcLevels { double fps = 0; std::vector<float> lv; bool ready = false; };
+static std::map<std::string, SrcLevels> g_srcLevels;       // source path -> envelope
+static std::set<std::string> g_srcLevelsInFlight;          // async fetches running
+
 struct Gesture {
     int kind = 0;
     int idx = -1;
@@ -2272,32 +2289,88 @@ static void emitThreshold(bool final_) {
         editLog(std::string("emitThreshold: thread spawn failed, skipping sync: ") + e.what());
     }
 }
+// ensureLevels kicks off (once) an async fetch of a source's auto-editor volume
+// envelope into g_srcLevels. Cheap to call every recompute - it no-ops once the
+// source is cached or already in flight. On arrival it flags g_quietDirty so the
+// dim regions recompute against the accurate signal. Callback runs on the UI
+// thread (drainAsync), same as the transcript fetch, so no locking is needed.
+static void ensureLevels(const std::string& source) {
+    if (source.empty()) return;
+    if (g_srcLevels.count(source) || g_srcLevelsInFlight.count(source)) return;
+    g_srcLevelsInFlight.insert(source);
+    engineCallAsync("audio_levels", { {"source", source} }, 600.0, "Analyzing audio (auto-editor)...",
+        [source](const json& r) {
+            g_srcLevelsInFlight.erase(source);
+            SrcLevels sl;
+            if (r.value("ok", false)) {
+                const json& d = r.contains("data") ? r["data"] : r;
+                if (d.is_object()) {
+                    sl.fps = d.value("fps", 0.0);
+                    if (d.contains("levels") && d["levels"].is_array()) {
+                        sl.lv.reserve(d["levels"].size());
+                        for (auto& v : d["levels"]) sl.lv.push_back((float)v.get<double>());
+                    }
+                }
+            }
+            // Cache even an empty result: "auto-editor couldn't answer" is an
+            // answer, asked once; computeQuietRangesNow falls back to peaks for it.
+            sl.ready = true;
+            g_srcLevels[source] = std::move(sl);
+            g_quietDirty = true;
+        });
+}
+
 // Item 3b: the broomstick button needs quiet ranges regardless of whether
 // "skip during playback" (g_thrOn) is toggled on - they're two independent
 // uses of the SAME threshold level. Pulled the actual scan out of
 // recomputeQuiet so both can share it without the g_thrOn gate.
+//
+// Per clip it prefers auto-editor's per-frame envelope (frame-accurate, covers the
+// WHOLE source so silence near a clip edge is never missed) and falls back to the
+// old 8-bit peak cache only until the levels arrive / if auto-editor is absent.
+// g_thrLevel is a linear peak fraction (0..1), the SAME units as an auto-editor
+// level (max|sample|/32767), so the dB the bar shows means the same thing here.
 static std::vector<std::pair<double, double>> computeQuietRangesNow() {
     std::vector<std::pair<double, double>> raw, out;
     for (auto& c : g_track[0]) {
-        auto pk = peaksGet(c.source);
-        if (!pk) continue;
-        std::lock_guard<std::mutex> lk(pk->mx);
-        if (!pk->ready) continue;
-        long long b0 = std::max(0LL, (long long)(c.in * kBinsPerSec));
-        long long b1 = std::min((long long)pk->bins, (long long)(c.out * kBinsPerSec));
-        double runA = -1;
-        for (long long b = b0; b <= b1; b++) {
-            bool quiet = false;
-            if (b < b1) {
-                int8_t mn = pk->n0[b], mx = pk->x0[b];
-                if (mn <= mx) {
-                    double amp = std::max(std::abs((int)mn), std::abs((int)mx)) / 127.0;
-                    quiet = amp < g_thrLevel;
-                }
+        ensureLevels(c.source);
+        auto lit = g_srcLevels.find(c.source);
+        bool haveLevels = lit != g_srcLevels.end() && lit->second.ready &&
+                          !lit->second.lv.empty() && lit->second.fps > 1.0;
+        if (haveLevels) {
+            const SrcLevels& sl = lit->second;
+            double fps = sl.fps;
+            long long n = (long long)sl.lv.size();
+            long long f0 = std::max(0LL, (long long)std::floor(c.in * fps));
+            long long f1 = std::min(n, (long long)std::ceil(c.out * fps));
+            double runA = -1;
+            for (long long f = f0; f <= f1; f++) {
+                bool quiet = (f < f1 && f < n) ? sl.lv[f] < g_thrLevel : false;
+                double compT = c.compStart + ((double)f / fps - c.in);
+                if (quiet && runA < 0) runA = compT;
+                else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
             }
-            double compT = c.compStart + (b / kBinsPerSec - c.in);
-            if (quiet && runA < 0) runA = compT;
-            else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
+        } else {
+            auto pk = peaksGet(c.source);
+            if (!pk) continue;
+            std::lock_guard<std::mutex> lk(pk->mx);
+            if (!pk->ready) continue;
+            long long b0 = std::max(0LL, (long long)(c.in * kBinsPerSec));
+            long long b1 = std::min((long long)pk->bins, (long long)(c.out * kBinsPerSec));
+            double runA = -1;
+            for (long long b = b0; b <= b1; b++) {
+                bool quiet = false;
+                if (b < b1) {
+                    int8_t mn = pk->n0[b], mx = pk->x0[b];
+                    if (mn <= mx) {
+                        double amp = std::max(std::abs((int)mn), std::abs((int)mx)) / 127.0;
+                        quiet = amp < g_thrLevel;
+                    }
+                }
+                double compT = c.compStart + (b / kBinsPerSec - c.in);
+                if (quiet && runA < 0) runA = compT;
+                else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
+            }
         }
     }
     std::sort(raw.begin(), raw.end());

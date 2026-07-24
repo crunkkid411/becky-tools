@@ -91,6 +91,11 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		// never render) and return its KEEP segments as {in,out} seconds, ready
 		// to feed into add_clip for each span. Degrades to {segments:[],note}.
 		return a.AutoCutSilence(argString(args, "name")), nil
+	case "audio_levels":
+		// auto-editor's per-frame loudness envelope for a source (the exact signal
+		// it thresholds when cutting), fetched once and thresholded live for "skip
+		// quiet parts" — frame-accurate to the source fps. Degrades to {levels:[]}.
+		return a.AudioLevels(argString(args, "source")), nil
 	case "timeline_edl":
 		// Write an mpv EDL of the whole timeline so the UI can play it as ONE
 		// seamless (gapless) virtual source. Returns {path,duration}; "" if empty.
