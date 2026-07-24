@@ -897,21 +897,50 @@ static const char* ico(const char* iconLabel, const char* textLabel) {
 // alone - it keeps whatever hover its own push defines - so this only ever fires on the
 // default #0A0A0A chip, exactly like the CSS.
 static const ImVec4 kNeon = ImVec4(0.224f, 1.0f, 0.078f, 1.0f);
-static bool refHoverPredict(float w, float h) {
-    ImVec4 cb = ImGui::GetStyleColorVec4(ImGuiCol_Button);
-    bool isDefaultChip = cb.x < 0.06f && cb.y < 0.06f && cb.z < 0.06f;   // ~#0A0A0A
-    if (!isDefaultChip) return false;
+
+// A toolbar/panel button drawn MANUALLY so its hover is STABLE. The old version pushed
+// hover colours from a per-frame prediction (IsWindowHovered + hit-test) that FLICKERED
+// the instant a tooltip window appeared and stole the hover - that flicker was the
+// "seizure" flashing Jordan saw. IsItemHovered() on our own InvisibleButton is rock
+// steady. We read the CURRENT Button/Text/Border style, so a caller that PUSHED a colour
+// is respected: a plain #0A0A0A chip gets the reference's neon text+border on hover; a
+// pushed-blue chip (the frame/extend buttons) inverts to white text + blue glow; a green
+// toggle-on chip keeps its fill and just gets a soft glow. Colour-emoji glyphs ignore the
+// text colour and stay in colour either way.
+static bool refBtnCore(const char* label, float w) {
+    const ImVec4 baseBg = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    const ImVec4 baseTx = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    const ImVec4 baseBd = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+    const bool isWhite = baseBg.x < 0.06f && baseBg.y < 0.06f && baseBg.z < 0.06f;
+    const bool isBlue  = baseBg.z > 0.45f && baseBg.x < 0.25f;
     ImVec2 p = ImGui::GetCursorScreenPos();
-    return ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
+    float h = ImGui::GetFrameHeight();
+    bool clicked = ImGui::InvisibleButton(label, ImVec2(w, h));
+    bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImVec4 bg = baseBg, tx = baseTx, bd = baseBd;
+    ImU32 glow = 0;
+    if (hov) {
+        if (isWhite)     { tx = kNeon; bd = kNeon; glow = IM_COL32(0x39, 0xFF, 0x14, 60); }
+        else if (isBlue) { tx = ImVec4(1, 1, 1, 1); bd = ImVec4(0.0f, 0.68f, 0.94f, 1.0f); glow = IM_COL32(0x00, 0xAE, 0xEF, 90); }
+        else             { glow = IM_COL32(0x39, 0xFF, 0x14, 50); }
+    }
+    if (act && isWhite) bg = ImVec4(0.08f, 0.08f, 0.09f, 1.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float r = ImGui::GetStyle().FrameRounding;
+    dl->AddRectFilled(mn, mx, ImGui::ColorConvertFloat4ToU32(bg), r);
+    if (glow) dl->AddRect(ImVec2(mn.x - 1, mn.y - 1), ImVec2(mx.x + 1, mx.y + 1), glow, r, 0, 3.0f);
+    dl->AddRect(mn, mx, ImGui::ColorConvertFloat4ToU32(bd), r, 0, 1.0f);
+    const char* end = label; while (*end && !(end[0] == '#' && end[1] == '#')) end++;
+    ImVec2 ts = ImGui::CalcTextSize(label, end);
+    dl->AddText(ImVec2(mn.x + (w - ts.x) * 0.5f, mn.y + (h - ts.y) * 0.5f),
+                ImGui::ColorConvertFloat4ToU32(tx), label, end);
+    return clicked;
 }
-// refBtn: a plain (auto-sized) button with the reference's white->neon hover.
+// refBtn: a plain (auto-sized) button with the reference hover.
 static bool refBtn(const char* label) {
     float w = ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    bool hov = refHoverPredict(w, ImGui::GetFrameHeight());
-    if (hov) { ImGui::PushStyleColor(ImGuiCol_Text, kNeon); ImGui::PushStyleColor(ImGuiCol_Border, kNeon); }
-    bool r = ImGui::Button(label);
-    if (hov) ImGui::PopStyleColor(2);
-    return r;
+    return refBtnCore(label, w);
 }
 
 // Reference input focus: a text box shows the NEON border (+ soft glow) while it has the
@@ -932,11 +961,7 @@ static bool fixedButton(const char* label, std::initializer_list<const char*> al
     float w = 0;
     for (const char* s : allStates) w = (std::max)(w, ImGui::CalcTextSize(s).x);
     w += ImGui::GetStyle().FramePadding.x * 2.0f;
-    bool hov = refHoverPredict(w, ImGui::GetFrameHeight());
-    if (hov) { ImGui::PushStyleColor(ImGuiCol_Text, kNeon); ImGui::PushStyleColor(ImGuiCol_Border, kNeon); }
-    bool r = ImGui::Button(label, ImVec2(w, 0));
-    if (hov) ImGui::PopStyleColor(2);
-    return r;
+    return refBtnCore(label, w);
 }
 
 // ---- run an engine verb WITHOUT freezing the window ----
@@ -8316,16 +8341,22 @@ int main(int argc, char** argv) {
                 const char* ovLabel = g_ovMode == 0 ? "overlay \xE2\x9C\x97##ov"           // x
                                     : g_ovMode == 1 ? "overlay \xE2\x9C\x93##ov"           // check
                                                     : "overlay \xF0\x9F\x91\x81##ov";      // eye
+                // CAPTURE the push count BEFORE the click. clicking calls setOverlayMode
+                // which changes g_ovMode, so re-reading g_ovMode for the Pop would pop the
+                // WRONG number -> a PushStyleColor/PopStyleColor imbalance -> ImGui crash
+                // (found live: "clicking overlay crashes the app").
+                int ovPushed = 0;
                 if (g_ovMode == 0) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.54f, 0.54f, 0.56f, 1.0f)); // dimmed
+                    ovPushed = 1;
                 } else if (g_ovMode == 2) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                    ovPushed = 2;
                 }
                 if (fixedButton(ovLabel, { "overlay \xE2\x9C\x97", "overlay \xE2\x9C\x93", "overlay \xF0\x9F\x91\x81" }))
                     setOverlayMode((g_ovMode + 1) % 3);
-                if (g_ovMode == 0) ImGui::PopStyleColor(1);
-                else if (g_ovMode == 2) ImGui::PopStyleColor(2);
+                if (ovPushed) ImGui::PopStyleColor(ovPushed);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Forensic lower-third overlay: %s",
                         g_ovMode == 0 ? "off" : g_ovMode == 1 ? "on (hidden in preview, still burns into export)" : "on (shown in preview)");
