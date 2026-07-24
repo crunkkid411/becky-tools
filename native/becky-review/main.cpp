@@ -4446,11 +4446,16 @@ static void askBeckyMark(float h) {
 // green fill/hover/active; the arrow itself is always dark ink so it reads on
 // green, same as every other active-green control in this file.
 static bool sendArrowButton(ImVec2 size) {
-    ImVec2 p0 = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::Button("##send", size);
+    // GetItemRectMin/Max, not the input `size` - a 0 component there means
+    // "auto" to ImGui::Button (e.g. height defaults to the frame height), so
+    // using it directly collapsed the triangle to a point (found live: solid
+    // green square, no arrow at all). The rect ImGui actually drew is the only
+    // reliable source for where the button really landed.
+    ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 c{ p0.x + size.x * 0.5f, p0.y + size.y * 0.5f };
-    float s = (std::min)(size.x, size.y) * 0.24f;
+    ImVec2 c{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
+    float s = (std::min)(p1.x - p0.x, p1.y - p0.y) * 0.24f;
     const ImU32 ink = IM_COL32(20, 20, 22, 255);
     dl->AddTriangleFilled({ c.x - s * 0.6f, c.y - s }, { c.x - s * 0.6f, c.y + s }, { c.x + s * 0.9f, c.y }, ink);
     return clicked;
