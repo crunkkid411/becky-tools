@@ -3200,18 +3200,14 @@ static void runCliCutCaptions(const std::string& reelPath) {
         if (!std::ifstream(exe)) {
             result = { {"ok", false}, {"error", "becky-subtitle.exe not found - run build-all-tools.bat"} };
         } else {
-            // ITEM 15 ROOT CAUSE (2026-07-24): --review defaults ON and sends the captions in
-            // batches to FREE LLM models to regroup them. Those free models are now dead or
-            // throttled (tencent/hy3:free -> 404 "unavailable for free", gemma -> 429, the
-            // nvidia fallback -> 30-67s PER BATCH), so "get captions" hung for ~9 minutes,
-            // usually timed out, wrote NO srt, and the stale/derived captions stayed on the
-            // timeline (Jordan: "produces no transcript ... loads the filler/demo transcript").
-            // --review=false uses the DETERMINISTIC phrase-break, which already makes good
-            // cut-snapped TikTok captions in well under a second (verified on his real reel).
-            //
-            // We also pass --out = the EXACT .srt path loadCaptions() reads (reel path with its
-            // last extension stripped, + .srt) so the fresh file is the one the app picks up,
-            // and we delete any stale sidecar first so a previous run's captions can never win.
+            // ITEM 15 (2026-07-24): the LLM review pass is what makes the captions usable
+            // (Jordan: "we need llm review because those captions are not usable"). It now
+            // routes through his OpenCode Zen account (hy3) in ONE shot and falls back to the
+            // deterministic captions if the LLM fails - so it no longer hangs on the dead
+            // OpenRouter free models. We ALSO pass --out = the EXACT .srt path loadCaptions()
+            // reads (reel path with its last extension stripped, + .srt) so the fresh file is
+            // the one the app picks up, and delete any stale sidecar first so a previous run's
+            // captions can never win (the old "loads the filler/demo transcript" symptom).
             std::string srtOut = reelPath;
             {
                 size_t dot = srtOut.find_last_of('.'), slash = srtOut.find_last_of("/\\");
@@ -3222,15 +3218,22 @@ static void runCliCutCaptions(const std::string& reelPath) {
                 srtOut += ".srt";
                 std::remove(srtOut.c_str());                                                       // and this one
             }
-            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\" --review=false --out \"" + srtOut + "\"";
+            // --review-model haiku: route the regroup pass through Jordan's Claude Max session
+            // (OAuth, $0, ~1 min ONE-SHOT). hy3 was removed from OpenCode Zen and its free
+            // deepseek replacement is far too slow (6+ min) for this button; Claude Max is free
+            // per his rules, fast, and higher quality. If it fails, becky-subtitle falls back
+            // to the (now cut-snapped, ?/!-breaking) deterministic captions.
+            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\" --review-model haiku --out \"" + srtOut + "\"";
             // Pass the reel's real frame rate so captions SNAP to whole frames (else it warns
             // "no frame rate known ... pass --fps"). reelFps() = the edit's own rate (29.97).
             double fps = reelFps();
             if (fps > 1.0) { char fbuf[48]; snprintf(fbuf, sizeof fbuf, " --fps %.6f", fps); cmd += fbuf; }
             std::string out;
-            // 300s is plenty now review is off; --transcribe (default) can still re-transcribe a
-            // source that has no word-level sidecar yet (the one genuinely slow, one-time step).
-            bool ran = runPipeCapture(cmd, 300.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); });
+            // 420s covers the one-shot Claude Max review (~1-2 min typical) plus a possible
+            // one-time re-transcribe of a source with no word-level sidecar. On LLM failure
+            // becky-subtitle falls back to the deterministic captions, which are now cut-snapped
+            // and break at ?/! - a usable result either way.
+            bool ran = runPipeCapture(cmd, 420.0, [&](const uint8_t* d, size_t n) { out.append((const char*)d, n); });
             bool haveReport = false;
             try { if (ran && !out.empty()) { json rep = json::parse(out); haveReport = rep.contains("srt"); } } catch (...) {}
             result = haveReport ? json{ {"ok", true} }

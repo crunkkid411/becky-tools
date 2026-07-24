@@ -236,9 +236,15 @@ func TestBuildQuantisesWhenFPSSet(t *testing.T) {
 // of stranding "can" by itself.
 func TestBuildSpansCutWhenSpeechIsContinuous(t *testing.T) {
 	opt := Options{MaxChars: 22, GapSeconds: 0.25, Lowercase: true}
+	// Same source, ONE shared word list with ABSOLUTE source times (as real segments have -
+	// every clip of a source shares that source's word slice). "can you post" is three
+	// consecutive words; the edit keeps it as two CONTIGUOUS clips (a frame-cut mid-phrase, no
+	// content removed), so the boundary words "can" (ends 0.35) and "you" (starts 0.40) are
+	// only 0.05s apart in the source -> the caption should span the cut.
+	src := []Word{w("can", 0.05, 0.35), w("you", 0.40, 0.60), w("post", 0.65, 0.85)}
 	segs := []Segment{
-		{Start: 0, End: 0.5, Words: []Word{w("can", 0.05, 0.35)}},                        // 0.15s trimmed after "can"
-		{Start: 0, End: 0.6, Words: []Word{w("you", 0.05, 0.35), w("post", 0.45, 0.55)}}, // 0.05s trimmed before "you"
+		{Start: 0.00, End: 0.38, Words: src}, // holds "can"
+		{Start: 0.38, End: 0.90, Words: src}, // holds "you", "post"
 	}
 	cues := Build(segs, opt)
 	if len(cues) != 1 {
@@ -247,9 +253,52 @@ func TestBuildSpansCutWhenSpeechIsContinuous(t *testing.T) {
 	if cues[0].Text != "can you post" {
 		t.Errorf("text = %q, want %q", cues[0].Text, "can you post")
 	}
-	if !closeTo(cues[0].Start, 0) || !closeTo(cues[0].End, 1.1) {
-		t.Errorf("cue = {%.4f %.4f}, want {0.0000 1.1000} (still anchored to the outer cut points)",
+	if !closeTo(cues[0].Start, 0) || !closeTo(cues[0].End, 0.9) {
+		t.Errorf("cue = {%.4f %.4f}, want {0.0000 0.9000} (anchored to the outer cut points)",
 			cues[0].Start, cues[0].End)
+	}
+}
+
+// Jordan (2026-07-24): "words from before or after a significant jumpcut are still placed
+// together." A cut that removed CONTENT (a big source-time jump) must NOT be spanned.
+func TestBuildDoesNotSpanSignificantJumpcut(t *testing.T) {
+	opt := Options{MaxChars: 22, GapSeconds: 0.25, Lowercase: true}
+	// Clip A keeps "...media" (ends 2.0s); clip B keeps "you should post" from 28s LATER in
+	// the same source. The boundary words are ~28s apart -> a real jumpcut -> separate captions.
+	src := []Word{
+		w("media", 1.70, 2.00),
+		w("you", 30.00, 30.20), w("should", 30.25, 30.55), w("post", 30.60, 30.90),
+	}
+	segs := []Segment{
+		{Start: 1.5, End: 2.05, Words: src},  // holds "media"
+		{Start: 29.9, End: 31.0, Words: src}, // holds "you should post"
+	}
+	cues := Build(segs, opt)
+	if len(cues) < 2 {
+		t.Fatalf("a jumpcut must break, not merge: got %d cue(s): %+v", len(cues), cues)
+	}
+	if cues[0].Text != "media" {
+		t.Errorf("first caption = %q, want %q (must not merge across the jumpcut)", cues[0].Text, "media")
+	}
+}
+
+// Jordan (2026-07-24): captions should break at ? and ! even when the pause is short.
+func TestChunkWordsBreaksAtQuestionAndExclamation(t *testing.T) {
+	// No pauses between words and a generous MaxChars, so ONLY the ? and ! force the breaks.
+	words := []Word{
+		w("do", 0.00, 0.20), w("it?", 0.22, 0.40),
+		w("yes!", 0.42, 0.60), w("now", 0.62, 0.80),
+	}
+	chunks := ChunkWords(words, 40, 0.5)
+	got := render(chunks)
+	want := []string{"do it?", "yes!", "now"}
+	if len(got) != len(want) {
+		t.Fatalf("want %d chunks (break after ? and after !), got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("chunk %d = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

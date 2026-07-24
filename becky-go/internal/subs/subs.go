@@ -277,6 +277,14 @@ func WordsPerSegment(segments []Segment) [][]Word {
 // boundaries where the pause was suppressed by the 22-char limit" — and the
 // deterministic stand-in for a clause boundary is the run's biggest pause,
 // which is exactly what splitAtBiggestPause picks.
+// endsSentence reports whether a word ends a sentence with ? or ! - tolerating a trailing
+// closing quote or bracket after the mark ("done?" / `over!"` / "really?)"). A break there
+// starts the next sentence on its own caption line.
+func endsSentence(word string) bool {
+	s := strings.TrimRight(strings.TrimSpace(word), `"'’”)]}`)
+	return strings.HasSuffix(s, "?") || strings.HasSuffix(s, "!")
+}
+
 func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 	// First pass: cut the stream at real pauses only. Every break here is one
 	// the speaker actually made.
@@ -291,6 +299,13 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 			cur = nil
 		}
 		cur = append(cur, w)
+		// A sentence-ending ? or ! forces a break: the next sentence starts its own
+		// caption, no matter how tight the pause (Jordan). This runs AFTER appending, so
+		// the mark's own word closes the line it belongs to.
+		if endsSentence(w.Word) {
+			runs = append(runs, cur)
+			cur = nil
+		}
 	}
 	if len(cur) > 0 {
 		runs = append(runs, cur)
@@ -354,15 +369,19 @@ func continuesAcrossCut(prevSeg Segment, prevChunks [][]Word, nextSeg Segment, n
 	if len(last) == 0 || len(first) == 0 {
 		return false
 	}
-	trailing := prevSeg.End - last[len(last)-1].End
-	leading := first[0].Start - nextSeg.Start
-	if trailing < 0 {
-		trailing = 0
+	// A caption may only span a cut that split a TIGHT phrase - i.e. the last word of the
+	// outgoing clip and the first word of the incoming one are CONSECUTIVE in the same source
+	// with no real pause between them (the cut removed a frame or two, not content). A
+	// different source, or a source-time gap larger than the pause threshold - a SIGNIFICANT
+	// jumpcut that removed content, or a trimmed real pause - is a genuine break and must NOT
+	// be spanned (Jordan: "words from before or after a significant jumpcut are still placed
+	// together"). Both words are from the same source's word slice, so their Start/End are on
+	// the same clock and their gap is exactly the speech gap the editor cut through.
+	if prevSeg.Source != nextSeg.Source {
+		return false
 	}
-	if leading < 0 {
-		leading = 0
-	}
-	return trailing+leading <= gapSeconds+gapEps
+	srcGap := first[0].Start - last[len(last)-1].End
+	return srcGap >= -gapEps && srcGap <= gapSeconds+gapEps
 }
 
 // BuildFromChunks is Build with the word grouping already decided — used when

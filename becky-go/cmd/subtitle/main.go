@@ -184,11 +184,21 @@ func main() {
 			// One session per call costs ~a minute regardless of payload, so send
 			// the whole edit at once instead of paying that eleven times.
 			batchSize = len(segments)
+		case haveZenKey():
+			// Jordan (2026-07-24): route the review through his OpenCode Zen account (deepseek
+			// -v4-flash-free; hy3 was removed from Zen), not the now-dead OpenRouter free models.
+			// A true one-shot of a whole edit is too slow for a free flash model (one giant
+			// call generates serially), so use a MODEST batch run CONCURRENTLY: a handful of
+			// calls that finish in about one call's wait, not the 11 serial calls over dead
+			// models that hung for 9 minutes. On any failure PlanChunks falls back fast to the
+			// deterministic captions.
+			model = opencodeZenModel(*reviewModel, *verbose)
+			batchSize = 16
 		case haveReviewer():
 			model = openRouterModel(*reviewModel, *verbose)
 		default:
-			noteReviewSkipped("OPENROUTER_API_KEY is not set")
-			warnings = append(warnings, "caption review skipped: OPENROUTER_API_KEY is not set")
+			noteReviewSkipped("no reviewer key (OPENCODE_ZEN_API_KEY / opencode_key.bin / OPENROUTER_API_KEY)")
+			warnings = append(warnings, "caption review skipped: no reviewer key available")
 		}
 	}
 	chunks, reviewWarnings := subs.PlanChunks(context.Background(), model, segments, opt, batchSize)
