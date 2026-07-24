@@ -875,6 +875,7 @@ static void endWork() {
 #define ICON_CHECK    "\xEE\x9C\xBE"  // U+E73E CheckMark - overlay mode 2 (on, shown)
 #define ICON_CANCEL   "\xEE\x9C\x91"  // U+E711 Cancel (X) - overlay mode 0 (off)
 #define ICON_EYE      "\xEE\xA2\x90"  // U+E890 View (eye) - overlay mode 1 (on, hidden)
+#define ICON_BACK     "\xEE\x9C\xAB"  // U+E72B Back (left arrow) - item 11, left-panel back button
 
 // False until segmdl2.ttf is actually loaded. EVERY icon button below routes
 // its label through ico(), so if the font is missing the whole toolbar falls
@@ -4552,25 +4553,42 @@ static void askBeckyMark(float h) {
 }
 
 // THE SEND ICON HE ASKED FOR (BR3-VISUAL-SPEC): "'send' button should be that
-// same icon instead of the word 'send'". A right-pointing triangle drawn with
-// AddTriangleFilled over a real ImGui::Button - never a font glyph (the merged
-// icon font has no arrow in range and a missing glyph draws a hollow square,
-// same reasoning as askBeckyMark above). The button keeps the caller's pushed
+// same icon instead of the word 'send'". Never a font glyph (the merged icon
+// font has no arrow in range and a missing glyph draws a hollow square, same
+// reasoning as askBeckyMark above). The button keeps the caller's pushed
 // green fill/hover/active; the arrow itself is always dark ink so it reads on
 // green, same as every other active-green control in this file.
+//
+// Item 10 (round 3): a plain equilateral triangle IS a play button - Jordan
+// said so directly. Drawn as an actual ARROW instead - a shaft plus a
+// wide-based head that TAPERS TO A POINT (the reference's send arrow, U+27A4),
+// not a symmetric triangle. A play glyph has no shaft and no notch; this one
+// has both, so it cannot be mistaken for one at a glance.
 static bool sendArrowButton(ImVec2 size) {
     bool clicked = ImGui::Button("##send", size);
     // GetItemRectMin/Max, not the input `size` - a 0 component there means
     // "auto" to ImGui::Button (e.g. height defaults to the frame height), so
-    // using it directly collapsed the triangle to a point (found live: solid
+    // using it directly collapsed the shape to a point (found live: solid
     // green square, no arrow at all). The rect ImGui actually drew is the only
     // reliable source for where the button really landed.
     ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 c{ (p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f };
-    float s = (std::min)(p1.x - p0.x, p1.y - p0.y) * 0.24f;
+    float s = (std::min)(p1.x - p0.x, p1.y - p0.y) * 0.30f;
     const ImU32 ink = IM_COL32(20, 20, 22, 255);
-    dl->AddTriangleFilled({ c.x - s * 0.6f, c.y - s }, { c.x - s * 0.6f, c.y + s }, { c.x + s * 0.9f, c.y }, ink);
+    // Shaft: a short thick horizontal bar reaching from the left edge of the
+    // glyph up to the head - the part a play triangle simply does not have.
+    float shaftHalfH = s * 0.28f;
+    dl->AddRectFilled({ c.x - s * 0.9f, c.y - shaftHalfH }, { c.x + s * 0.05f, c.y + shaftHalfH }, ink);
+    // Head: wider than the shaft (so it reads as an arrowhead, not a flag) and
+    // notched at the back (two short diagonals biting into the base) - the
+    // concave "V" a real send-arrow glyph has, a filled triangle does not.
+    ImVec2 tip{ c.x + s * 1.05f, c.y };
+    ImVec2 topBack{ c.x - s * 0.05f, c.y - s };
+    ImVec2 botBack{ c.x - s * 0.05f, c.y + s };
+    ImVec2 notch{ c.x + s * 0.35f, c.y };
+    dl->AddTriangleFilled(topBack, tip, notch, ink);
+    dl->AddTriangleFilled(notch, tip, botBack, ink);
     return clicked;
 }
 
@@ -6931,7 +6949,20 @@ int main(int argc, char** argv) {
                 // hovering/clicking anywhere in a cue's run of words seeks the player
                 // there; the current search match is highlighted, not hidden - a real
                 // "find", not a filter that deletes the rest of the document.
-                if (ImGui::SmallButton("< Back")) { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); g_cueSel = -1; }
+                // Item 11 (round 3): a GREEN back-arrow glyph, no "back" text - the
+                // dim-gray word "back" was wrong per Jordan's own spec. Neon-green
+                // ink on a near-black chip, matching the reference's .backbtn
+                // exactly (green text/icon, neon-dim border, no fill until hover).
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.04f, 0.04f, 0.04f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.10f, 0.18f, 0.07f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.18f, 0.07f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    if (fixedButton(ico(ICON_BACK "##cueback", "<##cueback"), { ico(ICON_BACK, "<") }))
+                        { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); g_cueSel = -1; }
+                    ImGui::PopStyleColor(4);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the file list");
+                }
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
                 ImGui::SameLine();
@@ -8059,18 +8090,19 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             // Item 8: CLI-CUT captions - becky-subtitle.exe, NOT the Parakeet
-            // per-clip transcript the toggle above falls back to. Amber, the same
-            // "runs a real pipeline" accent the Forensic button already uses -
-            // this saves the reel then shells out, so it is not instant either.
+            // per-clip transcript the toggle above falls back to. Blue (#00AEEF),
+            // NOT the amber "Forensic" already uses - amber there means "runs an
+            // LLM search pipeline"; reusing it here would read as "another
+            // forensic thing" instead of "captions, just a better source".
             {
                 bool busy = g_cliCutBusy.load();
                 bool noClips = g_track[0].empty();
                 if (busy || noClips) ImGui::BeginDisabled();
-                ImVec4 amber(1.0f, 0.72f, 0.18f, 1.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, amber);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(amber.x * 0.82f, amber.y * 0.82f, amber.z * 0.82f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(amber.x * 0.66f, amber.y * 0.66f, amber.z * 0.66f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                ImVec4 blue(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, blue);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
                 if (fixedButton(busy ? "CLI-CUT...##clicut" : "CLI-CUT##clicut", { "CLI-CUT...", "CLI-CUT" })) {
                     g_cliCutBusy.store(true);
                     engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel for CLI-CUT captions...", [](const json& r) {
