@@ -518,13 +518,20 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 		// Span the cut into the previous caption when the speech is continuous
 		// across it (continuesAcrossCut) — fold this segment's first cue into
 		// the last cue already in out rather than starting a new, often
-		// one-word, caption. Guarded by the same MaxChars+overflowSlack give
-		// repair.go uses for phrase integrity: a merge that would blow the line
-		// out is skipped, not forced.
+		// one-word, caption.
+		//
+		// TWO hard limits Jordan's rules put on this (2026-07-24): (1) NEVER span a
+		// cut when the previous caption ENDS a sentence — a ? or ! is a hard boundary
+		// even when the speech runs on, and this merge was gluing "them?" onto
+		// "drinking!" across a cut, the exact defect he saw; (2) the merged line must
+		// stay within the HARD 22 cap, not the phrase-slack, so a spanned caption can
+		// never exceed what fits on screen. A single word left behind is fine — he
+		// allows one-word captions.
 		if i > 0 && len(out) > 0 && i-1 < len(chunksPerSeg) && i < len(chunksPerSeg) &&
+			!endsSentence(out[len(out)-1].Text) &&
 			continuesAcrossCut(segments[i-1], chunksPerSeg[i-1], segments[i], chunksPerSeg[i], opt.GapSeconds) {
 			joined := normalize(out[len(out)-1].Text+" "+cues[0].Text, opt.Lowercase)
-			if opt.MaxChars <= 0 || len(joined) <= opt.MaxChars+overflowSlack {
+			if opt.MaxChars <= 0 || len(joined) <= opt.MaxChars {
 				out[len(out)-1].End = cues[0].End
 				out[len(out)-1].Text = joined
 				cues = cues[1:]

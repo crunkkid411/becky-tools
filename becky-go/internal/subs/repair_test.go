@@ -337,9 +337,11 @@ func TestRebalanceCapSplitsRescuesSegmentLeadingLoneWord(t *testing.T) {
 // (0.32s), so none of them may produce a one-word caption. Each asserts the
 // exact grouping, not just "no lone word".
 
-// "posting" was stranded at 40.07s: RepairDangling pushed the number
-// "twenty-seven" out of a two-word line. The right grouping keeps the number
-// with its unit by letting the first line run 4 chars into the burn slack.
+// TestPass1KeepsPostingWithItsNumber: the number "twenty-seven" stays with its unit
+// "times" — but "posting twenty-seven times" is 26 chars, and 22 is a HARD cap
+// (Jordan 2026-07-24: more than 22 does not fit on screen; a one-word line is fine).
+// So "posting" is stranded onto its own line and the number+unit fits below the cap,
+// instead of the old "run 4 chars into the burn slack".
 func TestPass1KeepsPostingWithItsNumber(t *testing.T) {
 	words := []Word{
 		w("posting", 107.04, 107.36), w("twenty-seven", 107.60, 108.00),
@@ -347,7 +349,7 @@ func TestPass1KeepsPostingWithItsNumber(t *testing.T) {
 		w("day,", 108.56, 108.80), w("it's", 108.88, 109.20),
 	}
 	got := render(Pass1Chunks(words, 22, 0.32))
-	want := []string{"posting twenty-seven times", "a day, it's"}
+	want := []string{"posting", "twenty-seven times", "a day, it's"}
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
 	}
@@ -387,18 +389,18 @@ func TestPass1DoesNotStrandProbably(t *testing.T) {
 	}
 }
 
-// "learned" became a 33ms cue at 137.87s: the only in-cap split of
-// "the fundamentals learned" strands "learned", so the chunk must be kept
-// WHOLE — 24 chars, over the 22 cap but inside the burn slack, which beats a
-// stranded word every time.
-func TestPass1KeepsFundamentalsLearnedWhole(t *testing.T) {
+// TestPass1SplitsFundamentalsLearnedAtHardCap: "the fundamentals learned" is 24
+// chars. The OLD rule kept it whole inside the burn slack; Jordan's rule now makes 22
+// a HARD cap with one-word lines allowed, so it breaks at the pause before "learned"
+// ("the fundamentals" | "learned") rather than sit 2 chars over what fits on screen.
+func TestPass1SplitsFundamentalsLearnedAtHardCap(t *testing.T) {
 	words := []Word{
 		w("you", 279.60, 279.60), w("don't", 279.68, 279.84), w("have", 280.00, 280.00),
 		w("the", 280.16, 280.16), w("fundamentals", 280.24, 280.64),
 		w("learned", 280.80, 281.12),
 	}
 	got := render(Pass1Chunks(words, 22, 0.32))
-	want := []string{"you don't have", "the fundamentals learned"}
+	want := []string{"you don't have", "the fundamentals", "learned"}
 	if strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
 	}

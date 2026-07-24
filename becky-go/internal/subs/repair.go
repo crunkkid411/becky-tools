@@ -386,16 +386,64 @@ func noLonePiece(pieces [][]Word) bool {
 	return true
 }
 
+// forceUnderCap is the LAST-RESORT HARD cap. The phrase-preserving splitter keeps a
+// line whole rather than strand a word, so it can leave a line a few chars over the
+// limit ("i have something important" = 26). Jordan's rule (2026-07-24): 22 is a HARD
+// failsafe — more than 22 characters do NOT fit on a TikTok caption — and a one-word
+// line is allowed. So here we DO strand a word if that is what it takes to fit: break
+// any over-cap line at its biggest internal pause (left side must fit; else the most
+// balanced point) and recurse until every piece fits or is a single unsplittable word.
+func forceUnderCap(chunks [][]Word, maxChars int) [][]Word {
+	if maxChars <= 0 {
+		return chunks
+	}
+	out := make([][]Word, 0, len(chunks))
+	var split func(c []Word)
+	split = func(c []Word) {
+		if len(c) < 2 || lineLen(c) <= maxChars {
+			out = append(out, c) // fits, or a single word too long to break
+			return
+		}
+		best, bestGap := -1, -1.0
+		bal, balDiff := 1, 1<<30
+		for i := 1; i < len(c); i++ {
+			if d := abs(lineLen(c[:i]) - lineLen(c[i:])); d < balDiff {
+				balDiff, bal = d, i
+			}
+			if lineLen(c[:i]) > maxChars {
+				continue // left side must fit the cap
+			}
+			g := c[i].Start - c[i-1].End
+			if g < 0 {
+				g = 0
+			}
+			if g >= bestGap { // >= keeps the later of equal gaps, filling lines fuller
+				bestGap, best = g, i
+			}
+		}
+		if best < 0 {
+			best = bal // nothing fit the cap on the left — fall back to the balance point
+		}
+		split(c[:best])
+		split(c[best:])
+	}
+	for _, c := range chunks {
+		split(c)
+	}
+	return out
+}
+
 // Pass1Chunks is the deterministic recipe used everywhere pass-1 chunks are
 // produced (Build's own chunking, and PlanChunks' pass-1/fallback): pace-
 // driven chunking, the cap-split rebalance above, then the phrase-integrity
 // repairs. Centralised so the two call sites can't drift apart.
 func Pass1Chunks(words []Word, maxChars int, gapSeconds float64) [][]Word {
 	raw := rebalanceCapSplits(ChunkWords(words, maxChars, gapSeconds), maxChars, gapSeconds)
+	capped := forceUnderCap(RepairDangling(raw, maxChars), maxChars)
 	// rebalanceCapSplits is not sentence-aware and can re-glue a ? to the next
 	// line; re-assert the sentence break last. The pause break is already safe on
 	// this path — rebalanceCapSplits leaves a real pause alone.
-	return splitAtSentenceEnds(RepairDangling(raw, maxChars))
+	return splitAtSentenceEnds(capped)
 }
 
 // RepairModelGroups is Pass1Chunks' counterpart for the LLM review pass: the
@@ -420,7 +468,7 @@ func RepairModelGroups(groups [][]Word, maxChars int, gapSeconds float64) [][]Wo
 	// pushes forward — so this has to come before the repairs, not after).
 	hard := splitAtHardBoundaries(groups, gapSeconds)
 	capped := EnforceMaxChars(RepairDangling(hard, maxChars), maxChars)
-	repaired := RepairDangling(rebalanceCapSplits(capped, maxChars, gapSeconds), maxChars)
+	repaired := forceUnderCap(RepairDangling(rebalanceCapSplits(capped, maxChars, gapSeconds), maxChars), maxChars)
 	// rebalanceCapSplits can still re-glue a ? (it guards pauses, not sentence
 	// ends), so re-assert the sentence break at the very end where nothing undoes it.
 	return splitAtSentenceEnds(repaired)
