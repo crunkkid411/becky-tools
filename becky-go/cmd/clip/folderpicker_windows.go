@@ -18,11 +18,24 @@ import (
 // FolderBrowserDialog in a single-threaded-apartment (-STA, required for the
 // WinForms dialog) and reads the chosen path off stdout. An exec failure (no
 // PowerShell, dialog error) is returned so the UI can fall back to a path box.
-func pickFolder() (string, error) {
-	const script = `Add-Type -AssemblyName System.Windows.Forms; ` +
+//
+// startDir preselects the folder the picker opens IN. Jordan (item 5): "open folder
+// needs to open to the last folder, not the default windows navigator" - the caller
+// passes the currently-open case folder, and FolderBrowserDialog.SelectedPath both
+// preselects it and scrolls the tree to it. Empty startDir = the old default location.
+func pickFolder(startDir string) (string, error) {
+	sel := ""
+	if s := strings.TrimSpace(startDir); s != "" {
+		// single-quote escape (double every ') so a folder name containing a quote
+		// cannot break out of the PowerShell string literal.
+		esc := strings.ReplaceAll(s, "'", "''")
+		sel = `$f.SelectedPath = '` + esc + `'; `
+	}
+	script := `Add-Type -AssemblyName System.Windows.Forms; ` +
 		`$f = New-Object System.Windows.Forms.FolderBrowserDialog; ` +
 		`$f.Description = 'Pick your case folder'; ` +
 		`$f.ShowNewFolderButton = $false; ` +
+		sel +
 		`if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($f.SelectedPath) }`
 	cmd := exec.Command("powershell", "-NoProfile", "-STA", "-Command", script)
 	out, err := cmd.Output()

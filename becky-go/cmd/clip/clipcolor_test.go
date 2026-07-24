@@ -98,6 +98,31 @@ func TestClipColorEmptySourceGivesNoColor(t *testing.T) {
 	}
 }
 
+// Item 26 (2026-07-24, Jordan: "currently it seems to just do random"). The per-folder
+// colour cache accumulated FOREIGN sources (external drops, dev/test churn), which consumed
+// palette slots and scrambled the case videos' order. ReseedClipColorsInOrder must re-derive
+// the palette STRICTLY from the current reel's first-appearance order, overriding that
+// polluted history so video 1 = #14FF39, video 2 = #00AEEF, video 3 = #DC143C.
+func TestReseedClipColorsInOrderOverridesPollution(t *testing.T) {
+	ResetClipColors()
+	// A polluted history: two foreign sources assigned first would push video1 to palette[2].
+	clipColor(`X:\foreign\a.mp4`)
+	clipColor(`X:\foreign\b.mp4`)
+	clipColor(`X:\case\video1.mp4`)
+	// Reseed from the reel's own order (video1 appears twice; distinct order is 1,2,3).
+	ReseedClipColorsInOrder([]string{`X:\case\video1.mp4`, `X:\case\video2.mp4`, `X:\case\video3.mp4`, `X:\case\video1.mp4`})
+	for i, src := range []string{`X:\case\video1.mp4`, `X:\case\video2.mp4`, `X:\case\video3.mp4`} {
+		if got := clipColor(src); got != clipPalette[i] {
+			t.Errorf("source %d = %s, want %s (reel-order palette, not polluted history)", i+1, got, clipPalette[i])
+		}
+	}
+	// The foreign sources were cleared by the reseed; asking about one now assigns the NEXT
+	// palette slot (4th), never stealing a case video's colour.
+	if got := clipColor(`X:\foreign\a.mp4`); got != clipPalette[3] {
+		t.Errorf("re-added foreign source = %s, want %s (next slot)", got, clipPalette[3])
+	}
+}
+
 // 2026-07-22, Jordan: "the colors are going wild... that color does not change
 // for the rest of the project." The in-memory map died with every engine
 // process, so a restart re-assigned colours in that session's first-appearance

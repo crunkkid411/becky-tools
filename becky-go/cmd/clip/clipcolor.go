@@ -169,6 +169,33 @@ func SeedClipColors(sources []string) {
 	}
 }
 
+// ReseedClipColorsInOrder resets the assignment and re-colours the given sources STRICTLY
+// by first-appearance order, so the timeline always shows clipPalette[0], [1], [2]... in the
+// reel's own order (item 26: "the colours are to be used in this order"). Called on reel/
+// timeline LOAD. This overrides any stale or FOREIGN-polluted per-folder colour history: the
+// cache is keyed by the open case folder, but a reel can carry sources from other folders
+// (external drops, forensic reels), and those foreign sources used to consume palette slots
+// and scramble the case videos' order into "random" colours. Re-deriving from the reel's own
+// clip order on load makes it deterministic. It runs ONLY on load, so mid-edit deletes/adds
+// never recolour a source under the user (the in-memory map persists during a session).
+func ReseedClipColorsInOrder(sources []string) {
+	clipColorMu.Lock()
+	defer clipColorMu.Unlock()
+	clipColorBy = map[string]string{}
+	clipColorNext = 0
+	seen := map[string]bool{}
+	for _, s := range sources {
+		k := colorKey(s)
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		clipColorBy[k] = clipPalette[clipColorNext%len(clipPalette)]
+		clipColorNext++
+	}
+	saveClipColorsLocked()
+}
+
 // ResetClipColors clears the assignment AND detaches from the backing file
 // (tests use this to simulate a fresh engine process; production project
 // switching goes through LoadClipColors, which resets internally).

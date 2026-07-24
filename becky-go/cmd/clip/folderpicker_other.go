@@ -8,6 +8,7 @@ package main
 
 // pickFolder is a no-op on non-Windows: it returns "" (nothing chosen) and no
 // error, so App.PickFolder degrades to "user cancelled" rather than failing.
-func pickFolder() (string, error) {
+// startDir (the folder to open in on Windows) is ignored here.
+func pickFolder(startDir string) (string, error) {
 	return "", nil
 }

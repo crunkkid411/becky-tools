@@ -276,7 +276,12 @@ var pickFolderFn = pickFolder
 // as Picked=false, not an error. A dialog/exec failure surfaces as an error so
 // the UI can fall back to a path prompt.
 func (a *App) PickFolder() (PickFolderResult, error) {
-	dir, err := pickFolderFn()
+	// Item 5: open the picker IN the currently-open case folder (Jordan: "open
+	// folder needs to open to the last folder, not the default windows navigator").
+	a.mu.Lock()
+	startDir := a.folder
+	a.mu.Unlock()
+	dir, err := pickFolderFn(startDir)
 	if err != nil {
 		return PickFolderResult{}, fmt.Errorf("folder picker failed: %w", err)
 	}
@@ -1169,6 +1174,16 @@ func (a *App) LoadReel(path string) (TimelineView, error) {
 		colorDir = filepath.Dir(path)
 	}
 	LoadClipColors(colorDir)
+	// Item 26: colour the reel's sources STRICTLY in first-appearance order so the timeline
+	// always shows the palette in reel order (#14FF39, #00AEEF, ...), overriding any stale or
+	// foreign-polluted per-folder colour history that used to scramble it into "random".
+	{
+		srcs := make([]string, 0, len(r.Clips))
+		for _, c := range r.Clips {
+			srcs = append(srcs, c.Source)
+		}
+		ReseedClipColorsInOrder(srcs)
+	}
 	a.mu.Lock()
 	a.pushUndoLocked()
 	a.reel = r

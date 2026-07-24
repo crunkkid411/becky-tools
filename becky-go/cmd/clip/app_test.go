@@ -589,7 +589,7 @@ func TestPickFolderPickedIndexes(t *testing.T) {
 
 	orig := pickFolderFn
 	defer func() { pickFolderFn = orig }()
-	pickFolderFn = func() (string, error) { return dir, nil }
+	pickFolderFn = func(string) (string, error) { return dir, nil }
 
 	res, err := app.PickFolder()
 	if err != nil {
@@ -607,6 +607,28 @@ func TestPickFolderPickedIndexes(t *testing.T) {
 	}
 }
 
+// TestPickFolderOpensInLastFolder verifies item 5: the picker is asked to open IN
+// the currently-open case folder (its startDir arg == app.folder), so it never pops
+// at the default Windows location once a folder is open.
+func TestPickFolderOpensInLastFolder(t *testing.T) {
+	dir := fixtureFolder(t)
+	app := NewApp()
+	app.workDir = t.TempDir()
+	app.folder = `X:\some\already\open\case`
+
+	orig := pickFolderFn
+	defer func() { pickFolderFn = orig }()
+	var gotStart string
+	pickFolderFn = func(startDir string) (string, error) { gotStart = startDir; return dir, nil }
+
+	if _, err := app.PickFolder(); err != nil {
+		t.Fatalf("PickFolder: %v", err)
+	}
+	if gotStart != `X:\some\already\open\case` {
+		t.Fatalf("picker should open in the last folder: want %q, got %q", `X:\some\already\open\case`, gotStart)
+	}
+}
+
 // TestPickFolderCancelledIsNoOp verifies a cancelled dialog (empty path) is a
 // no-op: Picked=false, no error, the open folder unchanged.
 func TestPickFolderCancelledIsNoOp(t *testing.T) {
@@ -615,7 +637,7 @@ func TestPickFolderCancelledIsNoOp(t *testing.T) {
 
 	orig := pickFolderFn
 	defer func() { pickFolderFn = orig }()
-	pickFolderFn = func() (string, error) { return "", nil }
+	pickFolderFn = func(string) (string, error) { return "", nil }
 
 	res, err := app.PickFolder()
 	if err != nil {
@@ -637,7 +659,7 @@ func TestPickFolderErrorSurfaces(t *testing.T) {
 
 	orig := pickFolderFn
 	defer func() { pickFolderFn = orig }()
-	pickFolderFn = func() (string, error) { return "", fmt.Errorf("no powershell") }
+	pickFolderFn = func(string) (string, error) { return "", fmt.Errorf("no powershell") }
 
 	if _, err := app.PickFolder(); err == nil {
 		t.Error("a picker exec failure should surface as an error")
@@ -653,7 +675,7 @@ func TestCallPickFolderVerb(t *testing.T) {
 
 	orig := pickFolderFn
 	defer func() { pickFolderFn = orig }()
-	pickFolderFn = func() (string, error) { return dir, nil }
+	pickFolderFn = func(string) (string, error) { return dir, nil }
 
 	r := callEnv(t, app, "pick_folder", `{}`)
 	if !r.OK {

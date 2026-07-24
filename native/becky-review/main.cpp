@@ -911,21 +911,35 @@ static bool refBtnCore(const char* label, float w) {
     const ImVec4 baseBg = ImGui::GetStyleColorVec4(ImGuiCol_Button);
     const ImVec4 baseTx = ImGui::GetStyleColorVec4(ImGuiCol_Text);
     const ImVec4 baseBd = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+    // A "white" chip = the default #0A0A0A dark fill (white/neon text). A "blue" chip is
+    // now identified by its BLUE TEXT on a dark fill (get-captions, frame [<|/|>]) - the
+    // reference draws those as blue TEXT on dark, NOT a solid blue FILL (that fill is the
+    // look Jordan banned, item 22). Detect blue by the pushed text colour (#00AEEF -> z
+    // high, x low) so the fill can stay dark.
     const bool isWhite = baseBg.x < 0.06f && baseBg.y < 0.06f && baseBg.z < 0.06f;
-    const bool isBlue  = baseBg.z > 0.45f && baseBg.x < 0.25f;
+    const bool isBlue  = baseTx.z > 0.6f && baseTx.x < 0.3f && baseBg.z < 0.30f;
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetFrameHeight();
     bool clicked = ImGui::InvisibleButton(label, ImVec2(w, h));
     bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
     ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
     ImVec4 bg = baseBg, tx = baseTx, bd = baseBd;
+    const ImVec4 kBlue = ImVec4(0.0f, 0.68f, 0.94f, 1.0f);           // #00AEEF
+    if (isBlue) bd = ImVec4(0.078f, 0.314f, 0.416f, 1.0f);           // #14506A muted-blue border at rest (.tbtn2.extend)
     ImU32 glow = 0;
     if (hov) {
-        if (isWhite)     { tx = kNeon; bd = kNeon; glow = IM_COL32(0x39, 0xFF, 0x14, 60); }
-        else if (isBlue) { tx = ImVec4(1, 1, 1, 1); bd = ImVec4(0.0f, 0.68f, 0.94f, 1.0f); glow = IM_COL32(0x00, 0xAE, 0xEF, 90); }
-        else             { glow = IM_COL32(0x39, 0xFF, 0x14, 50); }
+        // Jordan (items 17/18): EVERY button gets the same subtle WHITE outer glow on
+        // hover (matches becky-review-native's rgba(255,255,255,.35) button hover). A
+        // blue-text chip turns its text WHITE + border blue; a white chip turns its
+        // text+border neon (.btn:hover); a green-on chip just glows. Glow is white in
+        // every case, never green/blue. Check blue FIRST - a blue chip's fill is also
+        // dark, so it would otherwise fall into the isWhite branch.
+        const ImU32 whiteGlow = IM_COL32(255, 255, 255, 90);
+        if (isBlue)      { tx = ImVec4(1, 1, 1, 1); bd = kBlue; glow = whiteGlow; }
+        else if (isWhite){ tx = kNeon; bd = kNeon; glow = whiteGlow; }
+        else             { glow = whiteGlow; }
     }
-    if (act && isWhite) bg = ImVec4(0.08f, 0.08f, 0.09f, 1.0f);
+    if (act && (isWhite || isBlue)) bg = ImVec4(0.08f, 0.08f, 0.09f, 1.0f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r = ImGui::GetStyle().FrameRounding;
     dl->AddRectFilled(mn, mx, ImGui::ColorConvertFloat4ToU32(bg), r);
@@ -1795,19 +1809,42 @@ static void imguiOutlinedText(ImDrawList* dl, ImVec2 pos, float fontSize,
                 dl->AddText(font, fontSize, ImVec2(pos.x + dx, pos.y + dy), black, text);
     dl->AddText(font, fontSize, pos, white, text);
 }
-static void drawOverlayImGui(const Clip* cur, ImVec2 origin, ImVec2 size) {
+// Consolas, loaded in the font block; the overlay's monospace face so the forensic
+// timecode digits don't jitter (item 25). Null until loaded -> falls back to the UI font.
+static ImFont* g_overlayFont = nullptr;
+// Item 25 - the forensic lower-third must be IDENTICAL to becky-review-native / the burned
+// render (becky-go/internal/reel/drawtext.go). That spec, authored at the SOURCE frame
+// resolution: Consolas monospace, WHITE text, 42px per line (45px for the ORIG TC line), a
+// per-line semi-transparent BLACK BOX (boxcolor=black@0.6) behind the text, lower-LEFT,
+// left margin 20 / bottom pad 61 (bottom edge -> top of the lowest line) / line step 58.
+// All of it is scaled to the DISPLAYED video by `scale` = the caller's fit scale
+// (sc = displayedHeight / sourceHeight), so it tracks the frame exactly like the reference.
+static void drawOverlayImGui(const Clip* cur, ImVec2 origin, ImVec2 size, float scale) {
     if (g_ovMode != 2 || !cur) return;
     std::vector<std::string> lines = overlayLines(*cur);
     if (lines.empty()) return;
+    if (scale <= 0.0f) scale = 1.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    float fs = ImGui::GetFontSize() * 1.25f;
-    bool top = (g_overlay.position == "top");
-    float y = top ? origin.y + 8.0f : origin.y + size.y - 8.0f - fs * (float)lines.size() * 1.15f;
-    for (auto& ln : lines) {
-        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0, ln.c_str());
-        imguiOutlinedText(dl, ImVec2(origin.x + 8.0f, y), fs, ln.c_str());
-        (void)ts;
-        y += fs * 1.15f;
+    ImFont* font = g_overlayFont ? g_overlayFont : ImGui::GetFont();
+    const float fsBody = 42.0f * scale, fsTC = 45.0f * scale;
+    const float marginX = 20.0f * scale, bottomPad = 61.0f * scale, lineStep = 58.0f * scale;
+    const bool top = (g_overlay.position == "top");
+    const int n = (int)lines.size();
+    const ImU32 black = IM_COL32(0, 0, 0, 255), white = IM_COL32(255, 255, 255, 255);
+    for (int i = 0; i < n; i++) {
+        const std::string& ln = lines[i];
+        const float fs = (ln.rfind("ORIG TC", 0) == 0) ? fsTC : fsBody;   // TC line is the larger anchor
+        const float x = origin.x + marginX;
+        const float y = top ? origin.y + 20.0f * scale + (float)i * lineStep
+                            : origin.y + size.y - (bottomPad + (float)(n - 1 - i) * lineStep);
+        const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, ln.c_str());
+        const float bpx = fs * 0.22f, bpy = fs * 0.10f;                    // snug per-line box padding
+        dl->AddRectFilled(ImVec2(x - bpx, y - bpy), ImVec2(x + ts.x + bpx, y + ts.y + bpy),
+                          IM_COL32(0, 0, 0, 153));                          // black @ 0.6 (boxcolor=black@0.6)
+        for (int dy = -1; dy <= 1; dy++)                                    // thin 1px outline (the C# preview's bord1)
+            for (int dx = -1; dx <= 1; dx++)
+                if (dx || dy) dl->AddText(font, fs, ImVec2(x + dx, y + dy), black, ln.c_str());
+        dl->AddText(font, fs, ImVec2(x, y), white, ln.c_str());
     }
 }
 // Cycles/sets the 3-state preview toggle and keeps the engine's Overlay.Enabled
@@ -3151,6 +3188,9 @@ static void loadCaptions(const std::string& reelPath) {
 // UI thread), reused directly since this is a plain external exe, not an
 // engine verb - AsyncReply doesn't care which one produced its json.
 static std::atomic<bool> g_cliCutBusy{ false };
+// Item 27: set when the video-row "Get Captions" put a whole video on the timeline and now
+// wants captions built for it - consumed once the add_external reply lands (drainAsync).
+static bool g_getCaptionsAfterAdd = false;
 static void runCliCutCaptions(const std::string& reelPath) {
     beginWork("Building CLI-CUT captions (becky-subtitle)...");
     std::thread([reelPath]() {
@@ -3164,6 +3204,11 @@ static void runCliCutCaptions(const std::string& reelPath) {
             // per becky-subtitle's own --review-model help text) - this button asks for
             // the real CLI-CUT result, not a stripped-down fast path.
             std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\"";
+            // Item 15: pass the reel's real frame rate so becky-subtitle SNAPS caption
+            // boundaries to whole frames (it warns "no frame rate known ... pass --fps"
+            // otherwise). reelFps() is the edit's own rate (29.97 for Jordan's footage).
+            double fps = reelFps();
+            if (fps > 1.0) { char fbuf[48]; snprintf(fbuf, sizeof fbuf, " --fps %.6f", fps); cmd += fbuf; }
             std::string out;
             // 600s: --transcribe can run becky-transcribe on any source with no sidecar
             // yet ("this is the slow step", per the tool's own doc) plus a review pass.
@@ -3187,6 +3232,25 @@ static void runCliCutCaptions(const std::string& reelPath) {
             g_renderMsgAt = nowSec();
         } });
     }).detach();
+}
+
+// "get captions" (the toolbar button + both right-click menus, items 16/27): save the
+// CURRENT reel, then build real TikTok-style captions for it with becky-subtitle. Extracted
+// so the toolbar button and the clip/timeline context menu all run the identical pipeline.
+static void triggerGetCaptions() {
+    if (g_cliCutBusy.load() || g_track[0].empty()) return;
+    g_cliCutBusy.store(true);
+    engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel for captions...", [](const json& r) {
+        if (r.value("ok", false)) {
+            std::string path = r.value("data", json::object()).value("path", std::string());
+            if (!path.empty()) runCliCutCaptions(path);
+            else { g_cliCutBusy.store(false); g_renderMsg = "get captions failed: save_reel returned no path"; g_renderMsgAt = nowSec(); }
+        } else {
+            g_cliCutBusy.store(false);
+            g_renderMsg = "get captions failed: could not save reel: " + r.value("error", std::string("?"));
+            g_renderMsgAt = nowSec();
+        }
+    });
 }
 
 // The vertical placement is PER REEL, and deliberately so - Jordan: "the default
@@ -3418,6 +3482,28 @@ static bool prevBoundary(double from, double& hit) {
     const double eps = 1.0 / 60.0;
     for (auto it = b.rbegin(); it != b.rend(); ++it) if (*it < from - eps) { hit = *it; return true; }
     return false;
+}
+
+// Item 31: a CLOSED-HAND (grab) cursor for "I am moving something". ImGui/Win32 has no
+// closed-hand cursor (IDC_HAND is the POINTING hand), so hide the OS cursor and hand-draw
+// a small fist - palm + four curled knuckles + a thumb - on the foreground draw list at
+// the pointer. White fill + dark outline so it reads on any timeline colour.
+static void drawGrabCursor() {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+    ImVec2 m = ImGui::GetMousePos();
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const ImU32 fill = IM_COL32(240, 240, 245, 255), line = IM_COL32(20, 20, 24, 255);
+    const float s = 9.0f;
+    ImVec2 a(m.x - s * 0.8f, m.y - s * 0.15f), b(m.x + s * 0.9f, m.y + s);
+    dl->AddRectFilled(a, b, fill, s * 0.45f);                 // the fist body
+    dl->AddRect(a, b, line, s * 0.45f, 0, 1.5f);
+    for (int i = 0; i < 4; i++) {                             // four curled-finger knuckles
+        float kx = a.x + (b.x - a.x) * (0.22f + i * 0.19f);
+        dl->AddCircleFilled(ImVec2(kx, a.y), s * 0.26f, fill);
+        dl->AddCircle(ImVec2(kx, a.y), s * 0.26f, line, 0, 1.2f);
+    }
+    dl->AddCircleFilled(ImVec2(a.x, m.y + s * 0.4f), s * 0.28f, fill);   // thumb
+    dl->AddCircle(ImVec2(a.x, m.y + s * 0.4f), s * 0.28f, line, 0, 1.2f);
 }
 
 static void drawTimeline(double& curSec, bool& playing) {
@@ -3734,6 +3820,12 @@ static void drawTimeline(double& curSec, bool& playing) {
             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(c.source);
             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(c.source).c_str());
             if (ImGui::MenuItem("Open Transcript")) openTranscript(c.source);
+            ImGui::Separator();
+            // Item 27: build REAL TikTok-style captions (becky-subtitle: cut-snapped +
+            // phrase-broken) for the whole timeline, not the raw Parakeet transcript.
+            ImGui::BeginDisabled(g_cliCutBusy.load());
+            if (ImGui::MenuItem("Get Captions")) triggerGetCaptions();
+            ImGui::EndDisabled();
         }
         ImGui::EndPopup();
     }
@@ -3762,20 +3854,18 @@ static void drawTimeline(double& curSec, bool& playing) {
             g_gest.gIn = curSec;
             emitScrub(curSec, false);
         } else if (my < aY) {
-            // RULER BAND (items 52/53/107). The ruler is where a Vegas editor
-            // instinctively grabs to move around the timeline, and grabbing it
-            // used to scrub instead - the playhead shot off with the cursor.
-            //
-            // Click sets the playhead AND the stock (the return point playback
-            // resumes from), because on the ruler he is choosing where to work,
-            // not auditioning a moment. Dragging PANS the view, leaving the
-            // playhead where he put it. (Grabbing the playhead HANDLE itself is
-            // handled above instead - that drags the frame, not the view.)
+            // RULER BAND (items 28/29). Jordan reversed the earlier "drag pans" design:
+            // a CLICK moves the PLAYHEAD there instantly, and DRAG SCRUBS the playhead -
+            // panning is the MIDDLE mouse button's job (s_midPan above) and works great.
+            // If the timeline is PLAYING, the click/drag SEEKS and KEEPS PLAYING from the
+            // new spot (engine jumps, audio follows); paused, it is a frame-exact reposition.
+            // (Grabbing the playhead HANDLE itself is kind 1 above and already works - "do
+            // not break the playhead body".)
             g_gest.kind = 11;
-            g_gest.gIn = g_scrollSec;                 // view position at grab time
             curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
-            g_stockSec = curSec;
-            emitScrub(curSec, true);
+            g_gest.gIn = curSec;                      // drag throttle baseline (was the scroll pos)
+            if (g_playingExt) { g_stockSec = curSec; engineReelSeek(curSec); }
+            else { g_stockSec = -1; g_stockFlash = false; emitScrub(curSec, false); }
         } else if (onThresholdBar(mx, my)) {
             g_gest.kind = 7;
         } else if (clipHit(mx, my, idx, zone)) {
@@ -3812,11 +3902,13 @@ static void drawTimeline(double& curSec, bool& playing) {
             curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
             if (std::abs(curSec - g_gest.gIn) > 1e-9) { g_gest.gIn = curSec; emitScrub(curSec, false); }
         } else if (g_gest.kind == 11) {
-            // Pan, exactly like the middle-drag above - same formula, so the two
-            // ways of moving the view can never drift apart.
-            if (io.MouseDelta.x != 0) {
-                g_scrollSec = std::max(0.0, g_scrollSec - io.MouseDelta.x / g_pps);
-                g_lastUserScroll = nowSec();
+            // Item 29: DRAG SCRUBS the playhead (NOT pan). It follows the cursor; seeks the
+            // engine while playing (keeps playing), frame-exact recompose while paused.
+            curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+            if (std::abs(curSec - g_gest.gIn) > 1e-9) {
+                g_gest.gIn = curSec;
+                if (g_playingExt) { g_stockSec = curSec; engineReelSeek(curSec); }
+                else { g_stockSec = -1; emitScrub(curSec, false); }
             }
         } else if (g_gest.kind == 7) {
             float y = std::max(thrLaneTop, std::min(thrLaneBot, my));
@@ -3876,16 +3968,24 @@ static void drawTimeline(double& curSec, bool& playing) {
             }
             if (ns < 0) ns = 0;
             g_gest.gIn = quantToFrame(ns); g_gest.gOut = quantToFrame(ns + dur);
-        } else if (g_gest.kind == 9) {
+        } else if (g_gest.kind == 9 && std::abs(mx - g_gest.pressX) > 4) {
+            // Item 30: only trim once the mouse has actually DRAGGED > 4px - the same guard
+            // the clip edges (kinds 4/5) use. Without it a bare CLICK on the start edge
+            // quantized to a neighbouring frame and the release committed it, shaving one
+            // frame off the caption (the identical bug we already fixed for clips).
             double t = quantToFrame(capSnapCut(xToSec(mx)));
             double lim = quantToFrame(g_gest.gOut - 1.0 / reelFps());   // never shorter than one frame
             g_gest.gIn = std::max(0.0, std::min(t, lim));
-        } else if (g_gest.kind == 10) {
+        } else if (g_gest.kind == 10 && std::abs(mx - g_gest.pressX) > 4) {
             double t = quantToFrame(capSnapCut(xToSec(mx)));
             double lim = quantToFrame(g_gest.gIn + 1.0 / reelFps());
             g_gest.gOut = std::max(t, lim);
         }
     }
+
+    // Item 31: show the closed-hand (grab) cursor while dragging a clip to a new slot
+    // (kind 3) or middle-mouse panning the timeline - the "I'm moving this" feedback.
+    if (g_gest.kind == 3 || s_midPan) drawGrabCursor();
 
     if (released && g_gest.kind != 0) {
         Gesture g = g_gest; g_gest = Gesture{};
@@ -4325,12 +4425,17 @@ static void drawTimeline(double& curSec, bool& playing) {
         if (g_capEditFocus) { ImGui::SetKeyboardFocusHere(); g_capEditFocus = false; }
         bool enter = ImGui::InputText("##capedit", g_capEditBuf, sizeof g_capEditBuf,
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        // ImGui restores the pre-edit text into the buffer itself when Escape is
-        // pressed, so committing on deactivation covers Enter, Escape AND click-away
-        // through one path - Escape just commits the unchanged original, i.e. cancels.
+        // Item 32: reflect the typed text in the PREVIEW in realtime. drawCaptionsImGui
+        // reads g_caps[i].text, so update the in-memory caption EVERY frame while typing
+        // (Jordan: "when manually editing captions, they should update in realtime" - no
+        // more clicking away first). Only WRITE the .srt (saveCaptions) on commit, never
+        // per keystroke. ImGui restores the buffer to the original on Escape, so this same
+        // live-write reverts the text on cancel too.
+        std::string live = g_capEditBuf;
+        for (auto& ch : live) if (ch == '\n' || ch == '\r') ch = ' ';
+        if (live != g_caps[g_capEdit].text) g_caps[g_capEdit].text = live;
         if (enter || ImGui::IsItemDeactivated()) {
-            std::string nt = g_capEditBuf;
-            if (nt != g_caps[g_capEdit].text) { g_caps[g_capEdit].text = nt; saveCaptions(); }
+            saveCaptions();          // persist the final text to the .srt on commit
             g_capEdit = -1;
         }
     }
@@ -4537,6 +4642,11 @@ static std::string g_cueErr;
 // Item 5: a selected-cue state (visibly highlighted) and Up/Down keyboard nav
 // through the open transcript, mirroring g_hitSel/g_hitScrollPending exactly.
 static int g_cueSel = -1;
+// Items 10/11: Ctrl/Shift multi-selection of transcript quotes. g_cueMulti holds the
+// selected cue indices (a std::set, so it iterates in ascending order); g_cueAnchor is the
+// shift-range pivot. Empty = plain single-select (g_cueSel) with its audition-on-click.
+static std::set<int> g_cueMulti;
+static int g_cueAnchor = -1;
 static bool g_cueScrollPending = false;
 static char g_withinBuf[128] = { 0 };     // search-within-this-transcript
 static std::string g_withinLast;          // last frame's search text, to fire the
@@ -4622,18 +4732,23 @@ static const char* kAskChipPrompt[3] = {
 // range only, and CLAUDE.md bans non-ASCII bytes in this source, so the reference's
 // U+1F916 would render as a box or break the build. Six primitives, no atlas rebuild,
 // reads as a robot at a glance - which is the whole job of the mark.
+// Draws the becky robot mark from top-left (x, y0), height h, in colour col. Shared by the
+// green ask-becky/brand mark and item 13's BLUE per-card robot so the two are identical
+// shapes in different colours.
+static void drawRobotMark(ImDrawList* d, float x, float y0, float h, ImU32 col) {
+    float w = h * 0.86f, y = y0 + h * 0.20f;
+    d->AddLine({ x + w * 0.5f, y }, { x + w * 0.5f, y - h * 0.14f }, col, 2.0f);
+    d->AddCircleFilled({ x + w * 0.5f, y - h * 0.16f }, h * 0.08f, col);
+    d->AddRect({ x, y }, { x + w, y + h * 0.62f }, col, h * 0.15f, 0, 2.0f);
+    d->AddRectFilled({ x + w * 0.20f, y + h * 0.20f }, { x + w * 0.38f, y + h * 0.35f }, col, 1.5f);
+    d->AddRectFilled({ x + w * 0.62f, y + h * 0.20f }, { x + w * 0.80f, y + h * 0.35f }, col, 1.5f);
+    d->AddLine({ x + w * 0.28f, y + h * 0.48f }, { x + w * 0.72f, y + h * 0.48f }, col, 2.0f);
+}
 static void askBeckyMark(float h) {
     ImDrawList* d = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
-    const ImU32 neon = kPalette[0];                       // #14FF39, palette slot 1
-    float w = h * 0.86f, x = p.x, y = p.y + h * 0.20f;
-    d->AddLine({ x + w * 0.5f, y }, { x + w * 0.5f, y - h * 0.14f }, neon, 2.0f);
-    d->AddCircleFilled({ x + w * 0.5f, y - h * 0.16f }, h * 0.08f, neon);
-    d->AddRect({ x, y }, { x + w, y + h * 0.62f }, neon, h * 0.15f, 0, 2.0f);
-    d->AddRectFilled({ x + w * 0.20f, y + h * 0.20f }, { x + w * 0.38f, y + h * 0.35f }, neon, 1.5f);
-    d->AddRectFilled({ x + w * 0.62f, y + h * 0.20f }, { x + w * 0.80f, y + h * 0.35f }, neon, 1.5f);
-    d->AddLine({ x + w * 0.28f, y + h * 0.48f }, { x + w * 0.72f, y + h * 0.48f }, neon, 2.0f);
-    ImGui::Dummy(ImVec2(w, h * 0.82f));
+    drawRobotMark(d, p.x, p.y, h, kPalette[0]);          // #14FF39 green
+    ImGui::Dummy(ImVec2(h * 0.86f, h * 0.82f));
 }
 
 // THE SEND ICON HE ASKED FOR (BR3-VISUAL-SPEC): "'send' button should be that
@@ -4776,16 +4891,30 @@ static std::string midEllipsis(const std::string& s, float maxW) {
 static bool pillButton(const char* label, bool on, ImU32 accent) {
     const float S = ImGui::GetIO().FontGlobalScale;
     ImVec4 a = ImGui::ColorConvertU32ToFloat4(accent);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 999.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11.0f * S, 4.0f * S));
-    ImGui::PushStyleColor(ImGuiCol_Button,        on ? ImVec4(a.x * 0.22f, a.y * 0.22f, a.z * 0.22f, 1.0f) : ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(a.x * 0.36f, a.y * 0.36f, a.z * 0.36f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(a.x * 0.52f, a.y * 0.52f, a.z * 0.52f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          on ? ImVec4(1, 1, 1, 1) : ImVec4(0.80f, 0.84f, 0.90f, 1.0f));
-    bool hit = ImGui::Button(label);
-    ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-        on ? accent : IM_COL32(255, 255, 255, 130), 999.0f, 0, on ? 2.0f : 1.5f);
-    ImGui::PopStyleColor(4); ImGui::PopStyleVar(2);
+    const ImVec2 pad(11.0f * S, 4.0f * S);
+    const char* end = label; while (*end && !(end[0] == '#' && end[1] == '#')) end++;
+    ImVec2 ts = ImGui::CalcTextSize(label, end);
+    bool hit = ImGui::InvisibleButton(label, ImVec2(ts.x + pad.x * 2.0f, ts.y + pad.y * 2.0f));
+    bool hov = ImGui::IsItemHovered();
+    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float r = (mx.y - mn.y) * 0.5f;   // fully-round pill
+    // Item 23: OFF hover turns the TEXT + BORDER the accent colour with NO semi-transparent
+    // fill highlight (the reference .smartbtn:hover). ON = accent-tinted fill + white text +
+    // accent border (.smartbtn.on / a selected .sortbtn). Every state glows WHITE on hover.
+    ImU32 border, txt, fill = 0;
+    if (on) {
+        fill   = ImGui::ColorConvertFloat4ToU32(ImVec4(a.x * 0.22f, a.y * 0.22f, a.z * 0.22f, 1.0f));
+        border = accent; txt = IM_COL32(255, 255, 255, 255);
+    } else if (hov) {
+        border = accent; txt = accent;
+    } else {
+        border = IM_COL32(255, 255, 255, 130); txt = IM_COL32(204, 214, 230, 255);
+    }
+    if (fill) dl->AddRectFilled(mn, mx, fill, r);
+    if (hov)  dl->AddRect(ImVec2(mn.x - 1, mn.y - 1), ImVec2(mx.x + 1, mx.y + 1), IM_COL32(255, 255, 255, 90), r, 0, 3.0f);
+    dl->AddRect(mn, mx, border, r, 0, on ? 2.0f : 1.5f);
+    dl->AddText(ImVec2(mn.x + pad.x, mn.y + pad.y), txt, label, end);
     return hit;
 }
 
@@ -4830,7 +4959,7 @@ static bool broomButton() {
     return ImGui::Button(ico(ICON_BROOM "##broom", "Trim Silence##broom"));
 }
 
-struct LibCardResult { bool clicked = false, dbl = false, plus = false; };
+struct LibCardResult { bool clicked = false, dbl = false, plus = false, robot = false; };
 
 // ONE number, so the card and the list clipper can never disagree about row height.
 static float libCardHeight() {
@@ -4885,7 +5014,9 @@ static LibCardResult drawLibraryCard(VideoRow& v, bool selected, bool justViewed
 
     // --- text. Name is big; the sub-line is dim and never competes with it.
     const float textX = p0.x + pad + (accent ? 6.0f * S : 0.0f);
-    const float textR = p1.x - pad - btnD - 8.0f * S;
+    const float btnGap = 8.0f * S;
+    // Item 13: reserve room for TWO round buttons now (the blue robot + the green "+").
+    const float textR = p1.x - pad - btnD * 2.0f - btnGap - 8.0f * S;
     const float nameW = textR - textX;
     if (v.dispW != nameW) { v.disp = midEllipsis(v.name, nameW); v.dispW = nameW; }
     dl->PushClipRect(ImVec2(textX, p0.y), ImVec2(textR, p1.y), true);
@@ -4934,6 +5065,24 @@ static LibCardResult drawLibraryCard(VideoRow& v, bool selected, bool justViewed
             : "transcribe this video (local Parakeet ASR)");
     } else if (hov) {
         ImGui::SetTooltip("%s", v.name.c_str());   // the FULL name, never ellipsised
+    }
+
+    // Item 13: the BLUE robot, just LEFT of the green "+". Same robot shape as ask-becky,
+    // blue instead of green. One click = auto-cut this video AND caption it (becky-subtitle)
+    // as one pipeline, dropping the resulting clips + captions onto the timeline.
+    const ImVec2 bc2 = ImVec2(bc.x - btnD - btnGap, bc.y);
+    ImGui::SetCursorScreenPos(ImVec2(bc2.x - btnD * 0.5f, bc2.y - btnD * 0.5f));
+    res.robot = ImGui::InvisibleButton("##robot", ImVec2(btnD, btnD)) && !inFlight;
+    const bool rhov = ImGui::IsItemHovered();
+    if (rhov) { res.clicked = false; res.dbl = false; }
+    {
+        const ImU32 blue = rhov ? IM_COL32(0x33, 0xC2, 0xF2, 255) : IM_COL32(0x00, 0xAE, 0xEF, 255);
+        const float rh = btnD * 0.92f;
+        drawRobotMark(dl, bc2.x - rh * 0.86f * 0.5f, bc2.y - rh * 0.5f, rh, blue);
+        if (rhov) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("Auto-cut this video AND caption it (becky-subtitle) - clips + captions onto the timeline");
+        }
     }
 
     // Advance EXACTLY one stride so ImGuiListClipper's fixed item height matches.
@@ -5122,13 +5271,33 @@ static void seekToSpan(const std::string& source, double a, double b, bool start
 static void previewPlaySpan(const std::string& source, double a, double b,
                              double& curSec, bool& playing, double& lastComposed) {
     if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_previewFrozenPlayhead = curSec; g_inTiedPreview = true; }
-    Clip cl; cl.in = a; cl.out = (b > a + 0.05) ? b : a + 0.05;
+    // Item 7: clicking a quote plays the video FROM the quote onward and KEEPS PLAYING
+    // past it (Jordan: "continue playing the video like normal even past the point of that
+    // quote"), instead of looping just the tiny a..b span. So the audition clip runs from
+    // the quote start to the END of the source video - duration from the warm peaks decoder,
+    // else a generous cap corrected by an async probe (same shape as playWholeVideo).
+    double dur = 0;
+    if (auto pk = peaksGet(source)) { std::lock_guard<std::mutex> lk(pk->mx); if (pk->ready) dur = pk->duration; }
+    bool provisional = dur <= 0;
+    if (provisional) dur = 3600;
+    Clip cl; cl.in = a; cl.out = std::max(dur, b > a + 0.05 ? b : a + 0.05);
     cl.source = source; cl.label = baseName(source);
     paintClipFromKnownSource(cl);
     g_track[0].clear(); g_track[0].push_back(cl);
     packTrack(0); recomputeDur();
     curSec = 0; playing = true; g_playingExt = true; lastComposed = -1;
     g_quietDirty = true; peaksRequest(source, a - 1.0, b + 5.0);
+    if (provisional) {
+        engineCallAsync("probe", { {"source", source} }, 8.0, "checking video length...",
+            [source](const json& pr) {
+                double d2 = 0;
+                if (pr.value("ok", false)) { const json& d = pr.contains("data") ? pr["data"] : pr; d2 = d.value("duration", 0.0); }
+                if (d2 <= 0.05) return;   // unprobe-able: keep the cap
+                if (g_inTiedPreview && g_track[0].size() == 1 && g_track[0][0].source == source && g_track[0][0].out > d2) {
+                    g_track[0][0].out = d2; packTrack(0); recomputeDur(); g_quietDirty = true;
+                }
+            });
+    }
     // Item 1 (round 4): a preview must NOT touch the timeline's caption lane.
     // The clip track is already drawn frozen during a preview (the frozen-render
     // swap at the drawTimeline call), but rebuilding g_caps here rewrote the
@@ -5198,6 +5367,7 @@ static void openTranscript(const std::string& fullVideoPath) {
     g_cueName = name;
     g_cues.clear();
     g_cueSel = -1; g_cueScrollPending = false;
+    g_cueMulti.clear(); g_cueAnchor = -1;   // items 10/11: indices are stale once the transcript changes
     engineCallAsync("transcript", { {"name", name} }, 25.0, "Opening transcript...",
         [name](const json& r) {
             if (g_cueName != name) return;   // he moved to another row - stale reply
@@ -5376,9 +5546,16 @@ static int insertIndexAtPlayhead(double curSec) {
 // (TestAddClipAtInsertsAfterIndex) - it just was never being SENT from here,
 // so every add silently fell back to "at<0 -> append", which reads as "goes to
 // the end", not "goes next to what I'm looking at".
-static void addSpanToTimeline(const std::string& source, double a, double b, const std::string& label, double curSec) {
+static void addSpanToTimeline(const std::string& source, double a, double b, const std::string& label,
+                              double& curSec, bool& playing, double& lastComposed) {
     b = (b > a + 0.05) ? b : a + 0.05;
-    clearScrubPreview();   // a real add always supersedes any single-click preview
+    // Item 6: end any single-click AUDITION first. previewPlaySpan swaps the audition clip
+    // ONTO g_track[0] in place of the real reel; without restoring it here the add lands on
+    // top of the audition clip and the timeline shows TWO copies of the quote (the leftover
+    // audition + the real add) - exactly Jordan's "double-click puts 2 clips" bug. No-op when
+    // not previewing.
+    endPreviewRestore(curSec, playing, lastComposed);
+    clearScrubPreview();   // a real add always supersedes any single-click scrub proxy
     int at = insertIndexAtPlayhead(curSec);
     std::string src = source;
     // I-2 measurement: wall-clock the add_clip round trip (always-on, crash.log -
@@ -5407,11 +5584,67 @@ static void addSpanToTimeline(const std::string& source, double a, double b, con
         g_renderMsgAt = nowSec();
     });
 }
-static void addHitToTimeline(const Hit& h, double curSec) {
-    addSpanToTimeline(h.source, h.start, h.end, baseName(h.source), curSec);
+static void addHitToTimeline(const Hit& h, double& curSec, bool& playing, double& lastComposed) {
+    addSpanToTimeline(h.source, h.start, h.end, baseName(h.source), curSec, playing, lastComposed);
 }
-static void addCueToTimeline(const CueRow& c, double curSec) {
-    addSpanToTimeline(c.source, c.start, c.end, baseName(c.source), curSec);
+static void addCueToTimeline(const CueRow& c, double& curSec, bool& playing, double& lastComposed) {
+    addSpanToTimeline(c.source, c.start, c.end, baseName(c.source), curSec, playing, lastComposed);
+}
+// Items 10/11: add a MULTI-SELECTION of transcript quotes in ONE undo. CONSECUTIVE selected
+// cues (adjacent indices, same source) merge into a SINGLE clip - the video is continuous
+// there. A SKIPPED quote (a gap in the selected indices) breaks the run, so the next cue
+// becomes a SEPARATE clip and the omission shows as a cut on the timeline (Jordan's rule).
+// Everything is inserted to the LEFT of the playhead as one set_clips edit (one Ctrl+Z).
+static void addCuesToTimeline(const std::set<int>& sel, double& curSec, bool& playing, double& lastComposed) {
+    if (sel.empty()) return;
+    endPreviewRestore(curSec, playing, lastComposed);
+    clearScrubPreview();
+    struct Span { std::string source, label; double in, out; int lastIdx; };
+    std::vector<Span> spans;
+    for (int idx : sel) {   // std::set iterates ascending
+        if (idx < 0 || idx >= (int)g_cues.size()) continue;
+        const CueRow& c = g_cues[idx];
+        if (!spans.empty() && spans.back().lastIdx == idx - 1 && spans.back().source == c.source)
+            { spans.back().out = c.end; spans.back().lastIdx = idx; }   // extend a consecutive run
+        else
+            spans.push_back({ c.source, baseName(c.source), c.start, c.end, idx });
+    }
+    if (spans.empty()) return;
+    int n = (int)g_track[0].size();
+    int at = insertIndexAtPlayhead(curSec);
+    if (at < 0) at = 0; if (at > n) at = n;
+    json clips = json::array();
+    auto emit = [&](const std::string& src, double in, double out, const std::string& label) {
+        clips.push_back({ {"source", src}, {"in", in}, {"out", out}, {"label", label} });
+    };
+    for (int k = 0; k < n; k++) {
+        if (k == at) for (auto& s : spans) emit(s.source, s.in, s.out, s.label);
+        Clip& c = g_track[0][k];
+        emit(c.source, c.in, c.out, c.label);
+    }
+    if (at == n) for (auto& s : spans) emit(s.source, s.in, s.out, s.label);
+    engineCallAsync("set_clips", { {"clips", clips} }, 8.0, "Adding the selected quotes...",
+        [](const json& r) {
+            if (r.value("ok", false)) loadTimelineView(r.contains("data") ? r["data"] : r);
+            else { g_renderMsg = "Add quotes failed: " + r.value("error", std::string("?")); g_renderMsgAt = nowSec(); }
+        });
+}
+// Item 8: which cue indices START a paragraph, replicating the transcript's OWN render
+// logic (a >1.5s pause, OR >= 180s since the last paragraph header) so the paragraph-jump
+// keys land exactly on the visible paragraph breaks. Recomputed on demand - cheap, and
+// there is no per-frame render state to read from the keyboard handler.
+static std::vector<bool> cueParagraphStarts() {
+    std::vector<bool> para(g_cues.size(), false);
+    double lastEnd = -1000.0, lastTimestampAt = -1e18;
+    const double kIntervalSec = 180.0;
+    for (size_t i = 0; i < g_cues.size(); i++) {
+        const CueRow& c = g_cues[i];
+        bool np = (c.start - lastEnd > 1.5) || (c.start - lastTimestampAt >= kIntervalSec);
+        para[i] = np;
+        if (np) lastTimestampAt = c.start;
+        lastEnd = c.end;
+    }
+    return para;
 }
 
 // Item 3c: "auto-cut" - runs becky-cut's existing silence/VAD detector on ONE
@@ -5429,9 +5662,11 @@ static void addCueToTimeline(const CueRow& c, double curSec) {
 // the same stale index (the first N-1 replies have not landed yet), scrambling
 // the order. One set_clips call has no such race, and (like the broomstick,
 // item 3b) is one Ctrl+Z for the whole insert.
-static void applyAutoCut(const std::string& name, const std::string& source, double& curSec, double& lastComposed) {
+static void triggerGetCaptions();
+static void applyAutoCut(const std::string& name, const std::string& source, double& curSec, double& lastComposed,
+                         std::vector<std::pair<double, double>> restrictRanges = {}, bool thenCaptions = false) {
     engineCallAsync("autocut_silence", { {"name", name} }, 90.0, "Running auto-cut...",
-        [source, &curSec, &lastComposed](const json& r) {
+        [source, restrictRanges, thenCaptions, &curSec, &lastComposed](const json& r) {
             if (!r.value("ok", false)) {
                 g_renderMsg = "Auto-cut failed: " + r.value("error", std::string("unknown"));
                 g_renderMsgAt = nowSec();
@@ -5447,13 +5682,31 @@ static void applyAutoCut(const std::string& name, const std::string& source, dou
                 g_renderMsgAt = nowSec();
                 return;
             }
+            // Build the kept-segment list (source seconds).
+            std::vector<std::pair<double, double>> keep;
+            for (auto& s : segs) {
+                double a = s.value("in", 0.0), b = s.value("out", 0.0);
+                if (b - a > 0.01) keep.push_back({ a, b });
+            }
+            // Item 12: if the caller passed a restrict-set (the >1 selected quotes), keep
+            // ONLY the parts of each segment that fall inside a selected quote's range - i.e.
+            // auto-cut the SELECTED quotes only. Empty restrict = the whole video (default).
+            if (!restrictRanges.empty()) {
+                std::vector<std::pair<double, double>> clipped;
+                for (auto& k : keep)
+                    for (auto& rg : restrictRanges) {
+                        double a = (std::max)(k.first, rg.first), b = (std::min)(k.second, rg.second);
+                        if (b - a > 0.01) clipped.push_back({ a, b });
+                    }
+                std::sort(clipped.begin(), clipped.end());
+                keep.swap(clipped);
+            }
+            if (keep.empty()) { g_renderMsg = "Auto-cut: nothing to keep in the selection"; g_renderMsgAt = nowSec(); return; }
             int at = insertIndexAtPlayhead(curSec);
             std::vector<Clip> newTrack;
             for (int i = 0; i < at && i < (int)g_track[0].size(); i++) newTrack.push_back(g_track[0][i]);
-            for (auto& s : segs) {
-                double a = s.value("in", 0.0), b = s.value("out", 0.0);
-                if (b - a <= 0.01) continue;
-                Clip cl; cl.in = a; cl.out = b; cl.source = source; cl.label = baseName(source);
+            for (auto& k : keep) {
+                Clip cl; cl.in = k.first; cl.out = k.second; cl.source = source; cl.label = baseName(source);
                 paintClipFromKnownSource(cl);
                 newTrack.push_back(cl);
             }
@@ -5461,11 +5714,18 @@ static void applyAutoCut(const std::string& name, const std::string& source, dou
             json clips = json::array();
             for (auto& c : newTrack) clips.push_back({ {"source", c.source}, {"in", c.in}, {"out", c.out}, {"label", c.label} });
             engineCallAsync("set_clips", { {"clips", clips} }, 30.0, "Adding auto-cut segments...",
-                [&lastComposed](const json& r2) {
+                [&lastComposed, thenCaptions](const json& r2) {
                     if (r2.value("ok", false)) {
                         loadTimelineView(r2.contains("data") ? r2["data"] : r2);
                         lastComposed = -1;
-                        g_renderMsg = "Auto-cut segments added for review (Ctrl+Z undoes it)";
+                        if (thenCaptions) {
+                            // Item 13: the blue-robot pipeline - after the auto-cut clips land,
+                            // build TikTok captions for them (becky-subtitle) in the same flow.
+                            g_renderMsg = "Auto-cut done - building captions...";
+                            triggerGetCaptions();
+                        } else {
+                            g_renderMsg = "Auto-cut segments added for review (Ctrl+Z undoes it)";
+                        }
                     } else {
                         g_renderMsg = "Could not add auto-cut segments: " + r2.value("error", std::string("unknown"));
                     }
@@ -5746,6 +6006,7 @@ int main(int argc, char** argv) {
                     0x1F9F9, 0x1F9F9, // broom     (Trim silence)
                     0x1F441, 0x1F441, // eye       (overlay = on AND previewed)
                     0x1F4C1, 0x1F4C1, // folder    (Open Folder button)
+                    0x1F50D, 0x1F50D, // magnifier (search box - item 2, reference &#128269;)
                     0
                 };
                 ImFontConfig ecfg;
@@ -5764,7 +6025,6 @@ int main(int argc, char** argv) {
                 static const ImWchar kSymRange[] = {
                     0x2713, 0x2713,   // check
                     0x2717, 0x2717,   // x
-                    0x21BA, 0x21BB,   // undo / redo (circular arrows) - match the reference
                     0x25C0, 0x25C0,   // left triangle  (extend LEFT)
                     0x25B6, 0x25B6,   // right triangle (extend RIGHT)
                     0x23EE, 0x23EF,   // skip-to-start / play-pause
@@ -5774,10 +6034,34 @@ int main(int argc, char** argv) {
                 ImFontConfig scfg;
                 scfg.MergeMode = true;
                 ImGui::GetIO().Fonts->AddFontFromFileTTF(symPath, 20.0f, &scfg, kSymRange);
+                // Item 19: the undo/redo circular arrows (U+21BA/21BB) read TOO THIN vs
+                // becky-review-native. Merge them SEPARATELY, emboldened by freetype and a
+                // touch larger, so their stroke weight matches the reference's bolder pair.
+                static const ImWchar kUndoRedoRange[] = { 0x21BA, 0x21BB, 0 };
+                ImFontConfig urcfg;
+                urcfg.MergeMode = true;
+                urcfg.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_Bold;
+                urcfg.GlyphOffset = ImVec2(0.0f, 1.0f);
+                ImGui::GetIO().Fonts->AddFontFromFileTTF(symPath, 22.0f, &urcfg, kUndoRedoRange);
             }
         }
         if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
                                            : "icons: disabled by BECKY_ICONS=0 - toolbar using text labels");
+    }
+    // Item 25: the forensic OVERLAY font is CONSOLAS (monospace, so the timecode digits
+    // don't jitter frame to frame) - matching becky-review-native / the burned render
+    // (drawtext.go). Loaded standalone (NOT merged) at 48px, which covers the 45px ORIG TC
+    // line with headroom; drawOverlayImGui draws it downscaled to the displayed video size.
+    // Degrade-don't-crash: if the file is missing the overlay just falls back to the UI font.
+    {
+        const char* consPath = "C:\\Windows\\Fonts\\consola.ttf";
+        if (FILE* cf = fopen(consPath, "rb")) {
+            fclose(cf);
+            ImFontConfig ccfg;
+            ccfg.OversampleH = 2;
+            ccfg.OversampleV = 2;
+            g_overlayFont = ImGui::GetIO().Fonts->AddFontFromFileTTF(consPath, 48.0f, &ccfg);
+        }
     }
 
     ImGui_ImplWin32_Init(hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
@@ -6428,8 +6712,10 @@ int main(int argc, char** argv) {
             for (auto& d : done) {
                 if (d.ok && d.data.contains("clips")) {
                     loadTimelineView(d.data);
-                    g_renderMsg = "Added dropped file to timeline";
+                    if (g_getCaptionsAfterAdd) { g_getCaptionsAfterAdd = false; g_renderMsg = "Added video - building captions..."; triggerGetCaptions(); }
+                    else g_renderMsg = "Added dropped file to timeline";
                 } else {
+                    g_getCaptionsAfterAdd = false;   // add failed - do not strand the flag
                     g_renderMsg = "Add file failed: " + (d.err.empty() ? std::string("?") : d.err);
                 }
                 g_renderMsgAt = nowSec();
@@ -6683,13 +6969,9 @@ int main(int argc, char** argv) {
             // white "becky" + neon "review". #39FF14 is the accessibility
             // palette, not styling - do not tone it down.
             {
-                const ImVec2 c = ImGui::GetCursorScreenPos();
-                const float h = ImGui::GetTextLineHeight(), s = h * 0.42f;
-                const ImVec2 m(c.x + s, c.y + h * 0.5f);
-                ImGui::GetWindowDrawList()->AddQuadFilled(
-                    ImVec2(m.x, m.y - s), ImVec2(m.x + s, m.y),
-                    ImVec2(m.x, m.y + s), ImVec2(m.x - s, m.y), IM_COL32(0x39, 0xFF, 0x14, 255));
-                ImGui::Dummy(ImVec2(s * 2.4f, h));
+                // Item 14: the brand mark is now the SAME green robot that sits next to
+                // "ask becky" (askBeckyMark), replacing the old neon diamond.
+                askBeckyMark(ImGui::GetTextLineHeight());
             }
             ImGui::SameLine(0, 0); ImGui::TextUnformatted("becky");
             ImGui::SameLine(0, 0); ImGui::TextColored(ImVec4(0.224f, 1.0f, 0.078f, 1.0f), " review");
@@ -6698,7 +6980,10 @@ int main(int argc, char** argv) {
             // dimmed grey is the wrong colour for the only disambiguator on the bar.
             ImGui::SameLine(0, 0); ImGui::Text(" 3");
             ImGui::Separator();
-            if (ImGui::MenuItem("\xF0\x9F\x93\x81 Open Folder", "Ctrl+O")) {   // folder emoji, matches becky-review-native
+            // Item 4: the Open Folder control is now an emoji-ONLY chip (just the folder
+            // glyph, no "Open Folder" text) styled like the toolbar's emoji buttons - dark
+            // fill + thin border via refBtn. Ctrl+O still opens it (handled by the key map).
+            if (refBtn("\xF0\x9F\x93\x81##openfolder")) {   // folder emoji only
                 // Native folder dialog via the engine (pick_folder verb on Windows).
                 // Gap 4 fix: this was a 600s synchronous engineCall right on the menu
                 // handler - the dialog itself runs in the ENGINE's own process, so this
@@ -6716,10 +7001,10 @@ int main(int argc, char** argv) {
                     }
                 });
             }
-            // %.2f, not %.1f: one frame is ~0.033s, so a +1-frame step from 0 read
-            // "0.0" and looked dead (bug 7). Two decimals make every frame step move
-            // the number.
-            ImGui::Text("%.2fs / %.0fs", curSec, g_compDur);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a case folder  (Ctrl+O)");
+            // Item 3: the "%.2fs / %.0fs" playhead readout that used to sit next to Open
+            // Folder was REMOVED - Jordan: redundant clutter (the timeline header already
+            // shows clip count + duration, and the ruler shows the timecode).
             // ---- RIGHT of the bar: health flags, then WHICH FOLDER IS OPEN ----
             //
             // Right-aligned and drawn LAST so the left cluster's width can never push
@@ -6895,12 +7180,12 @@ int main(int argc, char** argv) {
                 ImVec2 mp = ImGui::GetCursorScreenPos();
                 if (ImGui::InvisibleButton("##mag", ImVec2(fh, fh))) runSearch(g_smartSearch);
                 bool mh = ImGui::IsItemHovered();
-                ImU32 mc = mh ? IM_COL32(0x14, 0xFF, 0x39, 255) : IM_COL32(150, 158, 170, 255);
-                ImVec2 mc0 = ImVec2(mp.x + fh * 0.45f, mp.y + fh * 0.42f);
-                float mr = fh * 0.20f;
-                dl->AddCircle(mc0, mr, mc, 0, 2.0f * S);
-                dl->AddLine(ImVec2(mc0.x + mr * 0.7f, mc0.y + mr * 0.7f),
-                            ImVec2(mc0.x + mr * 1.9f, mc0.y + mr * 1.9f), mc, 2.5f * S);
+                // Item 2: the ACTUAL magnifier emoji (U+1F50D, reference &#128269;), color-
+                // rendered from Segoe UI Emoji, replacing the old hand-drawn circle+handle.
+                const char* magEmoji = "\xF0\x9F\x94\x8D";
+                ImVec2 msz = ImGui::CalcTextSize(magEmoji);
+                dl->AddText(ImVec2(mp.x + (fh - msz.x) * 0.5f, mp.y + (fh - msz.y) * 0.5f),
+                            IM_COL32(255, 255, 255, 255), magEmoji);
                 if (mh) ImGui::SetTooltip("search every transcript in this folder (Enter)");
                 ImGui::SameLine(0, 6 * S);
 
@@ -6996,7 +7281,7 @@ int main(int argc, char** argv) {
                         { g_hitSel = std::max(0, g_hitSel - 1); g_hitScrollPending = true; hitMoved = true; }
                     if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
                         g_hitSel >= 0 && g_hitSel < (int)g_hits.size() && !g_hits[g_hitSel].transcriptOnly)
-                        addHitToTimeline(g_hits[g_hitSel], curSec);
+                        addHitToTimeline(g_hits[g_hitSel], curSec, playing, lastComposed);
                     // Item 5: arrow-key navigation plays whichever quote is now selected -
                     // same non-destructive path as a click (previewPlaySpan).
                     if (hitMoved && g_hitSel >= 0 && g_hitSel < (int)g_hits.size() && !g_hits[g_hitSel].transcriptOnly) {
@@ -7039,7 +7324,7 @@ int main(int argc, char** argv) {
                         ImGui::SetNextItemAllowOverlap();
                         if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick) && !overIdx) {
                             g_hitSel = (int)i;
-                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec);
+                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec, playing, lastComposed);
                             // Item 4: single click PLAYS the quote's span (still never
                             // touches the real reel - see previewPlaySpan's comment).
                             else previewPlaySpan(h.source, h.start, h.end, curSec, playing, lastComposed);
@@ -7059,7 +7344,7 @@ int main(int argc, char** argv) {
                             ImGui::TextDisabled("%s", midEllipsis(full, ImGui::CalcTextSize("Open in File Browser").x).c_str());
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
                             ImGui::Separator();
-                            if (ImGui::MenuItem("Add to Timeline")) addHitToTimeline(h, curSec);
+                            if (ImGui::MenuItem("Add to Timeline")) addHitToTimeline(h, curSec, playing, lastComposed);
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
                             if (ImGui::MenuItem("Copy Quote")) ImGui::SetClipboardText(h.text.c_str());
@@ -7133,7 +7418,7 @@ int main(int argc, char** argv) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.18f, 0.07f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     if (fixedButton(ico(ICON_BACK "##cueback", "<##cueback"), { ico(ICON_BACK, "<") }))
-                        { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); g_cueSel = -1; }
+                        { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); g_cueSel = -1; g_cueMulti.clear(); g_cueAnchor = -1; }
                     ImGui::PopStyleColor(4);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the file list");
                 }
@@ -7148,8 +7433,17 @@ int main(int argc, char** argv) {
                 {
                     bool canCut = !g_cueName.empty() && !g_cues.empty();
                     if (!canCut) ImGui::BeginDisabled();
-                    if (refBtn("auto-cut"))
-                        applyAutoCut(g_cueName, g_cues[0].source, curSec, lastComposed);
+                    if (refBtn("auto-cut")) {
+                        // Item 12: >1 quote selected -> auto-cut ONLY those quotes (restrict
+                        // the kept segments to their ranges); 1 or none selected -> the whole
+                        // video file.
+                        std::vector<std::pair<double, double>> restrictRanges;
+                        if (g_cueMulti.size() > 1)
+                            for (int idx : g_cueMulti)
+                                if (idx >= 0 && idx < (int)g_cues.size())
+                                    restrictRanges.push_back({ g_cues[idx].start, g_cues[idx].end });
+                        applyAutoCut(g_cueName, g_cues[0].source, curSec, lastComposed, restrictRanges);
+                    }
                     if (!canCut) ImGui::EndDisabled();
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Run becky-cut's silence detector on this video and drop the\nkeep segments onto the timeline for review (one Ctrl+Z undoes it).");
@@ -7162,16 +7456,40 @@ int main(int argc, char** argv) {
                 // frame-stepping (that path is gated on the timeline window's own focus,
                 // a completely different ImGui window than this left panel).
                 if (libFocusedNow && !ImGui::GetIO().WantTextInput && !g_cues.empty()) {
+                    // Item 8: the transcript now reads like a word-processor document, so
+                    // navigation changed. LEFT/RIGHT step one quote (segment); DOWN jumps to
+                    // the start of the NEXT paragraph; UP jumps to the start of the CURRENT
+                    // paragraph, or - if already AT that start - to the start of the PREVIOUS
+                    // paragraph. Paragraph breaks match the visible ones (cueParagraphStarts).
+                    const int nCues = (int)g_cues.size();
+                    if (g_cueSel < 0) g_cueSel = 0;
                     bool cueMoved = false;
-                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
-                        { g_cueSel = std::min((int)g_cues.size() - 1, g_cueSel + 1); g_cueScrollPending = true; cueMoved = true; }
-                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
-                        { g_cueSel = std::max(0, g_cueSel - 1); g_cueScrollPending = true; cueMoved = true; }
-                    if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
-                        g_cueSel >= 0 && g_cueSel < (int)g_cues.size())
-                        addCueToTimeline(g_cues[g_cueSel], curSec);
-                    // Item 5: arrow-key navigation plays whichever quote is now selected.
-                    if (cueMoved && g_cueSel >= 0 && g_cueSel < (int)g_cues.size()) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { g_cueSel = std::min(nCues - 1, g_cueSel + 1); cueMoved = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  { g_cueSel = std::max(0, g_cueSel - 1); cueMoved = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+                        std::vector<bool> para = cueParagraphStarts();
+                        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+                            int j = g_cueSel + 1; while (j < nCues && !para[j]) j++;
+                            if (j < nCues) { g_cueSel = j; cueMoved = true; }
+                        }
+                        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+                            int ps = g_cueSel; while (ps > 0 && !para[ps]) ps--;        // start of the current paragraph
+                            if (ps < g_cueSel) { g_cueSel = ps; cueMoved = true; }      // not yet at it -> go there
+                            else if (ps > 0) {                                          // already at it -> previous paragraph
+                                int pp = ps - 1; while (pp > 0 && !para[pp]) pp--;
+                                g_cueSel = pp; cueMoved = true;
+                            }
+                        }
+                    }
+                    if (cueMoved) { g_cueScrollPending = true; g_cueMulti.clear(); g_cueAnchor = g_cueSel; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+                        // Items 10/11: with a multi-selection, Enter adds ALL of it (merged);
+                        // otherwise it adds the single selected quote.
+                        if (!g_cueMulti.empty()) addCuesToTimeline(g_cueMulti, curSec, playing, lastComposed);
+                        else if (g_cueSel >= 0 && g_cueSel < nCues) addCueToTimeline(g_cues[g_cueSel], curSec, playing, lastComposed);
+                    }
+                    // Arrow-key navigation auditions whichever quote is now selected.
+                    if (cueMoved && g_cueSel >= 0 && g_cueSel < nCues) {
                         CueRow& cm = g_cues[g_cueSel];
                         previewPlaySpan(cm.source, cm.start, cm.end, curSec, playing, lastComposed);
                     }
@@ -7268,15 +7586,31 @@ int main(int argc, char** argv) {
                     // timeline AND REPLACES the entire existing timeline", his words,
                     // #1 priority, and the reason this whole item exists.
                     if (cueClicked) {
-                        g_cueSel = (int)i;   // item 5: a click also SELECTS/highlights
-                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addCueToTimeline(c, curSec);
-                        else previewPlaySpan(c.source, c.start, c.end, curSec, playing, lastComposed);
+                        ImGuiIO& gio = ImGui::GetIO();
+                        if (gio.KeyCtrl) {
+                            // Item 10: Ctrl+click TOGGLES this quote in the multi-selection.
+                            if (g_cueMulti.count((int)i)) g_cueMulti.erase((int)i); else g_cueMulti.insert((int)i);
+                            g_cueSel = (int)i; g_cueAnchor = (int)i;
+                        } else if (gio.KeyShift && g_cueAnchor >= 0) {
+                            // Item 11: Shift+click selects the whole range from the anchor to
+                            // here, in either direction.
+                            g_cueMulti.clear();
+                            int lo = (std::min)(g_cueAnchor, (int)i), hi = (std::max)(g_cueAnchor, (int)i);
+                            for (int k = lo; k <= hi; k++) g_cueMulti.insert(k);
+                            g_cueSel = (int)i;
+                        } else {
+                            // Plain click: single-select + audition (clears any multi-selection).
+                            g_cueMulti.clear(); g_cueAnchor = (int)i; g_cueSel = (int)i;
+                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addCueToTimeline(c, curSec, playing, lastComposed);
+                            else previewPlaySpan(c.source, c.start, c.end, curSec, playing, lastComposed);
+                        }
                     }
                     // Item 10: the selected cue is a real NEON GREEN fill (palette slot 0,
                     // #14FF39), not a white hairline outline - drawn on the splitter's
                     // background channel so it sits BEHIND the words already submitted
                     // above, and at low enough alpha the text stays readable on top.
-                    if (g_cueSel == (int)i && cueMax.x > cueMin.x) {
+                    bool cueSelected = g_cueMulti.empty() ? (g_cueSel == (int)i) : (g_cueMulti.count((int)i) > 0);
+                    if (cueSelected && cueMax.x > cueMin.x) {
                         cueSplit.SetCurrentChannel(dl, 0);
                         dl->AddRectFilled(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
                                           IM_COL32(0x14, 0xFF, 0x39, 70), 3.0f);
@@ -7300,17 +7634,15 @@ int main(int argc, char** argv) {
                     const float S = ImGui::GetIO().FontGlobalScale;
                     ImGui::Text("%d video%s", (int)g_videos.size(), g_videos.size() == 1 ? "" : "s");
                     ImGui::SameLine(0, 12 * S);
-                    // Clicking the ACTIVE pill flips its direction; clicking the other
-                    // switches to it (date->newest, name->Z-A, both his stated defaults).
-                    if (pillButton(g_sortMode == 1 ? "oldest" : "newest", g_sortMode <= 1, IM_COL32(0x14, 0xFF, 0x39, 255)))
-                        { g_sortMode = (g_sortMode == 0) ? 1 : 0; sortLibrary(); }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_sortMode <= 1
-                        ? "sorted by date - click again to flip newest/oldest" : "sort by date");
-                    ImGui::SameLine(0, 4 * S);
-                    if (pillButton(g_sortMode == 2 ? "A-Z" : "Z-A", g_sortMode >= 2, IM_COL32(0x14, 0xFF, 0x39, 255)))
-                        { g_sortMode = (g_sortMode == 3) ? 2 : 3; sortLibrary(); }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_sortMode >= 2
-                        ? "sorted by name - click again to flip A-Z/Z-A" : "sort by name");
+                    // Item 1: ONE sort button that CYCLES newest -> oldest -> A-Z -> Z-A
+                    // (was two pills). Green-active like the reference's selected .sortbtn;
+                    // the label always names the current order, a click advances to the next.
+                    static const char* kSortNames[4] = { "newest", "oldest", "A-Z", "Z-A" };
+                    const int sm = g_sortMode & 3;
+                    if (pillButton(kSortNames[sm], true, IM_COL32(0x14, 0xFF, 0x39, 255)))
+                        { g_sortMode = (sm + 1) & 3; sortLibrary(); }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Sort: %s  (click to cycle newest / oldest / A-Z / Z-A)", kSortNames[sm]);
 
                     // No folder open = nothing to transcribe. Rendering this live over
                     // an empty library invites a click that can only fail.
@@ -7391,8 +7723,26 @@ int main(int argc, char** argv) {
                         // required). res.clicked already fires on a plain single click with no
                         // extra latency (LibCardResult's comment), so this is a one-line move,
                         // not a new double-click timer.
-                        if (res.clicked) { g_libSel = i; openTranscript(v.path); g_libJustViewedIdx = i; }
+                        if (res.clicked) {
+                            g_libSel = i;
+                            if (ImGui::GetIO().KeyCtrl) {
+                                // Item 9: Ctrl+click a video puts the ENTIRE video onto the
+                                // timeline at the playhead (the engine probes its length and
+                                // inserts the whole file), instead of opening its transcript.
+                                endPreviewRestore(curSec, playing, lastComposed);
+                                requestAddExternal(v.path, insertIndexAtPlayhead(curSec));
+                            } else {
+                                openTranscript(v.path); g_libJustViewedIdx = i;
+                            }
+                        }
                         if (res.plus) { g_libSel = i; requestTranscribe(v.path, v.name); }
+                        if (res.robot) {
+                            // Item 13: auto-cut this whole video, then caption the result with
+                            // becky-subtitle - one pipeline, clips + captions onto the timeline.
+                            g_libSel = i;
+                            endPreviewRestore(curSec, playing, lastComposed);
+                            applyAutoCut(v.name, v.path, curSec, lastComposed, {}, /*thenCaptions=*/true);
+                        }
                         // Opened by the card's right-click (drawLibraryCard), same ID scope.
                         if (ImGui::BeginPopup("rowctx")) {
                             g_libCtxIdx = i;
@@ -7405,6 +7755,16 @@ int main(int argc, char** argv) {
                             if (inFlight) ImGui::BeginDisabled();
                             if (ImGui::MenuItem(v.hasTranscript ? "Re-transcribe" : "Transcribe")) requestTranscribe(v.path, v.name);
                             if (inFlight) ImGui::EndDisabled();
+                            // Item 27: "Get Captions" for a sidebar video = put the WHOLE video
+                            // on the timeline, then build real TikTok captions for it with
+                            // becky-subtitle (cut-snapped + phrase-broken), once the add lands.
+                            ImGui::BeginDisabled(g_cliCutBusy.load());
+                            if (ImGui::MenuItem("Get Captions")) {
+                                endPreviewRestore(curSec, playing, lastComposed);
+                                requestAddExternal(v.path, insertIndexAtPlayhead(curSec));
+                                g_getCaptionsAfterAdd = true;
+                            }
+                            ImGui::EndDisabled();
                             ImGui::EndPopup();
                         } else if (g_libCtxIdx == i) {
                             g_libCtxIdx = -1;
@@ -7460,7 +7820,7 @@ int main(int argc, char** argv) {
                     ImGui::GetWindowDrawList()->AddRectFilled(origin, { origin.x + avail.x, origin.y + videoH }, IM_COL32(0, 0, 0, 255));
                     ImGui::GetWindowDrawList()->AddImage((ImTextureID)vsrv, at, { at.x + fw, at.y + fh });
                     // provenance overlay + captions, drawn by ImGui ON the frame
-                    drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh });
+                    drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh }, sc);   // sc = fit scale = displayedH/sourceH (item 25)
                     // Item 1 (round 4): during a preview, g_caps deliberately still
                     // holds the REAL reel's captions (the lane must not change), so
                     // don't burn one over the audition frame at the preview time -
@@ -7827,16 +8187,16 @@ int main(int argc, char** argv) {
                         ImGui::GetColorU32(ImGuiCol_TextDisabled),
                         g_answerCardID.empty() ? "ask becky..." : "type your answer...");
                 }
-                // Icon, not the word - a green arrow, same shape the reference app's
-                // send control uses. Square-ish: a comfortable click target without
-                // reading as a wide text button. Tooltip carries the accessible label.
+                // Item 24: the send button = the reference's .sendbtn exactly - a GREEN chip
+                // with the BLACK send-arrowhead GLYPH (U+27A4 "\xE2\x9E\xA4", already in the
+                // atlas), NOT a hand-drawn triangle (which read as a play button). refBtnCore
+                // draws it and gives it the same white hover glow as every other button.
                 float sendW = ImGui::GetFrameHeight() * 1.6f;
                 ImGui::PushStyleColor(ImGuiCol_Button, neonV);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(neonV.x * 0.82f, neonV.y * 0.82f, neonV.z * 0.82f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(neonV.x * 0.66f, neonV.y * 0.66f, neonV.z * 0.66f, 1.0f));
-                if (sendArrowButton(ImVec2(sendW, 0))) submit = true;
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                if (refBtnCore("\xE2\x9E\xA4##send", sendW)) submit = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Send");
-                ImGui::PopStyleColor(3);
+                ImGui::PopStyleColor(2);
 
                 // H-7: the forensic route - same box, second button. The query in the
                 // box runs the WHOLE forensic pipeline (qmd recall + becky-judge LLM
@@ -8164,10 +8524,9 @@ int main(int argc, char** argv) {
                 double fps = sc ? sourceFps(sc->source) : 30.0;
                 if (fps <= 0) fps = 30.0;
                 const double oneFrame = 1.0 / fps;
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                // Item 16: BLUE TEXT on the dark chip (matches the reference .tbtn2.extend),
+                // NOT a solid blue fill. refBtnCore hovers it white-text + blue-border + white glow.
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
                 if (fixedButton("[\xE2\x97\x80##extl", { "[\xE2\x97\x80" }) && canTrim && sc->in > oneFrame) {   // [<| reference tExtendL
                     // Item 4 fix lives in loadTimelineView (see its comment) - this
                     // press no longer deselects the clip it just operated on.
@@ -8187,7 +8546,7 @@ int main(int argc, char** argv) {
                     queueEdit(std::move(req));
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame LATER (its own source rate)");
-                ImGui::PopStyleColor(4);
+                ImGui::PopStyleColor(1);
                 if (!canTrim) ImGui::EndDisabled();
             }
             ImGui::SameLine();
@@ -8296,9 +8655,9 @@ int main(int argc, char** argv) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
                 }
-                const char* capLabel = capOn ? ico("captions " ICON_CHECK "##caps", "captions on##caps")
-                                              : ico("captions##caps", "captions off##caps");
-                if (fixedButton(capLabel, { ico("captions " ICON_CHECK, "captions on"), ico("captions", "captions off") }))
+                // Item 21: NO checkmark - the button just reads "captions". Green fill +
+                // black text when ON (item 20), plain white-on-dark when off (the reference).
+                if (fixedButton("captions##caps", { "captions" }))
                     g_capsOn = !g_capsOn;
                 if (capOn) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show/hide captions (timeline lane + preview overlay): %s", capOn ? "ON" : "OFF");
@@ -8313,29 +8672,16 @@ int main(int argc, char** argv) {
                 bool busy = g_cliCutBusy.load();
                 bool noClips = g_track[0].empty();
                 if (busy || noClips) ImGui::BeginDisabled();
-                ImVec4 blue(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, blue);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                if (fixedButton(busy ? "CLI-CUT...##clicut" : "CLI-CUT##clicut", { "CLI-CUT...", "CLI-CUT" })) {
-                    g_cliCutBusy.store(true);
-                    engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel for CLI-CUT captions...", [](const json& r) {
-                        if (r.value("ok", false)) {
-                            std::string path = r.value("data", json::object()).value("path", std::string());
-                            if (!path.empty()) runCliCutCaptions(path);
-                            else { g_cliCutBusy.store(false); g_renderMsg = "CLI-CUT captions failed: save_reel returned no path"; g_renderMsgAt = nowSec(); }
-                        } else {
-                            g_cliCutBusy.store(false);
-                            g_renderMsg = "CLI-CUT captions failed: could not save reel: " + r.value("error", std::string("?"));
-                            g_renderMsgAt = nowSec();
-                        }
-                    });
-                }
-                ImGui::PopStyleColor(4);
+                // Item 16: "get captions" (was CLI-CUT) = BLUE TEXT on the dark chip (matches
+                // the reference's blue action buttons), NOT the banned solid-blue fill.
+                // refBtnCore hovers it white-text + blue-border + white glow.
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
+                if (fixedButton(busy ? "get captions...##clicut" : "get captions##clicut", { "get captions...", "get captions" }))
+                    triggerGetCaptions();
+                ImGui::PopStyleColor(1);
                 if (busy || noClips) ImGui::EndDisabled();
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Build real TikTok-style captions with becky-subtitle (CLI-CUT): snapped to your\ncut points and phrase-broken - not just the raw Parakeet forensic transcript.");
+                    ImGui::SetTooltip("Build real TikTok-style captions with becky-subtitle: snapped to your\ncut points and phrase-broken - not just the raw Parakeet forensic transcript.");
             }
             ImGui::SameLine();
             // Item 9: 3-state provenance overlay (off / on-hidden-in-preview / on-
@@ -8434,18 +8780,13 @@ int main(int argc, char** argv) {
                 char selLabel[48];
                 if (hasSel) snprintf(selLabel, sizeof selLabel, "render selection (%d)##rensel", (int)g_sel.size());
                 else snprintf(selLabel, sizeof selLabel, "render selection##rensel");
-                if (hasSel) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+                // Item 22: selected -> a NORMAL white-text-on-dark chip (refBtnCore hovers it
+                // neon text + white glow); NOT a solid-blue fill (banned). Nothing selected ->
+                // greyed + disabled, matching the reference's disabled render-selection look.
+                if (!hasSel) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.45f, 1.0f));
+                    ImGui::BeginDisabled();
                 }
-                if (!hasSel) ImGui::BeginDisabled();
                 if (fixedButton(selLabel, { "render selection (000)", "render selection" })) {
                     std::vector<std::string> ids(g_sel.begin(), g_sel.end());
                     engineCallAsync("export_selection", { {"ids", ids}, {"output", ""} }, 300.0,
@@ -8461,8 +8802,7 @@ int main(int argc, char** argv) {
                     g_renderMsgAt = nowSec();
                     });
                 }
-                if (!hasSel) ImGui::EndDisabled();
-                ImGui::PopStyleColor(4);
+                if (!hasSel) { ImGui::EndDisabled(); ImGui::PopStyleColor(1); }
             }
             ImGui::SameLine();
             // Item 5: "Render" -> "export", GREEN (#39FF14) fill + BLACK text - the
@@ -8472,7 +8812,9 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.42f, 1.0f, 0.26f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.72f, 0.06f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
-                if (ImGui::Button("export##doexport")) {
+                // Item 18: draw via refBtn so export gets the same white outer glow on hover
+                // as every other button (green fill + black text preserved).
+                if (refBtn("export##doexport")) {
                     engineCallAsync("export", { {"output", ""} }, 300.0, "Rendering video...", [](const json& r) {
                     if (r.value("ok", false)) {
                         const json& d = r.contains("data") ? r["data"] : r;
