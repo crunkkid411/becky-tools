@@ -3878,11 +3878,24 @@ static void drawTimeline(double& curSec, bool& playing) {
         dl->AddText(ImVec2(tlX + 26, labY), COL_THRBAR, tb);
     }
 
+    // 2026-07-03: "Add a second Playhead Stock (the black bar)... 2 identical
+    // black bars, but only one of them has the white playhead that moves." The
+    // stock used to draw as a plain 2px line - wrong SHAPE, not just wrong
+    // color. It now draws the SAME flag geometry (rect + triangle tip) as the
+    // moving playhead below, just solid black instead of white, so at rest the
+    // two read as identical bars and only the real playhead's cap is white.
+    // The slow black/white flash after a manual mid-playback move is preserved
+    // unchanged - a separate, wanted behavior.
     if (g_stockSec >= 0) {
         float sx = secToX(g_stockSec);
         if (sx >= tlX - 2 && sx <= tlX + tlW + 2) {
             bool wht = g_stockFlash && std::fmod(nowSec(), 0.8) >= 0.4;
-            dl->AddLine(ImVec2(sx, p.y + 4), ImVec2(sx, bot), wht ? IM_COL32(255, 255, 255, 255) : COL_PLAYHEAD, 2.0f);
+            ImU32 stockFlagCol = wht ? IM_COL32(255, 255, 255, 255) : COL_PLAYHEAD;
+            dl->AddLine(ImVec2(sx, p.y + 2), ImVec2(sx, bot), COL_PLAYHEAD, 2.0f);
+            float sfw = 8, sftop = p.y + 1, sfmid = p.y + 13, sftip = p.y + 20;
+            dl->AddRectFilled(ImVec2(sx - sfw, sftop), ImVec2(sx + sfw, sfmid), stockFlagCol);
+            dl->AddTriangleFilled(ImVec2(sx - sfw, sfmid), ImVec2(sx + sfw, sfmid), ImVec2(sx, sftip), stockFlagCol);
+            dl->AddRect(ImVec2(sx - sfw, sftop), ImVec2(sx + sfw, sfmid), IM_COL32(0, 0, 0, 115));
         }
     }
 
