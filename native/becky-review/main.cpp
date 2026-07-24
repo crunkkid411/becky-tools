@@ -2682,7 +2682,17 @@ static const ImU32 COL_CAPSEL   = IM_COL32(168, 118, 20, 255);
 static const ImU32 COL_CAPBRD   = IM_COL32(255, 190, 60, 255);
 static const ImU32 COL_CAPTX    = IM_COL32(255, 240, 208, 255);
 static const ImU32 COL_CAPCUT   = IM_COL32(255, 255, 255, 46);
-static const ImU32 COL_QUIETDIM = IM_COL32(0, 0, 0, 110);
+// Item 3 root cause (round 2): detection AND the seamless skip during playback
+// were BOTH already correct - proven live with a synthetic loud/silence/loud
+// clip (the skip landed exactly on the silent span, confirmed by playhead
+// position vs elapsed wall time). The only real bug was this constant: black
+// at 43% alpha over Becky Review 3's already-near-black timeline is
+// indistinguishable from "nothing happened" - Jordan had zero visual proof
+// the feature was doing anything, on top of an unrelated caption/library bug
+// that made it look inert. Crimson (palette-adjacent, reads as "will be cut")
+// at a real 55% alpha is unmissable without going full opaque and hiding the
+// waveform underneath.
+static const ImU32 COL_QUIETDIM = IM_COL32(220, 20, 60, 140);
 
 // Jordan's screenshot showed "0:08.5" printed twice in a row on the ruler, then
 // the whole label sequence one tick off. Root cause: this used to do
