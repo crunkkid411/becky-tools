@@ -4565,6 +4565,15 @@ static std::string pickOpenReelFile(HWND owner) {
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     ofn.lpstrTitle = L"Load Reel (or a Vegas/Final Cut edit export)";
+    // 2026-07-02(5): "'load' button should have .json files at the top of the
+    // 'Load reel' window, not at the bottom" - a stock GetOpenFileNameW dialog
+    // can't reorder files inside one filter, but it DOES default to whichever
+    // filter entry nFilterIndex names (1-based, counting the pairs above:
+    // 1=mixed, 2=.txt, 3=.xml, 4=.json, 5=all). Reels are the common case,
+    // edit imports the rare one, so default the dropdown to "Becky reel
+    // (*.json)" - the 4th entry - instead of the mixed *.txt;*.xml;*.json
+    // filter; .json is what shows first without the user touching the dropdown.
+    ofn.nFilterIndex = 4;
     if (!GetOpenFileNameW(&ofn)) return {};
     std::string s = wideToUtf8(file);
     fwslash(s);
