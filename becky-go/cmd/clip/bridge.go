@@ -54,6 +54,12 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		return a.OpenFolder(argString(args, "folder"))
 	case "transcript":
 		return a.Transcript(argString(args, "name"))
+	case "caption_chunks":
+		// Pace-based (pause-driven) caption chunks for a source, from the SAME
+		// deterministic chunker becky-subtitle uses. The derived caption lane seeds
+		// from this so an ad-hoc clip shows proper TikTok captions, not raw transcript.
+		// Returns an error (not-indexed-yet) so the lane retries, like transcript.
+		return a.CaptionChunks(argString(args, "name"))
 	case "search":
 		return a.Search(argString(args, "query")), nil
 	case "qmd_search":

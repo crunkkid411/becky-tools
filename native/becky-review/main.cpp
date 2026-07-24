@@ -3047,6 +3047,29 @@ static void drawWave(ImDrawList* dl, const std::string& source, double cin, doub
         if (!pk->ready) return;
         float mid = (wy0 + wy1) * 0.5f, half = (wy1 - wy0) * 0.5f - 1.0f;
         if (half < 2) return;
+        // Per-clip gain (Jordan edits by the waveform SHAPE): the stored peaks are REAL
+        // 48kHz PCM min/max, but drawn at ABSOLUTE scale a quiet -24dBFS dialogue clip is
+        // a near-flat line that reads as "no waveform". Scale each clip to its OWN loudest
+        // sample so the speech fills the lane (the tall, readable becky-review-native look),
+        // capped so a near-silent clip isn't amplified into a noise smear and floored so
+        // genuine silence still reads flat. This only scales the DRAW - the data is untouched.
+        int clipPeak = 0;
+        {
+            long long cb0 = std::max(0LL, (long long)(cin * kBinsPerSec));
+            long long cb1 = std::min((long long)pk->bins, (long long)(cout * kBinsPerSec) + 1);
+            if (!pk->n2.empty()) {
+                for (long long i = cb0 >> 8, e = std::min((long long)pk->n2.size(), (cb1 >> 8) + 1); i < e; i++)
+                    clipPeak = std::max(clipPeak, std::max(std::abs((int)pk->n2[i]), std::abs((int)pk->x2[i])));
+            } else if (!pk->n1.empty()) {
+                for (long long i = cb0 >> 4, e = std::min((long long)pk->n1.size(), (cb1 >> 4) + 1); i < e; i++)
+                    clipPeak = std::max(clipPeak, std::max(std::abs((int)pk->n1[i]), std::abs((int)pk->x1[i])));
+            } else {
+                for (long long i = cb0; i < cb1; i++)
+                    clipPeak = std::max(clipPeak, std::max(std::abs((int)pk->n0[i]), std::abs((int)pk->x0[i])));
+            }
+        }
+        float gain = 1.0f;
+        if (clipPeak >= 6) gain = std::min(16.0f, 115.0f / (float)clipPeak);  // fill ~90%; <~-26dB stays flat
         int x0 = (int)std::floor(wx0), x1 = (int)std::ceil(wx1);
         for (int x = x0; x < x1; x++) {
             double s0 = cin + (x - clipX0) / pps, s1 = s0 + 1.0 / pps;
@@ -3068,8 +3091,10 @@ static void drawWave(ImDrawList* dl, const std::string& source, double cin, doub
                 for (long long i = b0; i < b1; i++) { mn = std::min(mn, (int)pk->n0[i]); mx = std::max(mx, (int)pk->x0[i]); }
             }
             if (mn > mx) { missed = true; continue; }
-            float yTop = mid - (mx / 127.0f) * half;
-            float yBot = mid - (mn / 127.0f) * half;
+            float top = std::min(1.0f, std::max(-1.0f, (mx * gain) / 127.0f));
+            float bot = std::min(1.0f, std::max(-1.0f, (mn * gain) / 127.0f));
+            float yTop = mid - top * half;
+            float yBot = mid - bot * half;
             if (yBot - yTop < 1.0f) { yTop = mid - 0.5f; yBot = mid + 0.5f; }
             dl->AddLine(ImVec2((float)x, yTop), ImVec2((float)x, yBot), col);
         }
@@ -3331,8 +3356,10 @@ static void loadCaptions(const std::string& reelPath) {
     loadCapStyle();                        // this reel's saved vertical placement
     std::ifstream f(p);
     if (!f.good()) {
-        // A-1: no sidecar is NOT "no captions" any more - derive the lane from
-        // each clip's own source transcript instead (async; appears per source).
+        // No sidecar yet: derive the lane from each clip's own source transcript -
+        // now via the caption_chunks verb, which runs the SAME pace-based chunker
+        // becky-subtitle uses (pause-driven, 22-char only as a last resort, no gaps),
+        // so an un-captioned clip shows proper TikTok captions, not raw transcript.
         rebuildDerivedCaptions();
         return;
     }
@@ -3568,7 +3595,11 @@ static void rebuildDerivedCaptions() {
         if (it == g_srcCues.end()) {
             if (!g_srcCuesInFlight.count(name)) {
                 g_srcCuesInFlight.insert(name);
-                engineCallAsync("transcript", { {"name", name} }, 25.0, "loading captions",
+                // caption_chunks, NOT transcript: the pace-based (pause-driven) chunker
+                // becky-subtitle uses - 22 chars only as a last resort, phrases kept
+                // whole, no gaps. So an un-captioned clip shows proper TikTok captions
+                // instead of the raw Parakeet transcript (long lines + speech gaps).
+                engineCallAsync("caption_chunks", { {"name", name} }, 25.0, "loading captions",
                     [name](const json& r) {
                         g_srcCuesInFlight.erase(name);
                         if (!r.value("ok", false)) {
