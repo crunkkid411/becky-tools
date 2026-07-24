@@ -5133,6 +5133,66 @@ static void addCueToTimeline(const CueRow& c, double curSec) {
     addSpanToTimeline(c.source, c.start, c.end, baseName(c.source), curSec);
 }
 
+// Item 3c: "auto-cut" - runs becky-cut's existing silence/VAD detector on ONE
+// video and drops the resulting keep-segments onto the timeline FOR HUMAN
+// REVIEW (Jordan's own words) - it never renders, it proposes. The engine
+// side (autocut_silence, becky-go/cmd/clip/autocut.go) already shells the
+// real becky-cut and returns segments in the SOURCE video's own seconds,
+// explicitly documented as ready to feed straight into a clip add - this is
+// wiring, not new engine work.
+//
+// Splices the segments into the CURRENT reel at the playhead's index and
+// pushes the whole result through set_clips in ONE call, rather than firing
+// N separate add_clip calls - each add_clip computes its insert index from
+// g_track[0] at THAT moment, and N of them fired back-to-back would all read
+// the same stale index (the first N-1 replies have not landed yet), scrambling
+// the order. One set_clips call has no such race, and (like the broomstick,
+// item 3b) is one Ctrl+Z for the whole insert.
+static void applyAutoCut(const std::string& name, const std::string& source, double& curSec, double& lastComposed) {
+    engineCallAsync("autocut_silence", { {"name", name} }, 90.0, "Running auto-cut...",
+        [source, &curSec, &lastComposed](const json& r) {
+            if (!r.value("ok", false)) {
+                g_renderMsg = "Auto-cut failed: " + r.value("error", std::string("unknown"));
+                g_renderMsgAt = nowSec();
+                return;
+            }
+            const json& d = r.contains("data") ? r["data"] : r;
+            json segs = d.value("segments", json::array());
+            if (!segs.is_array() || segs.empty()) {
+                // Item 3c explicitly: when segments come back empty, surface the
+                // plain-language `note` field (becky-cut missing, shell failure,
+                // etc) - never a bare "nothing happened".
+                g_renderMsg = "Auto-cut: " + d.value("note", std::string("becky-cut found nothing to keep"));
+                g_renderMsgAt = nowSec();
+                return;
+            }
+            int at = insertIndexAtPlayhead(curSec);
+            std::vector<Clip> newTrack;
+            for (int i = 0; i < at && i < (int)g_track[0].size(); i++) newTrack.push_back(g_track[0][i]);
+            for (auto& s : segs) {
+                double a = s.value("in", 0.0), b = s.value("out", 0.0);
+                if (b - a <= 0.01) continue;
+                Clip cl; cl.in = a; cl.out = b; cl.source = source; cl.label = baseName(source);
+                paintClipFromKnownSource(cl);
+                newTrack.push_back(cl);
+            }
+            for (int i = at; i < (int)g_track[0].size(); i++) newTrack.push_back(g_track[0][i]);
+            json clips = json::array();
+            for (auto& c : newTrack) clips.push_back({ {"source", c.source}, {"in", c.in}, {"out", c.out}, {"label", c.label} });
+            engineCallAsync("set_clips", { {"clips", clips} }, 30.0, "Adding auto-cut segments...",
+                [&lastComposed](const json& r2) {
+                    if (r2.value("ok", false)) {
+                        loadTimelineView(r2.contains("data") ? r2["data"] : r2);
+                        lastComposed = -1;
+                        g_renderMsg = "Auto-cut segments added for review (Ctrl+Z undoes it)";
+                    } else {
+                        g_renderMsg = "Could not add auto-cut segments: " + r2.value("error", std::string("unknown"));
+                    }
+                    g_renderMsgAt = nowSec();
+                });
+        });
+}
+
 // --------------- main ---------------
 int main(int argc, char** argv) {
     crashLogInit();
@@ -6612,6 +6672,20 @@ int main(int argc, char** argv) {
                 if (ImGui::SmallButton("< Back")) { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); g_cueSel = -1; }
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
+                ImGui::SameLine();
+                // Item 3c: auto-cut, placed here per the old app's layout (the button
+                // sat immediately right of this same field). Runs on the video whose
+                // transcript is open; needs at least one cue for its source path
+                // (the transcript reply already carries it - g_cues[0].source).
+                {
+                    bool canCut = !g_cueName.empty() && !g_cues.empty();
+                    if (!canCut) ImGui::BeginDisabled();
+                    if (ImGui::SmallButton("auto-cut"))
+                        applyAutoCut(g_cueName, g_cues[0].source, curSec, lastComposed);
+                    if (!canCut) ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Run becky-cut's silence detector on this video and drop the\nkeep segments onto the timeline for review (one Ctrl+Z undoes it).");
+                }
                 ImGui::Separator();
                 if (!g_cueErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cueErr.c_str());
                 // Item 5: Up/Down move g_cueSel (the visibly-highlighted cue, drawn
