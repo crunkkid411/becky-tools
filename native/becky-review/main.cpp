@@ -3380,9 +3380,17 @@ static void drawTimeline(double& curSec, bool& playing) {
             float x0 = secToX(c.compStart), x1 = secToX(c.compStart + (c.out - c.in));
             if (x < x0 || x > x1) continue;
             idx = (int)i;
-            float hw = std::min(10.0f, (x1 - x0) / 4);
-            if ((x1 - x0) > 20 && x - x0 <= hw) zone = 4;
-            else if ((x1 - x0) > 20 && x1 - x <= hw) zone = 5;
+            // Item 1 (round 2): the trim gesture itself was never gone (kind 4/5
+            // below, set_trim on release) - it was just a 10px hairline, easy to
+            // miss by a few pixels and land on "select the clip" or the neighbour's
+            // edge instead (measured live: a drag that started 10px past the real
+            // boundary silently grabbed the WRONG clip). Widened to 16px - still
+            // capped at width/4 so a short clip keeps SOME body left to click, and
+            // the width gate raised from 20 to 40 so two 16px zones on a tiny clip
+            // can never swallow its whole body.
+            float hw = std::min(16.0f, (x1 - x0) / 4);
+            if ((x1 - x0) > 40 && x - x0 <= hw) zone = 4;
+            else if ((x1 - x0) > 40 && x1 - x <= hw) zone = 5;
             else zone = 0;
             return true;
         }
