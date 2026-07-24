@@ -2150,10 +2150,12 @@ static void emitThreshold(bool final_) {
         editLog(std::string("emitThreshold: thread spawn failed, skipping sync: ") + e.what());
     }
 }
-static void recomputeQuiet() {
-    g_quietRanges.clear();
-    if (!g_thrOn) return;
-    std::vector<std::pair<double, double>> raw;
+// Item 3b: the broomstick button needs quiet ranges regardless of whether
+// "skip during playback" (g_thrOn) is toggled on - they're two independent
+// uses of the SAME threshold level. Pulled the actual scan out of
+// recomputeQuiet so both can share it without the g_thrOn gate.
+static std::vector<std::pair<double, double>> computeQuietRangesNow() {
+    std::vector<std::pair<double, double>> raw, out;
     for (auto& c : g_track[0]) {
         auto pk = peaksGet(c.source);
         if (!pk) continue;
@@ -2178,12 +2180,18 @@ static void recomputeQuiet() {
     }
     std::sort(raw.begin(), raw.end());
     for (auto& r : raw) {
-        if (!g_quietRanges.empty() && r.first <= g_quietRanges.back().second + 0.06)
-            g_quietRanges.back().second = std::max(g_quietRanges.back().second, r.second);
-        else g_quietRanges.push_back(r);
+        if (!out.empty() && r.first <= out.back().second + 0.06)
+            out.back().second = std::max(out.back().second, r.second);
+        else out.push_back(r);
     }
-    g_quietRanges.erase(std::remove_if(g_quietRanges.begin(), g_quietRanges.end(),
-        [](const std::pair<double, double>& r) { return r.second - r.first < 0.35; }), g_quietRanges.end());
+    out.erase(std::remove_if(out.begin(), out.end(),
+        [](const std::pair<double, double>& r) { return r.second - r.first < 0.35; }), out.end());
+    return out;
+}
+static void recomputeQuiet() {
+    g_quietRanges.clear();
+    if (!g_thrOn) return;
+    g_quietRanges = computeQuietRangesNow();
 }
 
 // Load a TimelineView (from engine "timeline" verb) into the native track.
@@ -2614,6 +2622,76 @@ static std::string convertEditIfNeeded(const std::string& path); // defined belo
 // dropped in as .txt/.xml/.json) can report progress/errors through it too.
 static std::string g_renderMsg;           // last render outcome (plain language)
 static double g_renderMsgAt = 0;
+
+// Item 3b (round 2): the "broomstick" - Jordan had a button that removed every
+// silent stretch FROM the timeline (a real destructive edit, not the playback
+// skip), using wherever the threshold slider is set. Builds the "loud only"
+// clip list locally (cut every g_track[0] clip against computeQuietRangesNow's
+// composition-time spans, converting back to each clip's own source time) and
+// replaces the whole reel in ONE call - becky-go's `set_clips` verb
+// (cmd/clip/bridge.go) exists for exactly this ("the 'trim to the loud parts'
+// action, one undoable edit" per its own comment), so this is wiring, not new
+// engine work. One Ctrl+Z undoes the whole sweep.
+static void applyRemoveSilence(double& curSec, double& lastComposed) {
+    auto ranges = computeQuietRangesNow();
+    if (ranges.empty()) {
+        g_renderMsg = "No quiet parts found at the current threshold - drag the bar on the timeline to lower it";
+        g_renderMsgAt = nowSec();
+        return;
+    }
+    std::vector<Clip> kept;
+    for (auto& c : g_track[0]) {
+        double segStart = c.compStart, segEnd = c.compStart + (c.out - c.in);
+        double cursor = segStart;
+        for (auto& r : ranges) {
+            double a = std::max(r.first, segStart), b = std::min(r.second, segEnd);
+            if (b <= a) continue;
+            if (a > cursor) {
+                Clip nc = c;
+                nc.in = c.in + (cursor - c.compStart);
+                nc.out = c.in + (a - c.compStart);
+                if (nc.out - nc.in > 0.01) kept.push_back(nc);
+            }
+            cursor = std::max(cursor, b);
+        }
+        if (cursor < segEnd) {
+            Clip nc = c;
+            nc.in = c.in + (cursor - c.compStart);
+            nc.out = c.out;
+            if (nc.out - nc.in > 0.01) kept.push_back(nc);
+        }
+    }
+    if (kept.empty()) {
+        g_renderMsg = "Removing silence at this threshold would empty the timeline - skipped";
+        g_renderMsgAt = nowSec();
+        return;
+    }
+    if (kept.size() == g_track[0].size()) {
+        bool same = true;
+        for (size_t i = 0; i < kept.size(); i++)
+            if (std::abs(kept[i].in - g_track[0][i].in) > 0.001 || std::abs(kept[i].out - g_track[0][i].out) > 0.001)
+                { same = false; break; }
+        if (same) {
+            g_renderMsg = "No silent parts to remove at the current threshold";
+            g_renderMsgAt = nowSec();
+            return;
+        }
+    }
+    json clips = json::array();
+    for (auto& c : kept) clips.push_back({ {"source", c.source}, {"in", c.in}, {"out", c.out}, {"label", c.label} });
+    engineCallAsync("set_clips", { {"clips", clips} }, 30.0, "Removing silent parts...",
+        [&curSec, &lastComposed](const json& r) {
+            if (r.value("ok", false)) {
+                loadTimelineView(r.contains("data") ? r["data"] : r);
+                curSec = std::min(curSec, g_compDur);
+                lastComposed = -1;
+                g_renderMsg = "Removed the silent parts (Ctrl+Z undoes the whole sweep)";
+            } else {
+                g_renderMsg = "Could not remove silent parts: " + r.value("error", std::string("unknown"));
+            }
+            g_renderMsgAt = nowSec();
+        });
+}
 
 // DragQueryFileW/DragQueryPoint/DragFinish are SHELL32 calls - live-tested this
 // session and a malformed/foreign drop payload faulted (0xc0000005) INSIDE
@@ -4465,6 +4543,35 @@ static bool crownButton(bool on) {
         float leftX = bx0 + spikeW * k, rightX = bx0 + spikeW * (k + 1), cx = (leftX + rightX) * 0.5f;
         dl->AddTriangleFilled(ImVec2(leftX, bandY0), ImVec2(rightX, bandY0), ImVec2(cx, topY), shapeCol);
         dl->AddCircleFilled(ImVec2(cx, topY), 1.6f * S, shapeCol);
+    }
+    return clicked;
+}
+
+// Item 3b: hand-drawn broom, same InvisibleButton+ImDrawList technique as
+// crownButton above - a diagonal handle plus a fanned bristle head, never a
+// font glyph. "on" (hovered) just brightens it; this button has no persistent
+// toggle state of its own, it fires an action.
+static bool broomButton() {
+    const float S = ImGui::GetIO().FontGlobalScale;
+    float d = ImGui::GetTextLineHeight() + 12.0f * S;
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##broom", ImVec2(d, d));
+    bool clicked = ImGui::IsItemClicked();
+    bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p0, ImVec2(p0.x + d, p0.y + d), IM_COL32(255, 255, 255, hovered ? 24 : 0), 6.0f * S);
+    ImU32 col = hovered ? IM_COL32(255, 255, 255, 235) : IM_COL32(190, 196, 206, 255);
+    // Handle: a diagonal stroke from the top-right down to the bristle head.
+    ImVec2 handleTop(p0.x + d * 0.78f, p0.y + d * 0.14f);
+    ImVec2 headTop(p0.x + d * 0.30f, p0.y + d * 0.60f);
+    dl->AddLine(handleTop, headTop, col, 2.2f * S);
+    // Bristle head: a small filled wedge, then a fan of splayed lines below it.
+    ImVec2 headL(p0.x + d * 0.16f, p0.y + d * 0.62f), headR(p0.x + d * 0.44f, p0.y + d * 0.62f);
+    dl->AddTriangleFilled(headTop, headL, headR, col);
+    float fanY = p0.y + d * 0.90f;
+    for (int k = -2; k <= 2; k++) {
+        float fx = p0.x + d * 0.30f + k * d * 0.075f;
+        dl->AddLine(ImVec2(p0.x + d * 0.30f, p0.y + d * 0.62f), ImVec2(fx, fanY), col, 1.6f * S);
     }
     return clicked;
 }
@@ -7034,6 +7141,14 @@ int main(int argc, char** argv) {
                                           g_thrOn ? "ON" : "OFF");
                 }
             }
+            ImGui::SameLine();
+            // Item 3b: the broomstick - sweeps every quiet span (at the SAME
+            // threshold the bar above sets, independent of whether Skip Quiet's
+            // playback-skip is toggled on) out of the timeline for good. Lives right
+            // next to Skip Quiet since they read the same threshold level.
+            if (broomButton()) applyRemoveSilence(curSec, lastComposed);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Remove all silent parts from the timeline\n(uses the threshold bar's level - one Ctrl+Z undoes the whole sweep)");
             ImGui::SameLine();
             // Item 7: captions are OPTIONAL - a plain on/off toggle, same fixedButton
             // style Overlay uses on row 1. Lives on row 2 (not next to Overlay) - row 1
