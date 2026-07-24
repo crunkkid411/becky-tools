@@ -866,6 +866,15 @@ static void endWork() {
 // backwards would be worse than shipping no icon at all.
 #define ICON_UNDO   "\xEE\x9E\xA7"   // U+E7A7 Undo  (arrow curving back left)
 #define ICON_REDO   "\xEE\x9E\xA6"   // U+E7A6 Redo  (arrow curving forward right)
+// Round 3 additions (BR3-ROUND3-VISUAL-WORKORDER items 2/9): a Split button
+// (the reference toolbar's scissors) and glyphs for the 3-state Overlay toggle
+// (item 9 - a glyph, not the words "Overlay: On (hidden)"). Byte sequences
+// computed from the codepoint (Python chr(cp).encode('utf-8')), same method
+// that would have caught undo/redo backwards above.
+#define ICON_SCISSORS "\xEE\xA3\x86"  // U+E8C6 Cut (scissors) - Split
+#define ICON_CHECK    "\xEE\x9C\xBE"  // U+E73E CheckMark - overlay mode 2 (on, shown)
+#define ICON_CANCEL   "\xEE\x9C\x91"  // U+E711 Cancel (X) - overlay mode 0 (off)
+#define ICON_EYE      "\xEE\xA2\x90"  // U+E890 View (eye) - overlay mode 1 (on, hidden)
 
 // False until segmdl2.ttf is actually loaded. EVERY icon button below routes
 // its label through ico(), so if the font is missing the whole toolbar falls
@@ -7277,334 +7286,13 @@ int main(int argc, char** argv) {
             }
             // %.2f: a one-frame step (~0.033s) must visibly move this number (bug 7).
             ImGui::Text("%.2f / %.1f s", curSec, g_compDur);
-            if (fixedButton(playing ? ico(ICON_PAUSE "##play", "Pause##play") : ico(ICON_PLAY "##play", "Play##play"),
-                            { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) {
-                // Same rule as Space, via the same helper. This button used to
-                // just flip the flag, so the stock return (E-6) - and now the
-                // play-start return - happened on the KEY but not on the BUTTON.
-                // Two controls with one label behaving differently is the kind of
-                // thing he has to test to trust, which is why they share code now.
-                if (playing) stopPlayback(curSec, playing, true);
-                else { playing = true; g_playingExt = true; }
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Pause" : "Play");
-            ImGui::SameLine();
-            // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
-            // says the same thing without being read.
-            if (ImGui::Button(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to start");
-            ImGui::SameLine();
-            // BUG-1 ROOT CAUSE (the recurring 0xc0000409/ucrtbase!abort crash, SIGABRT
-            // stack: ImGui::PopStyleColor <- main). The push and pop were BOTH
-            // conditioned on g_playRate>1.5, but the Button call in between FLIPS
-            // g_playRate - so clicking 2x either popped a color that was never pushed
-            // (OFF->ON) or leaked one (ON->OFF). The one-off stack deficit then
-            // underflowed ImGui's global color stack on a later frame (observed at
-            // loop-to-start + Pause) and its assert aborted the whole app. Evaluate
-            // the condition ONCE so push and pop can never disagree.
-            {
-                // Active state = neon green with dark ink on top (BR3-VISUAL-SPEC
-                // rule 2: "2x when engaged"), never blue - blue is Render
-                // Selection's colour alone. Push/pop count is IDENTICAL on both
-                // branches of was2x (2 and 2), the exact shape BUG-1 above needed.
-                const bool was2x = g_playRate > 1.5;
-                // Item 13: was the same muddy blue as everything else - now the
-                // palette's neon green (kPalette[0]) with DARK ink on top so the
-                // "2x" label still reads, same accent as every other active state.
-                // Two pushes (button + text) to match the PopStyleColor(2) below.
-                if (was2x) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
-                }
-                if (ImGui::Button("2x")) g_playRate = was2x ? 1.0 : 2.0;
-                if (was2x) ImGui::PopStyleColor(2);
-            }
-            ImGui::SameLine();
-            // D-6: 3-state provenance overlay toggle (off / on-hidden-in-preview DEFAULT /
-            // on-previewed) - clicking cycles it; render always burns in whichever text
-            // "on-previewed" would show, since Render.Enabled tracks mode!=0 (setOverlayMode).
-            {
-                const char* ovLabel = g_ovMode == 0 ? "Overlay: Off##ov"
-                                    : g_ovMode == 1 ? "Overlay: On (hidden)##ov"
-                                                    : "Overlay: On (shown)##ov";
-                // "Overlay when on" is one of the four active-green states BR3-VISUAL-SPEC
-                // rule 2 names - either On mode counts, mode 0 stays dark-neutral.
-                const bool ovOn = g_ovMode != 0;
-                if (ovOn) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
-                }
-                if (fixedButton(ovLabel, { "Overlay: Off", "Overlay: On (hidden)", "Overlay: On (shown)" }))
-                    setOverlayMode((g_ovMode + 1) % 3);
-                if (ovOn) ImGui::PopStyleColor(2);
-            }
-            ImGui::SameLine();
-            // EXTEND THE SELECTED CLIP BY ONE FRAME (item 8). Jordan cuts to the
-            // frame - "a microsecond difference means you're cutting off
-            // consonants" - and dragging an edge with the mouse cannot reliably
-            // land on a single frame at any sane zoom. These two buttons move one
-            // edge by exactly one frame OF THAT CLIP'S OWN SOURCE RATE (29.97 is
-            // not 30; a 30fps assumption drifts a frame every 33 seconds).
-            //
-            // ONE set_trim per press = ONE Ctrl+Z per press, deliberately: the
-            // split+remove_clip approach costs two undos for one visible action,
-            // which is the "phantom moves" undo bug the spec names.
-            {
-                Clip* sc = nullptr;
-                for (auto& c : g_track[0]) if (g_sel.count(c.id)) { sc = &c; break; }
-                bool canTrim = sc && !sc->id.empty() && !g_editsInFlight.count(sc->id);
-                if (!canTrim) ImGui::BeginDisabled();
-                double fps = sc ? sourceFps(sc->source) : 30.0;
-                if (fps <= 0) fps = 30.0;
-                const double oneFrame = 1.0 / fps;
-                if (fixedButton("<+1f##extl", { "<+1f" }) && canTrim && sc->in > oneFrame) {
-                    EditReq req; req.verb = "set_trim";
-                    req.args = { {"id", sc->id}, {"in", sc->in - oneFrame}, {"out", sc->out} };
-                    req.kind = 2; req.t = curSec; req.group = g_group;
-                    g_editsInFlight.insert(sc->id);
-                    queueEdit(std::move(req));
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame EARLIER (its own source rate)");
-                ImGui::SameLine();
-                if (fixedButton("+1f>##extr", { "+1f>" }) && canTrim) {
-                    EditReq req; req.verb = "set_trim";
-                    req.args = { {"id", sc->id}, {"in", sc->in}, {"out", sc->out + oneFrame} };
-                    req.kind = 2; req.t = curSec; req.group = g_group;
-                    g_editsInFlight.insert(sc->id);
-                    queueEdit(std::move(req));
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame LATER (its own source rate)");
-                if (!canTrim) ImGui::EndDisabled();
-            }
-            // ROW 1 ENDS HERE (transport: things that move the playhead). Measured
-            // at the shipped 1.35 text scale, Play+|<<+2x+Overlay+<+1f++1f>+Skip
-            // Quiet is ~758px against a ~620px pane - Skip Quiet was sliced
-            // mid-word. Skip Quiet opens row 2 instead.
-            //
-            // ---- UNDO / REDO, VISIBLY (row 2 opens with them) ----
-            //
-            // The chords existed; the BUTTONS did not, and that is not a cosmetic
-            // gap. An editor who cannot SEE that redo exists edits defensively -
-            // he stops experimenting, because he is not sure he can get back. The
-            // way you make someone brave with a timeline is to show them the way
-            // back, not to document it.
-            //
-            // Leftmost on row 2 on purpose: row 2 is the only row with slack, and
-            // the leftmost slot is the one position nothing else can ever push
-            // off-screen as labels grow.
-            //
-            // ALWAYS ENABLED, deliberately. The engine owns both stacks and
-            // reports neither depth over the bridge, so "grey it out when empty"
-            // would mean GUESSING at emptiness - and a wrongly-greyed undo is a
-            // worse lie than an enabled one that turns out to be a no-op. If the
-            // bridge ever returns the depths, gate them here and nowhere else.
-            {
-                if (ImGui::Button(ico(ICON_UNDO "##undobtn", "Undo"))) queueUndo(curSec);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo the last edit  (Ctrl+Z)");
-                ImGui::SameLine();
-                if (ImGui::Button(ico(ICON_REDO "##redobtn", "Redo"))) queueRedo(curSec);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the edit you just undid  (Ctrl+Y or Ctrl+Shift+Z)");
-                ImGui::SameLine();
-            }
-            // E-10 SKIP QUIET — the feature Jordan called "the single biggest
-            // breakthrough" (feedback7): during playback, everything under the
-            // loudness threshold is SKIPPED seamlessly instead of played, so
-            // reviewing footage does not mean sitting through the silence.
-            //
-            // All of it was already written — the draggable threshold bar
-            // (onThresholdBar), the quiet-range computation (recomputeQuiet), the
-            // dimming, and the seamless engine skip during playback — and ALL of it
-            // sat behind g_thrOn, which was declared false and then NEVER ASSIGNED
-            // ANYWHERE. Six reads, zero writes: a finished feature with no way to
-            // turn it on. This button is that missing write.
-            {
-                // THE ICON HE ASKED FOR. feedback7: "add a toggle button to the
-                // timeline toolbar (have it simply be an icon that looks like a
-                // person running)".
-                //
-                // This was hand-drawn with ImDrawList lines and a circle,
-                // because no icon font was loaded and a missing glyph renders as
-                // a hollow square. Jordan's verdict: "your running man drawing
-                // looks more like a falling man who slipped on a banana peel -
-                // it looks like shit". He was right. The drawing is deleted; the
-                // font's own striding figure (U+E805) is a real, legible person.
-                //
-                // Colour still carries the state as well as the shape, because
-                // at a glance he should not have to decode a silhouette: neon
-                // green with dark ink when armed (BR3-VISUAL-SPEC rule 2 - the
-                // same active state every other toggle uses, not its own amber),
-                // dim slate when off.
-                {
-                    if (g_thrOn) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
-                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0, 0, 0, 1));
-                    } else {
-                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0.59f, 0.63f, 0.69f, 1.0f));
-                    }
-                    bool pressed = fixedButton(ico(ICON_RUN "##thr", "Skip Quiet##thr"),
-                                               { ico(ICON_RUN, "Skip Quiet") });
-                    ImGui::PopStyleColor(g_thrOn ? 2 : 1);
-                    if (pressed) {
-                        g_thrOn = !g_thrOn;
-                        g_quietDirty = true;      // force recomputeQuiet on the next frame
-                        emitThreshold(true);
-                    }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Skip quiet parts during playback: %s\nDrag the bar on the timeline to set the level.",
-                                          g_thrOn ? "ON" : "OFF");
-                }
-            }
-            ImGui::SameLine();
-            // Item 3b: the broomstick - sweeps every quiet span (at the SAME
-            // threshold the bar above sets, independent of whether Skip Quiet's
-            // playback-skip is toggled on) out of the timeline for good. Lives right
-            // next to Skip Quiet since they read the same threshold level.
-            if (broomButton()) applyRemoveSilence(curSec, lastComposed);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Remove all silent parts from the timeline\n(uses the threshold bar's level - one Ctrl+Z undoes the whole sweep)");
-            ImGui::SameLine();
-            // Item 7: captions are OPTIONAL - a plain on/off toggle, same fixedButton
-            // style Overlay uses on row 1. Lives on row 2 (not next to Overlay) - row 1
-            // is already at its measured width limit (see the row-1-ends-here comment
-            // above); row 2 is the one with slack. Off hides both the timeline caption
-            // lane and the preview overlay text.
-            {
-                const char* capLabel = g_capsOn ? "Captions: On##caps" : "Captions: Off##caps";
-                if (fixedButton(capLabel, { "Captions: On", "Captions: Off" }))
-                    g_capsOn = !g_capsOn;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show/hide captions (timeline lane + preview overlay)");
-            }
-            ImGui::SameLine();
-            // F-3/F-4: naming (clips_SOURCE_NNNN.mp4 / clips_compilation_NNNN.mp4,
-            // never overwrites) is entirely engine-side (renderReel) - the button
-            // just calls export with no output path and shows what came back.
-            // The captions are burned in by the ENGINE, in the render's own ffmpeg pass
-            // (cmd/clip export.go reelCaptions -> internal/reel burnCaptionsChain), so
-            // there is nothing to pass and nothing for Jordan to run by hand. What the
-            // button MUST do is say whether they actually landed: a render that silently
-            // dropped the captions is the bug that cost a whole day, and "Rendered
-            // <file>" alone reads identical in both cases.
-            if (ImGui::Button("Render")) {
-                engineCallAsync("export", { {"output", ""} }, 300.0, "Rendering video...", [](const json& r) {
-                if (r.value("ok", false)) {
-                    const json& d = r.contains("data") ? r["data"] : r;
-                    std::string caps = d.value("captions", std::string());
-                    g_renderMsg = "Rendered " + d.value("mp4", std::string()) +
-                                  (caps.empty() ? "  - NO captions in this file"
-                                                : "  - captions burned in");
-                    openInFileBrowser(d.value("mp4", std::string()));
-                } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
-                g_renderMsgAt = nowSec();
-                });
-            }
-            ImGui::SameLine();
-            // Keeps its WORDS on purpose - "render" has no self-evident glyph, and
-            // the (N) count is the whole point of the button. But the count made it
-            // a raw Button whose width JUMPED when the selection crossed 9 -> 10,
-            // shoving everything right of it sideways: the exact "buttons must never
-            // move" complaint fixedButton exists to prevent. Reserve three digits.
-            char selLabel[48]; snprintf(selLabel, sizeof selLabel, "Render Selection (%d)##rensel", (int)g_sel.size());
-            if (g_sel.empty()) ImGui::BeginDisabled();
-            // ASYNC, exactly like Render beside it. This was the ONE render path still
-            // calling engineCall straight from the button handler, with a 300 SECOND
-            // timeout - and unlike add_clip (4-16ms, measured) a render is genuinely
-            // minutes of ffmpeg. The whole window was dead for all of it: no repaint,
-            // no input, Windows greying the title bar and offering to kill it. Render
-            // was fixed; Render Selection sat one line below it and was missed.
-            //
-            // Palette blue (#00AEEF), always - not a toggle state. BR3-VISUAL-SPEC rule 3:
-            // Render Selection is the ONE permanently-blue control, same as the reference
-            // app's "render selection (1)" - it is how he tells "render everything" and
-            // "render just my selection" apart at a glance, disabled state dims it for free.
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));   // white on blue - same as pillButton's "on" text
-            if (fixedButton(selLabel, { "Render Selection (000)" })) {
-                std::vector<std::string> ids(g_sel.begin(), g_sel.end());
-                engineCallAsync("export_selection", { {"ids", ids}, {"output", ""} }, 300.0,
-                                "Rendering the selected clips...", [](const json& r) {
-                if (r.value("ok", false)) {
-                    const json& d = r.contains("data") ? r["data"] : r;
-                    // A selection render carries NO captions - the .srt is timed to the
-                    // whole reel, so on a subset every later cue would sit on the wrong
-                    // words. The engine says so in the note; surface it rather than let
-                    // "Rendered <file>" imply captions that are not there.
-                    std::string caps = d.value("captions", std::string());
-                    g_renderMsg = "Rendered " + d.value("mp4", std::string()) +
-                                  (caps.empty() ? "  - NO captions (use Render for a captioned file)"
-                                                : "  - captions burned in");
-                    openInFileBrowser(d.value("mp4", std::string()));
-                } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
-                g_renderMsgAt = nowSec();
-                });
-            }
-            ImGui::PopStyleColor(4);
-            if (g_sel.empty()) ImGui::EndDisabled();
-            // D-5/F-2/F-5: screenshot + save/load reel + EDL export. Engine verbs already
-            // existed (grab_frame/save_reel/load_reel/write_edl); only the buttons were missing.
-            if (ImGui::Button(ico(ICON_CAMERA "##shot", "Screenshot"))) {
-                Clip* cur = nullptr;
-                for (auto& c : g_track[0]) if (curSec >= c.compStart && curSec < c.compStart + (c.out - c.in)) { cur = &c; break; }
-                if (!cur && !g_track[0].empty()) cur = &g_track[0].back();
-                if (cur) {
-                    // COPY the source and time out of the Clip before going async. The
-                    // Clip* must never be captured: g_track is rebuilt by every edit
-                    // reply, so a pointer into it is dangling by the time a reply lands.
-                    std::string src = cur->source;
-                    double srcT = cur->in + (curSec - cur->compStart);
-                    // ASYNC: grab_frame shells out to ffmpeg, so this was up to 20s of
-                    // dead window for one screenshot.
-                    engineCallAsync("grab_frame", { {"source", src}, {"t", srcT} }, 20.0,
-                                    "Saving a screenshot...", [](const json& r) {
-                        // Same bug class root-caused for "undo" above (line ~281): r["data"] on a
-                        // reply that omits "data" vivifies a null, and .value() on that null throws
-                        // uncaught on the UI thread -> std::terminate -> abort (ucrtbase.dll 0xC0000409).
-                        // r.value("data", json::object()) never vivifies; always safe.
-                        g_renderMsg = r.value("ok", false) ? "Saved " + r.value("data", json::object()).value("path", std::string()) : "Screenshot failed: " + r.value("error", std::string("?"));
-                        g_renderMsgAt = nowSec();
-                    });
-                } else { g_renderMsg = "Screenshot failed: no clip at playhead"; g_renderMsgAt = nowSec(); }
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screenshot the frame at the playhead");
-            ImGui::SameLine();
-            if (ImGui::Button(ico(ICON_SAVE "##savereel", "Save Reel"))) {
-                engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel...", [](const json& r) {
-                    g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
-                    g_renderMsgAt = nowSec();
-                });
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Reel");
-            ImGui::SameLine();
-            if (ImGui::Button(ico(ICON_OPEN "##loadreel", "Load Reel"))) {
-                std::string picked = pickOpenReelFile(hwnd);
-                if (!picked.empty()) {
-                    std::string path = convertEditIfNeeded(picked);   // .txt/.xml Vegas/FCP export -> reel .json
-                    if (!path.empty()) {
-                        // cycle 17 review's runner-up: this was the LAST synchronous engineCall
-                        // left on the render/export toolbar (30s timeout) - the exact freeze
-                        // main.cpp:1055's comment names as the bug engineCallAsync was written to
-                        // kill. curSec/playing/lastComposed are main()'s own locals (declared
-                        // once, alive for the process lifetime), so capturing them by reference
-                        // is exactly as safe as g_playingExt already being touched here.
-                        engineCallAsync("load_reel", { {"path", path} }, 30.0, "Loading reel...",
-                                        [path, &curSec, &playing, &lastComposed](const json& r) {
-                            if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
-                            else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
-                            g_renderMsgAt = nowSec();
-                        });
-                    }
-                }
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Reel");
-            ImGui::SameLine();
-            if (ImGui::Button("Export EDL")) {
-                engineCallAsync("write_edl", { {"output", ""} }, 30.0, "Writing EDL...", [](const json& r) {
-                    if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
-                    else g_renderMsg = "Export EDL failed: " + r.value("error", std::string("?"));
-                    g_renderMsgAt = nowSec();
-                });
-            }
+            // Item 2 (round 3): the WHOLE transport/tool/action toolbar used to live
+            // here, under the video pane, leaving a big dead strip above the timeline
+            // that LOOKED clickable but wasn't - Jordan's #1 complaint ("deceptive").
+            // It now lives in the timeline's OWN header row (.tlhead in the reference),
+            // right next to the clip count + zoom - see drawTransportToolbar, called
+            // from the "timeline" window below. Only the small curSec/duration readout
+            // stays here, beside the frame it describes.
             if (!g_renderMsg.empty() && nowSec() - g_renderMsgAt < 8.0) ImGui::TextDisabled("%s", g_renderMsg.c_str());
         }
         ImGui::End();
@@ -8149,6 +7837,374 @@ int main(int argc, char** argv) {
 
                 ImGui::PopStyleVar();
             }
+
+            // ---- TRANSPORT / TOOL / ACTION TOOLBAR (item 2, round 3) ----
+            // Moved HERE, into the timeline's own header row next to the clip count
+            // and zoom control, from its old home under the video pane - matching the
+            // reference app's single .tlhead row and killing the dead blank strip
+            // that used to sit above the ruler (Jordan's #1 complaint, "deceptive").
+            // Continues the SAME row the count/zoom above just drew.
+            ImGui::SameLine(0.0f, 18.0f);
+            {
+                if (fixedButton(playing ? ico(ICON_PAUSE "##play", "Pause##play") : ico(ICON_PLAY "##play", "Play##play"),
+                                { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) {
+                    // Same rule as Space, via the same helper. This button used to
+                    // just flip the flag, so the stock return (E-6) - and now the
+                    // play-start return - happened on the KEY but not on the BUTTON.
+                    if (playing) stopPlayback(curSec, playing, true);
+                    else { playing = true; g_playingExt = true; }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Pause" : "Play");
+                ImGui::SameLine();
+                // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
+                // says the same thing without being read.
+                if (ImGui::Button(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to start");
+                ImGui::SameLine();
+            }
+            {
+                // Item 7 (round 3): shows the CURRENT rate - "1x" at rest, matching
+                // the reference exactly - and CYCLES 1x -> 1.5x -> 2x on each click.
+                // The old button always said the word "2x" even while playing at
+                // 1x, which read as if double speed were already engaged. NO colour
+                // change on this one (explicitly asked for) - it is a transport
+                // control, not an on/off state like the toggles beside it.
+                const char* speedLabel = g_playRate > 1.75 ? "2x##speed" : g_playRate > 1.25 ? "1.5x##speed" : "1x##speed";
+                if (fixedButton(speedLabel, { "1x", "1.5x", "2x" }))
+                    g_playRate = g_playRate > 1.75 ? 1.0 : (g_playRate > 1.25 ? 2.0 : 1.5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed - click to cycle 1x -> 1.5x -> 2x (Shift+Space plays at 2x)");
+            }
+            ImGui::SameLine();
+            // EXTEND THE SELECTED CLIP BY ONE FRAME. Jordan cuts to the frame - "a
+            // microsecond difference means you're cutting off consonants" - and
+            // dragging an edge with the mouse cannot reliably land on a single frame
+            // at any sane zoom. These two buttons move one edge by exactly one frame
+            // OF THAT CLIP'S OWN SOURCE RATE (29.97 is not 30; a 30fps assumption
+            // drifts a frame every 33 seconds). ONE set_trim per press = ONE Ctrl+Z
+            // per press, deliberately.
+            //
+            // Item 13: FILLED blue (#00AEEF), matching the reference screenshot's
+            // bold rounded blue pair - distinct from every other button on the row,
+            // and from the running-figure/broom icons sitting right beside them.
+            {
+                Clip* sc = nullptr;
+                for (auto& c : g_track[0]) if (g_sel.count(c.id)) { sc = &c; break; }
+                bool canTrim = sc && !sc->id.empty() && !g_editsInFlight.count(sc->id);
+                if (!canTrim) ImGui::BeginDisabled();
+                double fps = sc ? sourceFps(sc->source) : 30.0;
+                if (fps <= 0) fps = 30.0;
+                const double oneFrame = 1.0 / fps;
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                if (fixedButton("<##extl", { "<" }) && canTrim && sc->in > oneFrame) {
+                    // Item 4 fix lives in loadTimelineView (see its comment) - this
+                    // press no longer deselects the clip it just operated on.
+                    EditReq req; req.verb = "set_trim";
+                    req.args = { {"id", sc->id}, {"in", sc->in - oneFrame}, {"out", sc->out} };
+                    req.kind = 2; req.t = curSec; req.group = g_group;
+                    g_editsInFlight.insert(sc->id);
+                    queueEdit(std::move(req));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame EARLIER (its own source rate)");
+                ImGui::SameLine();
+                if (fixedButton(">##extr", { ">" }) && canTrim) {
+                    EditReq req; req.verb = "set_trim";
+                    req.args = { {"id", sc->id}, {"in", sc->in}, {"out", sc->out + oneFrame} };
+                    req.kind = 2; req.t = curSec; req.group = g_group;
+                    g_editsInFlight.insert(sc->id);
+                    queueEdit(std::move(req));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame LATER (its own source rate)");
+                ImGui::PopStyleColor(4);
+                if (!canTrim) ImGui::EndDisabled();
+            }
+            ImGui::SameLine();
+            // Split at the playhead - the reference toolbar's scissors button. Same
+            // split the 'S' key already does; duplicated inline rather than sharing
+            // editT()/the key handler's own debounce state, which is scoped to that
+            // handler's block - a few lines here is smaller than threading a new
+            // helper through both call sites for one button.
+            {
+                if (ImGui::Button(ico(ICON_SCISSORS "##split", "Split"))
+                    && nowSec() - g_lastSplitQueued > kEditDebounceSec) {
+                    double t = (playing && g_stockSec >= 0) ? g_stockSec : curSec;
+                    Clip* c = clipAtComp(0, t);
+                    bool noId = c && c->id.empty();
+                    bool gated = c && !noId && g_editsInFlight.count(c->id);
+                    if (c && noId && !g_promoteInFlight) {
+                        double srcT = c->in + (t - c->compStart);
+                        EditReq req; req.verb = "split"; req.args = { {"at", srcT} };
+                        req.kind = 0; req.t = t; req.group = g_group;
+                        req.promote = true; req.pSource = c->source; req.pIn = c->in; req.pOut = c->out; req.pLabel = c->label;
+                        g_promoteInFlight = true;
+                        g_lastSplitQueued = nowSec();
+                        queueEdit(std::move(req));
+                    } else if (c && !noId && !gated) {
+                        double srcT = c->in + (t - c->compStart);
+                        EditReq req; req.verb = "split"; req.args = { {"id", c->id}, {"at", srcT} };
+                        req.kind = 0; req.t = t; req.group = g_group;
+                        g_editsInFlight.insert(c->id);
+                        g_lastSplitQueued = nowSec();
+                        queueEdit(std::move(req));
+                    }
+                    if (!playing) lastComposed = -1;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split clip at playhead (S)");
+            }
+            ImGui::SameLine();
+            // D-5: screenshot the preview frame. Engine verb already existed
+            // (grab_frame); only the button was missing.
+            if (ImGui::Button(ico(ICON_CAMERA "##shot", "Screenshot"))) {
+                Clip* cur = nullptr;
+                for (auto& c : g_track[0]) if (curSec >= c.compStart && curSec < c.compStart + (c.out - c.in)) { cur = &c; break; }
+                if (!cur && !g_track[0].empty()) cur = &g_track[0].back();
+                if (cur) {
+                    // COPY the source and time out of the Clip before going async. The
+                    // Clip* must never be captured: g_track is rebuilt by every edit
+                    // reply, so a pointer into it is dangling by the time a reply lands.
+                    std::string src = cur->source;
+                    double srcT = cur->in + (curSec - cur->compStart);
+                    engineCallAsync("grab_frame", { {"source", src}, {"t", srcT} }, 20.0,
+                                    "Saving a screenshot...", [](const json& r) {
+                        // r.value("data", json::object()) never vivifies a null; always safe.
+                        g_renderMsg = r.value("ok", false) ? "Saved " + r.value("data", json::object()).value("path", std::string()) : "Screenshot failed: " + r.value("error", std::string("?"));
+                        g_renderMsgAt = nowSec();
+                    });
+                } else { g_renderMsg = "Screenshot failed: no clip at playhead"; g_renderMsgAt = nowSec(); }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screenshot the frame at the playhead");
+            ImGui::SameLine();
+            // E-10 SKIP QUIET - during playback, everything under the loudness
+            // threshold is SKIPPED seamlessly instead of played. Colour carries the
+            // state as well as the shape: neon green with dark ink when armed (same
+            // active state every other toggle uses), dim slate when off.
+            {
+                if (g_thrOn) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0, 0, 0, 1));
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0.59f, 0.63f, 0.69f, 1.0f));
+                }
+                bool pressed = fixedButton(ico(ICON_RUN "##thr", "Skip Quiet##thr"),
+                                           { ico(ICON_RUN, "Skip Quiet") });
+                ImGui::PopStyleColor(g_thrOn ? 2 : 1);
+                if (pressed) {
+                    g_thrOn = !g_thrOn;
+                    g_quietDirty = true;      // force recomputeQuiet on the next frame
+                    emitThreshold(true);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Skip quiet parts during playback: %s\nDrag the bar on the timeline to set the level.",
+                                      g_thrOn ? "ON" : "OFF");
+            }
+            ImGui::SameLine();
+            // The broomstick - sweeps every quiet span (at the SAME threshold the
+            // bar above sets) out of the timeline for good.
+            if (broomButton()) applyRemoveSilence(curSec, lastComposed);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Remove all silent parts from the timeline\n(uses the threshold bar's level - one Ctrl+Z undoes the whole sweep)");
+            ImGui::SameLine();
+            // Item 9: captions ON/OFF, GLYPH not the words "Captions: On/Off" - a
+            // checkmark suffix + green tint when on, plain otherwise. Off hides both
+            // the timeline caption lane and the preview overlay text.
+            {
+                const bool capOn = g_capsOn;
+                if (capOn) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                }
+                const char* capLabel = capOn ? ico("captions " ICON_CHECK "##caps", "captions on##caps")
+                                              : ico("captions##caps", "captions off##caps");
+                if (fixedButton(capLabel, { ico("captions " ICON_CHECK, "captions on"), ico("captions", "captions off") }))
+                    g_capsOn = !g_capsOn;
+                if (capOn) ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show/hide captions (timeline lane + preview overlay): %s", capOn ? "ON" : "OFF");
+            }
+            ImGui::SameLine();
+            // Item 8: CLI-CUT captions - becky-subtitle.exe, NOT the Parakeet
+            // per-clip transcript the toggle above falls back to. Amber, the same
+            // "runs a real pipeline" accent the Forensic button already uses -
+            // this saves the reel then shells out, so it is not instant either.
+            {
+                bool busy = g_cliCutBusy.load();
+                bool noClips = g_track[0].empty();
+                if (busy || noClips) ImGui::BeginDisabled();
+                ImVec4 amber(1.0f, 0.72f, 0.18f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, amber);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(amber.x * 0.82f, amber.y * 0.82f, amber.z * 0.82f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(amber.x * 0.66f, amber.y * 0.66f, amber.z * 0.66f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                if (fixedButton(busy ? "CLI-CUT...##clicut" : "CLI-CUT##clicut", { "CLI-CUT...", "CLI-CUT" })) {
+                    g_cliCutBusy.store(true);
+                    engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel for CLI-CUT captions...", [](const json& r) {
+                        if (r.value("ok", false)) {
+                            std::string path = r.value("data", json::object()).value("path", std::string());
+                            if (!path.empty()) runCliCutCaptions(path);
+                            else { g_cliCutBusy.store(false); g_renderMsg = "CLI-CUT captions failed: save_reel returned no path"; g_renderMsgAt = nowSec(); }
+                        } else {
+                            g_cliCutBusy.store(false);
+                            g_renderMsg = "CLI-CUT captions failed: could not save reel: " + r.value("error", std::string("?"));
+                            g_renderMsgAt = nowSec();
+                        }
+                    });
+                }
+                ImGui::PopStyleColor(4);
+                if (busy || noClips) ImGui::EndDisabled();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Build real TikTok-style captions with becky-subtitle (CLI-CUT): snapped to your\ncut points and phrase-broken - not just the raw Parakeet forensic transcript.");
+            }
+            ImGui::SameLine();
+            // Item 9: 3-state provenance overlay (off / on-hidden-in-preview / on-
+            // shown) - a GLYPH per state (x / eye / check), not the words "Overlay:
+            // On (hidden)". Render always burns in whichever text "on-previewed"
+            // would show, since Render.Enabled tracks mode!=0 (setOverlayMode).
+            {
+                const char* ovIcon = g_ovMode == 0 ? ico(ICON_CANCEL "##ov", "overlay x##ov")
+                                   : g_ovMode == 1 ? ico(ICON_EYE "##ov", "overlay eye##ov")
+                                                   : ico(ICON_CHECK "##ov", "overlay ok##ov");
+                const bool ovOn = g_ovMode != 0;
+                if (ovOn) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                }
+                if (fixedButton(ovIcon, { ico(ICON_CANCEL, "overlay x"), ico(ICON_EYE, "overlay eye"), ico(ICON_CHECK, "overlay ok") }))
+                    setOverlayMode((g_ovMode + 1) % 3);
+                if (ovOn) ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Forensic lower-third overlay: %s",
+                        g_ovMode == 0 ? "off" : g_ovMode == 1 ? "on (hidden in preview, still burns into export)" : "on (shown in preview)");
+            }
+            ImGui::SameLine();
+            // NEW (round 3): the overlay's filename LINE, on/off - existed as state
+            // (g_overlay.showFilename) with no button to toggle it. Green-when-on,
+            // matching the reference's "name" pill exactly.
+            {
+                const bool nameOn = g_overlay.showFilename;
+                if (nameOn) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                }
+                if (ImGui::Button("name##ovname")) g_overlay.showFilename = !g_overlay.showFilename;
+                if (nameOn) ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Include the filename line in the overlay (off = date/timecode/link only): %s", nameOn ? "ON" : "OFF");
+            }
+            ImGui::SameLine(0.0f, 18.0f);
+            // Undo/Redo - ALWAYS enabled, deliberately. The engine owns both stacks
+            // and reports neither depth over the bridge, so "grey it out when empty"
+            // would mean GUESSING at emptiness.
+            {
+                if (ImGui::Button(ico(ICON_UNDO "##undobtn", "Undo"))) queueUndo(curSec);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo the last edit  (Ctrl+Z)");
+                ImGui::SameLine();
+                if (ImGui::Button(ico(ICON_REDO "##redobtn", "Redo"))) queueRedo(curSec);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the edit you just undid  (Ctrl+Y or Ctrl+Shift+Z)");
+                ImGui::SameLine();
+            }
+            // save / load - plain text, matching the reference exactly (no icon).
+            if (ImGui::Button("save##savereel")) {
+                engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel...", [](const json& r) {
+                    g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                });
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Reel");
+            ImGui::SameLine();
+            if (ImGui::Button("load##loadreel")) {
+                std::string picked = pickOpenReelFile(hwnd);
+                if (!picked.empty()) {
+                    std::string path = convertEditIfNeeded(picked);   // .txt/.xml Vegas/FCP export -> reel .json
+                    if (!path.empty()) {
+                        engineCallAsync("load_reel", { {"path", path} }, 30.0, "Loading reel...",
+                                        [path, &curSec, &playing, &lastComposed](const json& r) {
+                            if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
+                            else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
+                            g_renderMsgAt = nowSec();
+                        });
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Reel");
+            ImGui::SameLine();
+            // Item 6: render selection - GRAYED (not blue) with no count shown when
+            // nothing is selected, matching the reference's disabled look exactly;
+            // blue + white + the "(N)" count once clips ARE selected. An explicit
+            // two-branch style, not just BeginDisabled's alpha-multiply on top of the
+            // always-blue push this used to be - Jordan's own words, it read "too
+            // loud for a rare action" even dimmed.
+            {
+                bool hasSel = !g_sel.empty();
+                char selLabel[48];
+                if (hasSel) snprintf(selLabel, sizeof selLabel, "render selection (%d)##rensel", (int)g_sel.size());
+                else snprintf(selLabel, sizeof selLabel, "render selection##rensel");
+                if (hasSel) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.45f, 1.0f));
+                }
+                if (!hasSel) ImGui::BeginDisabled();
+                if (fixedButton(selLabel, { "render selection (000)", "render selection" })) {
+                    std::vector<std::string> ids(g_sel.begin(), g_sel.end());
+                    engineCallAsync("export_selection", { {"ids", ids}, {"output", ""} }, 300.0,
+                                    "Rendering the selected clips...", [](const json& r) {
+                    if (r.value("ok", false)) {
+                        const json& d = r.contains("data") ? r["data"] : r;
+                        std::string caps = d.value("captions", std::string());
+                        g_renderMsg = "Rendered " + d.value("mp4", std::string()) +
+                                      (caps.empty() ? "  - NO captions (use export for a captioned file)"
+                                                    : "  - captions burned in");
+                        openInFileBrowser(d.value("mp4", std::string()));
+                    } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                    });
+                }
+                if (!hasSel) ImGui::EndDisabled();
+                ImGui::PopStyleColor(4);
+            }
+            ImGui::SameLine();
+            // Item 5: "Render" -> "export", GREEN (#39FF14) fill + BLACK text - the
+            // primary action, matching the reference exactly.
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.42f, 1.0f, 0.26f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.72f, 0.06f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                if (ImGui::Button("export##doexport")) {
+                    engineCallAsync("export", { {"output", ""} }, 300.0, "Rendering video...", [](const json& r) {
+                    if (r.value("ok", false)) {
+                        const json& d = r.contains("data") ? r["data"] : r;
+                        std::string caps = d.value("captions", std::string());
+                        g_renderMsg = "Rendered " + d.value("mp4", std::string()) +
+                                      (caps.empty() ? "  - NO captions in this file"
+                                                    : "  - captions burned in");
+                        openInFileBrowser(d.value("mp4", std::string()));
+                    } else g_renderMsg = "Render failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                    });
+                }
+                ImGui::PopStyleColor(4);
+            }
+            // Export EDL - not in the reference's button row, but a working
+            // Vegas/FCP-interchange feature nobody asked to remove; kept, just
+            // relegated to a small trailing text button so it never competes with
+            // the primary row the reference actually shows.
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Export EDL##writeedl")) {
+                engineCallAsync("write_edl", { {"output", ""} }, 30.0, "Writing EDL...", [](const json& r) {
+                    if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
+                    else g_renderMsg = "Export EDL failed: " + r.value("error", std::string("?"));
+                    g_renderMsgAt = nowSec();
+                });
+            }
+
             // Item 1 fix (round 3): "previewing a quote still shows it on the
             // timeline" - the whole point of a preview is that the timeline must
             // NOT visibly change for its whole duration, not just snap back once
