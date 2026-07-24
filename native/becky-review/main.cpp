@@ -889,13 +889,54 @@ static const char* ico(const char* iconLabel, const char* textLabel) {
     return g_iconsOk ? iconLabel : textLabel;
 }
 
+// ---- reference button HOVER (CSS .btn:hover { border-color:neon; color:neon }) ----
+// ImGui recolors only the FILL on hover, never the text/border. becky-review-native
+// turns a plain white button's TEXT and BORDER neon on hover (and the fill stays put).
+// Predict the hover from the button's own rect and push those colours for the frame.
+// A button that had a colour PUSHED (a blue extend button, a green toggle-on) is left
+// alone - it keeps whatever hover its own push defines - so this only ever fires on the
+// default #0A0A0A chip, exactly like the CSS.
+static const ImVec4 kNeon = ImVec4(0.224f, 1.0f, 0.078f, 1.0f);
+static bool refHoverPredict(float w, float h) {
+    ImVec4 cb = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    bool isDefaultChip = cb.x < 0.06f && cb.y < 0.06f && cb.z < 0.06f;   // ~#0A0A0A
+    if (!isDefaultChip) return false;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    return ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
+}
+// refBtn: a plain (auto-sized) button with the reference's white->neon hover.
+static bool refBtn(const char* label) {
+    float w = ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    bool hov = refHoverPredict(w, ImGui::GetFrameHeight());
+    if (hov) { ImGui::PushStyleColor(ImGuiCol_Text, kNeon); ImGui::PushStyleColor(ImGuiCol_Border, kNeon); }
+    bool r = ImGui::Button(label);
+    if (hov) ImGui::PopStyleColor(2);
+    return r;
+}
+
+// Reference input focus: a text box shows the NEON border (+ soft glow) while it has the
+// cursor, so it is obvious which box you are typing into (.searchbar:focus-within /
+// #ask:focus / .cuesearch:focus). Call right after the InputText.
+static void inputFocusBorder() {
+    if (!ImGui::IsItemActive()) return;
+    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRect(ImVec2(mn.x - 1, mn.y - 1), ImVec2(mx.x + 1, mx.y + 1), IM_COL32(0x39, 0xFF, 0x14, 70), 4.0f, 0, 3.0f);
+    dl->AddRect(ImVec2(mn.x - 1, mn.y - 1), ImVec2(mx.x + 1, mx.y + 1), IM_COL32(0x39, 0xFF, 0x14, 255), 4.0f, 0, 1.5f);
+}
+
 // fixedButton sizes to the WIDEST label the control can ever show, so its
-// footprint is constant whatever state it is in. Pass every variant.
+// footprint is constant whatever state it is in. Pass every variant. Carries the
+// same reference white->neon hover as refBtn.
 static bool fixedButton(const char* label, std::initializer_list<const char*> allStates) {
     float w = 0;
     for (const char* s : allStates) w = (std::max)(w, ImGui::CalcTextSize(s).x);
     w += ImGui::GetStyle().FramePadding.x * 2.0f;
-    return ImGui::Button(label, ImVec2(w, 0));
+    bool hov = refHoverPredict(w, ImGui::GetFrameHeight());
+    if (hov) { ImGui::PushStyleColor(ImGuiCol_Text, kNeon); ImGui::PushStyleColor(ImGuiCol_Border, kNeon); }
+    bool r = ImGui::Button(label, ImVec2(w, 0));
+    if (hov) ImGui::PopStyleColor(2);
+    return r;
 }
 
 // ---- run an engine verb WITHOUT freezing the window ----
@@ -4825,7 +4866,9 @@ static LibCardResult drawLibraryCard(VideoRow& v, bool selected, bool justViewed
     dl->PushClipRect(ImVec2(textX, p0.y), ImVec2(textR, p1.y), true);
     dl->AddText(ImVec2(textX, p0.y + pad), IM_COL32(235, 238, 245, 255), v.disp.c_str());
     std::string sub = v.date;
-    const char* status = inFlight ? "transcribing..." : (v.hasTranscript ? nullptr : "no transcript");
+    // Round 5c: "no transcript" text removed - the green [+] add button already IS the
+    // "this one has no transcript yet" indicator (Jordan: redundant). Keep "transcribing...".
+    const char* status = inFlight ? "transcribing..." : nullptr;
     if (status) { if (!sub.empty()) sub += "  -  "; sub += status; }
     if (!sub.empty())
         dl->AddText(ImVec2(textX, p0.y + pad + lh + 4.0f * S),
@@ -5538,7 +5581,12 @@ int main(int argc, char** argv) {
         // reference's "VERY subtle gray outline". Now every chip gets that 1px rule.
         st.FrameBorderSize = 1.0f;
         st.WindowPadding = ImVec2(12, 10);
-        st.WindowBorderSize = 1.0f;        // a visible seam between the panels
+        // Round 5c: NO window borders. They put a 1px rule on EACH panel edge, so the
+        // library|video boundary showed the library's right border + the splitter bar +
+        // the video's left border - Jordan's "a thick one surrounded by two small ones".
+        // The splitter draws its OWN single bar (below); the timeline draws its own top
+        // hairline; that is all the seam we want.
+        st.WindowBorderSize = 0.0f;
         st.SeparatorTextBorderSize = 2.0f;
 
         // ---- BR3-VISUAL-SPEC: the reference app's palette, not ImGui's default ----
@@ -5600,7 +5648,12 @@ int main(int argc, char** argv) {
     // is somehow missing (never assert - the same degrade-don't-crash rule as
     // the icon load below).
     {
-        const char* uiFontPath = "C:\\Windows\\Fonts\\seguisb.ttf";     // Segoe UI Semibold
+        // Round 5c: match becky-review-native's text WEIGHT and SIZE. The reference is
+        // Segoe UI at font-weight 700 (BOLD) and, rendered by the browser, reads ~35%
+        // heavier/larger than ImGui does at the same nominal px - so 16px Semibold came
+        // out visibly smaller and thinner than the reference beside it. Real Segoe UI
+        // BOLD at 20px, rendered 1:1 (crisp, no upscale), matches it.
+        const char* uiFontPath = "C:\\Windows\\Fonts\\segoeuib.ttf";     // Segoe UI Bold (weight 700)
         bool baseLoaded = false;
         if (FILE* f = fopen(uiFontPath, "rb")) {
             fclose(f);
@@ -5608,22 +5661,17 @@ int main(int argc, char** argv) {
             uiCfg.OversampleH = 3;
             uiCfg.OversampleV = 3;
             uiCfg.PixelSnapH  = false;
-            // Round 5b: 16px == the reference's CSS `body { font-size:16px }`, rendered
-            // 1:1 (FontGlobalScale is now 1.0) so it matches becky-review-native's text
-            // size exactly instead of being 35% larger.
-            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 16.0f, &uiCfg) != nullptr;
+            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 20.0f, &uiCfg) != nullptr;
         }
         if (!baseLoaded) {
-            // Semibold missing (older Windows) - real Segoe UI Bold is the next
-            // best legible fallback, still bolder than the old regular face.
-            const char* boldPath = "C:\\Windows\\Fonts\\segoeuib.ttf";
-            if (FILE* f = fopen(boldPath, "rb")) {
+            const char* sbPath = "C:\\Windows\\Fonts\\seguisb.ttf";      // Semibold fallback
+            if (FILE* f = fopen(sbPath, "rb")) {
                 fclose(f);
                 ImFontConfig uiCfg;
                 uiCfg.OversampleH = 3;
                 uiCfg.OversampleV = 3;
                 uiCfg.PixelSnapH  = false;
-                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(boldPath, 16.0f, &uiCfg) != nullptr;
+                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(sbPath, 20.0f, &uiCfg) != nullptr;
             }
         }
         if (!baseLoaded) ImGui::GetIO().Fonts->AddFontDefault();
@@ -5653,9 +5701,9 @@ int main(int argc, char** argv) {
             // the background. Screenshotting at 8x put the runner at 719..744
             // inside a 722..753 button; centring 25.5px of glyph in a 31px
             // button needs 4.3 more units of drop, hence 6.
-            cfg.GlyphOffset = ImVec2(0.0f, 4.0f);   // 18px icon centred in the 1:1 (scale 1.0) buttons
-            cfg.GlyphMinAdvanceX = 20.0f;          // uniform icon cells, so nothing jitters
-            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 18.0f, &cfg, kIconRange) != nullptr;
+            cfg.GlyphOffset = ImVec2(0.0f, 4.0f);   // 20px icon centred against the 20px base font
+            cfg.GlyphMinAdvanceX = 22.0f;          // uniform icon cells, so nothing jitters
+            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 20.0f, &cfg, kIconRange) != nullptr;
 
             // COLOR EMOJI (Jordan: "use the same emojis ... identical"). The reference
             // renders scissors/camera/running-man as real color emoji via the browser's
@@ -5671,14 +5719,26 @@ int main(int argc, char** argv) {
                     0x1F3C3, 0x1F3C3, // running man (Threshold)
                     0x1F4F7, 0x1F4F7, // camera    (Screenshot)
                     0x1F9F9, 0x1F9F9, // broom     (Trim silence)
+                    0x1F441, 0x1F441, // eye       (overlay = on AND previewed)
                     0
                 };
                 ImFontConfig ecfg;
                 ecfg.MergeMode = true;
                 ecfg.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_LoadColor;
                 ecfg.GlyphOffset = ImVec2(0.0f, 3.0f);
-                ecfg.GlyphMinAdvanceX = 20.0f;
-                ImGui::GetIO().Fonts->AddFontFromFileTTF(emojiPath, 16.0f, &ecfg, kEmojiRange);
+                ecfg.GlyphMinAdvanceX = 22.0f;
+                ImGui::GetIO().Fonts->AddFontFromFileTTF(emojiPath, 18.0f, &ecfg, kEmojiRange);
+            }
+            // Segoe UI BOLD lacks U+2717 (✗) - it rendered as "?" on the overlay button.
+            // Segoe UI Symbol has the mono ✓/✗; merge them (no LoadColor) so they tint with
+            // the button's text colour like the reference's "overlay ✓".
+            const char* symPath = "C:\\Windows\\Fonts\\seguisym.ttf";
+            if (FILE* sf = fopen(symPath, "rb")) {
+                fclose(sf);
+                static const ImWchar kSymRange[] = { 0x2713, 0x2713, 0x2717, 0x2717, 0 };
+                ImFontConfig scfg;
+                scfg.MergeMode = true;
+                ImGui::GetIO().Fonts->AddFontFromFileTTF(symPath, 18.0f, &scfg, kSymRange);
             }
         }
         if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
@@ -6787,8 +6847,8 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowPos({ 0, topY }); ImGui::SetNextWindowSize({ libW - splitHalf, topH });
         if (ImGui::Begin("library", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool libFocusedNow = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-            ImGui::Text("Library / Search");
-            ImGui::Separator();
+            // Round 5c: "Library / Search" header removed (Jordan: redundant) - the search
+            // box + file list speak for themselves, matching becky-review-native.
             // ONE search row, like the reference: [magnifier][box][smart pill][x].
             // Three same-size SmallButtons ("Search" / "Smart (qmd)" / "Clear") read
             // as three equal choices and the middle one got clipped at 320px.
@@ -6815,6 +6875,7 @@ int main(int argc, char** argv) {
                 if (ImGui::InputTextWithHint("##search", "search all transcripts", g_searchBuf, sizeof g_searchBuf,
                                              ImGuiInputTextFlags_EnterReturnsTrue))
                     runSearch(g_smartSearch);
+                inputFocusBorder();
                 ImGui::SameLine(0, 6 * S);
 
                 // Checklist 20: a TOGGLE, blue when on, so single-word keyword search
@@ -7043,6 +7104,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
+                inputFocusBorder();
                 ImGui::SameLine();
                 // Item 3c: auto-cut, placed here per the old app's layout (the button
                 // sat immediately right of this same field). Runs on the video whose
@@ -7051,7 +7113,7 @@ int main(int argc, char** argv) {
                 {
                     bool canCut = !g_cueName.empty() && !g_cues.empty();
                     if (!canCut) ImGui::BeginDisabled();
-                    if (ImGui::SmallButton("auto-cut"))
+                    if (refBtn("auto-cut"))
                         applyAutoCut(g_cueName, g_cues[0].source, curSec, lastComposed);
                     if (!canCut) ImGui::EndDisabled();
                     if (ImGui::IsItemHovered())
@@ -7472,10 +7534,13 @@ int main(int argc, char** argv) {
                 if (splitHov || splitAct) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
                 if (splitAct) g_libW += ImGui::GetIO().MouseDelta.x;
                 ImDrawList* sdl = ImGui::GetWindowDrawList();
-                ImU32 splitCol = splitAct ? IM_COL32(0x00, 0xAE, 0xEF, 255)
-                                : (splitHov ? IM_COL32(170, 176, 184, 220) : IM_COL32(90, 96, 105, 110));
+                // Reference .vsplit: one bar, background --line #262626; neon (+ glow) on
+                // hover/drag. ONE bar only now (the panel borders are gone).
+                bool splitLit = splitHov || splitAct;
+                ImU32 splitCol = splitLit ? IM_COL32(0x39, 0xFF, 0x14, 255) : IM_COL32(0x26, 0x26, 0x26, 255);
                 float cx = ImGui::GetWindowPos().x + splitHalf;
-                sdl->AddLine(ImVec2(cx, topY + 4), ImVec2(cx, topY + topH - 4), splitCol, splitAct ? 3.0f : 2.0f);
+                if (splitLit) sdl->AddLine(ImVec2(cx, topY + 4), ImVec2(cx, topY + topH - 4), IM_COL32(0x39, 0xFF, 0x14, 60), 6.0f); // glow
+                sdl->AddLine(ImVec2(cx, topY + 4), ImVec2(cx, topY + topH - 4), splitCol, 2.0f);
             }
             ImGui::End();
             ImGui::PopStyleVar();
@@ -7718,6 +7783,7 @@ int main(int argc, char** argv) {
                 bool submit = ImGui::InputTextMultiline("##ask", g_askBuf, sizeof g_askBuf,
                                                         ImVec2(inW, ImGui::GetFrameHeight() * 2.2f),
                                                         ImGuiInputTextFlags_EnterReturnsTrue);
+                inputFocusBorder();
                 if (g_askBuf[0] == 0) {
                     // Hint drawn by hand: InputTextMultiline has no WithHint variant.
                     ImVec2 mn = ImGui::GetItemRectMin();
@@ -8027,7 +8093,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
                 // says the same thing without being read.
-                if (ImGui::Button(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
+                if (refBtn(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to start");
                 ImGui::SameLine();
             }
@@ -8096,7 +8162,7 @@ int main(int argc, char** argv) {
             // handler's block - a few lines here is smaller than threading a new
             // helper through both call sites for one button.
             {
-                if (ImGui::Button(ico(ICON_SCISSORS "##split", "Split"))
+                if (refBtn(ico(ICON_SCISSORS "##split", "Split"))
                     && nowSec() - g_lastSplitQueued > kEditDebounceSec) {
                     double t = (playing && g_stockSec >= 0) ? g_stockSec : curSec;
                     Clip* c = clipAtComp(0, t);
@@ -8125,7 +8191,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             // D-5: screenshot the preview frame. Engine verb already existed
             // (grab_frame); only the button was missing.
-            if (ImGui::Button(ico(ICON_CAMERA "##shot", "Screenshot"))) {
+            if (refBtn(ico(ICON_CAMERA "##shot", "Screenshot"))) {
                 Clip* cur = nullptr;
                 for (auto& c : g_track[0]) if (curSec >= c.compStart && curSec < c.compStart + (c.out - c.in)) { cur = &c; break; }
                 if (!cur && !g_track[0].empty()) cur = &g_track[0].back();
@@ -8242,22 +8308,24 @@ int main(int argc, char** argv) {
             // On (hidden)". Render always burns in whichever text "on-previewed"
             // would show, since Render.Enabled tracks mode!=0 (setOverlayMode).
             {
-                // Round 5b: the reference button reads the WORD "overlay" (+ a ✓ when
-                // on), not a bare x/eye/check glyph - the glyph-only version was one of
-                // the "ambiguous" buttons Jordan called out. Keep the 3-state cycle
-                // (off / on-hidden / on-shown) but show it as text + a small state mark,
-                // exactly like becky-review-native's "overlay ✓".
-                const char* ovLabel = g_ovMode == 0 ? "overlay##ov"
-                                    : g_ovMode == 1 ? ico("overlay " ICON_EYE "##ov", "overlay (hidden)##ov")
-                                                    : ico("overlay " ICON_CHECK "##ov", "overlay ok##ov");
-                const bool ovOn = g_ovMode != 0;
-                if (ovOn) {
+                // Round 5c: EXACTLY the reference's overlay button (app.js):
+                //   off  (not rendering)      -> "overlay ✗" DIMMED  (x)
+                //   on, not previewed         -> "overlay ✓" normal  (check)
+                //   on AND previewed          -> "overlay \U0001F441" GREEN (eye emoji, color)
+                // g_ovMode 0/1/2 == off / on-hidden / on-shown maps straight onto that.
+                const char* ovLabel = g_ovMode == 0 ? "overlay \xE2\x9C\x97##ov"           // x
+                                    : g_ovMode == 1 ? "overlay \xE2\x9C\x93##ov"           // check
+                                                    : "overlay \xF0\x9F\x91\x81##ov";      // eye
+                if (g_ovMode == 0) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.54f, 0.54f, 0.56f, 1.0f)); // dimmed
+                } else if (g_ovMode == 2) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
                 }
-                if (fixedButton(ovLabel, { "overlay", ico("overlay " ICON_EYE, "overlay (hidden)"), ico("overlay " ICON_CHECK, "overlay ok") }))
+                if (fixedButton(ovLabel, { "overlay \xE2\x9C\x97", "overlay \xE2\x9C\x93", "overlay \xF0\x9F\x91\x81" }))
                     setOverlayMode((g_ovMode + 1) % 3);
-                if (ovOn) ImGui::PopStyleColor(2);
+                if (g_ovMode == 0) ImGui::PopStyleColor(1);
+                else if (g_ovMode == 2) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Forensic lower-third overlay: %s",
                         g_ovMode == 0 ? "off" : g_ovMode == 1 ? "on (hidden in preview, still burns into export)" : "on (shown in preview)");
@@ -8272,7 +8340,7 @@ int main(int argc, char** argv) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
                 }
-                if (ImGui::Button("name##ovname")) g_overlay.showFilename = !g_overlay.showFilename;
+                if (refBtn("name##ovname")) g_overlay.showFilename = !g_overlay.showFilename;
                 if (nameOn) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Include the filename line in the overlay (off = date/timecode/link only): %s", nameOn ? "ON" : "OFF");
@@ -8282,15 +8350,15 @@ int main(int argc, char** argv) {
             // and reports neither depth over the bridge, so "grey it out when empty"
             // would mean GUESSING at emptiness.
             {
-                if (ImGui::Button(ico(ICON_UNDO "##undobtn", "Undo"))) queueUndo(curSec);
+                if (refBtn(ico(ICON_UNDO "##undobtn", "Undo"))) queueUndo(curSec);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo the last edit  (Ctrl+Z)");
                 ImGui::SameLine();
-                if (ImGui::Button(ico(ICON_REDO "##redobtn", "Redo"))) queueRedo(curSec);
+                if (refBtn(ico(ICON_REDO "##redobtn", "Redo"))) queueRedo(curSec);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the edit you just undid  (Ctrl+Y or Ctrl+Shift+Z)");
                 ImGui::SameLine();
             }
             // save / load - plain text, matching the reference exactly (no icon).
-            if (ImGui::Button("save##savereel")) {
+            if (refBtn("save##savereel")) {
                 engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel...", [](const json& r) {
                     g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
                     g_renderMsgAt = nowSec();
@@ -8298,7 +8366,7 @@ int main(int argc, char** argv) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Reel");
             ImGui::SameLine();
-            if (ImGui::Button("load##loadreel")) {
+            if (refBtn("load##loadreel")) {
                 std::string picked = pickOpenReelFile(hwnd);
                 if (!picked.empty()) {
                     std::string path = convertEditIfNeeded(picked);   // .txt/.xml Vegas/FCP export -> reel .json
@@ -8383,7 +8451,7 @@ int main(int argc, char** argv) {
             // relegated to a small trailing text button so it never competes with
             // the primary row the reference actually shows.
             ImGui::SameLine();
-            if (ImGui::SmallButton("Export EDL##writeedl")) {
+            if (refBtn("Export EDL##writeedl")) {
                 engineCallAsync("write_edl", { {"output", ""} }, 30.0, "Writing EDL...", [](const json& r) {
                     if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
                     else g_renderMsg = "Export EDL failed: " + r.value("error", std::string("?"));
