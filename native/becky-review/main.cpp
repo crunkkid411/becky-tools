@@ -39,6 +39,7 @@
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
+#include "misc/freetype/imgui_freetype.h"   // color-emoji rasterizer (Segoe UI Emoji)
 #include "json.hpp"
 #include "engine.h" // the native video engine (mpv replacement, step 6)
 
@@ -856,8 +857,8 @@ static void endWork() {
 #define ICON_PLAY   "\xEE\x9D\xA8"   // U+E768 Play
 #define ICON_PAUSE  "\xEE\x9D\xA9"   // U+E769 Pause
 #define ICON_START  "\xEE\xA2\x92"   // U+E892 Previous / back to start
-#define ICON_RUN    "\xEE\xA0\x85"   // U+E805 Walking figure
-#define ICON_CAMERA "\xEE\x9C\xA2"   // U+E722 Camera
+#define ICON_RUN    "\xF0\x9F\x8F\x83"   // U+1F3C3 running man - COLOR emoji (Segoe UI Emoji), matches becky-review-native
+#define ICON_CAMERA "\xF0\x9F\x93\xB7"   // U+1F4F7 camera  - COLOR emoji
 #define ICON_SAVE   "\xEE\x9D\x8E"   // U+E74E Floppy disk
 #define ICON_OPEN   "\xEE\xB4\xA5"   // U+ED25 Open folder
 // U+E7A7 curls LEFT (undo), U+E7A6 curls RIGHT (redo) - verified by rendering
@@ -871,7 +872,8 @@ static void endWork() {
 // (item 9 - a glyph, not the words "Overlay: On (hidden)"). Byte sequences
 // computed from the codepoint (Python chr(cp).encode('utf-8')), same method
 // that would have caught undo/redo backwards above.
-#define ICON_SCISSORS "\xEE\xA3\x86"  // U+E8C6 Cut (scissors) - Split
+#define ICON_SCISSORS "\xE2\x9C\x82"  // U+2702 scissors - COLOR emoji (Segoe UI Emoji), matches becky-review-native
+#define ICON_BROOM    "\xF0\x9F\xA7\xB9" // U+1F9F9 broom - COLOR emoji (Trim silence)
 #define ICON_CHECK    "\xEE\x9C\xBE"  // U+E73E CheckMark - overlay mode 2 (on, shown)
 #define ICON_CANCEL   "\xEE\x9C\x91"  // U+E711 Cancel (X) - overlay mode 0 (off)
 #define ICON_EYE      "\xEE\xA2\x90"  // U+E890 View (eye) - overlay mode 1 (on, hidden)
@@ -4753,33 +4755,13 @@ static bool crownButton(bool on) {
     return clicked;
 }
 
-// Item 3b: hand-drawn broom, same InvisibleButton+ImDrawList technique as
-// crownButton above - a diagonal handle plus a fanned bristle head, never a
-// font glyph. "on" (hovered) just brightens it; this button has no persistent
-// toggle state of its own, it fires an action.
+// Round 5b: the reference's "trim silence" button IS the 🧹 broom emoji. Use the real
+// color emoji (via the Segoe UI Emoji merge) in a normal chip so it matches exactly and
+// sits at the same size/border as its toolbar neighbours - the old hand-drawn broom was
+// a monochrome sketch that read as one of the "ambiguous" icons. Degrades to a word if
+// the emoji font is missing, same rule as every other icon button.
 static bool broomButton() {
-    const float S = ImGui::GetIO().FontGlobalScale;
-    float d = ImGui::GetTextLineHeight() + 12.0f * S;
-    ImVec2 p0 = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("##broom", ImVec2(d, d));
-    bool clicked = ImGui::IsItemClicked();
-    bool hovered = ImGui::IsItemHovered();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, ImVec2(p0.x + d, p0.y + d), IM_COL32(255, 255, 255, hovered ? 24 : 0), 6.0f * S);
-    ImU32 col = hovered ? IM_COL32(255, 255, 255, 235) : IM_COL32(190, 196, 206, 255);
-    // Handle: a diagonal stroke from the top-right down to the bristle head.
-    ImVec2 handleTop(p0.x + d * 0.78f, p0.y + d * 0.14f);
-    ImVec2 headTop(p0.x + d * 0.30f, p0.y + d * 0.60f);
-    dl->AddLine(handleTop, headTop, col, 2.2f * S);
-    // Bristle head: a small filled wedge, then a fan of splayed lines below it.
-    ImVec2 headL(p0.x + d * 0.16f, p0.y + d * 0.62f), headR(p0.x + d * 0.44f, p0.y + d * 0.62f);
-    dl->AddTriangleFilled(headTop, headL, headR, col);
-    float fanY = p0.y + d * 0.90f;
-    for (int k = -2; k <= 2; k++) {
-        float fx = p0.x + d * 0.30f + k * d * 0.075f;
-        dl->AddLine(ImVec2(p0.x + d * 0.30f, p0.y + d * 0.62f), ImVec2(fx, fanY), col, 1.6f * S);
-    }
-    return clicked;
+    return ImGui::Button(ico(ICON_BROOM "##broom", "Trim Silence##broom"));
 }
 
 struct LibCardResult { bool clicked = false, dbl = false, plus = false; };
@@ -5674,6 +5656,30 @@ int main(int argc, char** argv) {
             cfg.GlyphOffset = ImVec2(0.0f, 4.0f);   // 18px icon centred in the 1:1 (scale 1.0) buttons
             cfg.GlyphMinAdvanceX = 20.0f;          // uniform icon cells, so nothing jitters
             g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 18.0f, &cfg, kIconRange) != nullptr;
+
+            // COLOR EMOJI (Jordan: "use the same emojis ... identical"). The reference
+            // renders scissors/camera/running-man as real color emoji via the browser's
+            // Segoe UI Emoji font; the monochrome Segoe MDL2 shapes above read as
+            // ambiguous to him. Merge those exact emoji codepoints from Segoe UI Emoji,
+            // rasterized IN COLOR by freetype (IMGUI_ENABLE_FREETYPE build + LoadColor).
+            // Needs IMGUI_USE_WCHAR32 for the > U+FFFF codepoints, which the build sets.
+            const char* emojiPath = "C:\\Windows\\Fonts\\seguiemj.ttf";
+            if (FILE* ef = fopen(emojiPath, "rb")) {
+                fclose(ef);
+                static const ImWchar kEmojiRange[] = {
+                    0x2702, 0x2702,   // scissors  (Split)
+                    0x1F3C3, 0x1F3C3, // running man (Threshold)
+                    0x1F4F7, 0x1F4F7, // camera    (Screenshot)
+                    0x1F9F9, 0x1F9F9, // broom     (Trim silence)
+                    0
+                };
+                ImFontConfig ecfg;
+                ecfg.MergeMode = true;
+                ecfg.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_LoadColor;
+                ecfg.GlyphOffset = ImVec2(0.0f, 3.0f);
+                ecfg.GlyphMinAdvanceX = 20.0f;
+                ImGui::GetIO().Fonts->AddFontFromFileTTF(emojiPath, 16.0f, &ecfg, kEmojiRange);
+            }
         }
         if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
                                            : "icons: disabled by BECKY_ICONS=0 - toolbar using text labels");
