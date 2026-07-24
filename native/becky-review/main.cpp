@@ -1535,6 +1535,11 @@ static OverlayState g_overlay;
 // out of sync with "off".
 static int g_ovMode = 1;
 static std::atomic<bool> g_ovEngineEnabled{ true }; // last "enabled" value pushed to the engine
+// Item 7 (round 2): "there should be a way to toggle OFF the captions, they
+// should be optional." Default ON (captions are the useful default); gates
+// BOTH the timeline caption lane and the preview's burned-in-style overlay -
+// off means fully hidden, not just dimmed.
+static bool g_capsOn = true;
 
 static void relabel(int tr) {
     const char* p = tr == 0 ? "clip " : "pip ";
@@ -2685,14 +2690,11 @@ static const ImU32 COL_CAPCUT   = IM_COL32(255, 255, 255, 46);
 // Item 3 root cause (round 2): detection AND the seamless skip during playback
 // were BOTH already correct - proven live with a synthetic loud/silence/loud
 // clip (the skip landed exactly on the silent span, confirmed by playhead
-// position vs elapsed wall time). The only real bug was this constant: black
-// at 43% alpha over Becky Review 3's already-near-black timeline is
-// indistinguishable from "nothing happened" - Jordan had zero visual proof
-// the feature was doing anything, on top of an unrelated caption/library bug
-// that made it look inert. Crimson (palette-adjacent, reads as "will be cut")
-// at a real 55% alpha is unmissable without going full opaque and hiding the
-// waveform underneath.
-static const ImU32 COL_QUIETDIM = IM_COL32(220, 20, 60, 140);
+// position vs elapsed wall time). Jordan, live, on the crimson experiment:
+// the plain semi-transparent black is CORRECT and reads fine, precisely
+// because it sits on top of already-colourful clips - reverted to the
+// original.
+static const ImU32 COL_QUIETDIM = IM_COL32(0, 0, 0, 110);
 
 // Jordan's screenshot showed "0:08.5" printed twice in a row on the ruler, then
 // the whole label sequence one tick off. Root cause: this used to do
@@ -3195,7 +3197,7 @@ static void drawTimeline(double& curSec, bool& playing) {
     // to the pre-caption one.
     // A-1: derived captions (no sidecar, no reel) still get a lane - the lane
     // shows whenever there ARE captions or a reel is loaded to explain itself on.
-    bool showCaps = (!g_capPath.empty() || !g_caps.empty()) && lanesH > 90;
+    bool showCaps = g_capsOn && (!g_capPath.empty() || !g_caps.empty()) && lanesH > 90;
     float capH = showCaps ? 36.0f : 0.0f;
     float capGap = showCaps ? 4.0f : 0.0f;
     float laneH = lanesH - capH - capGap;
@@ -4717,6 +4719,29 @@ static void seekToSpan(const std::string& source, double a, double b, bool start
     // preview's 0-based time), instead of stale reel captions at wrong times.
     rebuildDerivedCaptions();
 }
+// Round 2, items 4/5: clicking a quote (search hit or transcript cue) or moving
+// the arrow-key selection onto one now PLAYS that quote's span in the preview
+// pane, with real audio - but must NEVER touch the real edit reel (that was
+// round 1's destructive-wipe bug: seekToSpan above clears g_track[0] with no
+// way back). Reuses the exact swap-and-restore the "Play tied clips" Q&A
+// preview (G-1) already proved safe: back the real reel up once into
+// g_reelBeforePreview, swap in a one-clip preview reel, and the existing
+// "g_inTiedPreview && !playing" handler in the main loop restores the real
+// reel the instant playback stops - pause, arrow-step elsewhere, or the clip
+// running out - so the timeline is never actually mutated from the user's
+// point of view.
+static void previewPlaySpan(const std::string& source, double a, double b,
+                             double& curSec, bool& playing, double& lastComposed) {
+    if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_inTiedPreview = true; }
+    Clip cl; cl.in = a; cl.out = (b > a + 0.05) ? b : a + 0.05;
+    cl.source = source; cl.label = baseName(source);
+    paintClipFromKnownSource(cl);
+    g_track[0].clear(); g_track[0].push_back(cl);
+    packTrack(0); recomputeDur();
+    curSec = 0; playing = true; g_playingExt = true; lastComposed = -1;
+    g_quietDirty = true; peaksRequest(source, a - 1.0, b + 5.0);
+    rebuildDerivedCaptions();
+}
 // playWholeVideo puts a video's WHOLE span on the track (B-5 "spacebar plays the
 // selected row"). Duration comes from the engine probe; an unprobe-able source
 // degrades to a generous cap rather than blocking playback.
@@ -5036,6 +5061,38 @@ int main(int argc, char** argv) {
     if (!engine::init()) crashLog("engine: init failed - video decode disabled, window still opening");
 
     IMGUI_CHECKVERSION(); ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::StyleColorsDark();
+
+    // Item 13 (round 2): "why are we still using that ugly blue... it's not in
+    // our color palette." ImGui::StyleColorsDark()'s built-in accent IS that
+    // blue (Button/Header/CheckMark/SliderGrab default to roughly (0.26,0.59,
+    // 0.98)) - baked into every toolbar button, selected search-hit row,
+    // checkbox and slider, because nothing ever overrode it. The old app
+    // (gui/BeckyReviewNative - becky-review-gui2.JPG) was neon green
+    // throughout; restyle onto kPalette[0] (#14FF39) as the one accent colour
+    // everywhere the default theme used to reach for blue.
+    {
+        ImVec4 neonV = ImGui::ColorConvertU32ToFloat4(kPalette[0]);
+        ImVec4 neonDim(neonV.x * 0.55f, neonV.y * 0.55f, neonV.z * 0.55f, 1.0f);
+        ImVec4 neonDimmer(neonV.x * 0.32f, neonV.y * 0.32f, neonV.z * 0.32f, 0.85f);
+        ImGuiStyle& acc = ImGui::GetStyle();
+        acc.Colors[ImGuiCol_Button]           = neonDimmer;
+        acc.Colors[ImGuiCol_ButtonHovered]    = neonDim;
+        acc.Colors[ImGuiCol_ButtonActive]     = neonV;
+        acc.Colors[ImGuiCol_Header]           = neonDimmer;
+        acc.Colors[ImGuiCol_HeaderHovered]    = neonDim;
+        acc.Colors[ImGuiCol_HeaderActive]     = neonV;
+        acc.Colors[ImGuiCol_CheckMark]        = neonV;
+        acc.Colors[ImGuiCol_SliderGrab]       = neonDim;
+        acc.Colors[ImGuiCol_SliderGrabActive] = neonV;
+        acc.Colors[ImGuiCol_FrameBgActive]    = ImVec4(neonV.x * 0.20f, neonV.y * 0.20f, neonV.z * 0.20f, 0.90f);
+        acc.Colors[ImGuiCol_SeparatorHovered] = neonDim;
+        acc.Colors[ImGuiCol_SeparatorActive]  = neonV;
+        acc.Colors[ImGuiCol_ResizeGripHovered]= neonDim;
+        acc.Colors[ImGuiCol_ResizeGripActive] = neonV;
+        acc.Colors[ImGuiCol_TabHovered]       = neonDim;
+        acc.Colors[ImGuiCol_TabActive]        = neonDimmer;
+        acc.Colors[ImGuiCol_TextSelectedBg]   = ImVec4(neonV.x, neonV.y, neonV.z, 0.35f);
+    }
 
     // ---- SIZED FOR JORDAN, not for a default ImGui demo ----
     //
@@ -6285,13 +6342,20 @@ int main(int argc, char** argv) {
                 // while typing in it. Without !WantTextInput, pressing Enter to
                 // SUBMIT a search would also fire "add the selected hit".
                 if (libFocusedNow && !ImGui::GetIO().WantTextInput && !g_hits.empty()) {
+                    bool hitMoved = false;
                     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
-                        { g_hitSel = std::min((int)g_hits.size() - 1, g_hitSel + 1); g_hitScrollPending = true; }
+                        { g_hitSel = std::min((int)g_hits.size() - 1, g_hitSel + 1); g_hitScrollPending = true; hitMoved = true; }
                     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
-                        { g_hitSel = std::max(0, g_hitSel - 1); g_hitScrollPending = true; }
+                        { g_hitSel = std::max(0, g_hitSel - 1); g_hitScrollPending = true; hitMoved = true; }
                     if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
                         g_hitSel >= 0 && g_hitSel < (int)g_hits.size() && !g_hits[g_hitSel].transcriptOnly)
                         addHitToTimeline(g_hits[g_hitSel], curSec);
+                    // Item 5: arrow-key navigation plays whichever quote is now selected -
+                    // same non-destructive path as a click (previewPlaySpan).
+                    if (hitMoved && g_hitSel >= 0 && g_hitSel < (int)g_hits.size() && !g_hits[g_hitSel].transcriptOnly) {
+                        Hit& hm = g_hits[g_hitSel];
+                        previewPlaySpan(hm.source, hm.start, hm.end, curSec, playing, lastComposed);
+                    }
                 }
                 ImGui::BeginChild("hits", { 0, 0 }, false);
                 for (size_t i = 0; i < g_hits.size(); i++) {
@@ -6329,7 +6393,9 @@ int main(int argc, char** argv) {
                         if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick) && !overIdx) {
                             g_hitSel = (int)i;
                             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec);
-                            else previewSourceFrame(h.source, h.start);
+                            // Item 4: single click PLAYS the quote's span (still never
+                            // touches the real reel - see previewPlaySpan's comment).
+                            else previewPlaySpan(h.source, h.start, h.end, curSec, playing, lastComposed);
                         }
                         // Right-click = the video rows' menu, on a hit. Right-click
                         // also MOVES the selection first, so the menu and the row
@@ -6421,13 +6487,19 @@ int main(int argc, char** argv) {
                 // frame-stepping (that path is gated on the timeline window's own focus,
                 // a completely different ImGui window than this left panel).
                 if (libFocusedNow && !ImGui::GetIO().WantTextInput && !g_cues.empty()) {
+                    bool cueMoved = false;
                     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
-                        { g_cueSel = std::min((int)g_cues.size() - 1, g_cueSel + 1); g_cueScrollPending = true; }
+                        { g_cueSel = std::min((int)g_cues.size() - 1, g_cueSel + 1); g_cueScrollPending = true; cueMoved = true; }
                     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
-                        { g_cueSel = std::max(0, g_cueSel - 1); g_cueScrollPending = true; }
+                        { g_cueSel = std::max(0, g_cueSel - 1); g_cueScrollPending = true; cueMoved = true; }
                     if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
                         g_cueSel >= 0 && g_cueSel < (int)g_cues.size())
                         addCueToTimeline(g_cues[g_cueSel], curSec);
+                    // Item 5: arrow-key navigation plays whichever quote is now selected.
+                    if (cueMoved && g_cueSel >= 0 && g_cueSel < (int)g_cues.size()) {
+                        CueRow& cm = g_cues[g_cueSel];
+                        previewPlaySpan(cm.source, cm.start, cm.end, curSec, playing, lastComposed);
+                    }
                 }
                 ImGui::BeginChild("transcript", { 0, 0 }, false);
                 std::string within(g_withinBuf);
@@ -6435,6 +6507,16 @@ int main(int argc, char** argv) {
                 g_withinLast = within;
                 bool scrolledToMatch = false;
                 ImDrawList* dl = ImGui::GetWindowDrawList();
+                // Item 10: the selected cue's highlight is a FILL, not a hairline
+                // outline - but the fill has to sit BEHIND the words (which are
+                // already submitted to `dl` before the cue's own bounding box is
+                // even known - it only exists once every word has wrapped). A
+                // draw-list splitter is the standard fix: words go on channel 1
+                // (foreground) as before, the fill goes on channel 0 (background),
+                // Merge puts channel 0 first regardless of submission order.
+                ImDrawListSplitter cueSplit;
+                cueSplit.Split(dl, 2);
+                cueSplit.SetCurrentChannel(dl, 1);
                 float spaceW = ImGui::CalcTextSize(" ").x;
                 if (spaceW <= 0.0f) spaceW = 4.0f * ImGui::GetIO().FontGlobalScale;
                 double lastEnd = -1000.0;
@@ -6489,9 +6571,19 @@ int main(int argc, char** argv) {
                         ImGui::PopID();
                         ImGui::SameLine(0, spaceW);
                     }
+                    // Item 11: the whole quote band is clickable, not just the glyphs -
+                    // a click in the whitespace between words or in the line-wrap gap
+                    // used to be silently ignored because only the individual word
+                    // items had a hit test. Anywhere inside the cue's own bounding box
+                    // counts, on top of the per-word hits already collected above.
+                    if (!cueClicked && cueMax.x > cueMin.x &&
+                        ImGui::IsMouseHoveringRect(cueMin, cueMax) &&
+                        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        cueClicked = true; cueHovered = true;
+                    }
                     // Corrected live (item B): single click ANYWHERE in this cue's words
-                    // PREVIEWS ONLY, at its timestamp, paused - previewSourceFrame never
-                    // touches g_track[0]. Double-click ADDS, inserted at the playhead,
+                    // PLAYS its span (item 4, round 2) - previewPlaySpan never touches
+                    // the real g_track[0]. Double-click ADDS, inserted at the playhead,
                     // non-destructively (addCueToTimeline -> addSpanToTimeline). The old
                     // single-click path (seekToSpan) replaced the WHOLE live edit reel
                     // with a one-clip audition - "single-clicking a cue ADDS it to the
@@ -6500,18 +6592,26 @@ int main(int argc, char** argv) {
                     if (cueClicked) {
                         g_cueSel = (int)i;   // item 5: a click also SELECTS/highlights
                         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addCueToTimeline(c, curSec);
-                        else previewSourceFrame(c.source, c.start);
+                        else previewPlaySpan(c.source, c.start, c.end, curSec, playing, lastComposed);
                     }
-                    // Item 5: the selected cue is VISIBLY highlighted, not just tracked -
-                    // an outline (not a fill) so the words underneath stay readable.
-                    if (g_cueSel == (int)i && cueMax.x > cueMin.x)
+                    // Item 10: the selected cue is a real NEON GREEN fill (palette slot 0,
+                    // #14FF39), not a white hairline outline - drawn on the splitter's
+                    // background channel so it sits BEHIND the words already submitted
+                    // above, and at low enough alpha the text stays readable on top.
+                    if (g_cueSel == (int)i && cueMax.x > cueMin.x) {
+                        cueSplit.SetCurrentChannel(dl, 0);
+                        dl->AddRectFilled(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
+                                          IM_COL32(0x14, 0xFF, 0x39, 70), 3.0f);
                         dl->AddRect(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
-                                    IM_COL32(255, 255, 255, 210), 3.0f, 0, 1.5f);
+                                    IM_COL32(0x14, 0xFF, 0x39, 220), 3.0f, 0, 1.5f);
+                        cueSplit.SetCurrentChannel(dl, 1);
+                    }
                     if (g_cueSel == (int)i && g_cueScrollPending) { ImGui::SetScrollHereY(0.3f); g_cueScrollPending = false; }
                     if (isMatch && searchChanged && !scrolledToMatch) { ImGui::SetScrollHereY(0.2f); scrolledToMatch = true; }
-                    if (cueHovered) ImGui::SetTooltip("%s - click to preview; double-click to add to the timeline", c.timecode.c_str());
+                    if (cueHovered) ImGui::SetTooltip("%s - click to play; double-click to add to the timeline", c.timecode.c_str());
                     ImGui::PopID();
                 }
+                cueSplit.Merge(dl);
                 ImGui::EndChild();
             } else {
                 // ---- video library list (B-1/B-3/B-4/B-5/B-6/B-7) ----
@@ -6680,16 +6780,46 @@ int main(int argc, char** argv) {
                     ImGui::GetWindowDrawList()->AddImage((ImTextureID)vsrv, at, { at.x + fw, at.y + fh });
                     // provenance overlay + captions, drawn by ImGui ON the frame
                     drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh });
-                    drawCaptionsImGui(curSec, at, { fw, fh });
+                    if (g_capsOn) drawCaptionsImGui(curSec, at, { fw, fh });
                 } else {
                     ImGui::GetWindowDrawList()->AddRectFilled(origin, { origin.x + avail.x, origin.y + videoH }, IM_COL32(12, 12, 12, 255));
                 }
                 ImGui::Dummy({ avail.x, videoH });
+                // Item 6: clicking the preview screen toggles play/pause - exactly the
+                // same toggle the Play/Pause button below uses (stopPlayback's stock-
+                // return semantics, item 59), so a click and the button never disagree
+                // about where playback resumes/returns to. Gated on "didn't drag" so it
+                // can't fire underneath the caption-vertical-placement drag just below
+                // (that gesture already owns press-and-hold in this same pane).
+                {
+                    static bool s_vidPressed = false;
+                    static ImVec2 s_vidPressPos;
+                    bool vidHovered = ImGui::IsItemHovered();
+                    bool mc = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                    bool mr = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+                    if (mc || mr) crashLog("VIDCLICK DIAG hovered=" + std::to_string(vidHovered) +
+                        " clicked=" + std::to_string(mc) + " released=" + std::to_string(mr) +
+                        " sVidPressed=" + std::to_string(s_vidPressed) +
+                        " capMarginDrag=" + std::to_string(g_capMarginDrag));
+                    if (vidHovered && mc) {
+                        s_vidPressed = true; s_vidPressPos = ImGui::GetMousePos();
+                    }
+                    if (s_vidPressed && mr) {
+                        ImVec2 rel = ImGui::GetMousePos();
+                        float dx = rel.x - s_vidPressPos.x, dy = rel.y - s_vidPressPos.y;
+                        crashLog("VIDCLICK DIAG release dx=" + std::to_string(dx) + " dy=" + std::to_string(dy));
+                        if (!g_capMarginDrag && (dx * dx + dy * dy) < 16.0f) {
+                            if (playing) stopPlayback(curSec, playing, true);
+                            else { playing = true; g_playingExt = true; }
+                        }
+                        s_vidPressed = false;
+                    }
+                }
 
                 // ---- drag a caption UP or DOWN to place ALL of them ----
                 // (kept on OS cursor polling - it already works and also fires when
                 // an ImGui popup would otherwise eat the click)
-                if (!g_capPath.empty() && videoH > 32) {
+                if (g_capsOn && !g_capPath.empty() && videoH > 32) {
                     POINT cp; GetCursorPos(&cp); ScreenToClient(g_hwnd, &cp);
                     bool inPane = cp.x >= (LONG)origin.x && cp.x <= (LONG)(origin.x + avail.x) &&
                                   cp.y >= (LONG)origin.y && cp.y <= (LONG)(origin.y + videoH);
@@ -6749,7 +6879,10 @@ int main(int argc, char** argv) {
             // the condition ONCE so push and pop can never disagree.
             {
                 const bool was2x = g_playRate > 1.5;
-                if (was2x) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1));
+                // Item 13: was the same muddy blue as everything else - now the
+                // palette's neon green (kPalette[0]), same accent as every other
+                // "this is active" state in the app.
+                if (was2x) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                 if (ImGui::Button("2x")) g_playRate = was2x ? 1.0 : 2.0;
                 if (was2x) ImGui::PopStyleColor();
             }
@@ -6877,6 +7010,18 @@ int main(int argc, char** argv) {
                         ImGui::SetTooltip("Skip quiet parts during playback: %s\nDrag the bar on the timeline to set the level.",
                                           g_thrOn ? "ON" : "OFF");
                 }
+            }
+            ImGui::SameLine();
+            // Item 7: captions are OPTIONAL - a plain on/off toggle, same fixedButton
+            // style Overlay uses on row 1. Lives on row 2 (not next to Overlay) - row 1
+            // is already at its measured width limit (see the row-1-ends-here comment
+            // above); row 2 is the one with slack. Off hides both the timeline caption
+            // lane and the preview overlay text.
+            {
+                const char* capLabel = g_capsOn ? "Captions: On##caps" : "Captions: Off##caps";
+                if (fixedButton(capLabel, { "Captions: On", "Captions: Off" }))
+                    g_capsOn = !g_capsOn;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show/hide captions (timeline lane + preview overlay)");
             }
             ImGui::SameLine();
             // F-3/F-4: naming (clips_SOURCE_NNNN.mp4 / clips_compilation_NNNN.mp4,
