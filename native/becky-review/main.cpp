@@ -3893,8 +3893,12 @@ static void drawTimeline(double& curSec, bool& playing) {
         dl->AddRectFilled(ImVec2(px - fw, ftop), ImVec2(px + fw, fmid), COL_PHFLAG);
         dl->AddTriangleFilled(ImVec2(px - fw, fmid), ImVec2(px + fw, fmid), ImVec2(px, ftip), COL_PHFLAG);
         dl->AddRect(ImVec2(px - fw, ftop), ImVec2(px + fw, fmid), IM_COL32(0, 0, 0, 115));
-        dl->AddLine(ImVec2(px - 2.5f, ftop + 2), ImVec2(px - 2.5f, fmid - 2), COL_PHGRIP, 2.0f);
-        dl->AddLine(ImVec2(px + 2.5f, ftop + 2), ImVec2(px + 2.5f, fmid - 2), COL_PHGRIP, 2.0f);
+        // 2026-07-03: "add 2 tiny vertical hashmarks inside the white part of the
+        // playhead" (his reference photo, playhead.JPG - 2 small dark ticks with
+        // a real gap between them). Filled rects, not thin AddLine strokes: at
+        // this size 2 nearly-touching antialiased lines blur into one blob.
+        dl->AddRectFilled(ImVec2(px - 4.0f, ftop + 3), ImVec2(px - 2.0f, fmid - 2), COL_PHGRIP);
+        dl->AddRectFilled(ImVec2(px + 2.0f, ftop + 3), ImVec2(px + 4.0f, fmid - 2), COL_PHGRIP);
     }
 
     ImGui::PopClipRect();
