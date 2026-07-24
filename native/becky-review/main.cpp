@@ -6845,7 +6845,10 @@ int main(int argc, char** argv) {
                     bool newParagraph = (c.start - lastEnd > 1.5) || (c.start - lastTimestampAt >= kCueTimestampIntervalSec);
                     if (lastEnd > -999.0 && newParagraph) { ImGui::NewLine(); ImGui::NewLine(); }
                     lastEnd = c.end;
-                    if (newParagraph) { ImGui::TextDisabled("%s", c.timecode.c_str()); ImGui::SameLine(0, 6); lastTimestampAt = c.start; }
+                    // Green, not dim gray: the reference app's every cue carries a
+                    // neon timecode on the left - it is how he jumps the page, not
+                    // decoration (BR3-VISUAL-SPEC rule 6).
+                    if (newParagraph) { ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kPalette[0]), "%s", c.timecode.c_str()); ImGui::SameLine(0, 6); lastTimestampAt = c.start; }
                     bool isMatch = !within.empty() && ciContains(c.text, within);
                     bool cueHovered = false, cueClicked = false;
                     // Item 5: bounding box of every word this cue draws (may wrap
@@ -7185,13 +7188,21 @@ int main(int argc, char** argv) {
             // loop-to-start + Pause) and its assert aborted the whole app. Evaluate
             // the condition ONCE so push and pop can never disagree.
             {
+                // Active state = neon green with dark ink on top (BR3-VISUAL-SPEC
+                // rule 2: "2x when engaged"), never blue - blue is Render
+                // Selection's colour alone. Push/pop count is IDENTICAL on both
+                // branches of was2x (2 and 2), the exact shape BUG-1 above needed.
                 const bool was2x = g_playRate > 1.5;
                 // Item 13: was the same muddy blue as everything else - now the
-                // palette's neon green (kPalette[0]), same accent as every other
-                // "this is active" state in the app.
-                if (was2x) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                // palette's neon green (kPalette[0]) with DARK ink on top so the
+                // "2x" label still reads, same accent as every other active state.
+                // Two pushes (button + text) to match the PopStyleColor(2) below.
+                if (was2x) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                }
                 if (ImGui::Button("2x")) g_playRate = was2x ? 1.0 : 2.0;
-                if (was2x) ImGui::PopStyleColor();
+                if (was2x) ImGui::PopStyleColor(2);
             }
             ImGui::SameLine();
             // D-6: 3-state provenance overlay toggle (off / on-hidden-in-preview DEFAULT /
@@ -7201,8 +7212,16 @@ int main(int argc, char** argv) {
                 const char* ovLabel = g_ovMode == 0 ? "Overlay: Off##ov"
                                     : g_ovMode == 1 ? "Overlay: On (hidden)##ov"
                                                     : "Overlay: On (shown)##ov";
+                // "Overlay when on" is one of the four active-green states BR3-VISUAL-SPEC
+                // rule 2 names - either On mode counts, mode 0 stays dark-neutral.
+                const bool ovOn = g_ovMode != 0;
+                if (ovOn) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                }
                 if (fixedButton(ovLabel, { "Overlay: Off", "Overlay: On (hidden)", "Overlay: On (shown)" }))
                     setOverlayMode((g_ovMode + 1) % 3);
+                if (ovOn) ImGui::PopStyleColor(2);
             }
             ImGui::SameLine();
             // EXTEND THE SELECTED CLIP BY ONE FRAME (item 8). Jordan cuts to the
@@ -7296,12 +7315,14 @@ int main(int argc, char** argv) {
                 // font's own striding figure (U+E805) is a real, legible person.
                 //
                 // Colour still carries the state as well as the shape, because
-                // at a glance he should not have to decode a silhouette: lit
-                // amber when skipping is ON, dim slate when off.
+                // at a glance he should not have to decode a silhouette: neon
+                // green with dark ink when armed (BR3-VISUAL-SPEC rule 2 - the
+                // same active state every other toggle uses, not its own amber),
+                // dim slate when off.
                 {
                     if (g_thrOn) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.32f, 0.06f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(1.00f, 0.86f, 0.42f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
+                        ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0, 0, 0, 1));
                     } else {
                         ImGui::PushStyleColor(ImGuiCol_Text,   ImVec4(0.59f, 0.63f, 0.69f, 1.0f));
                     }
@@ -7375,6 +7396,15 @@ int main(int argc, char** argv) {
             // minutes of ffmpeg. The whole window was dead for all of it: no repaint,
             // no input, Windows greying the title bar and offering to kill it. Render
             // was fixed; Render Selection sat one line below it and was missed.
+            //
+            // Palette blue (#00AEEF), always - not a toggle state. BR3-VISUAL-SPEC rule 3:
+            // Render Selection is the ONE permanently-blue control, same as the reference
+            // app's "render selection (1)" - it is how he tells "render everything" and
+            // "render just my selection" apart at a glance, disabled state dims it for free.
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0x00 / 255.0f, 0xAE / 255.0f, 0xEF / 255.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0x33 / 255.0f, 0xC2 / 255.0f, 0xF2 / 255.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0x00 / 255.0f, 0x8C / 255.0f, 0xC2 / 255.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));   // white on blue - same as pillButton's "on" text
             if (fixedButton(selLabel, { "Render Selection (000)" })) {
                 std::vector<std::string> ids(g_sel.begin(), g_sel.end());
                 engineCallAsync("export_selection", { {"ids", ids}, {"output", ""} }, 300.0,
@@ -7394,6 +7424,7 @@ int main(int argc, char** argv) {
                 g_renderMsgAt = nowSec();
                 });
             }
+            ImGui::PopStyleColor(4);
             if (g_sel.empty()) ImGui::EndDisabled();
             // D-5/F-2/F-5: screenshot + save/load reel + EDL export. Engine verbs already
             // existed (grab_frame/save_reel/load_reel/write_edl); only the buttons were missing.
