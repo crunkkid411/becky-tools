@@ -2775,15 +2775,17 @@ static LRESULT WINAPI WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 // --------------- the timeline surface ---------------
 static const ImU32 COL_BG       = IM_COL32(16, 18, 22, 255);
 static const ImU32 COL_LANE     = IM_COL32(24, 27, 33, 255);
-// Round 3, item "the gray ruler bar": a DISTINCT medium-gray band (reference
-// CSS --ruler #676767), so the click-to-place-the-playhead surface reads as
-// obviously separate from the black clip track below it - Jordan specifically
-// praised this in the reference, calling the old blended-in ruler deceptive.
-// Tick lines/labels switch to dark ink (CSS .rtick { color:#111 }) to read on it.
-static const ImU32 COL_RULERBG  = IM_COL32(103, 103, 103, 255);
-static const ImU32 COL_RULERTX  = IM_COL32(17, 17, 17, 255);
-static const ImU32 COL_TICK     = IM_COL32(17, 17, 17, 255);
-static const ImU32 COL_TICKMIN  = IM_COL32(40, 40, 40, 255);
+// Round 4, item 2: the ruler is DARK like the rest of the timeline - NOT a gray
+// band. Jordan, comparing to becky-review-buttons-correct.JPG: "you've made the
+// entire thing gray ... the timeline is divided from the buttons by a THIN GRAY
+// LINE". Measured off that reference: the toolbar->timeline divider is one ~#3E3F41
+// hairline; the ruler/track below it are dark; the tick labels are LIGHT gray so
+// they read on the dark ruler (this reverses round 3's gray #676767 band, which is
+// exactly the "entire thing gray" he rejected - newest request wins).
+static const ImU32 COL_TLDIVIDER = IM_COL32(62, 63, 65, 255);   // #3E3F41 toolbar|timeline hairline
+static const ImU32 COL_RULERTX  = IM_COL32(176, 178, 184, 255); // light labels on the dark ruler
+static const ImU32 COL_TICK     = IM_COL32(96, 98, 104, 255);   // major tick, visible on dark
+static const ImU32 COL_TICKMIN  = IM_COL32(56, 58, 64, 255);    // minor tick, dim
 static const ImU32 COL_CLIP     = IM_COL32(38, 56, 84, 255);
 static const ImU32 COL_CLIPBRD  = IM_COL32(255, 255, 255, 70);
 static const ImU32 COL_WAVE     = IM_COL32(255, 255, 255, 128);
@@ -3377,11 +3379,11 @@ static void drawTimeline(double& curSec, bool& playing) {
     float sbY = bot + gap;
 
     dl->AddRectFilled(p, ImVec2(p.x + tlW, sbY + sbH), COL_BG);
-    // The gray ruler band itself, drawn OVER the base fill so it reads as a
-    // clearly separate surface from the black clip track directly below it -
-    // exactly the "obvious/intuitive" separation Jordan asked for. A 1px darker
-    // line under it is the boundary the reference's border-bottom draws.
-    dl->AddRectFilled(p, ImVec2(p.x + tlW, p.y + rulerH), COL_RULERBG);
+    // Item 2 (round 4): NO gray ruler band. The whole timeline (ruler included) is
+    // the dark COL_BG fill above; the toolbar is divided from it by ONE thin gray
+    // hairline at the very top (the reference's only visible divider), and a fainter
+    // dark rule under the ruler sets the timecodes off from the clips.
+    dl->AddLine(ImVec2(p.x, p.y + 0.5f), ImVec2(p.x + tlW, p.y + 0.5f), COL_TLDIVIDER, 1.0f);
     dl->AddLine(ImVec2(p.x, p.y + rulerH), ImVec2(p.x + tlW, p.y + rulerH), IM_COL32(26, 26, 26, 255), 1.0f);
 
     ImGui::SetCursorScreenPos(p);
@@ -4199,13 +4201,15 @@ static void drawTimeline(double& curSec, bool& playing) {
     if (g_stockSec >= 0) {
         float sx = secToX(g_stockSec);
         if (sx >= tlX - 2 && sx <= tlX + tlW + 2) {
+            // Item 6 (round 4): the stock is a PLAIN BAR with NO flag head - only the
+            // real moving playhead below carries the white flag (CSS #stock vs
+            // #playhead). Drawing the stock as a full flag made a "phantom" second
+            // playhead Jordan rejected. The BAR itself blinks black<->white when it
+            // was moved during playback (CSS #stock.flashing / stockBlink 0.8s);
+            // black (COL_PLAYHEAD) at rest.
             bool wht = g_stockFlash && std::fmod(nowSec(), 0.8) >= 0.4;
-            ImU32 stockFlagCol = wht ? IM_COL32(255, 255, 255, 255) : COL_PLAYHEAD;
-            dl->AddLine(ImVec2(sx, p.y + 2), ImVec2(sx, bot), COL_PLAYHEAD, 2.0f);
-            float sfw = 8, sftop = p.y + 1, sfmid = p.y + 13, sftip = p.y + 20;
-            dl->AddRectFilled(ImVec2(sx - sfw, sftop), ImVec2(sx + sfw, sfmid), stockFlagCol);
-            dl->AddTriangleFilled(ImVec2(sx - sfw, sfmid), ImVec2(sx + sfw, sfmid), ImVec2(sx, sftip), stockFlagCol);
-            dl->AddRect(ImVec2(sx - sfw, sftop), ImVec2(sx + sfw, sfmid), IM_COL32(0, 0, 0, 115));
+            ImU32 barCol = wht ? IM_COL32(255, 255, 255, 255) : COL_PLAYHEAD;
+            dl->AddLine(ImVec2(sx, p.y + 2), ImVec2(sx, bot), barCol, 2.0f);
         }
     }
 
@@ -5063,7 +5067,15 @@ static void previewPlaySpan(const std::string& source, double a, double b,
     packTrack(0); recomputeDur();
     curSec = 0; playing = true; g_playingExt = true; lastComposed = -1;
     g_quietDirty = true; peaksRequest(source, a - 1.0, b + 5.0);
-    rebuildDerivedCaptions();
+    // Item 1 (round 4): a preview must NOT touch the timeline's caption lane.
+    // The clip track is already drawn frozen during a preview (the frozen-render
+    // swap at the drawTimeline call), but rebuilding g_caps here rewrote the
+    // caption lane to the AUDITIONED clip's captions - which is exactly the
+    // "previewing changes the captions on the timeline" Jordan rejected. Leaving
+    // g_caps untouched keeps the lane showing the real reel's captions for the
+    // whole preview, and the pane overlay is separately suppressed during a
+    // preview (drawCaptionsImGui call, gated on !g_inTiedPreview) so no stale
+    // real-reel caption is burned over the audition frame either.
 }
 // playWholeVideo puts a video's WHOLE span on the track (B-5 "spacebar plays the
 // selected row"). Duration comes from the engine probe; an unprobe-able source
@@ -6318,7 +6330,12 @@ int main(int argc, char** argv) {
                     case 0: { // split
                         if (res.req.group) splitTrack(1, res.req.t);
                         std::string newId = res.data.value("new_id", std::string());
-                        if (!newId.empty()) { g_sel.insert(newId); g_selAnchor = newId; emitSelect(); }
+                        // Item 5 (round 4): after a split, select ONLY the RIGHT-of-
+                        // playhead half. The engine (App.Split) keeps the original id
+                        // on the LEFT half and gives the RIGHT half the new_id it
+                        // returns, so selecting new_id alone - clearing everything
+                        // else first - is exactly "the left half is de-selected".
+                        if (!newId.empty()) { g_sel.clear(); g_sel.insert(newId); g_selAnchor = newId; emitSelect(); }
                         break;
                     }
                     case 1: // remove
@@ -7274,10 +7291,13 @@ int main(int argc, char** argv) {
             if (engine::available() && haveClip) {
                 ImVec2 origin = ImGui::GetCursorScreenPos();
                 ImVec2 avail = ImGui::GetContentRegionAvail();
-                // Reserve room for BOTH control rows below the preview plus the
-                // curSec/dur text line and the g_renderMsg status line (bug found
-                // live: reserving one row silently clipped the readouts).
-                float ctrlH = ImGui::GetTextLineHeightWithSpacing() * 2 + ImGui::GetFrameHeightWithSpacing() * 2;
+                // Item 4 (round 4): the transport/tool toolbar MOVED to the timeline
+                // header row, so the two button-row heights this used to reserve
+                // below the video (GetFrameHeightWithSpacing()*2) are now dead space
+                // wasting the preview. Reserve only what still draws here: the
+                // curSec/dur readout line and the g_renderMsg status line - two text
+                // lines - and give every other pixel back to the video pane.
+                float ctrlH = ImGui::GetTextLineHeightWithSpacing() * 2;
                 float videoH = std::max(0.0f, avail.y - ctrlH);
                 if (vsrv && vw > 0 && vh > 0 && videoH > 8.0f) {
                     // letterbox-fit the frame into the pane (mpv used to do this
@@ -7289,7 +7309,11 @@ int main(int argc, char** argv) {
                     ImGui::GetWindowDrawList()->AddImage((ImTextureID)vsrv, at, { at.x + fw, at.y + fh });
                     // provenance overlay + captions, drawn by ImGui ON the frame
                     drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh });
-                    if (g_capsOn) drawCaptionsImGui(curSec, at, { fw, fh });
+                    // Item 1 (round 4): during a preview, g_caps deliberately still
+                    // holds the REAL reel's captions (the lane must not change), so
+                    // don't burn one over the audition frame at the preview time -
+                    // just show the video, "only in the preview window".
+                    if (g_capsOn && !g_inTiedPreview) drawCaptionsImGui(curSec, at, { fw, fh });
                 } else {
                     ImGui::GetWindowDrawList()->AddRectFilled(origin, { origin.x + avail.x, origin.y + videoH }, IM_COL32(12, 12, 12, 255));
                 }
@@ -7916,7 +7940,25 @@ int main(int argc, char** argv) {
             // reference app's single .tlhead row and killing the dead blank strip
             // that used to sit above the ruler (Jordan's #1 complaint, "deceptive").
             // Continues the SAME row the count/zoom above just drew.
+            //
+            // Item 3 (round 4): RIGHT-ALIGN the whole cluster to the window's right
+            // edge - the reference's .tlspacer { flex:1 } sits between the count/zoom
+            // and .transport/.tlactions and pushes them all the way right. ImGui is
+            // immediate-mode so the cluster's total width isn't known until it has
+            // been drawn: measure it on the PREVIOUS frame (s_toolbarW) and apply it
+            // now. It self-corrects in one frame; at worst a width change (a selection
+            // count appearing) is a single-frame nudge. Never push LEFT of where the
+            // cluster naturally sits, so a too-narrow window keeps it left-aligned
+            // instead of overlapping the count/zoom.
+            static float s_toolbarW = 0.0f;
             ImGui::SameLine(0.0f, 18.0f);
+            {
+                float naturalX = ImGui::GetCursorPosX();
+                float rightEdge = ImGui::GetWindowContentRegionMax().x;
+                float startX = (s_toolbarW > 0.0f) ? std::max(naturalX, rightEdge - s_toolbarW) : naturalX;
+                ImGui::SetCursorPosX(startX);
+            }
+            float toolbarStartScreenX = ImGui::GetCursorScreenPos().x;
             {
                 if (fixedButton(playing ? ico(ICON_PAUSE "##play", "Pause##play") : ico(ICON_PLAY "##play", "Play##play"),
                                 { ico(ICON_PAUSE, "Pause"), ico(ICON_PLAY, "Play") })) {
@@ -8041,7 +8083,18 @@ int main(int argc, char** argv) {
                     engineCallAsync("grab_frame", { {"source", src}, {"t", srcT} }, 20.0,
                                     "Saving a screenshot...", [](const json& r) {
                         // r.value("data", json::object()) never vivifies a null; always safe.
-                        g_renderMsg = r.value("ok", false) ? "Saved " + r.value("data", json::object()).value("path", std::string()) : "Screenshot failed: " + r.value("error", std::string("?"));
+                        // Item 7 (round 4): Jordan "couldn't find where the files get
+                        // screenshotted to". Open the containing folder on save - the
+                        // exact behaviour render/export/EDL already use - so the file's
+                        // location is never a mystery again (it lands in the clip's
+                        // render folder, <clip-stem>_<seconds>s.png).
+                        if (r.value("ok", false)) {
+                            std::string path = r.value("data", json::object()).value("path", std::string());
+                            g_renderMsg = "Saved screenshot " + path;
+                            if (!path.empty()) openInFileBrowser(path);
+                        } else {
+                            g_renderMsg = "Screenshot failed: " + r.value("error", std::string("?"));
+                        }
                         g_renderMsgAt = nowSec();
                     });
                 } else { g_renderMsg = "Screenshot failed: no clip at playhead"; g_renderMsgAt = nowSec(); }
@@ -8277,6 +8330,11 @@ int main(int argc, char** argv) {
                     g_renderMsgAt = nowSec();
                 });
             }
+            // Item 3 (round 4): the last toolbar item just drew - its right edge minus
+            // the cluster's start edge IS the cluster width the NEXT frame right-aligns
+            // by. Measured in screen space (SetCursorPosX offsets don't distort a
+            // width delta), stored in the static above.
+            s_toolbarW = ImGui::GetItemRectMax().x - toolbarStartScreenX;
 
             // Item 1 fix (round 3): "previewing a quote still shows it on the
             // timeline" - the whole point of a preview is that the timeline must
