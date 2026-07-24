@@ -5516,13 +5516,19 @@ int main(int argc, char** argv) {
         // control (pillButton, the 2x/Overlay/Skip-Quiet active states, Render
         // Selection, Send) - every ordinary button and every text input falls back
         // to this dark-neutral/dark-gray pair so it never competes with them.
-        st.Colors[ImGuiCol_Button]          = ImVec4(38 / 255.0f, 38 / 255.0f, 42 / 255.0f, 1.0f);
-        st.Colors[ImGuiCol_ButtonHovered]   = ImVec4(52 / 255.0f, 52 / 255.0f, 58 / 255.0f, 1.0f);
-        st.Colors[ImGuiCol_ButtonActive]    = ImVec4(30 / 255.0f, 30 / 255.0f, 34 / 255.0f, 1.0f);
-        st.Colors[ImGuiCol_FrameBg]         = ImVec4(30 / 255.0f, 30 / 255.0f, 33 / 255.0f, 1.0f);   // text inputs: dark gray, no tint
-        st.Colors[ImGuiCol_FrameBgHovered]  = ImVec4(40 / 255.0f, 40 / 255.0f, 44 / 255.0f, 1.0f);
-        st.Colors[ImGuiCol_FrameBgActive]   = ImVec4(46 / 255.0f, 46 / 255.0f, 51 / 255.0f, 1.0f);
-        st.Colors[ImGuiCol_Border]          = ImVec4(60 / 255.0f, 60 / 255.0f, 66 / 255.0f, 0.55f);
+        // Reference CSS exactly: .btn background = --panel #0A0A0A (DARKER than the
+        // toolbar bar it sits on, which is --chrome #121212), a SOLID --line #262626
+        // border so each button reads as a distinct dark chip, and WHITE bold text.
+        // The old (38,38,42) button was LIGHTER than the bar - the "reversed" look.
+        st.Colors[ImGuiCol_Button]          = ImVec4(10 / 255.0f, 10 / 255.0f, 10 / 255.0f, 1.0f);   // #0A0A0A panel
+        st.Colors[ImGuiCol_ButtonHovered]   = ImVec4(21 / 255.0f, 21 / 255.0f, 21 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_ButtonActive]    = ImVec4(15 / 255.0f, 15 / 255.0f, 15 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_FrameBg]         = ImVec4(14 / 255.0f, 14 / 255.0f, 14 / 255.0f, 1.0f);   // text inputs: --panel-2 #0E0E0E
+        st.Colors[ImGuiCol_FrameBgHovered]  = ImVec4(20 / 255.0f, 20 / 255.0f, 20 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_FrameBgActive]   = ImVec4(24 / 255.0f, 24 / 255.0f, 24 / 255.0f, 1.0f);
+        st.Colors[ImGuiCol_Border]          = ImVec4(38 / 255.0f, 38 / 255.0f, 38 / 255.0f, 1.0f);   // #262626 SOLID
+        st.Colors[ImGuiCol_Text]            = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);                          // #FFFFFF white
+        st.Colors[ImGuiCol_WindowBg]        = ImVec4(18 / 255.0f, 18 / 255.0f, 18 / 255.0f, 1.0f);   // --chrome #121212: toolbar bar is LIGHTER than its buttons
     }
 
     // ---- load the icon font (see the ICON_* block near fixedButton) ----
