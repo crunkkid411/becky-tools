@@ -2774,9 +2774,15 @@ static LRESULT WINAPI WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 // --------------- the timeline surface ---------------
 static const ImU32 COL_BG       = IM_COL32(16, 18, 22, 255);
 static const ImU32 COL_LANE     = IM_COL32(24, 27, 33, 255);
-static const ImU32 COL_RULERTX  = IM_COL32(160, 166, 178, 255);
-static const ImU32 COL_TICK     = IM_COL32(80, 86, 98, 255);
-static const ImU32 COL_TICKMIN  = IM_COL32(52, 57, 66, 255);
+// Round 3, item "the gray ruler bar": a DISTINCT medium-gray band (reference
+// CSS --ruler #676767), so the click-to-place-the-playhead surface reads as
+// obviously separate from the black clip track below it - Jordan specifically
+// praised this in the reference, calling the old blended-in ruler deceptive.
+// Tick lines/labels switch to dark ink (CSS .rtick { color:#111 }) to read on it.
+static const ImU32 COL_RULERBG  = IM_COL32(103, 103, 103, 255);
+static const ImU32 COL_RULERTX  = IM_COL32(17, 17, 17, 255);
+static const ImU32 COL_TICK     = IM_COL32(17, 17, 17, 255);
+static const ImU32 COL_TICKMIN  = IM_COL32(40, 40, 40, 255);
 static const ImU32 COL_CLIP     = IM_COL32(38, 56, 84, 255);
 static const ImU32 COL_CLIPBRD  = IM_COL32(255, 255, 255, 70);
 static const ImU32 COL_WAVE     = IM_COL32(255, 255, 255, 128);
@@ -3370,6 +3376,12 @@ static void drawTimeline(double& curSec, bool& playing) {
     float sbY = bot + gap;
 
     dl->AddRectFilled(p, ImVec2(p.x + tlW, sbY + sbH), COL_BG);
+    // The gray ruler band itself, drawn OVER the base fill so it reads as a
+    // clearly separate surface from the black clip track directly below it -
+    // exactly the "obvious/intuitive" separation Jordan asked for. A 1px darker
+    // line under it is the boundary the reference's border-bottom draws.
+    dl->AddRectFilled(p, ImVec2(p.x + tlW, p.y + rulerH), COL_RULERBG);
+    dl->AddLine(ImVec2(p.x, p.y + rulerH), ImVec2(p.x + tlW, p.y + rulerH), IM_COL32(26, 26, 26, 255), 1.0f);
 
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("tl", ImVec2(tlW, bot - p.y));
