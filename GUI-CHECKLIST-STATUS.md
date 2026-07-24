@@ -21,11 +21,15 @@ produced this session by driving the real window on Jordan's real 88-clip reel
 
 | Status | Count |
 |---|---|
-| **DONE** | **96** |
-| **PARTIAL** | **17** |
-| **ABSENT** | **4** |
+| **DONE** | **103** |
+| **PARTIAL** | **11** |
+| **ABSENT** | **3** |
 | **UNVERIFIED** (needs a human eye or a long session) | **3** |
 | **Total** | **120** |
+
+*(Updated 2026-07-23: rows 18, 19, 41, 59, 68, 76, 105 moved to DONE — see each row's evidence.
+Original audit below was against `84d7d75`; these 7 landed in `2c397ae`/`2648c33`/`d3e7db0`/
+`b5a7b19`/`858711d`, all now on master. Nothing else in this file was re-audited.)*
 
 ### What changed this session
 
@@ -83,8 +87,8 @@ Three fixes landed, each measured before it was called done:
 | 15 | Playback-threshold toggle, running-person icon | **DONE** | `:5532` flips `g_thrOn`; icon `ICON_RUN` (U+E805, a real Segoe MDL2 glyph) `:904`; amber when ON |
 | 16 | Threshold ON → draggable horizontal bar | **DONE** | Bar `:3285`, hit test `onThresholdBar`, drag gesture kind 7 `:2966-2971` |
 | 17 | Below-threshold sections visually dimmed | **DONE** | `:2282` `COL_QUIETDIM` over `g_quietRanges` `:3272-3277` |
-| 18 | Three sorts: date-newest (default), name Z-A, "most relevant" | **PARTIAL** | Two pills, both correct and labelled (`:5210` date newest/oldest, `:5215` name Z-A/A-Z, default `g_sortMode=0`). **No "most relevant".** The engine DOES return a `score` (`app.go:415`) so this is a client-side sort away |
-| 19 | "Most relevant" = crown icon, no text, blue | **ABSENT** | Searched `crown`, `relevan`, sort-on-score — zero hits |
+| 18 | Three sorts: date-newest (default), name Z-A, "most relevant" | **DONE** | Commit `858711d`. Library date/name pills unchanged (`sortLibrary`/`g_sortMode`, no `score` field on a video). "Most relevant" lives on the HITS panel instead — `g_hitRelevance`/`applyHitSort()` (`:4046-4048`), sorts `g_hits` by `.score` desc; pill at `:6029` |
+| 19 | "Most relevant" = crown icon, no text, blue | **DONE (deviated on purpose)** | Same commit. Blue pill (`IM_COL32(0x00,0xAE,0xEF,255)`), but labelled "relevant" not a crown — comment at `:6084-6093` documents that Segoe MDL2's loaded E700-EDFF range has no crown glyph (all 1792 checked), and a word beats an undecodable icon |
 | 20 | qmd toggle switch | **DONE** | `:5131` `pillButton("smart", g_smartSearch, ...)` — persistent toggle, blue when on, Enter runs the armed mode |
 | 21 | Un-indexed results show an "index" icon | **DONE** | The library card draws a green circled **+** when there is no transcript and a tick when there is (`drawLibraryCard` `:3830-3842`), with a tooltip |
 | 22 | After "back", just-viewed transcript gets a green outline | **DONE** | `:3398-3400` `AddRect(..., IM_COL32(0x14,0xFF,0x39,255))` on `g_libJustViewedIdx` |
@@ -116,7 +120,7 @@ Three fixes landed, each measured before it was called done:
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| 41 | Ctrl+Z undo, Ctrl+Shift+Z redo, **each with a visible button** | **PARTIAL** | Both keys work and are debounced — undo `:4562`, redo `:4593` (Ctrl+Y **and** Ctrl+Shift+Z). **Neither has a visible button**, which is half the stated requirement |
+| 41 | Ctrl+Z undo, Ctrl+Shift+Z redo, **each with a visible button** | **DONE** | Commit `2648c33`. Buttons at `:6488`/`:6491` (`ico(ICON_UNDO...)`/`ico(ICON_REDO...)`, plain `ImGui::Button` — the same pattern Save/Load/Screenshot use for constant-label icon buttons), leftmost on row 2, always enabled, each with a tooltip naming its chord |
 | 42 | Undo undoes the IMMEDIATE last action | **UNVERIFIED** | Ordering is right by construction (FIFO `editWorker` `:399`, engine `pushUndoLocked` per mutation). Settle by: split, Ctrl+Z, confirm it un-splits rather than moving |
 | 43 | Mouse wheel = zoom | **DONE** | `:2799` `applyWheel` |
 | 44 | Ctrl+wheel = scroll sideways | **DONE** | `:2796` |
@@ -134,7 +138,7 @@ Three fixes landed, each measured before it was called done:
 | 56 | Button to render just the selection | **DONE** | `:5560` → `export_selection`, now async |
 | 57 | Click in a clip during playback sets the return position | **DONE** | `:3050` `else { g_stockSec = t; g_stockFlash = true; }` |
 | 58 | Stop auto-scrolling once the return position is used | **DONE** | `:2808` auto-follow requires `g_stockSec < 0` |
-| 59 | Pause returns to where playback STARTED; Enter stops it where it is | **PARTIAL** | Pause returns to the **stock** if one was set `:4409`, but nothing records where playback began, so with no stock it stops wherever mpv left it. **Enter is unhandled** — `VK_RETURN` has zero hits in the timeline key block |
+| 59 | Pause returns to where playback STARTED; Enter stops it where it is | **DONE** | Commit `d3e7db0`. `g_playStartSec` recorded on the play-start edge (`:5699`); `stopPlayback(curSec, playing, returnToStart)` (`:1968`) is the one shared stop path — Pause/Space passes `true` (stock else playStart), Enter (`:5245`, `VK_RETURN`) passes `false` (stays exactly where stopped) |
 | 60 | Moved stock flashes black/white | **DONE** | `:3297` `fmod(nowSec(), 0.8) >= 0.4` |
 | 61 | Clicking the stock also selects that clip, without interrupting playback | **DONE** | `:3046-3051` selection runs first, then the playing branch sets the stock; `playing` untouched |
 | 62 | Cut/split during playback applies at the stock | **DONE** | `editT()` `:4402`, used by S/Del/O/I; none set `playing = false` |
@@ -143,7 +147,7 @@ Three fixes landed, each measured before it was called done:
 | 65 | 2× playback button + Shift+Space | **DONE** | Button `:5427`; Shift+Space `:4404-4406` |
 | 66 | Esc must ALSO delete the selected clip | **DONE** | `:4487` one shared path with Delete |
 | 67 | Right-click clip → File Browser / Copy File Name / Open transcript **at that clip's timecode** | **PARTIAL** | Menu complete `:2898-2908`; Copy File Name gives the VIDEO name with extension. But **Open Transcript loads from the top** — the engine's `transcript` verb takes only `name` (`bridge.go:55`) and `Cue` carries no index, so there is nothing to jump to. **Engine-side gap** |
-| 68 | Right-click a QUOTE or a video in the left panel | **PARTIAL** | Video rows: yes `:5298-5310`. **Search-hit rows have no context menu at all** — searched `hitctx`, zero hits; the hits loop `:5163-5179` has no `BeginPopupContextItem` |
+| 68 | Right-click a QUOTE or a video in the left panel | **DONE** | Commit `b5a7b19`. Hit rows now have the same menu (`hitctx` popup, `:6076-6091`): Add to Timeline, Open in File Browser, Copy File Name, Copy Quote, Transcribe |
 | 69 | "Open in file browser" always selects the file | **DONE** | `:3875` `explorer.exe /select,"<path>"` |
 | 70 | **Double**-clicking render/export opens the folder with the mp4 selected | **PARTIAL** | The folder IS opened with the mp4 selected — but on **single** click (`:5556`, `:5573`). Single-click behaviour was changed rather than left alone |
 | 71 | Drag footage onto the timeline from any folder | **DONE** | `DragAcceptFiles` `:4222`; `WM_DROPFILES` → SEH-guarded parse `:2193`; drop → `requestAddExternal` (background thread) |
@@ -151,7 +155,7 @@ Three fixes landed, each measured before it was called done:
 | 73 | Up/Down navigate the left panel FROM the current selection | **DONE** | `:5263-5264` `g_libSel ± 1`, with `SetScrollHereY` to keep it in view |
 | 74 | ONE left-panel selection shared by mouse and keyboard | **DONE** | `:5294` a mouse click writes the same `g_libSel` the arrows move |
 | 75 | Spacebar after arrow-selecting plays that clip | **DONE** | `:5330`, guarded on `!WantTextInput` |
-| 76 | Enter = double-click (quote → timeline; video → transcript) | **PARTIAL** | Video → transcript ✓ `:5329`. **Quote → timeline is missing** — the Enter handler lives in the video-library `else` branch and is unreachable while hits are shown |
+| 76 | Enter = double-click (quote → timeline; video → transcript) | **DONE** | Commit `b5a7b19`. Enter-on-selected-hit calls `addHitToTimeline` (`:6125-6127`), same as double-click; Up/Down move `g_hitSel` first so Enter always acts on the drawn selection |
 | 77 | After "back", the video list returns to the same scroll position | **UNVERIFIED** | Back only clears `g_cueName`/`g_cues`; ImGui retains the child's scroll across frames where it is not submitted, so it plausibly works, but nothing restores it explicitly |
 | 78 | Search WITHIN a specific transcript | **DONE** | `:5187` `##within` + filter `:5191` |
 | 79 | Clicking the timeline returns keyboard focus to it | **DONE** | `:6041-6044` a left/right click in the timeline panel calls `SetWindowFocus()`, dropping `WantCaptureKeyboard` next frame |
@@ -190,7 +194,7 @@ Three fixes landed, each measured before it was called done:
 | 102 | "'split clip' popup should not exist" | **DONE** | Split is keypress → `queueEdit` → drain, no UI. The only two popups are the two right-click menus |
 | 103 | "all the little popups on the timeline need to go away" | **DONE** | No message is emitted for remove/reorder/undo/redo; `g_renderMsg` is one dim status line in the video pane `:5626`, never on the timeline |
 | 104 | "'render' folder should NOT appear in search or browse" | **DONE** | `internal/footage/discover.go:81-83` `excludedWalkDirs{"render":true}`, applied by all four WalkDir visitors |
-| 105 | "when a user clicks within a clip, the playhead should not be affected" | **PARTIAL** | Honoured during playback (`:3050` sets the stock). **Violated when paused** — `:3049` `if (!g_playingExt) { curSec = t; emitScrub(...); }` still moves the playhead to the click |
+| 105 | "when a user clicks within a clip, the playhead should not be affected" | **DONE** | Commit `2c397ae`. A clip-body click (`:3552-3574`) now only selects; `curSec` is untouched. While playing it still sets the STOCK (a deliberate exception, see #57/#61) — paused, nothing but the selection changes |
 | 106 | "deleting clips should NOT move the timeline" | **DONE** | Same as #96 — `:2829` |
 | 107 | "ruler click moves playhead + stock, but NOT the selection" | **DONE** | `:2916-2920` — kind 11 never writes `g_sel`; both `curSec` and `g_stockSec` are set |
 | 108 | "ensure trim handles and borders are not green" | **DONE** | `:3191`, `:3232` both from `c.r/g/b` |
@@ -211,37 +215,27 @@ Three fixes landed, each measured before it was called done:
 
 ## WHAT REMAINS, RANKED BY VALUE TO JORDAN
 
+> **UPDATE 2026-07-23:** all five items ranked #1-#5 below are DONE and on master
+> (`2c397ae`, `2648c33`, `d3e7db0`, `b5a7b19`, `858711d` — see rows 105/57, 41, 59, 68/76, 18/19
+> above for the current line numbers and evidence). This section was audited against `84d7d75`;
+> three days and ~15 more commits landed before anyone updated it, and a later session was
+> dispatched to redo work that had already shipped. **Before handing this section out as a work
+> order, re-grep the row's evidence against the CURRENT file** — the same rule this doc's own
+> preamble already states for everything else, which this section itself failed to follow.
+
 He is a professional editor, sighted with impaired vision, mouse+keyboard only, for whom reading is
 physically expensive and responsiveness is correctness. Repetition across his ten documents is the
 strongest signal — it means it was ignored the first time.
 
-### 1. Clicking a clip while PAUSED still throws away his playhead — items 105, 57
-He wrote this as a MUST-NEVER-DO. Selecting a clip in order to delete it also moves the playhead, so he
-loses his place on every single selection — the exact "2 hour session becomes 4 hours" tax.
-**Where:** `main.cpp:3049`. Select should select. One line, but check it against the memory note "a
-timeline click navigates PAUSED, never auto-plays" — that note is about not auto-playing, not about
-moving the playhead.
+### 1. ~~Clicking a clip while PAUSED still throws away his playhead~~ — items 105, 57 — DONE (`2c397ae`)
 
-### 2. Undo and Redo have no visible buttons — item 41
-Stated with the shortcut, explicitly: "each with a visible button". Both keybindings work; the buttons
-were never added. An editor who cannot SEE that redo exists edits defensively.
-**Where:** the control row at `main.cpp:5417`. Two `fixedButton`s posting the same `EditReq` the keys do.
+### 2. ~~Undo and Redo have no visible buttons~~ — item 41 — DONE (`2648c33`)
 
-### 3. Enter does not stop the playhead, and Pause does not return to where playback started — item 59
-Two named transport behaviours, both missing. `VK_RETURN` has zero hits in the timeline key block, and
-nothing records the position playback began at.
-**Where:** `main.cpp:4404` — record `curSec` when `playing` flips true; handle `VK_RETURN` beside Space.
+### 3. ~~Enter does not stop the playhead, and Pause does not return to where playback started~~ — item 59 — DONE (`d3e7db0`)
 
-### 4. Search-hit rows have no right-click menu and no Enter — items 68, 76
-Both stated. From a search hit he cannot open the file's folder, copy the filename, or add it with the
-keyboard — he must reach for the mouse and double-click, every time.
-**Where:** the hits loop `main.cpp:5163-5179`; copy the pattern from the video rows at `:5298`.
+### 4. ~~Search-hit rows have no right-click menu and no Enter~~ — items 68, 76 — DONE (`b5a7b19`)
 
-### 5. "Most relevant" sort, with the crown icon — items 18, 19
-The only left-panel control he asked for that does not exist. **The engine already returns a `score` on
-every hit** (`app.go:415`, populated at `:460`/`:472` and `qmd.go:75`/`:91`); the engine sorts by date
-(`app.go:479`), so this is a client-side re-sort plus a third pill.
-**Where:** `sortLibrary` `main.cpp:3637` / the pill row `:5210`.
+### 5. ~~"Most relevant" sort, with the crown icon~~ — items 18, 19 — DONE (`858711d`); shipped as a blue text pill, not a crown glyph — see row 19
 
 ### Deliberately NOT recommended, with the measurement that justifies it
 
