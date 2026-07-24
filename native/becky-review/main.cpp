@@ -3225,6 +3225,25 @@ static ProjResult projectCap(Caption& cap) {
     cap.end   = c->compStart + (b - c->in);
     return PROJ_VISIBLE;
 }
+// rebindCapToCoveringClip follows a caption to whatever CURRENT clip (same source)
+// now holds its source span, when its own bound clip no longer does. After a clip
+// SPLIT the right half becomes a NEW clip: a caption bound to the original clip whose
+// span moved into that half would otherwise project HIDDEN (zero-width) - it neither
+// shows nor follows, which read as "the right-side captions vanished" and wrote
+// stacked zero-duration cues to the .srt (Jordan 2026-07-24). Re-binding makes it
+// follow the split exactly like the clips do. Returns true if it moved.
+static bool rebindCapToCoveringClip(Caption& c) {
+    Clip* orig = clipById(c.clipId);
+    if (!orig) return false;
+    double mid = (c.srcIn + c.srcOut) * 0.5;
+    for (auto& cl : g_track[0]) {
+        if (cl.id != c.clipId && cl.source == orig->source && mid >= cl.in && mid < cl.out) {
+            c.clipId = cl.id;
+            return true;
+        }
+    }
+    return false;
+}
 // reanchorCap derives a caption's SOURCE span from its CURRENT absolute start/end
 // against the clip it now sits on - called after a drag/resize so the edit survives
 // the next reload. Anchors to the clip under the caption's MIDPOINT (a caption
@@ -3461,12 +3480,14 @@ static void runCliCutCaptions(const std::string& reelPath) {
                 srtOut += ".srt";
                 std::remove(srtOut.c_str());                                                       // and this one
             }
-            // --review-model haiku: route the regroup pass through Jordan's Claude Max session
-            // (OAuth, $0, ~1 min ONE-SHOT). hy3 was removed from OpenCode Zen and its free
-            // deepseek replacement is far too slow (6+ min) for this button; Claude Max is free
-            // per his rules, fast, and higher quality. If it fails, becky-subtitle falls back
-            // to the (now cut-snapped, ?/!-breaking) deterministic captions.
-            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\" --review-model haiku --out \"" + srtOut + "\"";
+            // --review=false: the LLM regroup pass is OFF (Jordan 2026-07-24 "pause the
+            // llm step"). The deterministic pace chunker now honors every rule on his real
+            // footage - breaks at ?/! (even across cuts), matches the speaker's pauses,
+            // keeps phrases whole, a HARD 22-char cap, single-word lines allowed - verified
+            // 0 mid-line ?/! and 0 over-22 lines on 27_5_millionaires. The model was
+            // regrouping by meaning and re-introducing the exact defects he kept flagging;
+            // deterministic is faster, free, and correct. Re-enable only if he asks.
+            std::string cmd = "\"" + exe + "\" --reel \"" + reelPath + "\" --review=false --out \"" + srtOut + "\"";
             // Pass the reel's real frame rate so captions SNAP to whole frames (else it warns
             // "no frame rate known ... pass --fps"). reelFps() = the edit's own rate (29.97).
             double fps = reelFps();
@@ -3626,7 +3647,12 @@ static void rebuildDerivedCaptions() {
     for (auto& cap : g_caps) {
         if (cap.clipId.empty()) { kept.push_back(cap); continue; }  // legacy/unanchored: leave as drawn
         Caption c = cap;
-        if (projectCap(c) != PROJ_GONE) kept.push_back(c);
+        ProjResult pr = projectCap(c);
+        if (pr == PROJ_HIDDEN && rebindCapToCoveringClip(c)) {
+            pr = projectCap(c);                                  // follow a clip split into its new half
+            if (pr == PROJ_VISIBLE) g_capSeededClips.insert(c.clipId);  // it holds captions now - don't ALSO re-seed this clip from the transcript (that was the duplicate cues)
+        }
+        if (pr != PROJ_GONE) kept.push_back(c);
     }
     // 2. Seed captions for clips not yet seeded, from their source transcript.
     bool waiting = false;
