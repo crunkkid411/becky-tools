@@ -5525,13 +5525,23 @@ int main(int argc, char** argv) {
     // WPF app uses - not ImGui's 13px ProggyClean bitmap. ProggyClean read as a
     // "DOS terminal" and was the #1 thing two independent eyes (Jordan, and a
     // free vision model comparing the two apps) called out as making Review 3
-    // look unpolished. Rasterized at the SAME 13px base ProggyClean used, so
-    // every FontGlobalScale-based layout measurement downstream is byte-for-byte
-    // unchanged; oversampled 3x3 so the 1.35 UI-scale upscale stays crisp. Falls
-    // back to the bitmap default if the file is somehow missing (never assert -
-    // the same degrade-don't-crash rule as the icon load below).
+    // look unpolished.
+    //
+    // Round 3 readability pass: Jordan's impaired vision read the regular-weight
+    // face as "too small and dim" even though ImGuiCol_Text is plain white (1,1,1) -
+    // a thin stroke on black reads as dim to him regardless of the RGB value,
+    // which is exactly the same "high-contrast is an accessibility aid" reasoning
+    // ACCESSIBILITY.md already states for colour. segoeuiB.ttf (Semibold - built
+    // into every Windows 10 install beside the regular face) is loaded as THE
+    // DEFAULT FONT instead of regular Segoe UI, one size up (14px, was 13px), so
+    // the whole app - buttons, panels, the timeline header - gets bolder+bigger
+    // in this one place rather than needing a second PushFont() at every one of
+    // the hundreds of call sites in this file. Oversampled 3x3 so the 1.35
+    // UI-scale upscale stays crisp. Falls back to the bitmap default if the file
+    // is somehow missing (never assert - the same degrade-don't-crash rule as
+    // the icon load below).
     {
-        const char* uiFontPath = "C:\\Windows\\Fonts\\segoeui.ttf";
+        const char* uiFontPath = "C:\\Windows\\Fonts\\seguisb.ttf";     // Segoe UI Semibold
         bool baseLoaded = false;
         if (FILE* f = fopen(uiFontPath, "rb")) {
             fclose(f);
@@ -5539,7 +5549,20 @@ int main(int argc, char** argv) {
             uiCfg.OversampleH = 3;
             uiCfg.OversampleV = 3;
             uiCfg.PixelSnapH  = false;
-            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 13.0f, &uiCfg) != nullptr;
+            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 14.0f, &uiCfg) != nullptr;
+        }
+        if (!baseLoaded) {
+            // Semibold missing (older Windows) - real Segoe UI Bold is the next
+            // best legible fallback, still bolder than the old regular face.
+            const char* boldPath = "C:\\Windows\\Fonts\\segoeuib.ttf";
+            if (FILE* f = fopen(boldPath, "rb")) {
+                fclose(f);
+                ImFontConfig uiCfg;
+                uiCfg.OversampleH = 3;
+                uiCfg.OversampleV = 3;
+                uiCfg.PixelSnapH  = false;
+                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(boldPath, 14.0f, &uiCfg) != nullptr;
+            }
         }
         if (!baseLoaded) ImGui::GetIO().Fonts->AddFontDefault();
     }
