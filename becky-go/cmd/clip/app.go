@@ -1151,11 +1151,24 @@ func (a *App) LoadReel(path string) (TimelineView, error) {
 	if err != nil {
 		return TimelineView{}, err
 	}
-	// The reel's folder identifies the project for clip-colour persistence; in
-	// the standard layout (reel beside the footage) this is the same file the
-	// case folder loads, so the forensic launcher's reel-before-folder boot
-	// order still lands on one frozen assignment. See clipcolor.go.
-	LoadClipColors(filepath.Dir(path))
+	// Per-source clip colours are frozen PER PROJECT, and the project is the
+	// open CASE FOLDER (open_folder's a.folder) - not wherever this particular
+	// reel file happens to sit. A reel commonly lives in a "Rendered" OUTPUT
+	// subfolder (excluded from browse/search - see footage/discover.go), one
+	// level below the actual footage, so filepath.Dir(path) alone is a
+	// DIFFERENT directory than the case folder. That keyed two different
+	// on-disk colour files for the same project depending on which loaded
+	// last (reel vs. folder) - the "colours going wild" regression (item 11,
+	// 2026-07-23). Prefer the already-open case folder; fall back to the
+	// reel's own folder only when no folder has been opened yet this session
+	// (the forensic launcher's reel-before-folder boot order). See clipcolor.go.
+	a.mu.Lock()
+	colorDir := a.folder
+	a.mu.Unlock()
+	if colorDir == "" {
+		colorDir = filepath.Dir(path)
+	}
+	LoadClipColors(colorDir)
 	a.mu.Lock()
 	a.pushUndoLocked()
 	a.reel = r
