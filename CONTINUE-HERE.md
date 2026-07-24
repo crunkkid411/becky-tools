@@ -4,6 +4,37 @@ This file exists so you don't have to ask Jordan anything to pick up where the
 last agent stopped. Read it, then go straight to work — don't re-ask him what's
 already answered below.
 
+## 2026-07-24 PM: captions bound to clips + skip-quiet via auto-editor + .json transcripts (on master 155c10a)
+
+Three of Jordan's 2026-07-24 asks, built + verified by DRIVING the app:
+
+- **Captions now BELONG TO their clip.** Each caption carries an anchor
+  (clip id + its span in the clip's source time); the lane is re-projected from
+  the clips after every reload, so a caption follows its clip through
+  reorder/trim/split for free, and the good becky-subtitle `.srt` captions
+  follow too (they used to sit at fixed absolute times and get left behind).
+  VERIFIED LIVE: dragged a clip to the end -> its caption moved with it; the
+  other two stayed put. Right-click a caption = **Glue to next / Remove**.
+  **Ctrl+Z now undoes caption typing** (native-only undo stack, ordered against
+  the engine's clip undo by timestamp) - VERIFIED LIVE: text edit reverted, the
+  clip reorder underneath was untouched. `native/becky-review/main.cpp`.
+- **"Skip quiet parts" now uses auto-editor's own per-frame volume**, not the
+  coarse 8-bit waveform peak cache (which was filled per-window, so silence near
+  a clip's edges never dimmed - Jordan's `skip-quiet-inaccurate.JPG`). New
+  `audio_levels` verb runs `auto-editor levels --edit audio` once per source,
+  cached, thresholded live. VERIFIED against the real FLYV9992 source: 99.9%
+  frame coverage, catches the silence at t=0 the old method missed.
+- **A `becky-transcribe` `.json` now counts as a transcript** (left panel shows
+  transcribed; scrubbing/captions work). Parser + widened discovery, excluding
+  becky's own `.beckymeta/.reel/.questions` `.json` sidecars.
+
+Known limits (documented in the commit): a cross-clip Glue anchors to the
+midpoint clip; a CLIP split relies on reproject-clamp + transcript re-seed for
+the right half rather than a word-level text split of the straddling caption
+(the manual 'S' caption-split does do a word split). Not yet driven in the
+automated harness: the Glue/Remove menu *execution* (the popup renders and the
+logic reuses verified primitives) - worth a hands-on confirm.
+
 ## 2026-07-23: mpv IS DELETED. Becky Review 3 runs the native engine.
 
 The overnight mpv-swap mission (HANDOFF-VIDEO-ENGINE.md, all 8 steps checked
