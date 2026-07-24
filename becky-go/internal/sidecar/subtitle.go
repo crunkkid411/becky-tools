@@ -30,7 +30,7 @@ type Segment struct {
 // Subtitle is the parsed result of one subtitle sidecar.
 type Subtitle struct {
 	Path     string    // the sidecar file the segments came from
-	Format   string    // "srt" | "vtt" | "json3"
+	Format   string    // "srt" | "vtt" | "json3" | "json"
 	Text     string    // full transcript text (segments joined by space)
 	Segments []Segment // caption-sized, de-duplicated, time-ordered
 }
@@ -43,6 +43,11 @@ var subtitleExtPriority = []string{
 	".en.srt", ".srt",
 	".en.vtt", ".vtt",
 	".en.json3", ".json3",
+	// becky-transcribe's own JSON, LAST so an official .srt/.vtt/.json3 always
+	// wins. "<stem>.transcript.json" is the documented name; a bare
+	// "<stem>.json" is accepted too. Exact-match here can't collide with
+	// "<stem>.mp4.beckymeta.json" etc. (those are a different literal name).
+	".transcript.json", ".json",
 }
 
 // FindSubtitle returns the best subtitle sidecar for videoPath, or "" if none.
@@ -76,10 +81,16 @@ func FindSubtitle(videoPath string) string {
 			}
 		}
 	}
-	// 2) Fallback: any "<stem>.<lang>.srt|vtt|json3" (e.g. en-US, en-orig).
-	for _, ext := range []string{".srt", ".vtt", ".json3"} {
+	// 2) Fallback: any "<stem>.<lang>.srt|vtt|json3" (e.g. en-US, en-orig), or a
+	// "<stem>.<qualifier>.json" becky transcript. The ".json" pass EXCLUDES becky's
+	// own data sidecars (meta/reel/questions/…) via isBeckyDataJSON, so the
+	// prefix+suffix match can't grab "<stem>.mp4.beckymeta.json".
+	for _, ext := range []string{".srt", ".vtt", ".json3", ".json"} {
 		for _, n := range names {
 			ln := strings.ToLower(n)
+			if ext == ".json" && IsBeckyDataJSON(n) {
+				continue
+			}
 			if strings.HasPrefix(ln, lowerStem+".") && strings.HasSuffix(ln, ext) {
 				return filepath.Join(dir, n)
 			}
@@ -113,6 +124,14 @@ func ParseSubtitle(path string) (Subtitle, error) {
 	case ".json3":
 		segs = parseJSON3(data)
 		format = "json3"
+	case ".json":
+		// becky-transcribe's own JSON output (segments/words). Its parser errors
+		// on any non-transcript .json (reel/meta/questions), so those degrade.
+		segs, err = parseBeckyTranscriptJSON(data)
+		if err != nil {
+			return Subtitle{}, err
+		}
+		format = "json"
 	default:
 		return Subtitle{}, fmt.Errorf("unsupported subtitle format: %s", ext)
 	}

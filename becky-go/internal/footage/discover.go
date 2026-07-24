@@ -28,6 +28,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"becky-go/internal/sidecar"
 )
 
 // ytIDRe matches a yt-dlp video-id token: an 11-char YouTube id wrapped in square
@@ -58,6 +60,22 @@ var subtitleExts = map[string]bool{
 	".srt":   true,
 	".vtt":   true,
 	".json3": true,
+	".json":  true, // becky-transcribe's own JSON (<stem>.json / <stem>.transcript.json)
+}
+
+// acceptsSubtitle reports whether a file NAME may be paired as a transcript. It
+// gates on subtitleExts, but a ".json" must also NOT be one of becky's own data
+// sidecars (meta/reel/questions/…) — those literally end in ".json" and would be
+// boundary-matched to a video otherwise (e.g. "ring.mp4.beckymeta.json" for
+// "ring.mp4"). sidecar.IsBeckyDataJSON is the single, shared exclusion list.
+func acceptsSubtitle(name string) bool {
+	if !subtitleExts[strings.ToLower(filepath.Ext(name))] {
+		return false
+	}
+	if strings.EqualFold(filepath.Ext(name), ".json") && sidecar.IsBeckyDataJSON(name) {
+		return false
+	}
+	return true
 }
 
 // subtitleSubdirs are the conventional sibling folders a detective's tooling
@@ -305,7 +323,7 @@ func buildSubtitleIDIndex(root string) map[string]string {
 			}
 			return nil
 		}
-		if !subtitleExts[strings.ToLower(filepath.Ext(path))] {
+		if !acceptsSubtitle(filepath.Base(path)) {
 			return nil
 		}
 		tok := videoIDToken(filepath.Base(path))
@@ -346,7 +364,7 @@ func subtitleNames(dir string) []string {
 		if e.IsDir() {
 			continue
 		}
-		if subtitleExts[strings.ToLower(filepath.Ext(e.Name()))] {
+		if acceptsSubtitle(e.Name()) {
 			out = append(out, e.Name())
 		}
 	}
@@ -507,7 +525,7 @@ func lonePairMatch(dir, videoPath string, claimed map[string]bool) string {
 		switch {
 		case videoExts[ext]:
 			videos = append(videos, e.Name())
-		case subtitleExts[ext]:
+		case acceptsSubtitle(e.Name()):
 			subtitles = append(subtitles, e.Name())
 		}
 	}
@@ -557,7 +575,7 @@ func collectOrphans(root string, claimed map[string]bool) []OrphanTranscript {
 			}
 			return nil
 		}
-		if !subtitleExts[strings.ToLower(filepath.Ext(path))] {
+		if !acceptsSubtitle(filepath.Base(path)) {
 			return nil
 		}
 		if claimed[filepath.Clean(path)] {
