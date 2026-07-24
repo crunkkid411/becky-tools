@@ -3359,7 +3359,7 @@ static void drawTimeline(double& curSec, bool& playing) {
     float availH = ImGui::GetContentRegionAvail().y;
     if (availW < 16 || availH < 44) return;
     float tlX = p.x, tlW = availW;
-    float rulerH = 28, sbH = 12, gap = 4;   // round 5: taller ruler (was 22, "disproportionately small")
+    float rulerH = 24, sbH = 12, gap = 4;   // round 5b: 24px == the reference's .ruler height
     int lanes = 1;
     float lanesH = availH - rulerH - sbH - gap * 2;
     // The caption lane sits directly UNDER the clip lane and inside the same
@@ -3411,9 +3411,16 @@ static void drawTimeline(double& curSec, bool& playing) {
     // Item 1 fix (round 3): a preview audition swaps g_track[0] for a one-clip
     // (or tied-clips) reel WHILE THE REAL REEL IS FROZEN AND SHOWN INSTEAD (see the
     // drawTimeline call site, which swaps the real reel/duration/playhead back in
-    // for this render). A click during that render must never be processed as a
-    // real gesture against it - the indices/ids on screen do not match what is
-    // actually loaded for playback.
+    // for this render).
+    //
+    // Round 5: clicking the timeline while an audition is playing is exactly the
+    // gesture that means "I'm done previewing, take me back to the reel". Because the
+    // frozen render already put the REAL reel into g_track[0] for this call, ending
+    // the preview here (clear g_inTiedPreview) makes the very same click fall through
+    // to the normal gesture below and select/seek on the real reel - one click both
+    // exits the audition and acts. The call site notices g_inTiedPreview flipped and
+    // keeps the reel instead of restoring the preview clip.
+    if (ImGui::IsItemActivated() && g_inTiedPreview) g_inTiedPreview = false;
     bool pressed = ImGui::IsItemActivated() && !g_inTiedPreview;
     bool active = ImGui::IsItemActive() && !g_inTiedPreview;
     bool released = ImGui::IsItemDeactivated() && !g_inTiedPreview;
@@ -5082,6 +5089,23 @@ static void previewPlaySpan(const std::string& source, double a, double b,
     // preview (drawCaptionsImGui call, gated on !g_inTiedPreview) so no stale
     // real-reel caption is burned over the audition frame either.
 }
+// Round 5: end an active audition and put the REAL reel back - the state any timeline
+// EDIT must act against. Without this, pressing S while auditioning would promote the
+// preview clip onto the reel (its "no engine id" path), quietly adding a clip he never
+// asked for. Returns true if it actually ended a preview. Safe to call when not
+// previewing.
+static bool endPreviewRestore(double& curSec, bool& playing, double& lastComposed) {
+    if (!g_inTiedPreview) return false;
+    g_track[0] = g_reelBeforePreview;
+    g_reelBeforePreview.clear();
+    g_inTiedPreview = false;
+    playing = false; g_playingExt = false;
+    packTrack(0); recomputeDur();
+    curSec = std::min(g_previewFrozenPlayhead, g_compDur);
+    lastComposed = -1; g_quietDirty = true;
+    for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+    return true;
+}
 // playWholeVideo puts a video's WHOLE span on the track (B-5 "spacebar plays the
 // selected row"). Duration comes from the engine probe; an unprobe-able source
 // degrades to a generous cap rather than blocking playback.
@@ -5506,7 +5530,14 @@ int main(int argc, char** argv) {
     //
     // BECKY_UI_SCALE overrides it (e.g. "1.6") without a rebuild, because the
     // right number is whatever he can actually read, not whatever I picked.
-    float uiScale = 1.35f;
+    // Round 5b: match becky-review-native EXACTLY. That app renders its CSS at TRUE
+    // pixel size (body 16px, .btn 14px, no UI upscale). The old 1.35 FontGlobalScale
+    // inflated every glyph by 35% and ALSO softened it (a 14px atlas stretched 1.35x),
+    // which is why Jordan - comparing the two side by side - said mine were
+    // "significantly larger" and the text "looks different". Render 1:1 like the
+    // reference and load the fonts at their true size so they stay crisp. BECKY_UI_SCALE
+    // still overrides if he ever wants it bigger than the reference.
+    float uiScale = 1.0f;
     if (const char* s = getenv("BECKY_UI_SCALE")) {
         float v = (float)atof(s);
         if (v >= 0.8f && v <= 3.0f) uiScale = v;
@@ -5595,11 +5626,10 @@ int main(int argc, char** argv) {
             uiCfg.OversampleH = 3;
             uiCfg.OversampleV = 3;
             uiCfg.PixelSnapH  = false;
-            // Round-5 readability (Jordan, vision-impaired, "still too small ... not
-            // bold"): 17px NATIVE (was 14). The atlas is loaded at the bigger size so
-            // the 1.35 UI-scale upscale starts from a denser bitmap - that removes the
-            // softness that read as "not bold", and the glyphs are simply larger.
-            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 17.0f, &uiCfg) != nullptr;
+            // Round 5b: 16px == the reference's CSS `body { font-size:16px }`, rendered
+            // 1:1 (FontGlobalScale is now 1.0) so it matches becky-review-native's text
+            // size exactly instead of being 35% larger.
+            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 16.0f, &uiCfg) != nullptr;
         }
         if (!baseLoaded) {
             // Semibold missing (older Windows) - real Segoe UI Bold is the next
@@ -5611,7 +5641,7 @@ int main(int argc, char** argv) {
                 uiCfg.OversampleH = 3;
                 uiCfg.OversampleV = 3;
                 uiCfg.PixelSnapH  = false;
-                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(boldPath, 17.0f, &uiCfg) != nullptr;
+                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(boldPath, 16.0f, &uiCfg) != nullptr;
             }
         }
         if (!baseLoaded) ImGui::GetIO().Fonts->AddFontDefault();
@@ -5641,9 +5671,9 @@ int main(int argc, char** argv) {
             // the background. Screenshotting at 8x put the runner at 719..744
             // inside a 722..753 button; centring 25.5px of glyph in a 31px
             // button needs 4.3 more units of drop, hence 6.
-            cfg.GlyphOffset = ImVec2(0.0f, 7.0f);   // scaled with the 20->24 icon size below
-            cfg.GlyphMinAdvanceX = 24.0f;          // uniform icon cells, so nothing jitters
-            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 24.0f, &cfg, kIconRange) != nullptr;
+            cfg.GlyphOffset = ImVec2(0.0f, 4.0f);   // 18px icon centred in the 1:1 (scale 1.0) buttons
+            cfg.GlyphMinAdvanceX = 20.0f;          // uniform icon cells, so nothing jitters
+            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 18.0f, &cfg, kIconRange) != nullptr;
         }
         if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
                                            : "icons: disabled by BECKY_ICONS=0 - toolbar using text labels");
@@ -5911,7 +5941,15 @@ int main(int argc, char** argv) {
             // split just created, at essentially the same point. That reads exactly
             // like "duplicates the clip and freaks out". Same fix, same constant,
             // same shared reasoning as queueUndo/queueRedo above.
-            if ((GetAsyncKeyState('S') & 1) && nowSec() - g_lastSplitQueued > kEditDebounceSec) {
+            // Round 5: S while auditioning ENDS the audition (back to the reel) instead
+            // of promoting the preview clip onto it. The GetAsyncKeyState low bit is a
+            // one-shot "pressed since last read", so consuming it here also stops the
+            // split handler below from firing this frame - he presses S again to split
+            // on the real reel.
+            if (g_inTiedPreview && (GetAsyncKeyState('S') & 1)) {
+                endPreviewRestore(curSec, playing, lastComposed);
+            }
+            if (!g_inTiedPreview && (GetAsyncKeyState('S') & 1) && nowSec() - g_lastSplitQueued > kEditDebounceSec) {
                 double t = editT();
                 Clip* c = clipAtComp(0, t);
                 bool noId = c && c->id.empty();
@@ -6450,18 +6488,15 @@ int main(int argc, char** argv) {
             stageMark("reel-exit");
         }
 
-        // G-1 "Play tied clips" preview ends the instant playback stops (pause, arrow
-        // step, or reaching a boundary handler that pauses) - restore the real reel
-        // that was showing before the preview so the timeline never sits corrupted.
-        if (g_inTiedPreview && !playing) {
-            g_track[0] = g_reelBeforePreview;
-            g_reelBeforePreview.clear();
-            g_inTiedPreview = false;
-            packTrack(0); recomputeDur();
-            curSec = std::min(curSec, g_compDur);
-            lastComposed = -1; g_quietDirty = true;
-            for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
-        }
+        // Round 5 (Jordan): a preview MUST survive a pause. The old code tore the
+        // preview down the instant playback stopped, which is what made the preview
+        // window "go dark" on Space when there was no reel to fall back to, and made
+        // pausing "return focus to the timeline". A preview is a transcript-browsing
+        // mode: pause keeps the audition frame on screen (paused), Space resumes it,
+        // clicking another quote auditions that one, and it only ENDS when he clicks
+        // the timeline (handled in drawTimeline, which restores the reel and processes
+        // the click) or does a real edit/add/load (loadTimelineView/applyAddClipDelta
+        // already clear it). So there is deliberately no teardown-on-pause here.
         stageMark("tied-preview-restore");
 
         // P1 fix: never decode on the UI thread. Post the newest target to the decode
@@ -7898,12 +7933,11 @@ int main(int argc, char** argv) {
             // only way to know at a glance that a reel actually loaded and how
             // deep the current zoom is.
             //
-            // Round-5: Jordan wants the toolbar buttons SLIGHTLY LARGER, to match the
-            // reference. (10,6) is between the old cramped (8,3) and the global (10,7)
-            // - big enough to read/hit, small enough that the caption lane still clears
-            // its lanesH>90 cutoff at the normal timeline height.
+            // Round 5b: at 1:1 (scale 1.0) with the 16px font, (10,7) padding makes a
+            // ~32px button - the reference's .btn height (7px vertical padding + 16px
+            // line + 1px border). Matches becky-review-native.
             {
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 7));
 
                 char durb[24]; fmtTime(g_compDur, durb, sizeof durb, false);
                 size_t nclips = g_track[0].size();
@@ -8371,8 +8405,21 @@ int main(int argc, char** argv) {
                 recomputeDur();
                 double frozenCur = std::min(g_previewFrozenPlayhead, g_compDur);
                 drawTimeline(frozenCur, playing);
-                g_track[0] = livePreviewTrack;
-                g_compDur = livePreviewDur;
+                if (g_inTiedPreview) {
+                    // still auditioning: put the live preview clip back for playback
+                    g_track[0] = livePreviewTrack;
+                    g_compDur = livePreviewDur;
+                } else {
+                    // Round 5: a click on the timeline inside drawTimeline ENDED the
+                    // audition (it cleared g_inTiedPreview and already selected/seeked
+                    // on the reel, which is what g_track[0] now holds). Keep the reel,
+                    // stop the audition, and adopt the clicked playhead position.
+                    g_reelBeforePreview.clear();
+                    playing = false; g_playingExt = false;
+                    curSec = frozenCur;
+                    lastComposed = -1; g_quietDirty = true;
+                    for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+                }
             } else {
                 drawTimeline(curSec, playing);
             }
