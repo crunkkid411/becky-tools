@@ -1802,6 +1802,34 @@ static void requestCompose(double t, bool exact) {
     g_decReqCv.notify_one();
 }
 
+// Non-destructive single-click preview (item B, corrected live 2026-07-23):
+// shows ONE frame of ONE source at ONE timestamp in the video pane WITHOUT
+// touching g_track[0] at all - unlike seekToSpan, which replaces the whole
+// live edit reel with a one-clip audition and had no restore of its own. A
+// single click is "let me look at this", not "let me rebuild the timeline
+// around this". Bypasses requestCompose's g_track[0] lookup and posts the
+// (source, srcSec) straight to the same decode thread/engine::showSource path
+// requestCompose already uses, so it costs nothing extra and never fights the
+// real timeline. Cleared (see clearScrubPreview) the instant the user does
+// anything that means "back to the real timeline": clicks the timeline itself,
+// starts real playback, or actually adds a clip.
+static bool g_scrubPreviewActive = false;
+static bool g_scrubPreviewDispatched = false;
+static std::string g_scrubPreviewSource;
+static double g_scrubPreviewSec = 0;
+static void previewSourceFrame(const std::string& src, double sec) {
+    g_scrubPreviewActive = true; g_scrubPreviewDispatched = false;
+    g_scrubPreviewSource = src; g_scrubPreviewSec = sec;
+}
+static void clearScrubPreview() { g_scrubPreviewActive = false; }
+static void requestComposeSource(const std::string& source, double srcSec, bool exact) {
+    scrubLog("REQUEST(preview) source=" + source + " srcSec=" + std::to_string(srcSec) + " exact=" + (exact ? "1" : "0"));
+    std::lock_guard<std::mutex> lk(g_decReqMx);
+    g_decReqSource = source; g_decReqSrcSec = srcSec; g_decReqCompT = -1; g_decReqExact = exact;
+    g_decReqPending = true;
+    g_decReqCv.notify_one();
+}
+
 // --------------- D-9 (step 6 rewrite): REAL playback with AUDIO - the engine plays the reel ---------------
 // The segment list goes to the in-process engine STRAIGHT FROM g_track[0] - the old
 // mpv EDL temp file, its CRLF trap, and the time-pos observe/extrapolate dance are all
@@ -1907,6 +1935,7 @@ static Gesture g_gest;
 static double g_lastScrubEmit = 0, g_lastViewEmit = 0;
 static double g_lastUndoQueued = -1;
 static double g_lastRedoQueued = -1;   // redo debounce, same reason as undo's
+static double g_lastSplitQueued = -1;  // split ('S') debounce, item 10 - same reason as undo's
 // Ctrl read from the SAME clock and BOTH bits as every other modifier here -
 // see the ctrlDown comment in the arrow handler for why that matters.
 static bool ctrlDownForRedo() { SHORT c = GetAsyncKeyState(VK_CONTROL); return (c & 0x8000) != 0 || (c & 1) != 0; }
@@ -3353,10 +3382,25 @@ static void drawTimeline(double& curSec, bool& playing) {
     }
 
     if (pressed) {
+        // A real click on the real timeline means "back to the real timeline" -
+        // drop any single-click cue/hit preview that might be showing (item B).
+        clearScrubPreview();
         int idx, zone;
         g_gest = Gesture{};
         g_gest.pressX = mx; g_gest.ctrl = io.KeyCtrl; g_gest.shiftK = io.KeyShift;
-        if (my < aY) {
+        if (my < aY && std::abs(mx - secToX(curSec)) <= 10.0f) {
+            // Item 8, corrected live: grabbing the PLAYHEAD HANDLE ITSELF must SCRUB
+            // (drag = the frame follows the cursor), never pan - panning was eating
+            // the one gesture an editor expects to work everywhere: drag the
+            // playhead. Hit test is a little wider than the drawn flag (fw=8 in the
+            // playhead draw block below) for an easy grab. Same mechanics as an
+            // empty-track click-drag (kind 1): pauses, scrubs frame-exact.
+            g_gest.kind = 1;
+            curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+            playing = false; g_playingExt = false;
+            g_gest.gIn = curSec;
+            emitScrub(curSec, false);
+        } else if (my < aY) {
             // RULER BAND (items 52/53/107). The ruler is where a Vegas editor
             // instinctively grabs to move around the timeline, and grabbing it
             // used to scrub instead - the playhead shot off with the cursor.
@@ -3364,7 +3408,8 @@ static void drawTimeline(double& curSec, bool& playing) {
             // Click sets the playhead AND the stock (the return point playback
             // resumes from), because on the ruler he is choosing where to work,
             // not auditioning a moment. Dragging PANS the view, leaving the
-            // playhead where he put it.
+            // playhead where he put it. (Grabbing the playhead HANDLE itself is
+            // handled above instead - that drags the frame, not the view.)
             g_gest.kind = 11;
             g_gest.gIn = g_scrollSec;                 // view position at grab time
             curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
@@ -3490,25 +3535,19 @@ static void drawTimeline(double& curSec, bool& playing) {
             } else {
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
-                // MUST-NEVER-DO, in his own words. Selecting a clip cost him his
-                // place on the timeline EVERY TIME: clicking a clip body - to
-                // delete it, to trim it, to nudge it a frame - snapped curSec to
-                // wherever the cursor happened to land. The single gesture an
-                // editor makes most often was also the one that threw away his
-                // position, so selecting anything meant re-finding his spot.
-                //
-                // A clip-body click now SELECTS and does nothing else. The RULER
-                // is the control that moves the playhead (click = playhead+stock,
-                // drag = pan) - one obvious place to move, and clips are safe to
-                // touch.
-                //
-                // While PLAYING it still sets the STOCK, which is a DIFFERENT
-                // thing and stays: the stock is where edit keys apply and where
-                // Space returns to (E-6), and it never moves the live playhead
-                // either. Paused, there is no stock to set - just a selection.
+                // REVERSED, live, 2026-07-23 (item 9): the earlier "a clip-body click
+                // never moves the playhead" rule cost him the ability to click a clip
+                // to work on it. His corrected word: PAUSED, a clip-body click DOES
+                // move the playhead to the click - the click is where he wants to work.
+                // PLAYING, it still only sets the STOCK (unchanged) - moving the live
+                // playhead mid-playback would disrupt it, and the stock is where edit
+                // keys apply and where Space returns to (E-6).
                 if (g_playingExt) {
                     g_stockSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
                     g_stockFlash = true;
+                } else {
+                    curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+                    emitScrub(curSec, true);
                 }
             }
         } else if (g.kind == 3 && !g.group.empty()) {
@@ -4084,6 +4123,10 @@ struct CueRow { std::string source, name, text, timecode; double start = 0, end 
 static std::vector<CueRow> g_cues;
 static std::string g_cueName;             // which video's transcript is open
 static std::string g_cueErr;
+// Item 5: a selected-cue state (visibly highlighted) and Up/Down keyboard nav
+// through the open transcript, mirroring g_hitSel/g_hitScrollPending exactly.
+static int g_cueSel = -1;
+static bool g_cueScrollPending = false;
 static char g_withinBuf[128] = { 0 };     // search-within-this-transcript
 static std::string g_withinLast;          // last frame's search text, to fire the
                                            // auto-scroll-to-first-match only on change
@@ -4293,6 +4336,38 @@ static bool pillButton(const char* label, bool on, ImU32 accent) {
         on ? accent : IM_COL32(255, 255, 255, 130), 999.0f, 0, on ? 2.0f : 1.5f);
     ImGui::PopStyleColor(4); ImGui::PopStyleVar(2);
     return hit;
+}
+
+// Item 19, corrected live: a HAND-DRAWN crown, band + 3 spikes + 3 jewel dots,
+// same InvisibleButton+ImDrawList technique the card's round "+" button above
+// uses (that comment's own words: "DRAWN, not a glyph"). Segoe MDL2 has no
+// crown glyph, so this can never regress into a hollow square.
+static bool crownButton(bool on) {
+    const float S = ImGui::GetIO().FontGlobalScale;
+    const ImU32 accent = IM_COL32(0x00, 0xAE, 0xEF, 255);
+    float d = ImGui::GetTextLineHeight() + 12.0f * S;
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##crown", ImVec2(d, d));
+    bool clicked = ImGui::IsItemClicked();
+    bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec4 a4 = ImGui::ColorConvertU32ToFloat4(accent);
+    float bgA = on ? 0.28f : (hovered ? 0.16f : 0.0f);
+    dl->AddRectFilled(p0, ImVec2(p0.x + d, p0.y + d),
+        IM_COL32((int)(a4.x * 255), (int)(a4.y * 255), (int)(a4.z * 255), (int)(bgA * 255)), 6.0f * S);
+    ImU32 shapeCol = on ? accent : IM_COL32(190, 196, 206, 255);
+    float pad = d * 0.24f;
+    float bx0 = p0.x + pad, bx1 = p0.x + d - pad;
+    float bandY0 = p0.y + d * 0.60f, bandY1 = p0.y + d - pad;
+    float topY = p0.y + pad;
+    float w = bx1 - bx0, spikeW = w / 3.0f;
+    dl->AddRectFilled(ImVec2(bx0, bandY0), ImVec2(bx1, bandY1), shapeCol, 1.0f * S);
+    for (int k = 0; k < 3; k++) {
+        float leftX = bx0 + spikeW * k, rightX = bx0 + spikeW * (k + 1), cx = (leftX + rightX) * 0.5f;
+        dl->AddTriangleFilled(ImVec2(leftX, bandY0), ImVec2(rightX, bandY0), ImVec2(cx, topY), shapeCol);
+        dl->AddCircleFilled(ImVec2(cx, topY), 1.6f * S, shapeCol);
+    }
+    return clicked;
 }
 
 struct LibCardResult { bool clicked = false, dbl = false, plus = false; };
@@ -4603,6 +4678,7 @@ static void openTranscript(const std::string& fullVideoPath) {
     g_cueErr.clear();
     g_cueName = name;
     g_cues.clear();
+    g_cueSel = -1; g_cueScrollPending = false;
     engineCallAsync("transcript", { {"name", name} }, 25.0, "Opening transcript...",
         [name](const json& r) {
             if (g_cueName != name) return;   // he moved to another row - stale reply
@@ -4736,10 +4812,27 @@ static void runSearch(bool qmd) {
     g_searchQCv.notify_one();
 }
 
-// add a search-hit's span as a clip to the timeline (C-4 double-click). The
-// engine is authoritative on success ("clip" = just the ONE new clip, cycle 27's
-// I-2 wire-protocol fix - see applyAddClipDelta); a degraded/failed engine call
-// still responds locally so the UI never silently no-ops.
+// Where a non-destructive add lands: right after whatever clip is under/before
+// curSec (Jordan, corrected live: double-click/Enter must insert "to the RIGHT
+// of the current playhead, WITHOUT deleting or replacing any existing clips" -
+// never the seekToSpan-style whole-track replace). Empty track, or curSec past
+// the last clip, appends. Mirrors requestCompose's own clip-lookup above.
+static int insertIndexAtPlayhead(double curSec) {
+    for (size_t i = 0; i < g_track[0].size(); i++) {
+        Clip& c = g_track[0][i];
+        double dur = c.out - c.in;
+        if (curSec >= c.compStart && curSec < c.compStart + dur) return (int)i + 1;
+    }
+    return (int)g_track[0].size();
+}
+
+// Add ONE span [a,b) of source as a clip, inserted at the playhead - shared by
+// addHitToTimeline (search hit, C-4 double-click/Enter) and addCueToTimeline
+// (transcript cue, double-click). The engine is authoritative on success
+// ("clip" = just the ONE new clip, cycle 27's I-2 wire-protocol fix - see
+// applyAddClipDelta); a degraded/failed engine call still responds locally so
+// the UI never silently no-ops.
+//
 // THE "EVERY NEW CLIP LAGS EVERYTHING" BUG. Jordan, feedback9, verbatim:
 // "every new clip on the timeline makes everything - even my mouse - lag super
 // bad for like 2 seconds."
@@ -4755,19 +4848,29 @@ static void runSearch(bool qmd) {
 //
 // Async: the click lands instantly, the reply arrives on the UI thread via
 // drainAsync, and the >1s work indicator covers a genuinely slow one.
-static void addHitToTimeline(const Hit& h) {
-    double a = h.start, b = (h.end > a + 0.05) ? h.end : a + 0.05;
-    std::string label = baseName(h.source);
-    std::string src = h.source;
+//
+// THE PLAYHEAD-POSITION FIX itself is one field: add_clip's request already
+// accepts an optional "at" insert index - becky-go app.go:AddClipAt inserts
+// there and shifts everything after it back, non-destructively, and
+// bridge.go's addClipReply already echoes that same index back as "index" for
+// applyAddClipDelta to use. All of that was already built and tested
+// (TestAddClipAtInsertsAfterIndex) - it just was never being SENT from here,
+// so every add silently fell back to "at<0 -> append", which reads as "goes to
+// the end", not "goes next to what I'm looking at".
+static void addSpanToTimeline(const std::string& source, double a, double b, const std::string& label, double curSec) {
+    b = (b > a + 0.05) ? b : a + 0.05;
+    clearScrubPreview();   // a real add always supersedes any single-click preview
+    int at = insertIndexAtPlayhead(curSec);
+    std::string src = source;
     // I-2 measurement: wall-clock the add_clip round trip (always-on, crash.log -
     // one line per add, negligible cost) so "<200ms, proxy building never gates
     // the add" is a grepped number, not a claim - same pattern as I-4's search
     // timing (see searchWorker). It now measures the WORKER's wait, not a stall
     // Jordan can feel, which is the entire point of the change.
     double t0 = nowSec();
-    engineCallAsync("add_clip", { {"source", src}, {"in", a}, {"out", b}, {"label", label} }, 6.0,
+    engineCallAsync("add_clip", { {"source", src}, {"in", a}, {"out", b}, {"label", label}, {"at", at} }, 6.0,
                     "Adding " + label + " to the timeline...",
-                    [src, a, b, label, t0](const json& r) {
+                    [src, a, b, label, at, t0](const json& r) {
         crashLog("I-2 add_clip source=" + label + " elapsedMs=" + std::to_string((nowSec() - t0) * 1000.0));
         if (r.value("ok", false) && r.contains("data") && r["data"].contains("clip")) {
             applyAddClipDelta(r["data"]);
@@ -4775,7 +4878,8 @@ static void addHitToTimeline(const Hit& h) {
         }
         Clip cl; cl.in = a; cl.out = b; cl.source = src; cl.label = label;
         paintClipFromKnownSource(cl);   // B: same colour as the source's real clips
-        g_track[0].push_back(cl); packTrack(0); recomputeDur();
+        int idx = std::max(0, std::min(at, (int)g_track[0].size()));
+        g_track[0].insert(g_track[0].begin() + idx, cl); packTrack(0); recomputeDur();
         g_quietDirty = true; peaksRequest(src, a - 1.0, b + 5.0);
         // Bug-2 fix: this fallback used to be SILENT, leaving a clip that looked
         // real but had no engine id (every edit no-opped). Say so - and the first
@@ -4783,6 +4887,12 @@ static void addHitToTimeline(const Hit& h) {
         g_renderMsg = "Engine didn't confirm the add - clip shown as a preview; your first edit will register it.";
         g_renderMsgAt = nowSec();
     });
+}
+static void addHitToTimeline(const Hit& h, double curSec) {
+    addSpanToTimeline(h.source, h.start, h.end, baseName(h.source), curSec);
+}
+static void addCueToTimeline(const CueRow& c, double curSec) {
+    addSpanToTimeline(c.source, c.start, c.end, baseName(c.source), curSec);
 }
 
 // --------------- main ---------------
@@ -5197,7 +5307,18 @@ int main(int argc, char** argv) {
             // the session. Fix: treat "no id" as "not editable yet", same as "gated" - never
             // insert the gate for it in the first place. Root-caused once here, in the shared
             // check every edit key goes through, so it covers all three preview call sites.
-            if (GetAsyncKeyState('S') & 1) {
+            // Item 10 root cause: GetAsyncKeyState's "was pressed" bit is the SAME
+            // primitive that needed the 60ms debounce for undo/redo (measured live:
+            // 6 presses sent at 90ms apart, 3 landed, plus doubles under a slightly
+            // held key) - split had only the by-id in-flight gate, no time debounce.
+            // That gate is not enough: this engine's split round trip is a few ms, so
+            // a HELD 's' (or a fast repeat edge) can see the FIRST split's reply land
+            // and its gate clear, THEN fire again while curSec/the playhead has not
+            // moved - and the second split lands on one of the two clips the first
+            // split just created, at essentially the same point. That reads exactly
+            // like "duplicates the clip and freaks out". Same fix, same constant,
+            // same shared reasoning as queueUndo/queueRedo above.
+            if ((GetAsyncKeyState('S') & 1) && nowSec() - g_lastSplitQueued > kEditDebounceSec) {
                 double t = editT();
                 Clip* c = clipAtComp(0, t);
                 bool noId = c && c->id.empty();
@@ -5210,6 +5331,7 @@ int main(int argc, char** argv) {
                     req.kind = 0; req.t = t; req.group = g_group;
                     req.promote = true; req.pSource = c->source; req.pIn = c->in; req.pOut = c->out; req.pLabel = c->label;
                     g_promoteInFlight = true;
+                    g_lastSplitQueued = nowSec();
                     queueEdit(std::move(req));
                     editLog("QUEUE promote+split src=" + c->label);
                 } else if (c && !noId && !gated) {
@@ -5217,6 +5339,7 @@ int main(int argc, char** argv) {
                     EditReq req; req.verb = "split"; req.args = { {"id", c->id}, {"at", srcT} };
                     req.kind = 0; req.t = t; req.group = g_group;
                     g_editsInFlight.insert(c->id);
+                    g_lastSplitQueued = nowSec();
                     queueEdit(std::move(req));
                     editLog("QUEUE split id=" + c->id);
                 }
@@ -5628,7 +5751,7 @@ int main(int argc, char** argv) {
         // it is the frame he actually pressed play on and not one tick later.
         {
             static bool s_wasPlaying = false;
-            if (playing && !s_wasPlaying) g_playStartSec = curSec;
+            if (playing && !s_wasPlaying) { g_playStartSec = curSec; clearScrubPreview(); }
             s_wasPlaying = playing;
         }
 
@@ -5728,11 +5851,25 @@ int main(int argc, char** argv) {
         // failure mode this originally guarded against - a named pipe's kernel buffer
         // silently absorbing a burst until mpv's IPC wedged - no longer exists post
         // step-6, but the same seek-cost argument still justifies the throttle.)
+        // The scrub-preview (single-click on a cue/hit, item B) is a visual override
+        // of this same dispatch, never a g_track[0] mutation - see previewSourceFrame's
+        // comment. lastComposed deliberately does NOT track it (a preview frame is not
+        // "the real curSec's frame"), so the instant it clears, curSec == lastComposed
+        // would otherwise skip the real recompose forever; force one right here, in the
+        // one place both flags are already in scope.
+        static bool s_wasPreviewActive = false;
+        if (s_wasPreviewActive && !g_scrubPreviewActive) lastComposed = -1;
+        s_wasPreviewActive = g_scrubPreviewActive;
         if (g_edlActive.load()) {
             // D-9: the engine is PLAYING the reel itself - it owns position and the
             // painted frame. Dispatching scrub seeks here would drag playback backwards
             // every frame and re-create the I-5 seek flood. lastComposed is reset on
             // exit (see above), so the first paused frame still gets its exact recompose.
+        } else if (g_scrubPreviewActive) {
+            if (!g_scrubPreviewDispatched) {
+                requestComposeSource(g_scrubPreviewSource, g_scrubPreviewSec, true);
+                g_scrubPreviewDispatched = true;
+            }
         } else if (composeContinuous && !composeSettling && nowSec() - lastComposeContinuousEmit < 0.016) {
             // skip this frame's dispatch - too soon since the last one
         } else if (!g_track[0].empty() && (curSec != lastComposed || (engineReadyNow && !engineArmedOnce) || composeSettling)) {
@@ -5923,7 +6060,6 @@ int main(int argc, char** argv) {
         // they stay readable when the window is small.
         const float menuH = ImGui::GetFrameHeight();          // main menu bar
         const float availH = (float)g_H - menuH;
-        const float libW = (std::max)(320.0f, (float)g_W * 0.22f);
         const float qaW = (std::max)(300.0f, (float)g_W * 0.22f);
         // Floor raised by the ~30px header row added below (clip count + zoom
         // readout) so the lane keeps the same usable height it had before it:
@@ -5933,11 +6069,34 @@ int main(int argc, char** argv) {
         // default 800px window - where the video pane loses about 12px.
         const float timelineH = (std::max)(212.0f, availH * 0.26f);
         const float topH = availH - timelineH;
-        const float vidW = (std::max)(240.0f, (float)g_W - libW - qaW);
         const float topY = menuH;
+        // Item 7: the library pane used to be draggable to widen it - a regression
+        // dropped it to a flat, non-adjustable 22% of the window, which sliced
+        // long titles with no way to fix it. g_libW is the user-set width
+        // (adjusted only by dragging the splitter below); clamped every frame so
+        // a shrunk window can never hide the video pane or push the splitter
+        // off-screen. -1 means "never dragged this session" -> the same default
+        // percentage as before.
+        const float libWDefault = (std::max)(320.0f, (float)g_W * 0.22f);
+        static float g_libW = -1.0f;   // function-local static: persists frame to frame
+        if (g_libW < 0.0f) g_libW = libWDefault;
+        const float libWMin = 320.0f;
+        const float libWMax = (std::max)(libWMin, (float)g_W - qaW - 240.0f);   // video pane keeps its own floor
+        g_libW = (std::min)((std::max)(g_libW, libWMin), libWMax);
+        const float libW = g_libW;
+        const float vidW = (std::max)(240.0f, (float)g_W - libW - qaW);
+        // The splitter is a THIN STRIP carved out of the boundary, not an overlay
+        // on top of it - "library" stops splitHalf short of libW and "video"
+        // starts splitHalf past it, so the strip is never covered by either
+        // neighbour's window and the click can never land on the wrong one
+        // regardless of ImGui's internal window z-order. (An earlier version
+        // tried an OVERLAPPING 8px window instead and relied on submission order
+        // to win the overlap - measured live: it never actually received a
+        // click, submission order was not a reliable way to win a hit-test.)
+        const float splitW = 14.0f, splitHalf = splitW * 0.5f;   // a generous grab width - he has impaired vision
 
         // ---- left panel: library / search / transcript (B, C) ----
-        ImGui::SetNextWindowPos({ 0, topY }); ImGui::SetNextWindowSize({ libW, topH });
+        ImGui::SetNextWindowPos({ 0, topY }); ImGui::SetNextWindowSize({ libW - splitHalf, topH });
         if (ImGui::Begin("library", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool libFocusedNow = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGui::Text("Library / Search");
@@ -6013,25 +6172,21 @@ int main(int argc, char** argv) {
                 // count-plus-pills line, so it is the same control in the same place
                 // for the list it can actually sort.
                 //
-                // NOT THE CROWN ICON HE ASKED FOR, and this is the one place I went
-                // against the request on purpose. Segoe MDL2 Assets - the font this
-                // app loads - HAS NO CROWN. All 1792 glyphs in the loaded E700-EDFF
-                // range were rendered and looked at; the nearest candidates are a
-                // star (reads as "favourite", which would be a lie here) and a
-                // trophy that does not exist. His own standing rule is that a glyph
-                // he has to decode is worse than the word, so this is the word.
-                // Blue, as he asked, using the app's established blue accent - the
-                // same one the "smart" pill wears - so it reads as a distinct family
-                // from the green library sorts.
+                // A REAL CROWN, hand-drawn (crownButton, defined near drawLibraryCard) -
+                // not a font glyph (Segoe MDL2 has none - all 1792 glyphs in the loaded
+                // E700-EDFF range were checked) and not the word either: Jordan tested
+                // the text-pill version live and corrected it, an icon is what he wants
+                // here. Same InvisibleButton+ImDrawList technique the clear-search "X"
+                // already uses, so a missing font glyph can never turn this into a
+                // hollow square. Blue, as he asked, the same accent the "smart" pill wears.
                 {
                     const float S = ImGui::GetIO().FontGlobalScale;
                     ImGui::SameLine(0, 8 * S);
-                    if (pillButton("relevant", g_hitRelevance, IM_COL32(0x00, 0xAE, 0xEF, 255)))
-                        { g_hitRelevance = !g_hitRelevance; applyHitSort(); }
+                    if (crownButton(g_hitRelevance)) { g_hitRelevance = !g_hitRelevance; applyHitSort(); }
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", g_hitRelevance
                             ? "BEST MATCHES FIRST - click to go back to the order the search returned"
-                            : "sorted the way the search returned them - click for best matches first");
+                            : "sorted the way the search returned them - click for best matches first (most relevant)");
                 }
                 ImGui::Separator();
                 // ---- KEYBOARD REACH ON HITS (items 68/76) ----
@@ -6056,7 +6211,7 @@ int main(int argc, char** argv) {
                         { g_hitSel = std::max(0, g_hitSel - 1); g_hitScrollPending = true; }
                     if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
                         g_hitSel >= 0 && g_hitSel < (int)g_hits.size() && !g_hits[g_hitSel].transcriptOnly)
-                        addHitToTimeline(g_hits[g_hitSel]);
+                        addHitToTimeline(g_hits[g_hitSel], curSec);
                 }
                 ImGui::BeginChild("hits", { 0, 0 }, false);
                 for (size_t i = 0; i < g_hits.size(); i++) {
@@ -6066,11 +6221,16 @@ int main(int argc, char** argv) {
                     if (h.transcriptOnly) {
                         ImGui::TextDisabled("%s", line.c_str());
                     } else {
-                        // click plays at the verbatim timestamp (C-4); double-click adds to timeline.
+                        // Corrected live (item B): single click PREVIEWS ONLY (no track
+                        // mutation, no auto-play - previewSourceFrame, same as a cue click);
+                        // double-click / Enter ADDS, inserted at the playhead, never
+                        // destructively (addHitToTimeline -> addSpanToTimeline). The old
+                        // single-click path (seekToSpan, startPlaying=true) replaced the
+                        // WHOLE live edit reel with a one-clip audition - that was the bug.
                         if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick)) {
                             g_hitSel = (int)i;
-                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h);
-                            else seekToSpan(h.source, h.start, h.end, true, curSec, playing, lastComposed);
+                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec);
+                            else previewSourceFrame(h.source, h.start);
                         }
                         // Right-click = the video rows' menu, on a hit. Right-click
                         // also MOVES the selection first, so the menu and the row
@@ -6087,7 +6247,7 @@ int main(int argc, char** argv) {
                             ImGui::TextDisabled("%s", midEllipsis(full, ImGui::CalcTextSize("Open in File Browser").x).c_str());
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
                             ImGui::Separator();
-                            if (ImGui::MenuItem("Add to Timeline")) addHitToTimeline(h);
+                            if (ImGui::MenuItem("Add to Timeline")) addHitToTimeline(h, curSec);
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
                             if (ImGui::MenuItem("Copy Quote")) ImGui::SetClipboardText(h.text.c_str());
@@ -6120,11 +6280,25 @@ int main(int argc, char** argv) {
                 // hovering/clicking anywhere in a cue's run of words seeks the player
                 // there; the current search match is highlighted, not hidden - a real
                 // "find", not a filter that deletes the rest of the document.
-                if (ImGui::SmallButton("< Back")) { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); }
+                if (ImGui::SmallButton("< Back")) { g_cueName.clear(); g_cues.clear(); g_cueErr.clear(); g_cueSel = -1; }
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
                 ImGui::Separator();
                 if (!g_cueErr.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", g_cueErr.c_str());
+                // Item 5: Up/Down move g_cueSel (the visibly-highlighted cue, drawn
+                // below) and Enter adds it - same libFocusedNow guard the hits/library
+                // rows already use, so this can never fight the TIMELINE's own arrow-key
+                // frame-stepping (that path is gated on the timeline window's own focus,
+                // a completely different ImGui window than this left panel).
+                if (libFocusedNow && !ImGui::GetIO().WantTextInput && !g_cues.empty()) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+                        { g_cueSel = std::min((int)g_cues.size() - 1, g_cueSel + 1); g_cueScrollPending = true; }
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+                        { g_cueSel = std::max(0, g_cueSel - 1); g_cueScrollPending = true; }
+                    if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) &&
+                        g_cueSel >= 0 && g_cueSel < (int)g_cues.size())
+                        addCueToTimeline(g_cues[g_cueSel], curSec);
+                }
                 ImGui::BeginChild("transcript", { 0, 0 }, false);
                 std::string within(g_withinBuf);
                 bool searchChanged = (within != g_withinLast);
@@ -6134,17 +6308,28 @@ int main(int argc, char** argv) {
                 float spaceW = ImGui::CalcTextSize(" ").x;
                 if (spaceW <= 0.0f) spaceW = 4.0f * ImGui::GetIO().FontGlobalScale;
                 double lastEnd = -1000.0;
+                // Item 6: NO timestamps at all was the actual complaint on a long
+                // (5-hour livestream) transcript with few natural >1.5s pauses - one
+                // "paragraph" could run the whole file with a single header at the
+                // top. Force a header at least every kCueTimestampIntervalSec too, so
+                // a long continuous take is still navigable to a rough time.
+                static const double kCueTimestampIntervalSec = 180.0;   // "every few minutes"
+                double lastTimestampAt = -1e18;
                 for (size_t i = 0; i < g_cues.size(); i++) {
                     CueRow& c = g_cues[i];
                     ImGui::PushID((int)i);
                     // A real pause (>1.5s) reads as a paragraph break, like an actual
                     // transcript - never a boxed row per ASR segment.
-                    bool newParagraph = (c.start - lastEnd > 1.5);
+                    bool newParagraph = (c.start - lastEnd > 1.5) || (c.start - lastTimestampAt >= kCueTimestampIntervalSec);
                     if (lastEnd > -999.0 && newParagraph) { ImGui::NewLine(); ImGui::NewLine(); }
                     lastEnd = c.end;
-                    if (newParagraph) { ImGui::TextDisabled("%s", c.timecode.c_str()); ImGui::SameLine(0, 6); }
+                    if (newParagraph) { ImGui::TextDisabled("%s", c.timecode.c_str()); ImGui::SameLine(0, 6); lastTimestampAt = c.start; }
                     bool isMatch = !within.empty() && ciContains(c.text, within);
                     bool cueHovered = false, cueClicked = false;
+                    // Item 5: bounding box of every word this cue draws (may wrap
+                    // across lines), so the selected cue can be outlined afterward
+                    // without a filled overlay dimming the text underneath it.
+                    ImVec2 cueMin(1e9f, 1e9f), cueMax(-1e9f, -1e9f);
                     size_t pos = 0, n = c.text.size();
                     while (pos < n) {
                         size_t wstart = c.text.find_first_not_of(' ', pos);
@@ -6164,16 +6349,37 @@ int main(int argc, char** argv) {
                             dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0xFF, 0xD7, 0x00, 60), 2.0f);
                         }
                         ImGui::PushID((int)wstart);
+                        ImVec2 wp0 = ImGui::GetCursorScreenPos();
                         ImGui::TextUnformatted(word.c_str());
+                        ImVec2 wp1 = ImGui::GetItemRectMax();
+                        cueMin.x = (std::min)(cueMin.x, wp0.x); cueMin.y = (std::min)(cueMin.y, wp0.y);
+                        cueMax.x = (std::max)(cueMax.x, wp1.x); cueMax.y = (std::max)(cueMax.y, wp1.y);
                         if (ImGui::IsItemHovered()) cueHovered = true;
                         if (ImGui::IsItemClicked()) cueClicked = true;
                         ImGui::PopID();
                         ImGui::SameLine(0, spaceW);
                     }
-                    // click ANYWHERE in this cue's words -> player seeks there, PAUSED (D-3/B-8).
-                    if (cueClicked) seekToSpan(c.source, c.start, c.end, false, curSec, playing, lastComposed);
+                    // Corrected live (item B): single click ANYWHERE in this cue's words
+                    // PREVIEWS ONLY, at its timestamp, paused - previewSourceFrame never
+                    // touches g_track[0]. Double-click ADDS, inserted at the playhead,
+                    // non-destructively (addCueToTimeline -> addSpanToTimeline). The old
+                    // single-click path (seekToSpan) replaced the WHOLE live edit reel
+                    // with a one-clip audition - "single-clicking a cue ADDS it to the
+                    // timeline AND REPLACES the entire existing timeline", his words,
+                    // #1 priority, and the reason this whole item exists.
+                    if (cueClicked) {
+                        g_cueSel = (int)i;   // item 5: a click also SELECTS/highlights
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addCueToTimeline(c, curSec);
+                        else previewSourceFrame(c.source, c.start);
+                    }
+                    // Item 5: the selected cue is VISIBLY highlighted, not just tracked -
+                    // an outline (not a fill) so the words underneath stay readable.
+                    if (g_cueSel == (int)i && cueMax.x > cueMin.x)
+                        dl->AddRect(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
+                                    IM_COL32(255, 255, 255, 210), 3.0f, 0, 1.5f);
+                    if (g_cueSel == (int)i && g_cueScrollPending) { ImGui::SetScrollHereY(0.3f); g_cueScrollPending = false; }
                     if (isMatch && searchChanged && !scrolledToMatch) { ImGui::SetScrollHereY(0.2f); scrolledToMatch = true; }
-                    if (cueHovered) ImGui::SetTooltip("%s - click to play from here", c.timecode.c_str());
+                    if (cueHovered) ImGui::SetTooltip("%s - click to preview; double-click to add to the timeline", c.timecode.c_str());
                     ImGui::PopID();
                 }
                 ImGui::EndChild();
@@ -6272,8 +6478,12 @@ int main(int argc, char** argv) {
                         LibCardResult res = drawLibraryCard(v, g_libSel == i, g_libJustViewedIdx == i, inFlight,
                                                             it == srcCol.end() ? 0u : it->second);
                         // ONE selection model (B-4): mouse click sets the SAME index arrows move.
-                        if (res.clicked) g_libSel = i;
-                        if (res.dbl) { openTranscript(v.path); g_libJustViewedIdx = i; }
+                        // Jordan tested live and corrected this: a SINGLE click must open the
+                        // transcript (it was wrongly gated behind res.dbl - a double click was
+                        // required). res.clicked already fires on a plain single click with no
+                        // extra latency (LibCardResult's comment), so this is a one-line move,
+                        // not a new double-click timer.
+                        if (res.clicked) { g_libSel = i; openTranscript(v.path); g_libJustViewedIdx = i; }
                         if (res.plus) { g_libSel = i; requestTranscribe(v.path, v.name); }
                         // Opened by the card's right-click (drawLibraryCard), same ID scope.
                         if (ImGui::BeginPopup("rowctx")) {
@@ -6317,7 +6527,7 @@ int main(int argc, char** argv) {
         stageMark("left-panel");
 
         // ---- center video pane (step 6: the ENGINE's frame as a plain ImGui image) ----
-        ImGui::SetNextWindowPos({ libW, topY }); ImGui::SetNextWindowSize({ vidW, topH });
+        ImGui::SetNextWindowPos({ libW + splitHalf, topY }); ImGui::SetNextWindowSize({ vidW - splitHalf, topH });
         if (ImGui::Begin("video", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool haveClip = !g_track[0].empty();
             int vw = 0, vh = 0;
@@ -6663,6 +6873,39 @@ int main(int argc, char** argv) {
         }
         ImGui::End();
         stageMark("center-video-pane");
+
+        // ---- LEFT/CENTER SPLITTER (item 7): drag to resize the library pane ----
+        // Occupies the strip "library" and "video" leave carved out between
+        // them (see splitW/splitHalf above) - never overlapped by a neighbour,
+        // so its click can never be lost to one.
+        {
+            ImGui::SetNextWindowPos({ libW - splitHalf, topY });
+            ImGui::SetNextWindowSize({ splitW, topH });
+            ImGui::SetNextWindowBgAlpha(0.0f);
+            // ROOT CAUSE of the first version of this fix not responding to any
+            // click, measured live: the default WindowPadding (~8px each side)
+            // ate almost this entire 14px-wide window before the InvisibleButton
+            // ever got laid out, so the real clickable area was a sliver a few
+            // px wide and NOT centred where the drawn line is. Zero padding here
+            // so the button fills the window exactly.
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            if (ImGui::Begin("libsplitter", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+                ImGui::InvisibleButton("##libsplit", ImVec2(splitW, topH));
+                bool splitHov = ImGui::IsItemHovered(), splitAct = ImGui::IsItemActive();
+                if (splitHov || splitAct) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                if (splitAct) g_libW += ImGui::GetIO().MouseDelta.x;
+                ImDrawList* sdl = ImGui::GetWindowDrawList();
+                ImU32 splitCol = splitAct ? IM_COL32(0x00, 0xAE, 0xEF, 255)
+                                : (splitHov ? IM_COL32(170, 176, 184, 220) : IM_COL32(90, 96, 105, 110));
+                float cx = ImGui::GetWindowPos().x + splitHalf;
+                sdl->AddLine(ImVec2(cx, topY + 4), ImVec2(cx, topY + topH - 4), splitCol, splitAct ? 3.0f : 2.0f);
+            }
+            ImGui::End();
+            ImGui::PopStyleVar();
+        }
+        stageMark("lib-splitter");
 
         // ---- right panel: Q&A / ask-becky (G) ----
         ImGui::SetNextWindowPos({ libW + vidW, topY }); ImGui::SetNextWindowSize({ qaW, topH });
