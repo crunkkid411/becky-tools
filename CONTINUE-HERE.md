@@ -4,6 +4,32 @@ This file exists so you don't have to ask Jordan anything to pick up where the
 last agent stopped. Read it, then go straight to work — don't re-ask him what's
 already answered below.
 
+## 2026-07-24 late: chunking rules restored + word-timed split + click-near-cut + one-click reload (master e521f7c)
+
+Four of Jordan's asks, each built + VERIFIED by driving the app (or with tests):
+
+- **Caption chunking honors his rules again, deterministically.** A `?`/`!` ENDS
+  a chunk, a real speaker pause ENDS a chunk (pace is rule #1), phrases stay whole,
+  22 chars is a FAILSAFE not a target, and single-word chunks are allowed. The LLM
+  review pass and `rebalanceCapSplits` were ERASING the `?`/`!` + pause breaks after
+  the chunker set them; now `splitAtSentenceEnds`/`splitAtHardBoundaries`
+  (`internal/subs`) re-assert them as the LAST step of both pass-1 and the model
+  path, where nothing can undo them. 55 subs tests + becky-subtitle selftest green;
+  pins Jordan's exact example. **Never fix chunking via the LLM prompt** - the model
+  ignores it. See memory `caption-chunking-inviolable-rules`.
+- **Splitting a caption cuts between words by real timing.** `caption_chunks` now
+  attaches each cue's word timings; the native split picks the between-words
+  boundary nearest the cut in TIME (cut time still owns the on-screen span, no
+  flash). Loaded `.srt` (no word timing) falls back to the old fraction guess.
+  VERIFIED LIVE: split "one two three four" at 1.0s -> "one two" | "three four".
+- **A click near a cut navigates.** A no-drag click in a clip's edge zone used to
+  be swallowed as a maybe-trim; now it moves the playhead AND selects the clip like
+  a body click. VERIFIED LIVE: click by the 2.5s cut -> playhead jumped to 2.37s.
+- **One-click reload of a video's auto-cut.** The robot pipeline saves the reel
+  BESIDE the video as `<stem>.reel.json`; the card detects it and the robot turns
+  GREEN with a download badge - one click loads clips + captions, no re-analysis
+  (right-click to re-run). VERIFIED LIVE: green robot loaded 2 clips + both captions.
+
 ## 2026-07-24 PM: captions bound to clips + skip-quiet via auto-editor + .json transcripts (on master 155c10a)
 
 Three of Jordan's 2026-07-24 asks, built + verified by DRIVING the app:
