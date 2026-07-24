@@ -490,7 +490,15 @@ static void crashLogInit() {
     });
 }
 
+// nowSec() of the last engine (CLIP) edit, so Ctrl+Z can tell whether the most
+// recent thing to undo is a clip edit (engine "undo" verb) or a CAPTION edit
+// (native-only, its own stack) - see captionTryUndo. A plain double, never a
+// stack, so it can never desync or interfere with the engine's own undo history.
+static double g_lastEngineEditAt = -1;
 static void queueEdit(EditReq req) {
+    // undo/redo are not NEW edits - they must not move the "last engine edit" mark,
+    // or a Ctrl+Z would flip to undoing captions after undoing one clip edit.
+    if (req.verb != "undo" && req.verb != "redo") g_lastEngineEditAt = nowSec();
     std::lock_guard<std::mutex> lk(g_editQMx);
     g_editQ.push_back(std::move(req));
     g_editQCv.notify_one();
@@ -2146,10 +2154,18 @@ static bool ctrlDownForRedo() { SHORT c = GetAsyncKeyState(VK_CONTROL); return (
 // far under any deliberate double-tap, still comfortably absorbs a same/next-
 // frame double edge.
 static const double kEditDebounceSec = 0.06;
+// Caption edits are native-only (the engine has no captions), so they undo on their
+// OWN stack. These are defined with the caption lane far below; declared here so the
+// ONE undo/redo path can consult them first. Each returns true if it consumed the
+// action (the most recent thing was a caption edit), false to fall through to the
+// engine's clip undo/redo - so the engine history is touched exactly as before.
+static bool captionTryUndo();
+static bool captionTryRedo();
 static void queueUndo(double t) {
     double n = nowSec();
     if (n - g_lastUndoQueued <= kEditDebounceSec) return;
     g_lastUndoQueued = n;
+    if (captionTryUndo()) return;
     editLog("EDGE UNDO");
     // req.args MUST be json::object(), not {} - see the long note at the Ctrl+Z
     // handler: an empty brace list picks the default ctor and yields JSON null,
@@ -2161,6 +2177,7 @@ static void queueRedo(double t) {
     double n = nowSec();
     if (n - g_lastRedoQueued <= kEditDebounceSec) return;
     g_lastRedoQueued = n;
+    if (captionTryRedo()) return;
     editLog("EDGE REDO");
     EditReq req; req.verb = "redo"; req.args = json::object(); req.kind = 4; req.t = t;
     queueEdit(std::move(req));
@@ -3119,8 +3136,22 @@ static double quantToFrame(double t) {
 // engine's write_srt REGENERATES captions from the clip transcripts (app.go
 // WriteSRTOnly -> edl.WriteSRT), so routing a hand edit through it would throw the
 // edit away. The format is four lines per cue - nothing here needs the engine.
-struct Caption { double start = 0, end = 0; std::string text; };
+// A caption is BOUND TO A CLIP INSTANCE (Jordan, 2026-07-24: "captions need to
+// stick with the clip when i rearrange... expand or shorten a clip, the captions
+// for that clip should expand to match"). start/end are the DERIVED absolute
+// compilation times used for drawing + the .srt render burn-in; clipId + srcIn/srcOut
+// are the ANCHOR - the caption's span in its clip's SOURCE time. reprojectCaptions()
+// recomputes start/end from the clip's current compStart/in after every timeline
+// reload, so a caption follows its clip through reorder/trim/split with zero extra
+// work, and a per-caption edit (drag/resize/retype/merge/split) survives the reload
+// because it lives on the caption, keyed to the clip, not on a flat absolute .srt.
+struct Caption { double start = 0, end = 0; std::string text; std::string clipId; double srcIn = 0, srcOut = 0; };
 static std::vector<Caption> g_caps;
+// Clip ids whose captions have already been seeded (from a sidecar .srt or the
+// source transcript). A clip is seeded exactly once; after that, the ABSENCE of a
+// caption on it is a deliberate user removal (issue 5: "the user chooses to remove
+// SOME of them - that's a creative decision") and must NOT be re-seeded.
+static std::set<std::string> g_capSeededClips;
 static std::string g_capPath;        // the .srt on disk; "" = no reel loaded, lane hidden
 // A-1 (Jordan: "i don't see captions"): captions no longer require a saved reel
 // sidecar. Every timeline clip whose SOURCE video has a transcript (.srt beside
@@ -3141,6 +3172,84 @@ static int  g_capSel = -1;           // selected caption (white border)
 static int  g_capEdit = -1;          // caption whose text is being typed, -1 = none
 static char g_capEditBuf[1024] = { 0 };
 static bool g_capEditFocus = false;  // one-shot: put the keyboard in the box next frame
+static bool g_capEditSnapped = false; // an undo snapshot was taken for THIS typing session (issue 7)
+
+// ---- caption <-> clip anchoring (issues 1-5) --------------------------------
+static Clip* clipById(const std::string& id) {
+    if (id.empty()) return nullptr;
+    for (auto& c : g_track[0]) if (c.id == id) return &c;
+    return nullptr;
+}
+enum ProjResult { PROJ_VISIBLE, PROJ_HIDDEN, PROJ_GONE };
+// projectCap recomputes a caption's absolute start/end from its clip's CURRENT
+// compStart+trim. VISIBLE = its source span overlaps the clip; HIDDEN = a trim
+// pushed the whole span outside [in,out] (kept, drawn as zero-width, restored when
+// the clip is re-lengthened - non-destructive); GONE = the clip was deleted.
+static ProjResult projectCap(Caption& cap) {
+    Clip* c = clipById(cap.clipId);
+    if (!c) return PROJ_GONE;
+    double a = std::max(cap.srcIn, c->in), b = std::min(cap.srcOut, c->out);
+    if (b <= a) { cap.start = cap.end = c->compStart; return PROJ_HIDDEN; }
+    cap.start = c->compStart + (a - c->in);
+    cap.end   = c->compStart + (b - c->in);
+    return PROJ_VISIBLE;
+}
+// reanchorCap derives a caption's SOURCE span from its CURRENT absolute start/end
+// against the clip it now sits on - called after a drag/resize so the edit survives
+// the next reload. Anchors to the clip under the caption's MIDPOINT (a caption
+// dragged mostly onto a new clip becomes that clip's).
+static void reanchorCap(Caption& cap) {
+    Clip* c = clipAtComp(0, (cap.start + cap.end) * 0.5);
+    if (!c) c = clipById(cap.clipId);
+    if (!c) return;
+    cap.clipId = c->id;
+    cap.srcIn  = c->in + (cap.start - c->compStart);
+    cap.srcOut = c->in + (cap.end   - c->compStart);
+    if (cap.srcOut < cap.srcIn) std::swap(cap.srcIn, cap.srcOut);
+}
+
+// ---- caption undo/redo (issue 7) --------------------------------------------
+// Native-only stack (see the forward-decl comment at queueUndo). A snapshot of the
+// WHOLE lane is taken before every caption edit; Ctrl+Z restores the newest one.
+struct CapSnapshot { std::vector<Caption> caps; std::set<std::string> seeded; double at = 0; };
+static std::vector<CapSnapshot> g_capUndo, g_capRedo;
+static bool g_lastUndoWasCaption = false;
+static const size_t kCapUndoMax = 200;
+static void saveCaptions();          // fwd: writes the .srt (defined below)
+static void pushCapUndo() {
+    CapSnapshot s; s.caps = g_caps; s.seeded = g_capSeededClips; s.at = nowSec();
+    g_capUndo.push_back(std::move(s));
+    if (g_capUndo.size() > kCapUndoMax) g_capUndo.erase(g_capUndo.begin());
+    g_capRedo.clear();
+}
+static bool captionTryUndo() {
+    if (g_capUndo.empty()) return false;
+    // Only claim the undo when the caption edit is at least as recent as the last
+    // CLIP edit; otherwise fall through so the engine undoes its clip edit first.
+    if (g_capUndo.back().at < g_lastEngineEditAt) return false;
+    CapSnapshot cur; cur.caps = g_caps; cur.seeded = g_capSeededClips; cur.at = nowSec();
+    g_capRedo.push_back(std::move(cur));
+    CapSnapshot s = std::move(g_capUndo.back()); g_capUndo.pop_back();
+    g_caps = std::move(s.caps); g_capSeededClips = std::move(s.seeded);
+    g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
+    saveCaptions();
+    g_lastUndoWasCaption = true;
+    editLog("CAP undo");
+    return true;
+}
+static bool captionTryRedo() {
+    // Redo pairs with the most recent undo: only redo a caption if the last undo
+    // was a caption undo, so Ctrl+Y after a clip undo still redoes the clip.
+    if (!g_lastUndoWasCaption || g_capRedo.empty()) return false;
+    CapSnapshot cur; cur.caps = g_caps; cur.seeded = g_capSeededClips; cur.at = nowSec();
+    g_capUndo.push_back(std::move(cur));
+    CapSnapshot s = std::move(g_capRedo.back()); g_capRedo.pop_back();
+    g_caps = std::move(s.caps); g_capSeededClips = std::move(s.seeded);
+    g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
+    saveCaptions();
+    editLog("CAP redo");
+    return true;
+}
 
 // ONE vertical placement for the whole reel - Jordan: "Simply dragging a caption up
 // or down should affect all captions vertical placement. horzontal placement is fine
@@ -3188,10 +3297,21 @@ static void capTrimRight(std::string& s) {
 // error (the reel simply has not been captioned yet) - the lane still appears
 // and says so, which is how Jordan finds out he needs to run becky-subtitle.
 static void loadCapStyle();   // defined just below - needs g_capPath, which this sets
+// anchorLoadedCaptions binds each just-parsed flat .srt cue to the clip under it and
+// records its source-time span, so a hand-edited / becky-subtitle caption FOLLOWS
+// its clip through later reorder/trim/split (issues 1-2). It then marks every clip
+// seeded: the sidecar is the COMPLETE caption set, so refresh must not also add raw
+// transcript captions on clips the sidecar happened to leave blank.
+static void anchorLoadedCaptions() {
+    for (auto& cap : g_caps) reanchorCap(cap);
+    for (auto& c : g_track[0]) g_capSeededClips.insert(c.id);
+}
 static void loadCaptions(const std::string& reelPath) {
     g_caps.clear(); g_capErr.clear(); g_capPath.clear();
     g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
     g_capSidecar = false;
+    // New reel: forget the previous reel's seeded clips + caption undo history.
+    g_capSeededClips.clear(); g_capUndo.clear(); g_capRedo.clear(); g_lastUndoWasCaption = false;
     if (reelPath.empty()) return;
     std::string p = reelPath; fwslash(p);
     size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
@@ -3243,7 +3363,8 @@ static void loadCaptions(const std::string& reelPath) {
     // A-1: a sidecar that parsed to real cues is the hand-edited truth and wins;
     // an empty/garbled one falls back to the derived per-source captions.
     g_capSidecar = !g_caps.empty();
-    if (!g_capSidecar) rebuildDerivedCaptions();
+    if (g_capSidecar) anchorLoadedCaptions();   // bind the good captions to their clips
+    else rebuildDerivedCaptions();
 }
 
 // Item 8 (round 3): CLI-CUT captions - becky-subtitle.exe (becky-go/cmd/subtitle),
@@ -3412,13 +3533,37 @@ static void saveCaptions() {
 // directly, the transcript fetch via drainAsync) - so no locking here.
 // Transcripts arrive asynchronously; each arrival re-runs this, so captions
 // appear per source as its transcript lands, never blocking a frame.
+// rebuildDerivedCaptions is the ONE post-reload caption refresh (kept its old name
+// so every caller - loadTimelineView, applyAddClipDelta, seekToSpan, the transcript
+// arrival - stays wired). It no longer CLEARS + re-derives from scratch (that threw
+// away every per-caption edit and never followed a sidecar's captions at all).
+// Instead it REPROJECTS each caption through its anchored clip (so it follows a
+// reorder/trim/split) and SEEDS a clip's captions from its source transcript exactly
+// ONCE - after that, an empty clip is a deliberate removal, not a re-seed target.
 static void rebuildDerivedCaptions() {
-    if (g_capSidecar) return;                 // the hand-edited sidecar wins
-    g_caps.clear();
-    g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
+    // Prune the seeded set to CURRENT clips: a deleted clip that comes back via
+    // Ctrl+Z is then re-seeded (its captions had been dropped on delete). A clip
+    // that merely moved/trimmed keeps its id, so it stays seeded and its edits hold.
+    if (!g_capSeededClips.empty()) {
+        std::set<std::string> present;
+        for (auto& c : g_track[0]) present.insert(c.id);
+        std::set<std::string> keepSeed;
+        for (auto& id : g_capSeededClips) if (present.count(id)) keepSeed.insert(id);
+        g_capSeededClips.swap(keepSeed);
+    }
+    // 1. Reproject existing captions; drop only those whose clip was deleted.
+    std::vector<Caption> kept;
+    kept.reserve(g_caps.size());
+    for (auto& cap : g_caps) {
+        if (cap.clipId.empty()) { kept.push_back(cap); continue; }  // legacy/unanchored: leave as drawn
+        Caption c = cap;
+        if (projectCap(c) != PROJ_GONE) kept.push_back(c);
+    }
+    // 2. Seed captions for clips not yet seeded, from their source transcript.
     bool waiting = false;
-    for (auto& c : g_track[0]) {
-        std::string name = baseName(c.source);
+    for (auto& clip : g_track[0]) {
+        if (g_capSeededClips.count(clip.id)) continue;
+        std::string name = baseName(clip.source);
         auto it = g_srcCues.find(name);
         if (it == g_srcCues.end()) {
             if (!g_srcCuesInFlight.count(name)) {
@@ -3427,10 +3572,8 @@ static void rebuildDerivedCaptions() {
                     [name](const json& r) {
                         g_srcCuesInFlight.erase(name);
                         if (!r.value("ok", false)) {
-                            // NOT cached: the usual cause is boot ordering - the
-                            // forensic launcher loads the reel BEFORE open_folder
-                            // indexes the case folder, so the first transcript ask
-                            // lands on an engine that hasn't met the video yet.
+                            // NOT cached: usually boot ordering (the forensic launcher
+                            // loads the reel before open_folder indexes the folder).
                             // Retry (bounded) until the index exists; only a real
                             // answer is worth remembering.
                             static std::map<std::string, int> retries;
@@ -3441,9 +3584,9 @@ static void rebuildDerivedCaptions() {
                         std::vector<Caption> cues;
                         if (r.contains("data") && r["data"].is_array())
                             for (auto& q : r["data"]) {
-                                Caption cp; cp.start = q.value("start", 0.0); cp.end = q.value("end", 0.0);
+                                Caption cp; cp.srcIn = q.value("start", 0.0); cp.srcOut = q.value("end", 0.0);
                                 cp.text = q.value("text", std::string());
-                                if (cp.end > cp.start && !cp.text.empty()) cues.push_back(cp);
+                                if (cp.srcOut > cp.srcIn && !cp.text.empty()) cues.push_back(cp);
                             }
                         // an empty ok-list is cached too - "this source has no
                         // transcript" is an answer, asked exactly once
@@ -3455,16 +3598,23 @@ static void rebuildDerivedCaptions() {
             continue;
         }
         for (auto& q : it->second) {
-            if (q.end <= c.in || q.start >= c.out) continue;   // cue outside this clip's span
+            // q.srcIn/q.srcOut are the cue's SOURCE times (from the transcript).
+            if (q.srcOut <= clip.in || q.srcIn >= clip.out) continue;   // outside this clip's window
             Caption cp;
-            cp.start = c.compStart + (std::max(q.start, c.in) - c.in);
-            cp.end   = c.compStart + (std::min(q.end,   c.out) - c.in);
-            cp.text = q.text;
-            if (cp.end > cp.start) g_caps.push_back(cp);
+            cp.clipId = clip.id;
+            cp.srcIn  = std::max(q.srcIn,  clip.in);
+            cp.srcOut = std::min(q.srcOut, clip.out);
+            cp.text   = q.text;
+            if (projectCap(cp) == PROJ_VISIBLE) kept.push_back(cp);
         }
+        g_capSeededClips.insert(clip.id);
     }
+    g_caps = std::move(kept);
     std::sort(g_caps.begin(), g_caps.end(),
               [](const Caption& a, const Caption& b) { return a.start < b.start; });
+    // Selection/edit indices point into the just-rebuilt vector; reset so a stale
+    // index can't select the wrong cue after a clip edit reshuffled the lane.
+    g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
     if (!g_caps.empty()) g_capErr.clear();
     else if (!waiting && !g_track[0].empty())
         g_capErr = "no captions - no transcript found beside these clips' source videos";
@@ -3902,9 +4052,52 @@ static void drawTimeline(double& curSec, bool& playing) {
 
     // E-14: right-click a clip -> Open in File Browser / Copy File Name / Open transcript.
     static int s_ctxIdx = -1;
+    static int s_capCtxIdx = -1;   // right-clicked caption (issues 4/5: glue + remove)
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         int idx, zone;
-        if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
+        // A caption right-click is tested FIRST - the caption lane sits below the clip
+        // lane, so its y-range is unambiguous and capHit already gates on it.
+        if (capHit(mx, my, idx, zone)) { s_capCtxIdx = idx; g_capSel = idx; ImGui::OpenPopup("capctx"); }
+        else if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
+    }
+    // Caption context menu (Jordan 2026-07-24). "Glue to next" merges the clicked
+    // caption with the one after it so they show together (his "right click should
+    // glue 2 captions together"); "Remove" drops just this caption and leaves the
+    // clip's others - a deliberate creative removal that is NOT re-seeded.
+    if (ImGui::BeginPopup("capctx")) {
+        if (s_capCtxIdx >= 0 && s_capCtxIdx < (int)g_caps.size()) {
+            // Find the caption that starts immediately after this one (the lane is kept
+            // sorted by start, but resolve by time so it is right even mid-edit).
+            int nextI = -1; double nextStart = 1e18;
+            double myStart = g_caps[s_capCtxIdx].start;
+            for (size_t i = 0; i < g_caps.size(); i++)
+                if ((int)i != s_capCtxIdx && g_caps[i].start >= myStart && g_caps[i].start < nextStart) { nextStart = g_caps[i].start; nextI = (int)i; }
+            ImGui::TextDisabled("caption");
+            ImGui::Separator();
+            ImGui::BeginDisabled(nextI < 0);
+            if (ImGui::MenuItem("Glue to next")) {
+                pushCapUndo();
+                Caption& a = g_caps[s_capCtxIdx];
+                Caption& b = g_caps[nextI];
+                std::string merged = a.text;
+                if (!merged.empty() && !b.text.empty()) merged += " ";
+                merged += b.text;
+                a.end = std::max(a.end, b.end);
+                a.text = merged;
+                reanchorCap(a);                       // span both cues on the clip under the middle
+                g_caps.erase(g_caps.begin() + nextI);
+                saveCaptions();
+                g_capSel = -1; g_capEdit = -1;
+            }
+            ImGui::EndDisabled();
+            if (ImGui::MenuItem("Remove caption")) {
+                pushCapUndo();
+                g_caps.erase(g_caps.begin() + s_capCtxIdx);
+                saveCaptions();
+                g_capSel = -1; g_capEdit = -1;
+            }
+        }
+        ImGui::EndPopup();
     }
     if (ImGui::BeginPopup("clipctx")) {
         if (s_ctxIdx >= 0 && s_ctxIdx < (int)g_track[0].size()) {
@@ -4153,6 +4346,7 @@ static void drawTimeline(double& curSec, bool& playing) {
             // real reel - drop the drag instead of sending the engine a reorder that
             // would corrupt the real reel out from under the preview.
             if (changed && !g_inTiedPreview) {
+                g_lastEngineEditAt = nowSec();   // a CLIP edit (drag-reorder bypasses queueEdit); keeps Ctrl+Z caption-vs-clip ordering right
                 g_track[0] = rest; packTrack(0); recomputeDur();
                 // A-1: the reorder is optimistic-local (no timeline reload), so the
                 // derived caption lane must follow the clips RIGHT NOW - found live:
@@ -4185,6 +4379,7 @@ static void drawTimeline(double& curSec, bool& playing) {
         } else if ((g.kind == 4 || g.kind == 5) && g.idx >= 0 && g.idx < (int)g_track[0].size()) {
             Clip& c = g_track[0][g.idx];
             if (std::abs(g.gIn - c.in) > 0.001 || std::abs(g.gOut - c.out) > 0.001) {
+                g_lastEngineEditAt = nowSec();   // a CLIP trim (drag bypasses queueEdit) - see reorder above
                 c.in = g.gIn; c.out = g.gOut;
                 packTrack(0); recomputeDur();
                 if (curSec > g_compDur) curSec = g_compDur;
@@ -4208,6 +4403,7 @@ static void drawTimeline(double& curSec, bool& playing) {
             // A caption CLICK (pressed and released without dragging) opens the
             // inline text box on that cue - "click and type the correct caption".
             g_capSel = g.idx; g_capEdit = g.idx; g_capEditFocus = true;
+            g_capEditSnapped = false;   // issue 7: snapshot on the FIRST keystroke of this session
             std::string t = g_caps[g.idx].text;
             for (auto& ch : t) if (ch == '\n' || ch == '\r') ch = ' ';
             snprintf(g_capEditBuf, sizeof g_capEditBuf, "%s", t.c_str());
@@ -4230,7 +4426,9 @@ static void drawTimeline(double& curSec, bool& playing) {
                          " fps=" + std::to_string(fps) +
                          " pps=" + std::to_string(g_pps) +
                          " onCut=" + (onCut ? "1" : "0"));
+                pushCapUndo();                       // issue 7: a drag/resize is undoable
                 cp.start = g.gIn; cp.end = g.gOut;
+                reanchorCap(cp);                     // issues 1-2/5: rebind to the clip so the move sticks
                 saveCaptions();          // straight back to the .srt - no hidden unsaved state
             }
         }
@@ -4527,7 +4725,13 @@ static void drawTimeline(double& curSec, bool& playing) {
         // live-write reverts the text on cancel too.
         std::string live = g_capEditBuf;
         for (auto& ch : live) if (ch == '\n' || ch == '\r') ch = ' ';
-        if (live != g_caps[g_capEdit].text) g_caps[g_capEdit].text = live;
+        if (live != g_caps[g_capEdit].text) {
+            // Issue 7: snapshot ONCE per typing session, before the first change, so
+            // Ctrl+Z (after the box closes) reverses the whole retype. In-box Ctrl+Z
+            // is ImGui's own char-level undo (the box has keyboard capture).
+            if (!g_capEditSnapped) { pushCapUndo(); g_capEditSnapped = true; }
+            g_caps[g_capEdit].text = live;
+        }
         if (enter || ImGui::IsItemDeactivated()) {
             saveCaptions();          // persist the final text to the .srt on commit
             g_capEdit = -1;
@@ -6492,11 +6696,15 @@ int main(int argc, char** argv) {
                         if (guess + d < n && cp.text[guess + d] == ' ') { splitAt = guess + d; break; }
                     }
                     if (splitAt != std::string::npos && splitAt > 0 && splitAt < n - 1) {
+                        pushCapUndo();               // issue 7: a caption split is undoable
                         Caption tail;
                         tail.start = t; tail.end = cp.end;
                         tail.text = cp.text.substr(splitAt + 1);
+                        tail.clipId = cp.clipId;     // both halves stay on the same clip
                         cp.end = t;
                         cp.text = cp.text.substr(0, splitAt);
+                        reanchorCap(cp);             // issues 1-3: each half re-binds so it follows the clip
+                        reanchorCap(tail);
                         g_caps.insert(g_caps.begin() + g_capSel + 1, tail);
                         saveCaptions();
                         editLog("CAP split idx=" + std::to_string(g_capSel) + " at t=" + std::to_string(t) +
