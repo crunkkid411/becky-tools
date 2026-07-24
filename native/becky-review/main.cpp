@@ -3462,6 +3462,10 @@ static void drawTimeline(double& curSec, bool& playing) {
             g_gest.kind = 1;
             curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
             playing = false; g_playingExt = false;
+            // Item 2: same stale-stock fix as the paused clip-click below - grabbing
+            // the real playhead and dragging it must not leave an old stock flag
+            // parked behind, or the visible playhead reads as "stuck" at two places.
+            g_stockSec = -1; g_stockFlash = false;
             g_gest.gIn = curSec;
             emitScrub(curSec, false);
         } else if (my < aY) {
@@ -3502,6 +3506,9 @@ static void drawTimeline(double& curSec, bool& playing) {
             g_gest.kind = 1;
             curSec = std::min(xToSec(mx), g_compDur);
             playing = false; g_playingExt = false;
+            // Item 2: same stale-stock fix - an empty-timeline click/scrub is also a
+            // deliberate reposition while stopped.
+            g_stockSec = -1; g_stockFlash = false;
             g_gest.gIn = curSec;
             emitScrub(curSec, false);
         }
@@ -3611,6 +3618,17 @@ static void drawTimeline(double& curSec, bool& playing) {
                     g_stockFlash = true;
                 } else {
                     curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+                    // Item 2 (round 2): a STOPPED clip-click moved curSec but left any
+                    // earlier g_stockSec exactly where it was - the stock draws its OWN
+                    // flag (the solid black one, right above the white real playhead in
+                    // the draw code), so a stale stock from an earlier ruler click or
+                    // playhead drag kept showing as a playhead that "didn't move", even
+                    // though curSec (the white flag) had. Jordan, verbatim: "the
+                    // playhead body remains where i last clicked the playhead". The
+                    // stock's whole purpose is a MID-PLAYBACK return point (see its
+                    // declaration comment) - there is no playback running here, so
+                    // clearing it is correct, not a workaround.
+                    g_stockSec = -1; g_stockFlash = false;
                     emitScrub(curSec, true);
                 }
             }
