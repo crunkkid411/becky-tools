@@ -442,3 +442,53 @@ func (a *App) Reindex() FolderView {
 	a.mu.Unlock()
 	return a.folderView()
 }
+
+// IndexStatusResult is the reply for both index_status and index_source:
+// whether source's transcript is (now) present in the qmd smart-search
+// index (internal/qmdindex's "_md" locator folder).
+type IndexStatusResult struct {
+	Indexed bool `json:"indexed"`
+}
+
+// IndexStatus reports whether source's transcript already has a qmd search
+// locator, for becky-review's "not yet indexed" icon (mirrors the "+"
+// button's has_transcript check). A source with no transcript at all, or
+// not resolvable in the open folder, reports NOT indexed rather than
+// erroring — there is nothing to find either way and the icon treats both
+// the same. Read-only; never writes a locator (see IndexSource for that).
+func (a *App) IndexStatus(source string) IndexStatusResult {
+	v, ok := a.resolveSourceForRead(source)
+	if !ok || !v.HasTranscript {
+		return IndexStatusResult{Indexed: false}
+	}
+	a.mu.Lock()
+	folder := a.folder
+	a.mu.Unlock()
+	if folder == "" {
+		return IndexStatusResult{Indexed: false}
+	}
+	return IndexStatusResult{Indexed: qmdindex.IsIndexed(v.TranscriptPath, qmdindex.MDDir(folder))}
+}
+
+// IndexSource converts source's transcript into a qmd locator right now —
+// the click-to-fix half of the "not yet indexed" icon, the same "act on
+// what the icon is telling you" shape as the "+" button's requestTranscribe.
+// A source with no transcript can't be indexed (nothing to convert), which
+// is reported as a plain error so the icon's click can surface why.
+func (a *App) IndexSource(source string) (IndexStatusResult, error) {
+	v, ok := a.resolveSourceForRead(source)
+	if !ok || !v.HasTranscript {
+		return IndexStatusResult{}, fmt.Errorf("no transcript to index for %s", source)
+	}
+	a.mu.Lock()
+	folder := a.folder
+	a.mu.Unlock()
+	if folder == "" {
+		return IndexStatusResult{}, fmt.Errorf("no folder open")
+	}
+	if _, err := qmdindex.Convert(v.TranscriptPath, qmdindex.MDDir(folder)); err != nil {
+		return IndexStatusResult{}, err
+	}
+	go func() { _ = runQmdUpdate() }()
+	return IndexStatusResult{Indexed: true}, nil
+}

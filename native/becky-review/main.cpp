@@ -1589,6 +1589,50 @@ static double sourceFps(const std::string& source) {
     return 30.0;
 }
 
+// 2026-06-30(2): "we need an 'index' icon for results which have not yet been
+// indexed, similar to our 'plus' button which transcribes" - a plain-keyword
+// hit's source can have a transcript that never got converted to a qmd
+// search locator (internal/qmdindex's "_md" folder), so smart search will
+// never surface it until it is. Cached per source, same lazy-background-probe
+// shape as sourceFps just above - never stats the whole corpus per frame, and
+// a source is only ever asked about once until an index click marks it done.
+enum class IndexState { Unknown, Indexed, NotIndexed };
+static std::map<std::string, IndexState> g_indexBySource;
+static std::set<std::string> g_indexInFlight;
+static std::mutex g_indexMx;
+static IndexState sourceIndexState(const std::string& source) {
+    if (source.empty()) return IndexState::Indexed; // nothing playable to flag
+    std::lock_guard<std::mutex> lk(g_indexMx);
+    auto it = g_indexBySource.find(source);
+    if (it != g_indexBySource.end()) return it->second;
+    if (!g_indexInFlight.count(source)) {
+        g_indexInFlight.insert(source);
+        std::thread([source] {
+            json r = engineCall("index_status", { {"source", source} }, 8.0);
+            IndexState st = IndexState::Indexed; // unknown/error - never flash a false alarm
+            if (r.value("ok", false)) {
+                const json& d = r.contains("data") ? r["data"] : r;
+                st = d.value("indexed", true) ? IndexState::Indexed : IndexState::NotIndexed;
+            }
+            std::lock_guard<std::mutex> lk2(g_indexMx);
+            g_indexBySource[source] = st;
+        }).detach();
+    }
+    return IndexState::Unknown;
+}
+// Click-to-fix half of the icon: runs the same qmdindex convert the
+// transcribe pipeline already calls, then marks the source Indexed locally
+// so the icon clears immediately instead of waiting on a re-check round trip.
+static void requestIndexSource(const std::string& source) {
+    engineCallAsync("index_source", { {"source", source} }, 30.0, "Indexing for search...",
+        [source](const json& r) {
+            if (r.value("ok", false)) {
+                std::lock_guard<std::mutex> lk(g_indexMx);
+                g_indexBySource[source] = IndexState::Indexed;
+            }
+        });
+}
+
 // --------------- D-6: provenance overlay (Date+UTC / ORIG TC / filename) ---------------
 // Builds the SAME lines the engine's render burns in (becky-go/internal/reel/
 // drawtext.go lowerThirdFilter: Date, ORIG TC, filename|person|location, Link -
@@ -6253,7 +6297,26 @@ int main(int argc, char** argv) {
                         // destructively (addHitToTimeline -> addSpanToTimeline). The old
                         // single-click path (seekToSpan, startPlaying=true) replaced the
                         // WHOLE live edit reel with a one-clip audition - that was the bug.
-                        if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        // AllowOverlap so the "not yet indexed" icon drawn below (same
+                        // technique as the library card's round "+") can steal its own
+                        // click instead of always resolving to this row's Selectable.
+                        // The icon's own rect is worked out HERE (before Selectable, from
+                        // the same cursor pos/width Selectable is about to claim) so a
+                        // click on the icon can be excluded from the row's click below -
+                        // drawLibraryCard's "+" needs the same exclusion, just after the
+                        // fact (its button decides via a returned struct field instead).
+                        ImVec2 rowP0  = ImGui::GetCursorScreenPos();
+                        float  rowW   = ImGui::GetContentRegionAvail().x;
+                        float  rowH   = ImGui::GetTextLineHeightWithSpacing();
+                        bool   showIdx = sourceIndexState(h.source) == IndexState::NotIndexed;
+                        const float S = ImGui::GetIO().FontGlobalScale;
+                        float idxD    = ImGui::GetTextLineHeight() * 0.8f;
+                        ImVec2 idxBc  = ImVec2(rowP0.x + rowW - idxD * 0.5f - 4.0f * S, rowP0.y + rowH * 0.5f);
+                        bool overIdx  = showIdx && ImGui::IsMouseHoveringRect(
+                            ImVec2(idxBc.x - idxD * 0.5f, idxBc.y - idxD * 0.5f),
+                            ImVec2(idxBc.x + idxD * 0.5f, idxBc.y + idxD * 0.5f));
+                        ImGui::SetNextItemAllowOverlap();
+                        if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick) && !overIdx) {
                             g_hitSel = (int)i;
                             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec);
                             else previewSourceFrame(h.source, h.start);
@@ -6278,10 +6341,41 @@ int main(int argc, char** argv) {
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
                             if (ImGui::MenuItem("Copy Quote")) ImGui::SetClipboardText(h.text.c_str());
                             if (ImGui::MenuItem("Transcribe")) requestTranscribe(h.source, baseName(h.source));
+                            if (showIdx && ImGui::MenuItem("Index for Search")) requestIndexSource(h.source);
                             ImGui::EndPopup();
                         }
                         if (g_hitSel == (int)i && g_hitScrollPending) { ImGui::SetScrollHereY(0.5f); g_hitScrollPending = false; }
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", h.name.c_str(), h.date.c_str());
+                        // 2026-06-30(2): "not yet indexed" icon, mirrors the library card's
+                        // round "+" (drawLibraryCard) - hand-drawn, not a font glyph, so a
+                        // missing Segoe MDL2 range can never regress this into a hollow
+                        // square. Sits in this row's own right edge via AllowOverlap same as
+                        // that button; click runs the same qmdindex convert the transcribe
+                        // pipeline calls, without navigating away from the search results.
+                        // Reuses idxBc/idxD/showIdx computed before the Selectable above,
+                        // so the click-exclusion test and the drawn icon can never disagree
+                        // about where the icon actually is.
+                        if (showIdx) {
+                            ImVec2 bc = idxBc;
+                            float id_ = idxD;
+                            ImGui::SetCursorScreenPos(ImVec2(bc.x - id_ * 0.5f, bc.y - id_ * 0.5f));
+                            ImGui::SetNextItemAllowOverlap();
+                            bool idxClicked = ImGui::InvisibleButton("##idx", ImVec2(id_, id_));
+                            bool idxHov = ImGui::IsItemHovered();
+                            ImDrawList* idl = ImGui::GetWindowDrawList();
+                            float ir = id_ * 0.5f;
+                            idl->AddCircleFilled(bc, idxHov ? ir : ir - 1.0f, IM_COL32(0x00, 0xAE, 0xEF, 255));
+                            for (int k = 0; k < 3; k++) {
+                                float ly = bc.y - ir * 0.35f + k * (ir * 0.35f);
+                                float lw = ir * (0.35f + 0.18f * (float)k);
+                                idl->AddLine(ImVec2(bc.x - lw, ly), ImVec2(bc.x + lw, ly), IM_COL32(0, 0, 0, 255), 1.6f * S);
+                            }
+                            if (idxHov) {
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                ImGui::SetTooltip("not yet in the smart-search index - click to index now");
+                            }
+                            if (idxClicked) requestIndexSource(h.source);
+                        }
                     }
                     ImGui::PopID();
                 }

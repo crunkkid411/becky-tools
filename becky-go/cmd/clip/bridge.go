@@ -110,6 +110,14 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 	case "reindex":
 		// Re-walk the open folder after external changes (no-op if none open).
 		return a.Reindex(), nil
+	case "index_status":
+		// Cheap read-only check: is source's transcript already in the qmd
+		// smart-search index? Drives becky-review's "not yet indexed" icon.
+		return a.IndexStatus(argString(args, "source")), nil
+	case "index_source":
+		// Click-to-fix half of the same icon: convert source's transcript
+		// into a qmd locator right now.
+		return a.IndexSource(argString(args, "source"))
 
 	// ---- timeline mutation ----
 	case "add_clip":

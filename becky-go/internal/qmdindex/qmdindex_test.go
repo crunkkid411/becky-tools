@@ -79,6 +79,23 @@ func TestConvert_NoSegmentsErrors(t *testing.T) {
 	}
 }
 
+func TestIsIndexed(t *testing.T) {
+	dir := t.TempDir()
+	srt := filepath.Join(dir, "video_parakeet_transcription.srt")
+	writeSRT(t, srt, sampleSRT)
+	mdDir := filepath.Join(dir, "_md")
+
+	if IsIndexed(srt, mdDir) {
+		t.Fatal("IsIndexed true before Convert ever ran")
+	}
+	if _, err := Convert(srt, mdDir); err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !IsIndexed(srt, mdDir) {
+		t.Fatal("IsIndexed false right after Convert wrote the locator")
+	}
+}
+
 func TestMDPath_DeterministicAndCollisionSafe(t *testing.T) {
 	dir := t.TempDir()
 	mdDir := filepath.Join(dir, "_md")

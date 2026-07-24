@@ -136,6 +136,16 @@ func readFrontmatterSource(path string) (string, bool) {
 	return string(m[1]), true
 }
 
+// IsIndexed reports whether srtPath already has a qmd .md locator in mdDir,
+// matched the SAME way Convert/Sweep match one (frontmatter "source:", via
+// buildMDIndex) — not by checking whether MDPath(srtPath, mdDir) exists,
+// since an older locator can live under a different filename (see MDPath's
+// doc comment). Used by becky-review's "not yet indexed" search-result icon.
+func IsIndexed(srtPath, mdDir string) bool {
+	_, ok := buildMDIndex(mdDir)[filepath.Base(srtPath)]
+	return ok
+}
+
 // Convert reads srtPath and writes (or, if mdDir already has a locator for
 // this exact transcript under any name, UPDATES) its qmd .md locator,
 // returning the path written. Read-only on srtPath. Degrade, never crash: an
