@@ -3156,12 +3156,12 @@ static void drawTimeline(double& curSec, bool& playing) {
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("tl", ImVec2(tlW, bot - p.y));
     bool hovered = ImGui::IsItemHovered();
-    // I-BEAM over the timeline, not the hand. Jordan asked for this directly
-    // (feedback1). The hand cursor reads as "grab and drag the surface", which is
-    // wrong here: the timeline's primary gesture is placing the playhead at an
-    // exact instant, and an I-beam has a defined single-pixel hotspot he can aim
-    // with. On a 150s reel a few pixels is several frames.
-    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
+    // NORMAL POINTER over the timeline. Jordan asked for the I-beam on 2026-06-30
+    // (feedback1, replacing the hand) and then REVERSED that later - he wants the
+    // ordinary arrow back. Newest instruction wins, so do not "restore" the I-beam
+    // by citing the older feedback file. Leaving the cursor unset here means ImGui
+    // keeps ImGuiMouseCursor_Arrow, which is exactly what he asked for.
+    (void)hovered;
     bool pressed = ImGui::IsItemActivated();
     bool active = ImGui::IsItemActive();
     bool released = ImGui::IsItemDeactivated();
