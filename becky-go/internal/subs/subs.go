@@ -325,6 +325,43 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 	return chunks
 }
 
+// splitAtHardBoundaries re-asserts Jordan's two INVIOLABLE break rules on chunks
+// that some later step may have merged across: a caption line ENDS at a ? or !
+// (endsSentence), and it ENDS at a real speaker pause (a gap wider than gapSeconds
+// — "match the speaker's pace", his rule 1). These are compiled in, not left to the
+// model: the LLM regroup ignores its own punctuation instruction, and
+// rebalanceCapSplits folds a lone word back onto a question when the combined line
+// happens to fit ("what i miss?" + "good" -> "miss? good"). It only ever SPLITS an
+// existing chunk at an internal boundary — never moves a word between chunks — so
+// the result is still a strict in-order partition, and where the break was already
+// there it is a no-op.
+func splitAtHardBoundaries(chunks [][]Word, gapSeconds float64) [][]Word {
+	out := make([][]Word, 0, len(chunks))
+	for _, c := range chunks {
+		start := 0
+		for i := 1; i < len(c); i++ {
+			pause := c[i].Start-c[i-1].End > gapSeconds+gapEps
+			if endsSentence(c[i-1].Word) || pause {
+				out = append(out, c[start:i])
+				start = i
+			}
+		}
+		if start < len(c) {
+			out = append(out, c[start:])
+		}
+	}
+	return out
+}
+
+// noPause disables the pause half of splitAtHardBoundaries, leaving ONLY the
+// sentence-end (?/!) rule. Used where a pause break would fight a dangling-word
+// push that already ran (RepairDangling moves "to"/"the" across a pause on purpose;
+// re-breaking at that pause would strand it again). A ? word is never a dangler, so
+// the sentence rule never has that conflict and is always safe to apply last.
+const noPause = 1e18
+
+func splitAtSentenceEnds(chunks [][]Word) [][]Word { return splitAtHardBoundaries(chunks, noPause) }
+
 // Build turns kept source segments into output-timeline cues with cut-snapped,
 // gap-free timing. Segments are laid end to end in the order given: segment i
 // occupies [offset, offset+Dur) on the output timeline.

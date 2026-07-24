@@ -120,6 +120,131 @@ func TestChunkWordsStillBreaksAtRealPausesFirst(t *testing.T) {
 	}
 }
 
+// TestPass1KeepsSentenceEndBreak is Jordan's core rule (2026-07-24): "when a ? or
+// ! appears that's the end of the chunk." ChunkWords breaks there, but the
+// downstream rebalanceCapSplits is NOT sentence-aware — it folded the lone next
+// word back onto the question ("what i miss?" + "good" -> "miss? good") because the
+// combined line fits under the cap. The full pass-1 recipe must keep the break.
+func TestPass1KeepsSentenceEndBreak(t *testing.T) {
+	// Tight timings, no pauses: ONLY the ? can force the break, so this pins the
+	// sentence rule specifically (not a pause coincidence).
+	words := []Word{
+		w("what", 0.00, 0.20), w("i", 0.22, 0.30), w("miss?", 0.32, 0.55),
+		w("good", 0.57, 0.90),
+	}
+	got := render(Pass1Chunks(words, 22, 0.5))
+	want := []string{"what i miss?", "good"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestRepairModelGroupsKeepsSentenceEndBreak is Jordan's exact bad example: the
+// review model returned "you know what i" | "miss? good", gluing a ? to the next
+// sentence. The model ignores the punctuation instruction in its prompt (Jordan
+// confirmed it "should know better" but doesn't), so the rule is enforced in code.
+// No line may carry a ? or ! anywhere but its last word.
+func TestRepairModelGroupsKeepsSentenceEndBreak(t *testing.T) {
+	groups := [][]Word{
+		{w("you", 0.00, 0.20), w("know", 0.22, 0.40), w("what", 0.42, 0.60), w("i", 0.62, 0.70)},
+		{w("miss?", 0.72, 0.95), w("good", 0.97, 1.30)},
+	}
+	got := render(RepairModelGroups(groups, 22, 0.5))
+	for _, line := range got {
+		fields := strings.Fields(line)
+		for k, f := range fields {
+			if k != len(fields)-1 && (strings.HasSuffix(f, "?") || strings.HasSuffix(f, "!")) {
+				t.Errorf("line %q has a sentence end mid-line — the ? break was lost: %v", line, got)
+			}
+		}
+	}
+}
+
+// TestRepairModelGroupsKeepsSpeakerPause is Jordan's rule 1 (match the speaker's
+// pace): the model must not glue words together ACROSS a real pause. "you know"
+// [0.8s pause] "what i" is two lines, not one — the model merged them and the
+// deterministic repair has to re-assert the pause.
+func TestRepairModelGroupsKeepsSpeakerPause(t *testing.T) {
+	groups := [][]Word{
+		{w("you", 0.00, 0.20), w("know", 0.22, 0.40),
+			w("what", 1.20, 1.40), w("i", 1.42, 1.50)}, // 0.8s pause before "what"
+	}
+	got := render(RepairModelGroups(groups, 22, 0.3))
+	want := []string{"you know", "what i"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("got   %q\nwant  %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestJordansExampleProducesTheRightChunks is Jordan's own worked example
+// (2026-07-24). Pace is the #1 deciding factor: the pause after "know" and the ?
+// after "miss" break the lines, while "good offensive content" is one phrase with
+// no pause inside it. The BAD grouping the model actually gave him
+// ("you know what i" | "miss? good" | ...) must be repaired to the SAME
+// rule-correct result the deterministic path produces — a ? never sits mid-line, a
+// pause is never glued over, phrases stay whole, and 22 is only a cap not a target.
+func TestJordansExampleProducesTheRightChunks(t *testing.T) {
+	words := []Word{
+		w("you", 0.00, 0.20), w("know", 0.25, 0.45),
+		w("what", 0.85, 1.05), w("i", 1.10, 1.20), w("miss?", 1.25, 1.50),
+		w("good", 1.55, 2.20),
+		w("offensive", 2.25, 2.60), w("content", 2.65, 3.00),
+		w("watching", 3.50, 3.80), w("those", 3.85, 4.00), w("videos", 4.05, 4.40),
+	}
+	want := []string{"you know", "what i miss?", "good offensive content", "watching those videos"}
+
+	if got := render(Pass1Chunks(words, 22, 0.25)); strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("Pass1Chunks (deterministic):\n got  %q\n want %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+
+	bad := [][]Word{
+		{words[0], words[1], words[2], words[3]}, // "you know what i"
+		{words[4], words[5]},                     // "miss? good"  (? glued to next sentence)
+		{words[6], words[7]},                     // "offensive content"
+		{words[8], words[9], words[10]},          // "watching those videos"
+	}
+	if got := render(RepairModelGroups(bad, 22, 0.25)); strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("RepairModelGroups (from the bad model grouping):\n got  %q\n want %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestSingleWordChunkFromPaceSurvives is Jordan (2026-07-24): single-word captions
+// are ABSOLUTELY allowed on TikTok — a word the speaker isolated with a pause (a
+// drawn-out beat) must stay its own caption. Only a lone word with NO pace behind
+// it (a bare character-cap artifact) is ever redistributed; a pace-driven one is
+// never glued away, on either path.
+func TestSingleWordChunkFromPaceSurvives(t *testing.T) {
+	words := []Word{
+		w("the", 0.00, 0.20), w("food", 0.25, 0.45),
+		w("good", 1.10, 1.75), // 0.65s pause before AND after — a beat, not a cap artifact
+		w("really", 2.40, 2.65), w("nice", 2.70, 2.95),
+	}
+	want := []string{"the food", "good", "really nice"}
+	if got := render(Pass1Chunks(words, 22, 0.25)); strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("Pass1Chunks glued away a pace-isolated word:\n got  %q\n want %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+	// Even if the model globs it all onto one line, the pace break is re-asserted.
+	if got := render(RepairModelGroups([][]Word{words}, 22, 0.25)); strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("RepairModelGroups glued away a pace-isolated word:\n got  %q\n want %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
+// TestSingleWordChunkAfterQuestionSurvives is the BEST version of Jordan's example:
+// "good" sits between a ? (which ends the previous caption) and a jumpcut pause, so
+// it is its own one-word caption — never glued back onto "miss?" nor onto the
+// phrase after the pause.
+func TestSingleWordChunkAfterQuestionSurvives(t *testing.T) {
+	words := []Word{
+		w("what", 0.00, 0.20), w("i", 0.22, 0.30), w("miss?", 0.32, 0.55),
+		w("good", 0.60, 1.25), // no pause before (the ? breaks it), drawn out
+		w("offensive", 1.90, 2.25), w("content", 2.30, 2.65), // 0.65s pause before = jumpcut
+	}
+	want := []string{"what i miss?", "good", "offensive content"}
+	if got := render(Pass1Chunks(words, 22, 0.25)); strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("Pass1Chunks:\n got  %q\n want %q", strings.Join(got, " | "), strings.Join(want, " | "))
+	}
+}
+
 func renderChunks(chunks [][]Word) []string {
 	var out []string
 	for _, c := range chunks {

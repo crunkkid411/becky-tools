@@ -392,7 +392,10 @@ func noLonePiece(pieces [][]Word) bool {
 // repairs. Centralised so the two call sites can't drift apart.
 func Pass1Chunks(words []Word, maxChars int, gapSeconds float64) [][]Word {
 	raw := rebalanceCapSplits(ChunkWords(words, maxChars, gapSeconds), maxChars, gapSeconds)
-	return RepairDangling(raw, maxChars)
+	// rebalanceCapSplits is not sentence-aware and can re-glue a ? to the next
+	// line; re-assert the sentence break last. The pause break is already safe on
+	// this path — rebalanceCapSplits leaves a real pause alone.
+	return splitAtSentenceEnds(RepairDangling(raw, maxChars))
 }
 
 // RepairModelGroups is Pass1Chunks' counterpart for the LLM review pass: the
@@ -410,8 +413,17 @@ func Pass1Chunks(words []Word, maxChars int, gapSeconds float64) [][]Word {
 // the very thing that strands a lone word, so the rebalance has to run AFTER it —
 // running it first would repair groups that EnforceMaxChars then re-breaks.
 func RepairModelGroups(groups [][]Word, maxChars int, gapSeconds float64) [][]Word {
-	capped := EnforceMaxChars(RepairDangling(groups, maxChars), maxChars)
-	return RepairDangling(rebalanceCapSplits(capped, maxChars, gapSeconds), maxChars)
+	// The model regroups word indices freely and WILL merge across a sentence end
+	// or a real speaker pause — Jordan's two hard rules — despite the prompt telling
+	// it not to. Re-assert BOTH up front so the phrase repairs run on pace-correct
+	// input (a pause break can leave a dangling word, which RepairDangling then
+	// pushes forward — so this has to come before the repairs, not after).
+	hard := splitAtHardBoundaries(groups, gapSeconds)
+	capped := EnforceMaxChars(RepairDangling(hard, maxChars), maxChars)
+	repaired := RepairDangling(rebalanceCapSplits(capped, maxChars, gapSeconds), maxChars)
+	// rebalanceCapSplits can still re-glue a ? (it guards pauses, not sentence
+	// ends), so re-assert the sentence break at the very end where nothing undoes it.
+	return splitAtSentenceEnds(repaired)
 }
 
 // RepairDangling pushes any phrase-splitting trailing word onto the next line,

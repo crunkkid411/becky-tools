@@ -4427,8 +4427,23 @@ static void drawTimeline(double& curSec, bool& playing) {
                     }
                 }
             } else {
+                // Jordan (2026-07-24): a plain CLICK that landed in a clip's edge zone
+                // but NEVER dragged is NAVIGATION, not a trim. It only reached kind 4/5
+                // because the cursor was near the cut - being close to (or right on) the
+                // cut must never swallow the click. So do exactly what a clip-BODY click
+                // does: select the clip AND move the playhead to the click (paused), or
+                // set the stock (playing). Mirrors the kind==2 release path above so the
+                // two can't drift.
                 g_sel.clear(); g_sel.insert(c.id); g_selAnchor = c.id;
                 emitSelect();
+                if (g_playingExt) {
+                    g_stockSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+                    g_stockFlash = true;
+                } else {
+                    curSec = std::max(0.0, std::min(xToSec(mx), g_compDur));
+                    g_stockSec = -1; g_stockFlash = false;
+                    emitScrub(curSec, true);
+                }
             }
         } else if (g.kind == 8 && g.idx >= 0 && g.idx < (int)g_caps.size()) {
             // A caption CLICK (pressed and released without dragging) opens the
