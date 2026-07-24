@@ -3501,10 +3501,30 @@ static void runCliCutCaptions(const std::string& reelPath) {
 // "get captions" (the toolbar button + both right-click menus, items 16/27): save the
 // CURRENT reel, then build real TikTok-style captions for it with becky-subtitle. Extracted
 // so the toolbar button and the clip/timeline context menu all run the identical pipeline.
+// reelPathForVideo is the STABLE, per-video name of a video's saved auto-cut reel:
+// "<video without extension>.reel.json", right beside the source. The robot
+// pipeline saves there and the library card looks there, so "pull up the cut I
+// already made" is one click and no re-analysis (Jordan 2026-07-24).
+static std::string reelPathForVideo(const std::string& videoPath) {
+    size_t dot = videoPath.find_last_of('.'), slash = videoPath.find_last_of("/\\");
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+        return videoPath.substr(0, dot) + ".reel.json";
+    return videoPath + ".reel.json";
+}
+
 static void triggerGetCaptions() {
     if (g_cliCutBusy.load() || g_track[0].empty()) return;
     g_cliCutBusy.store(true);
-    engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel for captions...", [](const json& r) {
+    // When the WHOLE timeline is one video's cut (the robot / get-captions case), save
+    // the reel BESIDE that video under its stable per-video name, so the card can find
+    // and reload it later. A mixed reel keeps the engine's default location.
+    std::string savePath;
+    {
+        std::string src = g_track[0][0].source; bool single = !src.empty();
+        for (auto& c : g_track[0]) if (c.source != src) { single = false; break; }
+        if (single) savePath = reelPathForVideo(src);
+    }
+    engineCallAsync("save_reel", { {"path", savePath} }, 20.0, "Saving reel for captions...", [](const json& r) {
         if (r.value("ok", false)) {
             std::string path = r.value("data", json::object()).value("path", std::string());
             if (!path.empty()) runCliCutCaptions(path);
@@ -4846,6 +4866,10 @@ static void drawTimeline(double& curSec, bool& playing) {
 // ---- library state ----
 struct VideoRow {
     std::string path, name, date; bool hasTranscript = false;
+    // #4 (Jordan 2026-07-24): true when a saved auto-cut reel exists beside this
+    // video (reelPathForVideo). The blue robot then LOADS that cut in one click
+    // instead of re-analysing. Set on folder load.
+    bool hasSavedCut = false;
     // B-1 card display cache: the middle-ellipsised name and the width it was
     // measured at. Recomputed only when the panel width changes, so a 2258-video
     // corpus costs zero CalcTextSize work per frame while the panel is still.
@@ -5446,12 +5470,26 @@ static LibCardResult drawLibraryCard(VideoRow& v, bool selected, bool justViewed
     const bool rhov = ImGui::IsItemHovered();
     if (rhov) { res.clicked = false; res.dbl = false; }
     {
-        const ImU32 blue = rhov ? IM_COL32(0x33, 0xC2, 0xF2, 255) : IM_COL32(0x00, 0xAE, 0xEF, 255);
+        // GREEN when a saved auto-cut already exists (one click = LOAD it, no
+        // re-analysis); BLUE when there is none yet (one click = auto-cut + caption).
+        const bool saved = v.hasSavedCut;
+        const ImU32 col = saved ? (rhov ? IM_COL32(0x5B, 0xFF, 0x77, 255) : IM_COL32(0x14, 0xFF, 0x39, 255))
+                                : (rhov ? IM_COL32(0x33, 0xC2, 0xF2, 255) : IM_COL32(0x00, 0xAE, 0xEF, 255));
         const float rh = btnD * 0.92f;
-        drawRobotMark(dl, bc2.x - rh * 0.86f * 0.5f, bc2.y - rh * 0.5f, rh, blue);
+        drawRobotMark(dl, bc2.x - rh * 0.86f * 0.5f, bc2.y - rh * 0.5f, rh, col);
+        if (saved) {
+            // A down-chevron badge = "load this saved cut down onto the timeline".
+            const float k = btnD * 0.15f;
+            const ImVec2 b(bc2.x + btnD * 0.30f, bc2.y - btnD * 0.30f);
+            dl->AddCircleFilled(b, k + 3.0f * S, IM_COL32(10, 12, 14, 255));
+            dl->AddLine(ImVec2(b.x - k, b.y - k * 0.4f), ImVec2(b.x, b.y + k * 0.7f), IM_COL32(0x14, 0xFF, 0x39, 255), 2.2f * S);
+            dl->AddLine(ImVec2(b.x + k, b.y - k * 0.4f), ImVec2(b.x, b.y + k * 0.7f), IM_COL32(0x14, 0xFF, 0x39, 255), 2.2f * S);
+        }
         if (rhov) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            ImGui::SetTooltip("Auto-cut this video AND caption it (becky-subtitle) - clips + captions onto the timeline");
+            ImGui::SetTooltip("%s", saved
+                ? "Load the saved auto-cut of this video (clips + captions) - already analysed. Right-click to re-run."
+                : "Auto-cut this video AND caption it (becky-subtitle) - clips + captions onto the timeline");
         }
     }
 
@@ -5490,6 +5528,7 @@ static void applyFolderView(const json& d, const std::string& fallbackRoot) {
             row.name = v.value("name", std::string());
             row.date = v.value("date", std::string());
             row.hasTranscript = v.value("has_transcript", false);
+            row.hasSavedCut = !row.path.empty() && std::ifstream(reelPathForVideo(row.path)).good();
             if (!row.name.empty()) g_videos.push_back(row);
         }
     }
@@ -8139,11 +8178,28 @@ int main(int argc, char** argv) {
                         }
                         if (res.plus) { g_libSel = i; requestTranscribe(v.path, v.name); }
                         if (res.robot) {
-                            // Item 13: auto-cut this whole video, then caption the result with
-                            // becky-subtitle - one pipeline, clips + captions onto the timeline.
                             g_libSel = i;
                             endPreviewRestore(curSec, playing, lastComposed);
-                            applyAutoCut(v.name, v.path, curSec, lastComposed, {}, /*thenCaptions=*/true);
+                            if (v.hasSavedCut) {
+                                // #4: a saved auto-cut already exists - LOAD it (clips +
+                                // captions) in one click, no re-analysis. Same load path as
+                                // the Load Reel button (loadTimelineView + loadCaptions).
+                                std::string rp = reelPathForVideo(v.path);
+                                engineCallAsync("load_reel", { {"path", rp} }, 30.0, "Loading saved cut...",
+                                                [rp, &curSec, &playing, &lastComposed](const json& r) {
+                                    if (r.value("ok", false)) {
+                                        loadTimelineView(r.contains("data") ? r["data"] : r);
+                                        curSec = 0; playing = false; g_playingExt = false; lastComposed = -1;
+                                        loadCaptions(rp);
+                                        g_renderMsg = "Loaded saved cut - " + baseName(rp);
+                                    } else g_renderMsg = "Load saved cut failed: " + r.value("error", std::string("?"));
+                                    g_renderMsgAt = nowSec();
+                                });
+                            } else {
+                                // Item 13: no saved cut yet - auto-cut this whole video, then
+                                // caption the result with becky-subtitle, one pipeline onto the timeline.
+                                applyAutoCut(v.name, v.path, curSec, lastComposed, {}, /*thenCaptions=*/true);
+                            }
                         }
                         // Opened by the card's right-click (drawLibraryCard), same ID scope.
                         if (ImGui::BeginPopup("rowctx")) {
@@ -8167,6 +8223,16 @@ int main(int argc, char** argv) {
                                 g_getCaptionsAfterAdd = true;
                             }
                             ImGui::EndDisabled();
+                            // #4: when a saved auto-cut exists the robot button LOADS it, so
+                            // re-analysing lives here instead (it overwrites the saved cut).
+                            if (v.hasSavedCut) {
+                                ImGui::BeginDisabled(g_cliCutBusy.load());
+                                if (ImGui::MenuItem("Re-run auto-cut (replace saved cut)")) {
+                                    endPreviewRestore(curSec, playing, lastComposed);
+                                    applyAutoCut(v.name, v.path, curSec, lastComposed, {}, /*thenCaptions=*/true);
+                                }
+                                ImGui::EndDisabled();
+                            }
                             ImGui::EndPopup();
                         } else if (g_libCtxIdx == i) {
                             g_libCtxIdx = -1;
