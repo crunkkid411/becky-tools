@@ -3289,6 +3289,19 @@ static void drawTimeline(double& curSec, bool& playing) {
 
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("tl", ImVec2(tlW, bot - p.y));
+    // Item 8 (round 2): this ONE giant button covers the whole timeline,
+    // caption lane included, and is submitted before the caption-edit
+    // InputText further down - so without this, every click meant to place
+    // a caret or double-click-select a word inside an open caption edit box
+    // was being claimed by "tl" first (a normal ImGui click-priority rule:
+    // the button that's ALREADY submitted sees itself as hovered before a
+    // later widget at the same position exists yet), and dispatched as a
+    // timeline click/scrub instead - found live: a second click meant for
+    // the caret moved the playhead and silently closed the edit box.
+    // AllowOverlap is the same fix the library card's round "+" button
+    // already uses for exactly this shape of problem: it lets a LATER
+    // widget at an overlapping position still win hover/click priority.
+    ImGui::SetItemAllowOverlap();
     bool hovered = ImGui::IsItemHovered();
     // NORMAL POINTER over the timeline. Jordan asked for the I-beam on 2026-06-30
     // (feedback1, replacing the hand) and then REVERSED that later - he wants the
@@ -3304,6 +3317,28 @@ static void drawTimeline(double& curSec, bool& playing) {
 
     auto xToSec = [&](float x) { return std::max(0.0, g_scrollSec + (x - tlX) / g_pps); };
     auto secToX = [&](double s) { return tlX + (float)((s - g_scrollSec) * g_pps); };
+
+    // Item 8 (round 2): SetItemAllowOverlap (above) is not enough on its own -
+    // "tl" still computes its OWN pressed/active/released every frame from its
+    // OWN hover test, independent of whatever gets submitted later, so a click
+    // meant for the open caption-edit InputText was still dispatched as a
+    // capHit() body-drag gesture (confirmed live: mx/my landing squarely
+    // inside the edit box still logged a capHit press, kind 8, and the box
+    // closed instead of placing a caret). The InputText itself needs NO help
+    // to receive the click and place the caret/select a word - that is stock
+    // ImGui InputText behaviour - it only needs "tl" to not ALSO react to the
+    // same click and stomp the edit box. Recompute the exact same edit-box
+    // rect the render code below uses and suppress "tl"'s three flags when a
+    // press/release lands inside it while a caption is being edited.
+    if (g_capEdit >= 0 && g_capEdit < (int)g_caps.size()) {
+        float cx0 = secToX(g_caps[g_capEdit].start), cx1 = secToX(g_caps[g_capEdit].end);
+        float ecx0 = std::max(cx0, tlX), ecx1 = std::min(cx1, tlX + tlW);
+        if (ecx1 - ecx0 < 220) ecx1 = std::min(tlX + tlW, ecx0 + 220);
+        if (ecx1 - ecx0 < 80) { ecx0 = tlX; ecx1 = std::min(tlX + tlW, tlX + 220); }
+        if (mx >= ecx0 && mx <= ecx1 && my >= capY && my <= capY + capH) {
+            pressed = false; active = false; released = false;
+        }
+    }
 
     // E-13: drain any WM_DROPFILES drops queued this frame. Only a drop landing
     // ON the clip lane counts as a timeline drop (dropping elsewhere - e.g. onto
