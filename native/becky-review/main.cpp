@@ -8242,15 +8242,20 @@ int main(int argc, char** argv) {
             // On (hidden)". Render always burns in whichever text "on-previewed"
             // would show, since Render.Enabled tracks mode!=0 (setOverlayMode).
             {
-                const char* ovIcon = g_ovMode == 0 ? ico(ICON_CANCEL "##ov", "overlay x##ov")
-                                   : g_ovMode == 1 ? ico(ICON_EYE "##ov", "overlay eye##ov")
-                                                   : ico(ICON_CHECK "##ov", "overlay ok##ov");
+                // Round 5b: the reference button reads the WORD "overlay" (+ a ✓ when
+                // on), not a bare x/eye/check glyph - the glyph-only version was one of
+                // the "ambiguous" buttons Jordan called out. Keep the 3-state cycle
+                // (off / on-hidden / on-shown) but show it as text + a small state mark,
+                // exactly like becky-review-native's "overlay ✓".
+                const char* ovLabel = g_ovMode == 0 ? "overlay##ov"
+                                    : g_ovMode == 1 ? ico("overlay " ICON_EYE "##ov", "overlay (hidden)##ov")
+                                                    : ico("overlay " ICON_CHECK "##ov", "overlay ok##ov");
                 const bool ovOn = g_ovMode != 0;
                 if (ovOn) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
                 }
-                if (fixedButton(ovIcon, { ico(ICON_CANCEL, "overlay x"), ico(ICON_EYE, "overlay eye"), ico(ICON_CHECK, "overlay ok") }))
+                if (fixedButton(ovLabel, { "overlay", ico("overlay " ICON_EYE, "overlay (hidden)"), ico("overlay " ICON_CHECK, "overlay ok") }))
                     setOverlayMode((g_ovMode + 1) % 3);
                 if (ovOn) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered())
