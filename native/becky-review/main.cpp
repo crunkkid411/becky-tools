@@ -2783,9 +2783,9 @@ static const ImU32 COL_LANE     = IM_COL32(24, 27, 33, 255);
 // they read on the dark ruler (this reverses round 3's gray #676767 band, which is
 // exactly the "entire thing gray" he rejected - newest request wins).
 static const ImU32 COL_TLDIVIDER = IM_COL32(62, 63, 65, 255);   // #3E3F41 toolbar|timeline hairline
-static const ImU32 COL_RULERTX  = IM_COL32(176, 178, 184, 255); // light labels on the dark ruler
-static const ImU32 COL_TICK     = IM_COL32(96, 98, 104, 255);   // major tick, visible on dark
-static const ImU32 COL_TICKMIN  = IM_COL32(56, 58, 64, 255);    // minor tick, dim
+static const ImU32 COL_RULERTX  = IM_COL32(214, 216, 222, 255); // BRIGHT labels on the dark ruler (round 5: was too dim/small)
+static const ImU32 COL_TICK     = IM_COL32(120, 122, 128, 255); // major tick, clearly visible on dark
+static const ImU32 COL_TICKMIN  = IM_COL32(64, 66, 72, 255);    // minor tick, dim
 static const ImU32 COL_CLIP     = IM_COL32(38, 56, 84, 255);
 static const ImU32 COL_CLIPBRD  = IM_COL32(255, 255, 255, 70);
 static const ImU32 COL_WAVE     = IM_COL32(255, 255, 255, 128);
@@ -3359,7 +3359,7 @@ static void drawTimeline(double& curSec, bool& playing) {
     float availH = ImGui::GetContentRegionAvail().y;
     if (availW < 16 || availH < 44) return;
     float tlX = p.x, tlW = availW;
-    float rulerH = 22, sbH = 12, gap = 4;
+    float rulerH = 28, sbH = 12, gap = 4;   // round 5: taller ruler (was 22, "disproportionately small")
     int lanes = 1;
     float lanesH = availH - rulerH - sbH - gap * 2;
     // The caption lane sits directly UNDER the clip lane and inside the same
@@ -3986,7 +3986,12 @@ static void drawTimeline(double& curSec, bool& playing) {
     // rounding step, not an accumulating one.
     long long nTicks = (long long)std::ceil((g_scrollSec + viewDur + step - t0) / step) + 1;
     double frameDur = 1.0 / reelFps();
-    bool frameTicks = reelFps() > 1.0 && g_pps * frameDur >= 4.0;
+    // Round 5: per-FRAME ticks were flooding the ruler ("excessive hash marks") because
+    // they switched on as soon as a frame was 4px wide - at a normal working zoom that
+    // is a tick every few pixels. The reference ruler uses a handful of even
+    // subdivisions per label until you are zoomed in FAR enough that individual frames
+    // are genuinely spaced out; require >= 12px per frame before showing them.
+    bool frameTicks = reelFps() > 1.0 && g_pps * frameDur >= 12.0;
     for (long long k = 0; k < nTicks; k++) {
         double s = t0 + (double)k * step;
         float x = secToX(s);
@@ -5514,6 +5519,11 @@ int main(int argc, char** argv) {
         st.ScrollbarSize = 18.0f;          // grabbable without precision aiming
         st.GrabMinSize = 14.0f;
         st.FrameRounding = 4.0f;
+        // Round-5: DRAW the button/input outline. ImGui only strokes ImGuiCol_Border
+        // when FrameBorderSize >= 1 - it was 0, so the #262626 border set below was
+        // invisible, which is why every button looked borderless next to the
+        // reference's "VERY subtle gray outline". Now every chip gets that 1px rule.
+        st.FrameBorderSize = 1.0f;
         st.WindowPadding = ImVec2(12, 10);
         st.WindowBorderSize = 1.0f;        // a visible seam between the panels
         st.SeparatorTextBorderSize = 2.0f;
@@ -5585,7 +5595,11 @@ int main(int argc, char** argv) {
             uiCfg.OversampleH = 3;
             uiCfg.OversampleV = 3;
             uiCfg.PixelSnapH  = false;
-            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 14.0f, &uiCfg) != nullptr;
+            // Round-5 readability (Jordan, vision-impaired, "still too small ... not
+            // bold"): 17px NATIVE (was 14). The atlas is loaded at the bigger size so
+            // the 1.35 UI-scale upscale starts from a denser bitmap - that removes the
+            // softness that read as "not bold", and the glyphs are simply larger.
+            baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(uiFontPath, 17.0f, &uiCfg) != nullptr;
         }
         if (!baseLoaded) {
             // Semibold missing (older Windows) - real Segoe UI Bold is the next
@@ -5597,7 +5611,7 @@ int main(int argc, char** argv) {
                 uiCfg.OversampleH = 3;
                 uiCfg.OversampleV = 3;
                 uiCfg.PixelSnapH  = false;
-                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(boldPath, 14.0f, &uiCfg) != nullptr;
+                baseLoaded = ImGui::GetIO().Fonts->AddFontFromFileTTF(boldPath, 17.0f, &uiCfg) != nullptr;
             }
         }
         if (!baseLoaded) ImGui::GetIO().Fonts->AddFontDefault();
@@ -5627,9 +5641,9 @@ int main(int argc, char** argv) {
             // the background. Screenshotting at 8x put the runner at 719..744
             // inside a 722..753 button; centring 25.5px of glyph in a 31px
             // button needs 4.3 more units of drop, hence 6.
-            cfg.GlyphOffset = ImVec2(0.0f, 6.0f);
-            cfg.GlyphMinAdvanceX = 20.0f;          // uniform icon cells, so nothing jitters
-            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 20.0f, &cfg, kIconRange) != nullptr;
+            cfg.GlyphOffset = ImVec2(0.0f, 7.0f);   // scaled with the 20->24 icon size below
+            cfg.GlyphMinAdvanceX = 24.0f;          // uniform icon cells, so nothing jitters
+            g_iconsOk = ImGui::GetIO().Fonts->AddFontFromFileTTF(iconPath, 24.0f, &cfg, kIconRange) != nullptr;
         }
         if (!g_iconsOk) crashLog(wantIcons ? "icons: segmdl2.ttf unavailable - toolbar falls back to text labels"
                                            : "icons: disabled by BECKY_ICONS=0 - toolbar using text labels");
@@ -7884,11 +7898,12 @@ int main(int argc, char** argv) {
             // only way to know at a glance that a reel actually loaded and how
             // deep the current zoom is.
             //
-            // Compact FramePadding for this row only: at the default (10,7) the row
-            // costs ~38px, which at the minimum timeline height drops lanesH under
-            // 90 and silently switches the caption lane OFF. At (8,3) it costs ~30px.
+            // Round-5: Jordan wants the toolbar buttons SLIGHTLY LARGER, to match the
+            // reference. (10,6) is between the old cramped (8,3) and the global (10,7)
+            // - big enough to read/hit, small enough that the caption lane still clears
+            // its lanesH>90 cutoff at the normal timeline height.
             {
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 3));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
 
                 char durb[24]; fmtTime(g_compDur, durb, sizeof durb, false);
                 size_t nclips = g_track[0].size();
