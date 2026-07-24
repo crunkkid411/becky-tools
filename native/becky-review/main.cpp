@@ -4438,6 +4438,24 @@ static void askBeckyMark(float h) {
     ImGui::Dummy(ImVec2(w, h * 0.82f));
 }
 
+// THE SEND ICON HE ASKED FOR (BR3-VISUAL-SPEC): "'send' button should be that
+// same icon instead of the word 'send'". A right-pointing triangle drawn with
+// AddTriangleFilled over a real ImGui::Button - never a font glyph (the merged
+// icon font has no arrow in range and a missing glyph draws a hollow square,
+// same reasoning as askBeckyMark above). The button keeps the caller's pushed
+// green fill/hover/active; the arrow itself is always dark ink so it reads on
+// green, same as every other active-green control in this file.
+static bool sendArrowButton(ImVec2 size) {
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::Button("##send", size);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 c{ p0.x + size.x * 0.5f, p0.y + size.y * 0.5f };
+    float s = (std::min)(size.x, size.y) * 0.24f;
+    const ImU32 ink = IM_COL32(20, 20, 22, 255);
+    dl->AddTriangleFilled({ c.x - s * 0.6f, c.y - s }, { c.x - s * 0.6f, c.y + s }, { c.x + s * 0.9f, c.y }, ink);
+    return clicked;
+}
+
 // ---- header: WHICH FOLDER IS OPEN, on WHICH DRIVE (safety, not decoration) ----
 //
 // Jordan works across two drives that must never be confused: X: is his own video
@@ -7772,13 +7790,16 @@ int main(int argc, char** argv) {
                         ImGui::GetColorU32(ImGuiCol_TextDisabled),
                         g_answerCardID.empty() ? "ask becky..." : "type your answer...");
                 }
-                float sendW = ImGui::CalcTextSize("Send").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                // Icon, not the word - a green arrow, same shape the reference app's
+                // send control uses. Square-ish: a comfortable click target without
+                // reading as a wide text button. Tooltip carries the accessible label.
+                float sendW = ImGui::GetFrameHeight() * 1.6f;
                 ImGui::PushStyleColor(ImGuiCol_Button, neonV);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(neonV.x * 0.82f, neonV.y * 0.82f, neonV.z * 0.82f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(neonV.x * 0.66f, neonV.y * 0.66f, neonV.z * 0.66f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
-                if (ImGui::Button("Send", ImVec2(sendW, 0))) submit = true;
-                ImGui::PopStyleColor(4);
+                if (sendArrowButton(ImVec2(sendW, 0))) submit = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Send");
+                ImGui::PopStyleColor(3);
 
                 // H-7: the forensic route - same box, second button. The query in the
                 // box runs the WHOLE forensic pipeline (qmd recall + becky-judge LLM
