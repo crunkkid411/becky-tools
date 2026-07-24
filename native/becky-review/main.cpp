@@ -1516,6 +1516,12 @@ static void requestPeaksIfChanged(const Clip& c) {
 // stale preview restore, so it clears this flag too.
 static std::vector<Clip> g_reelBeforePreview;
 static bool g_inTiedPreview = false;
+// Item 1 fix (round 3): where the REAL playhead sat the instant a preview began -
+// so the timeline widget can be drawn FROZEN there (real reel, real duration, real
+// playhead) for the entire preview, instead of visibly showing the swapped one-clip
+// (or tied-clip) audition and only snapping back once playback stops. Captured once,
+// on the false->true edge of g_inTiedPreview, by every place that starts a preview.
+static double g_previewFrozenPlayhead = 0.0;
 
 // D-6: provenance overlay state, mirroring the engine's edl.Overlay (app.go
 // newReel defaults: everything on, position "bottom") so the native preview
@@ -2261,7 +2267,22 @@ static void loadTimelineView(const json& tv) {
         crashLog("PACK boundary i=" + std::to_string(i) + " t=" + std::to_string(b) +
                  " quant=" + std::to_string(q) + " err=" + std::to_string(q - b));
     }
-    g_sel.clear();
+    // Item 4 fix (round 3): PRESERVE selection across a reload when the clip id
+    // still exists post-edit (a trim/extend just resized it in place, same id) -
+    // only DROP ids that genuinely disappeared (delete/split/replace). An
+    // unconditional clear() here was WHY the extend-selected-clip-by-one-frame
+    // buttons deselected the clip on every press: each press is a set_trim edit,
+    // and every edit reply reloads the timeline through this exact function.
+    // Root-caused once, here, instead of patching every edit-kind switch case
+    // that reselects (split already does this itself at the drain site; trim
+    // needs no such patch because the id it operates on never changes).
+    if (g_sel.empty()) {
+        // nothing to preserve
+    } else {
+        std::set<std::string> keep;
+        for (auto& c : g_track[0]) if (g_sel.count(c.id)) keep.insert(c.id);
+        g_sel.swap(keep);
+    }
     // Windowed waveform decode: only what's on the timeline, newest first. (FB9 fix: keyed by SOURCE.)
     // I-2 fix: skip clips whose (source,in,out) is unchanged since the last reload -
     // see requestPeaksIfChanged above. This runs on EVERY edit reply, so this is the
@@ -3310,9 +3331,15 @@ static void drawTimeline(double& curSec, bool& playing) {
     // by citing the older feedback file. Leaving the cursor unset here means ImGui
     // keeps ImGuiMouseCursor_Arrow, which is exactly what he asked for.
     (void)hovered;
-    bool pressed = ImGui::IsItemActivated();
-    bool active = ImGui::IsItemActive();
-    bool released = ImGui::IsItemDeactivated();
+    // Item 1 fix (round 3): a preview audition swaps g_track[0] for a one-clip
+    // (or tied-clips) reel WHILE THE REAL REEL IS FROZEN AND SHOWN INSTEAD (see the
+    // drawTimeline call site, which swaps the real reel/duration/playhead back in
+    // for this render). A click during that render must never be processed as a
+    // real gesture against it - the indices/ids on screen do not match what is
+    // actually loaded for playback.
+    bool pressed = ImGui::IsItemActivated() && !g_inTiedPreview;
+    bool active = ImGui::IsItemActive() && !g_inTiedPreview;
+    bool released = ImGui::IsItemDeactivated() && !g_inTiedPreview;
     ImGuiIO& io = ImGui::GetIO();
     float mx = io.MousePos.x, my = io.MousePos.y;
 
@@ -3648,13 +3675,25 @@ static void drawTimeline(double& curSec, bool& playing) {
         } else if (g_gest.kind == 2 && std::abs(mx - g_gest.pressX) > 4) {
             g_gest.kind = 3; g_gest.dragged = true;
             if (g_gest.group.empty()) g_gest.group.push_back(g_gest.idx);
-        } else if (g_gest.kind == 4 && g_gest.idx >= 0 && g_gest.idx < (int)g_track[0].size()) {
+        } else if (g_gest.kind == 4 && g_gest.idx >= 0 && g_gest.idx < (int)g_track[0].size()
+                   && std::abs(mx - g_gest.pressX) > 4) {
+            // Item 3 fix (round 3): a plain CLICK on the trim handle (no real drag)
+            // must never trim a frame off the clip. gIn/gOut start out equal to
+            // c.in/c.out at press (see clipHit above); this block used to recompute
+            // them on the very first "active" frame regardless of movement, and
+            // snapComp's pixel->second->frame-snap round trip can land a hair off
+            // c.in even with a motionless mouse - enough to clear the release
+            // handler's 0.001 no-op check and commit a phantom 1-frame trim. Same
+            // DRAG_PX=4 slop every other click-vs-drag gesture here already uses
+            // (see kind==2 -> kind==3 promotion above); below it, this stays a click.
             Clip& c = g_track[0][g_gest.idx];
             double edgeComp = snapComp(xToSec(mx), g_pps, curSec, g_gest.idx);
             double nIn = c.in + (edgeComp - c.compStart);
             nIn = std::max(0.0, std::min(nIn, c.out - 0.05));
             g_gest.gIn = nIn; g_gest.gOut = c.out;
-        } else if (g_gest.kind == 5 && g_gest.idx >= 0 && g_gest.idx < (int)g_track[0].size()) {
+        } else if (g_gest.kind == 5 && g_gest.idx >= 0 && g_gest.idx < (int)g_track[0].size()
+                   && std::abs(mx - g_gest.pressX) > 4) {
+            // Same click-vs-drag guard as kind==4 above, right-edge handle.
             Clip& c = g_track[0][g_gest.idx];
             double edgeComp = snapComp(xToSec(mx), g_pps, curSec, g_gest.idx);
             double nOut = c.in + (edgeComp - c.compStart);
@@ -4924,7 +4963,7 @@ static void seekToSpan(const std::string& source, double a, double b, bool start
 // point of view.
 static void previewPlaySpan(const std::string& source, double a, double b,
                              double& curSec, bool& playing, double& lastComposed) {
-    if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_inTiedPreview = true; }
+    if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_previewFrozenPlayhead = curSec; g_inTiedPreview = true; }
     Clip cl; cl.in = a; cl.out = (b > a + 0.05) ? b : a + 0.05;
     cl.source = source; cl.label = baseName(source);
     paintClipFromKnownSource(cl);
@@ -7655,7 +7694,7 @@ int main(int argc, char** argv) {
                                 if (std::find(c.clipIDs.begin(), c.clipIDs.end(), tc.id) != c.clipIDs.end())
                                     tied.push_back(tc);
                             if (!tied.empty()) {
-                                if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_inTiedPreview = true; }
+                                if (!g_inTiedPreview) { g_reelBeforePreview = g_track[0]; g_previewFrozenPlayhead = curSec; g_inTiedPreview = true; }
                                 g_track[0].clear();
                                 for (auto& tc : tied) g_track[0].push_back(tc);
                                 packTrack(0); recomputeDur();
@@ -8057,7 +8096,31 @@ int main(int argc, char** argv) {
 
                 ImGui::PopStyleVar();
             }
-            drawTimeline(curSec, playing);
+            // Item 1 fix (round 3): "previewing a quote still shows it on the
+            // timeline" - the whole point of a preview is that the timeline must
+            // NOT visibly change for its whole duration, not just snap back once
+            // it ends. g_track[0]/g_compDur are swapped to the ONE-clip (or
+            // tied-clips) audition for playback purposes elsewhere in the frame
+            // (engineReelEnter reads g_track[0] directly - decoupling that is a
+            // bigger change than this render fix needs); here, for THIS ONE DRAW
+            // CALL ONLY, swap the REAL reel + duration + the playhead position it
+            // had before the preview started back in, render that, then swap the
+            // live preview state straight back so playback is completely
+            // unaffected. Gesture handling is separately gated off by
+            // g_inTiedPreview above (pressed/active/released), so this frozen
+            // render is read-only, matching what it visually claims to be.
+            if (g_inTiedPreview) {
+                std::vector<Clip> livePreviewTrack = g_track[0];
+                double livePreviewDur = g_compDur;
+                g_track[0] = g_reelBeforePreview;
+                recomputeDur();
+                double frozenCur = std::min(g_previewFrozenPlayhead, g_compDur);
+                drawTimeline(frozenCur, playing);
+                g_track[0] = livePreviewTrack;
+                g_compDur = livePreviewDur;
+            } else {
+                drawTimeline(curSec, playing);
+            }
         }
         ImGui::End();
         stageMark("bottom-timeline");
