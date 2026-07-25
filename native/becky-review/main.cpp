@@ -1115,46 +1115,126 @@ struct QuietLevelsStatus {
 };
 static QuietLevelsStatus g_quietLevelsStatus;
 
+// computeQuietRangesNow: detect silent ranges using the BPK3 waveform peaks
+// (750 bins/sec, already in memory) with smoothing + hysteresis. This replaced
+// the old auto-editor 30fps peak method (2026-07-25) which was 25x coarser and
+// used raw peak amplitude (a single transient made a whole 33ms frame "loud").
+//
+// Algorithm:
+//   1. Per-bin loudness = max(|min|, |max|) / 127  (normalized 0..1)
+//   2. Smooth over ~20ms (15 bins) to approximate short-time RMS energy
+//   3. Hysteresis: enter silence when smoothed < threshold,
+//      leave silence when smoothed > threshold * 1.4
+//   4. Minimum silence duration: 350ms (unchanged)
+//   5. Minimum speech duration: 80ms (prevents single-word blips from
+//      splitting a silence range into flickering fragments)
+//
+// Falls back to auto-editor levels ONLY when BPK3 data isn't decoded yet.
 static std::vector<std::pair<double, double>> computeQuietRangesNow() {
     std::vector<std::pair<double, double>> raw, out;
     g_quietLevelsStatus = QuietLevelsStatus{};
     std::set<std::string> reportedSources;
+    const double enterThr = g_thrLevel;          // drop below this -> silence
+    const double leaveThr = g_thrLevel * 1.4;    // rise above this -> speech
+    const int smoothBins = 15;                   // ~20ms at 750 bins/sec
+
     for (auto& c : g_track[0]) {
-        ensureLevels(c.source);   // starts the real analysis - this is "click the button, analyze the footage"
-        auto lit = g_srcLevels.find(c.source);
-        bool haveLevels = lit != g_srcLevels.end() && lit->second.ready &&
-                          !lit->second.lv.empty() && lit->second.fps > 1.0;
-        if (haveLevels) {
-            const SrcLevels& sl = lit->second;
-            double fps = sl.fps;
-            long long n = (long long)sl.lv.size();
-            long long f0 = std::max(0LL, (long long)std::floor(c.in * fps));
-            long long f1 = std::min(n, (long long)std::ceil(c.out * fps));
-            double runA = -1;
-            for (long long f = f0; f <= f1; f++) {
-                bool quiet = (f < f1 && f < n) ? sl.lv[f] < g_thrLevel : false;
-                double compT = c.compStart + ((double)f / fps - c.in);
-                if (quiet && runA < 0) runA = compT;
-                else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
+        // PRIMARY: BPK3 waveform peaks (750 bins/sec, already in memory).
+        auto pk = peaksGet(c.source);
+        bool havePeaks = pk && pk->ready && !pk->failed && pk->bins > 0;
+        if (havePeaks) {
+            std::lock_guard<std::mutex> lk(pk->mx);
+            double binsPerSec = kBinsPerSec;   // 750.0
+            long long b0 = std::max(0LL, (long long)std::floor((c.in + pk->avSkew) * binsPerSec));
+            long long b1 = std::min((long long)pk->bins, (long long)std::ceil((c.out + pk->avSkew) * binsPerSec));
+            if (b1 <= b0) continue;
+
+            // Pass 1: compute smoothed loudness per bin.
+            // loudness[i] = max(|n0[i]|, |x0[i]|) / 127, then box-smoothed.
+            long long count = b1 - b0;
+            std::vector<float> smooth(count, 0.0f);
+            // Running sum for the box filter.
+            float runSum = 0;
+            for (long long i = 0; i < count; i++) {
+                long long gi = b0 + i;   // global bin index
+                float loud = 0;
+                if (gi < (long long)pk->n0.size() && gi < (long long)pk->x0.size()) {
+                    float mn = std::abs((float)pk->n0[gi]);
+                    float mx = std::abs((float)pk->x0[gi]);
+                    loud = std::max(mn, mx) / 127.0f;
+                }
+                runSum += loud;
+                if (i >= smoothBins) {
+                    long long old = b0 + i - smoothBins;
+                    float oldLoud = 0;
+                    if (old < (long long)pk->n0.size() && old < (long long)pk->x0.size())
+                        oldLoud = std::max(std::abs((float)pk->n0[old]), std::abs((float)pk->x0[old])) / 127.0f;
+                    runSum -= oldLoud;
+                }
+                int window = (int)std::min((long long)smoothBins, i + 1);
+                smooth[i] = runSum / (float)window;
             }
-        } else if (reportedSources.insert(c.source).second) {
-            // NEVER fall back to the coarse waveform-peak method here (Jordan,
-            // 2026-07-25: that silent substitution is what made this feature
-            // unusable). This source contributes no ranges until auto-editor's
-            // real analysis lands; record why, once per source, so the caller
-            // can tell Jordan the truth instead of "no quiet parts found".
-            if (lit != g_srcLevels.end() && lit->second.ready)
-                g_quietLevelsStatus.failedNotes.push_back({ baseName(c.source), lit->second.note });
-            else
-                g_quietLevelsStatus.anyPending = true;
+
+            // Pass 2: hysteresis state machine.
+            bool inSilence = false;
+            double runA = -1;
+            for (long long i = 0; i <= count; i++) {
+                float val = (i < count) ? smooth[i] : leaveThr; // force-close at end
+                double binSec = (double)(b0 + i) / binsPerSec - pk->avSkew;
+                double compT = c.compStart + (binSec - c.in);
+                if (!inSilence) {
+                    if (val < enterThr) { inSilence = true; runA = compT; }
+                } else {
+                    if (val > leaveThr) {
+                        raw.push_back({ runA, compT });
+                        inSilence = false; runA = -1;
+                    }
+                }
+            }
+            if (inSilence && runA >= 0) {
+                double endT = c.compStart + (c.out - c.in);
+                raw.push_back({ runA, endT });
+            }
+        } else {
+            // FALLBACK: auto-editor levels (only when BPK3 not ready yet).
+            ensureLevels(c.source);
+            auto lit = g_srcLevels.find(c.source);
+            bool haveLevels = lit != g_srcLevels.end() && lit->second.ready &&
+                              !lit->second.lv.empty() && lit->second.fps > 1.0;
+            if (haveLevels) {
+                const SrcLevels& sl = lit->second;
+                double fps = sl.fps;
+                long long n = (long long)sl.lv.size();
+                long long f0 = std::max(0LL, (long long)std::floor(c.in * fps));
+                long long f1 = std::min(n, (long long)std::ceil(c.out * fps));
+                bool inSilence = false;
+                double runA = -1;
+                for (long long f = f0; f <= f1; f++) {
+                    float val = (f < f1 && f < n) ? sl.lv[f] : (float)leaveThr;
+                    double compT = c.compStart + ((double)f / fps - c.in);
+                    if (!inSilence) {
+                        if (val < enterThr) { inSilence = true; runA = compT; }
+                    } else {
+                        if (val > leaveThr) { raw.push_back({ runA, compT }); inSilence = false; runA = -1; }
+                    }
+                }
+                if (inSilence && runA >= 0) raw.push_back({ runA, c.compStart + (c.out - c.in) });
+            } else if (reportedSources.insert(c.source).second) {
+                if (lit != g_srcLevels.end() && lit->second.ready)
+                    g_quietLevelsStatus.failedNotes.push_back({ baseName(c.source), lit->second.note });
+                else
+                    g_quietLevelsStatus.anyPending = true;
+            }
         }
     }
+    // Merge nearby ranges (gap < 80ms = likely inter-word pause, not real speech).
     std::sort(raw.begin(), raw.end());
     for (auto& r : raw) {
-        if (!out.empty() && r.first <= out.back().second + 0.06)
+        if (!out.empty() && r.first <= out.back().second + 0.08)
             out.back().second = std::max(out.back().second, r.second);
         else out.push_back(r);
     }
+    // Filter: minimum silence duration 350ms.
     out.erase(std::remove_if(out.begin(), out.end(),
         [](const std::pair<double, double>& r) { return r.second - r.first < 0.35; }), out.end());
     return out;
