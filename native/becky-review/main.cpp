@@ -3244,6 +3244,42 @@ static bool rebindCapToCoveringClip(Caption& c) {
     }
     return false;
 }
+// capNormalize mirrors internal/subs.normalize: only ? and ! survive as punctuation
+// (. , ; : are dropped), whitespace collapses, lowercased.
+static std::string capNormalize(const std::string& in) {
+    std::string s; s.reserve(in.size());
+    bool sp = false;
+    for (char c : in) {
+        if (c == '.' || c == ',' || c == ';' || c == ':') continue;
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { if (!s.empty()) sp = true; continue; }
+        if (sp) { s += ' '; sp = false; }
+        s += (char)std::tolower((unsigned char)c);
+    }
+    return s;
+}
+static std::string joinWords(const std::vector<CapWord>& ws) {
+    std::string j;
+    for (auto& w : ws) { if (!j.empty()) j += " "; j += w.word; }
+    return j;
+}
+// captionForClipWindow divides a cue to the words that fall inside [clip.in, clip.out]
+// (source time) and rebuilds its text, so a cue spanning a cut becomes the correct
+// HALF on each clip instead of the whole cue duplicated onto both (Jordan 2026-07-24:
+// "it just duplicated so both clips have the same caption"). Returns false when the
+// cue has no per-word timing (an official .srt) - the caller keeps the old whole-cue-
+// clipped behaviour then. out.text is empty when this clip holds none of the words.
+static bool captionForClipWindow(const Caption& cue, const Clip& clip, Caption& out) {
+    if (cue.words.empty()) return false;
+    out = Caption{};
+    out.clipId = clip.id;
+    for (auto& wd : cue.words)
+        if (wd.end > clip.in && wd.start < clip.out) out.words.push_back(wd);
+    if (out.words.empty()) return true;
+    out.srcIn = out.words.front().start;
+    out.srcOut = out.words.back().end;
+    out.text = capNormalize(joinWords(out.words));
+    return true;
+}
 // reanchorCap derives a caption's SOURCE span from its CURRENT absolute start/end
 // against the clip it now sits on - called after a drag/resize so the edit survives
 // the next reload. Anchors to the clip under the caption's MIDPOINT (a caption
@@ -3647,6 +3683,21 @@ static void rebuildDerivedCaptions() {
     for (auto& cap : g_caps) {
         if (cap.clipId.empty()) { kept.push_back(cap); continue; }  // legacy/unanchored: leave as drawn
         Caption c = cap;
+        // A DERIVED caption (its words still match its text) whose words now extend
+        // beyond its clip - a clip split landed INSIDE it - is divided to just this
+        // clip's words, so it is not the whole caption duplicated onto both halves (the
+        // other half is re-seeded onto the new clip below). A hand-EDITED caption (text
+        // no longer matches its words) is left untouched.
+        Clip* bnd = clipById(c.clipId);
+        if (bnd && !c.words.empty() && capNormalize(joinWords(c.words)) == c.text) {
+            bool spans = false;
+            for (auto& wd : c.words)
+                if (wd.start < bnd->in || wd.end > bnd->out) { spans = true; break; }
+            if (spans) {
+                Caption d;
+                if (captionForClipWindow(c, *bnd, d) && !d.text.empty()) c = d;
+            }
+        }
         ProjResult pr = projectCap(c);
         if (pr == PROJ_HIDDEN && rebindCapToCoveringClip(c)) {
             pr = projectCap(c);                                  // follow a clip split into its new half
@@ -3703,11 +3754,14 @@ static void rebuildDerivedCaptions() {
             // q.srcIn/q.srcOut are the cue's SOURCE times (from the transcript).
             if (q.srcOut <= clip.in || q.srcIn >= clip.out) continue;   // outside this clip's window
             Caption cp;
-            cp.clipId = clip.id;
-            cp.srcIn  = std::max(q.srcIn,  clip.in);
-            cp.srcOut = std::min(q.srcOut, clip.out);
-            cp.text   = q.text;
-            cp.words  = q.words;   // word timings match cp.text; carried for a word-aware split
+            if (captionForClipWindow(q, clip, cp)) {
+                if (cp.text.empty()) continue;        // this clip holds none of the cue's words
+            } else {                                   // no per-word timing (official .srt): whole cue, clipped
+                cp.clipId = clip.id;
+                cp.srcIn  = std::max(q.srcIn, clip.in);
+                cp.srcOut = std::min(q.srcOut, clip.out);
+                cp.text   = q.text;
+            }
             if (projectCap(cp) == PROJ_VISIBLE) kept.push_back(cp);
         }
         g_capSeededClips.insert(clip.id);
@@ -4160,47 +4214,34 @@ static void drawTimeline(double& curSec, bool& playing) {
         int idx, zone;
         // A caption right-click is tested FIRST - the caption lane sits below the clip
         // lane, so its y-range is unambiguous and capHit already gates on it.
-        if (capHit(mx, my, idx, zone)) { s_capCtxIdx = idx; g_capSel = idx; ImGui::OpenPopup("capctx"); }
-        else if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
-    }
-    // Caption context menu (Jordan 2026-07-24). "Glue to next" merges the clicked
-    // caption with the one after it so they show together (his "right click should
-    // glue 2 captions together"); "Remove" drops just this caption and leaves the
-    // clip's others - a deliberate creative removal that is NOT re-seeded.
-    if (ImGui::BeginPopup("capctx")) {
-        if (s_capCtxIdx >= 0 && s_capCtxIdx < (int)g_caps.size()) {
-            // Find the caption that starts immediately after this one (the lane is kept
-            // sorted by start, but resolve by time so it is right even mid-edit).
+        if (capHit(mx, my, idx, zone)) {
+            // Jordan (2026-07-24): right-click a caption = GLUE TO NEXT, immediately.
+            // No popup, no questions. Merge this caption with the one that starts right
+            // after it ON THE SAME CLIP, so "because" + "of that" becomes one line. The
+            // words are carried along so a later split can still divide it by timing.
+            g_capSel = idx;
+            (void)s_capCtxIdx;
             int nextI = -1; double nextStart = 1e18;
-            double myStart = g_caps[s_capCtxIdx].start;
+            double myStart = g_caps[idx].start;
             for (size_t i = 0; i < g_caps.size(); i++)
-                if ((int)i != s_capCtxIdx && g_caps[i].start >= myStart && g_caps[i].start < nextStart) { nextStart = g_caps[i].start; nextI = (int)i; }
-            ImGui::TextDisabled("caption");
-            ImGui::Separator();
-            ImGui::BeginDisabled(nextI < 0);
-            if (ImGui::MenuItem("Glue to next")) {
+                if ((int)i != idx && g_caps[i].clipId == g_caps[idx].clipId &&
+                    g_caps[i].start >= myStart && g_caps[i].start < nextStart) {
+                    nextStart = g_caps[i].start; nextI = (int)i;
+                }
+            if (nextI >= 0) {
                 pushCapUndo();
-                Caption& a = g_caps[s_capCtxIdx];
+                Caption& a = g_caps[idx];
                 Caption& b = g_caps[nextI];
-                std::string merged = a.text;
-                if (!merged.empty() && !b.text.empty()) merged += " ";
-                merged += b.text;
+                if (!a.text.empty() && !b.text.empty()) a.text += " ";
+                a.text += b.text;
                 a.end = std::max(a.end, b.end);
-                a.text = merged;
-                reanchorCap(a);                       // span both cues on the clip under the middle
+                a.srcOut = std::max(a.srcOut, b.srcOut);          // same clip: extend a's source span
+                for (auto& wd : b.words) a.words.push_back(wd);   // keep word timings for a later re-split
                 g_caps.erase(g_caps.begin() + nextI);
                 saveCaptions();
-                g_capSel = -1; g_capEdit = -1;
-            }
-            ImGui::EndDisabled();
-            if (ImGui::MenuItem("Remove caption")) {
-                pushCapUndo();
-                g_caps.erase(g_caps.begin() + s_capCtxIdx);
-                saveCaptions();
-                g_capSel = -1; g_capEdit = -1;
             }
         }
-        ImGui::EndPopup();
+        else if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
     }
     if (ImGui::BeginPopup("clipctx")) {
         if (s_ctxIdx >= 0 && s_ctxIdx < (int)g_track[0].size()) {
@@ -4545,8 +4586,24 @@ static void drawTimeline(double& curSec, bool& playing) {
                          " pps=" + std::to_string(g_pps) +
                          " onCut=" + (onCut ? "1" : "0"));
                 pushCapUndo();                       // issue 7: a drag/resize is undoable
+                double oldStart = cp.start, oldEnd = cp.end;
                 cp.start = g.gIn; cp.end = g.gOut;
                 reanchorCap(cp);                     // issues 1-2/5: rebind to the clip so the move sticks
+                // RIPPLE (Jordan 2026-07-24): a shared edge belongs to BOTH captions.
+                // Dragging this caption's START pulls the previous caption's END with it;
+                // dragging its END pushes the next caption's START. So nudging one
+                // boundary fixes both and never opens a gap or overlap between them.
+                if (g.kind == 9) {                   // start edge moved
+                    for (auto& nb : g_caps)
+                        if (&nb != &cp && nb.start < cp.start && std::abs(nb.end - oldStart) < 0.03) {
+                            nb.end = cp.start; reanchorCap(nb); break;
+                        }
+                } else if (g.kind == 10) {           // end edge moved
+                    for (auto& nb : g_caps)
+                        if (&nb != &cp && nb.end > cp.end && std::abs(nb.start - oldEnd) < 0.03) {
+                            nb.start = cp.end; reanchorCap(nb); break;
+                        }
+                }
                 saveCaptions();          // straight back to the .srt - no hidden unsaved state
             }
         }
