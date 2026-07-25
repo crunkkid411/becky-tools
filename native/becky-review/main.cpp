@@ -2109,10 +2109,20 @@ static double g_lastQuietEmit = 0, g_lastThrEmit = 0;
 // audio_levels (cmd/clip/audiolevels.go) runs `auto-editor levels ... --edit audio`
 // ONCE per source and returns {fps, levels[]} (each a normalized max|sample|/32767,
 // linear 0..1 - the same units g_thrLevel is in). Cached here; the live threshold
-// drag re-thresholds the cached array with zero re-decode. If auto-editor is missing
-// or a source hasn't reported yet, computeQuietRangesNow falls back to the old peak
-// method so the feature still works, just less precisely.
-struct SrcLevels { double fps = 0; std::vector<float> lv; bool ready = false; };
+// drag re-thresholds the cached array with zero re-decode.
+//
+// CORRECTED 2026-07-25 (Jordan): this used to say that when auto-editor is
+// missing or a source hasn't reported yet, computeQuietRangesNow falls back to
+// the peak method above "so the feature still works, just less precisely." That
+// was wrong - the peak method doesn't work, it made the whole feature unusable,
+// and it silently kicked in on EVERY freshly loaded source because the real
+// analysis is async and that fallback fired before it landed. Deleted. Now: a
+// source with no levels yet contributes NO ranges and computeQuietRangesNow
+// records why in g_quietLevelsStatus (still analyzing vs. auto-editor's own
+// failure reason) - see applyRemoveSilence. The analysis itself already starts
+// the moment the button is clicked (ensureLevels below, called unconditionally
+// on every source in the loop); that part was never broken, only the fallback was.
+struct SrcLevels { double fps = 0; std::vector<float> lv; bool ready = false; std::string note; };
 static std::map<std::string, SrcLevels> g_srcLevels;       // source path -> envelope
 static std::set<std::string> g_srcLevelsInFlight;          // async fetches running
 
@@ -2327,10 +2337,18 @@ static void ensureLevels(const std::string& source) {
                         sl.lv.reserve(d["levels"].size());
                         for (auto& v : d["levels"]) sl.lv.push_back((float)v.get<double>());
                     }
+                    // AudioLevels() (cmd/clip/audiolevels.go) already carries a plain-
+                    // language reason on every degrade path (missing binary, unreadable
+                    // source, empty parse) - keep it so a real failure can be SHOWN to
+                    // Jordan instead of silently guessing with a different signal.
+                    sl.note = d.value("note", std::string());
                 }
+            } else {
+                sl.note = r.value("error", std::string());
             }
-            // Cache even an empty result: "auto-editor couldn't answer" is an
-            // answer, asked once; computeQuietRangesNow falls back to peaks for it.
+            // Cache even a failed/empty result: "auto-editor couldn't answer" is an
+            // answer, asked once - this only stops ensureLevels re-asking every frame.
+            // computeQuietRangesNow no longer substitutes a different signal for it.
             sl.ready = true;
             g_srcLevels[source] = std::move(sl);
             g_quietDirty = true;
@@ -2347,10 +2365,27 @@ static void ensureLevels(const std::string& source) {
 // old 8-bit peak cache only until the levels arrive / if auto-editor is absent.
 // g_thrLevel is a linear peak fraction (0..1), the SAME units as an auto-editor
 // level (max|sample|/32767), so the dB the bar shows means the same thing here.
+// Per-source status the LAST computeQuietRangesNow() call left behind, for a
+// caller (applyRemoveSilence) that needs to explain an empty/partial result
+// HONESTLY instead of guessing with a different, less-accurate signal.
+//   anyPending   - at least one clip's source is still being analyzed (just
+//                  kicked off, or already in flight) - real data is coming.
+//   failedNotes  - sources auto-editor finished analyzing but returned no
+//                  usable levels for, each with ITS OWN plain-language reason
+//                  from cmd/clip/audiolevels.go (e.g. "auto-editor not found -
+//                  install it or set config auto_editor").
+struct QuietLevelsStatus {
+    bool anyPending = false;
+    std::vector<std::pair<std::string, std::string>> failedNotes; // {basename, note}
+};
+static QuietLevelsStatus g_quietLevelsStatus;
+
 static std::vector<std::pair<double, double>> computeQuietRangesNow() {
     std::vector<std::pair<double, double>> raw, out;
+    g_quietLevelsStatus = QuietLevelsStatus{};
+    std::set<std::string> reportedSources;
     for (auto& c : g_track[0]) {
-        ensureLevels(c.source);
+        ensureLevels(c.source);   // starts the real analysis - this is "click the button, analyze the footage"
         auto lit = g_srcLevels.find(c.source);
         bool haveLevels = lit != g_srcLevels.end() && lit->second.ready &&
                           !lit->second.lv.empty() && lit->second.fps > 1.0;
@@ -2367,27 +2402,16 @@ static std::vector<std::pair<double, double>> computeQuietRangesNow() {
                 if (quiet && runA < 0) runA = compT;
                 else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
             }
-        } else {
-            auto pk = peaksGet(c.source);
-            if (!pk) continue;
-            std::lock_guard<std::mutex> lk(pk->mx);
-            if (!pk->ready) continue;
-            long long b0 = std::max(0LL, (long long)(c.in * kBinsPerSec));
-            long long b1 = std::min((long long)pk->bins, (long long)(c.out * kBinsPerSec));
-            double runA = -1;
-            for (long long b = b0; b <= b1; b++) {
-                bool quiet = false;
-                if (b < b1) {
-                    int8_t mn = pk->n0[b], mx = pk->x0[b];
-                    if (mn <= mx) {
-                        double amp = std::max(std::abs((int)mn), std::abs((int)mx)) / 127.0;
-                        quiet = amp < g_thrLevel;
-                    }
-                }
-                double compT = c.compStart + (b / kBinsPerSec - c.in);
-                if (quiet && runA < 0) runA = compT;
-                else if (!quiet && runA >= 0) { raw.push_back({ runA, compT }); runA = -1; }
-            }
+        } else if (reportedSources.insert(c.source).second) {
+            // NEVER fall back to the coarse waveform-peak method here (Jordan,
+            // 2026-07-25: that silent substitution is what made this feature
+            // unusable). This source contributes no ranges until auto-editor's
+            // real analysis lands; record why, once per source, so the caller
+            // can tell Jordan the truth instead of "no quiet parts found".
+            if (lit != g_srcLevels.end() && lit->second.ready)
+                g_quietLevelsStatus.failedNotes.push_back({ baseName(c.source), lit->second.note });
+            else
+                g_quietLevelsStatus.anyPending = true;
         }
     }
     std::sort(raw.begin(), raw.end());
@@ -2862,7 +2886,19 @@ static double g_renderMsgAt = 0;
 static void applyRemoveSilence(double& curSec, double& lastComposed) {
     auto ranges = computeQuietRangesNow();
     if (ranges.empty()) {
-        g_renderMsg = "No quiet parts found at the current threshold - drag the bar on the timeline to lower it";
+        // Say what's ACTUALLY true - "still analyzing" and "auto-editor failed"
+        // are real, different states from "genuinely no quiet parts", and
+        // telling him to drag the threshold bar for the first two just wastes
+        // his time chasing a knob that was never the problem.
+        if (g_quietLevelsStatus.anyPending) {
+            g_renderMsg = "Still analyzing this footage's audio (auto-editor) - click Remove Silence again in a moment";
+        } else if (!g_quietLevelsStatus.failedNotes.empty()) {
+            const auto& f = g_quietLevelsStatus.failedNotes[0];
+            g_renderMsg = "Could not analyze " + f.first + ": " +
+                          (f.second.empty() ? "auto-editor gave no reason" : f.second);
+        } else {
+            g_renderMsg = "No quiet parts found at the current threshold - drag the bar on the timeline to lower it";
+        }
         g_renderMsgAt = nowSec();
         return;
     }
