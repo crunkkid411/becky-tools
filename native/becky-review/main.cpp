@@ -1237,6 +1237,18 @@ static std::vector<std::pair<double, double>> computeQuietRangesNow() {
     // Filter: minimum silence duration 350ms.
     out.erase(std::remove_if(out.begin(), out.end(),
         [](const std::pair<double, double>& r) { return r.second - r.first < 0.35; }), out.end());
+    // Zero-crossing padding (auto-editor style): shrink each quiet range by ~2 frames
+    // on each side. The kept region's START snaps LEFT (earlier) and its END snaps
+    // RIGHT (later), preserving the natural zero-crossing at speech onset/offset so
+    // words and syllable tails are never clipped. At 29.97fps, 2 frames = ~67ms.
+    const double zcPad = 2.0 / 29.97;   // 2 frames of padding
+    for (auto& r : out) {
+        r.first += zcPad;    // quiet starts LATER (keeps speech tail)
+        r.second -= zcPad;   // quiet ends EARLIER (keeps speech onset)
+    }
+    // Remove any ranges that became too small after padding.
+    out.erase(std::remove_if(out.begin(), out.end(),
+        [](const std::pair<double, double>& r) { return r.second - r.first < 0.1; }), out.end());
     return out;
 }
 void recomputeQuiet() {
