@@ -341,6 +341,52 @@ func clampToSpan(x, lo, hi float64) float64 {
 	return x
 }
 
+// maxAbsorbFrames is Jordan's threshold (2026-07-25): a word lasting this many
+// video frames or less is absorbed into its nearest neighbour rather than left
+// to stand alone — this is how cli-cut has always handled it.
+const maxAbsorbFrames = 2
+
+// fallbackAbsorbFPS is used only when the caller has not set a real frame rate
+// (Options.FPS <= 0) — the project's own documented real rate.
+const fallbackAbsorbFPS = 30000.0 / 1001.0
+
+// absorbShortWords merges a word lasting <= maxAbsorbFrames into whichever
+// neighbour is nearer, closing the gap between them to zero. Must run BEFORE
+// ChunkWords: a word this short can be a rescued word clamped onto a cut edge
+// (WordsPerSegment) or just Parakeet's own timing, and either way, once it is
+// on its own, real speaker pauses around it make it its own chunk — a caption
+// with ~0 duration that flashes invisibly even though its text is right there.
+// Closing its gap to the nearer neighbour here means ChunkWords's own pause
+// detection groups them before the 22-char cap ever sees the run, so the word
+// lands on that neighbour's line instead of alone. One rule, nothing more.
+func absorbShortWords(words []Word, fps float64) []Word {
+	if len(words) < 2 {
+		return words
+	}
+	if fps <= 0 {
+		fps = fallbackAbsorbFPS
+	}
+	maxDur := maxAbsorbFrames / fps
+	out := make([]Word, len(words))
+	copy(out, words)
+	for i := range out {
+		if out[i].End-out[i].Start > maxDur {
+			continue
+		}
+		hasPrev, hasNext := i > 0, i+1 < len(out)
+		if !hasPrev && !hasNext {
+			continue
+		}
+		toPrev := hasPrev && (!hasNext || out[i].Start-out[i-1].End <= out[i+1].Start-out[i].End)
+		if toPrev {
+			out[i].Start = out[i-1].End
+		} else {
+			out[i].End = out[i+1].Start
+		}
+	}
+	return out
+}
+
 // ChunkWords is the deterministic pass-1 chunker. Two rules, in order: break at
 // every real speaker pause (gap > gapSeconds), then split any pause-free run
 // still longer than maxChars at its own biggest internal pauses
@@ -417,7 +463,8 @@ func Build(segments []Segment, opt Options) []Cue {
 	perSeg := WordsPerSegment(segments)
 	chunks := make([][][]Word, len(segments))
 	for i := range segments {
-		chunks[i] = Pass1Chunks(perSeg[i], opt.MaxChars, opt.GapSeconds)
+		words := absorbShortWords(perSeg[i], opt.FPS)
+		chunks[i] = Pass1Chunks(words, opt.MaxChars, opt.GapSeconds)
 	}
 	return BuildFromChunks(segments, chunks, opt)
 }

@@ -594,6 +594,48 @@ func TestWordsPerSegmentRescuesStrayWordAtCutEdge(t *testing.T) {
 	}
 }
 
+func TestBuildAbsorbsShortWordsBeforeTheCap(t *testing.T) {
+	// Jordan's follow-up (2026-07-25) to the stray-word rescue above: a rescued
+	// word clamped exactly onto a cut boundary can land with ~0 duration and
+	// become its OWN caption - present in the text now (no longer dropped) but
+	// flashing for 0 frames on screen. His fix, matching how cli-cut has always
+	// handled it: any word lasting <= 2 video frames is absorbed into its
+	// nearest neighbour BEFORE chunking sees it, so it can never stand alone.
+	words := []Word{
+		w("often", 30.5, 31.6),
+		w("but", 31.68, 31.68), // clamped to a cut edge, 0 duration
+		w("I", 31.99, 31.99),   // clamped to the next cut's edge, 0 duration
+		w("went", 32.1, 32.4),
+	}
+	segs := []Segment{
+		{Source: "a.mp4", Start: 30.0, End: 31.6, Words: words},
+		{Source: "a.mp4", Start: 32.0, End: 33.0, Words: words},
+	}
+	opt := DefaultOptions()
+	opt.FPS = 30000.0 / 1001.0 // real rate: 2 frames = 0.0667s
+	cues := Build(segs, opt)
+
+	minFrame := 2.0 / opt.FPS
+	for _, c := range cues {
+		if c.End-c.Start < minFrame-eps {
+			t.Errorf("cue %q = [%.4f,%.4f], duration %.4f — shorter than 2 frames, would flash invisibly",
+				c.Text, c.Start, c.End, c.End-c.Start)
+		}
+	}
+
+	var joined []string
+	for _, c := range cues {
+		joined = append(joined, c.Text)
+	}
+	all := strings.Join(joined, "|")
+	if !strings.Contains(all, "but") {
+		t.Errorf("cues = %q, want \"but\" absorbed into a neighbouring line, not dropped or isolated", all)
+	}
+	if !strings.Contains(all, "i went") {
+		t.Errorf("cues = %q, want \"i\" absorbed into \"went\"'s line", all)
+	}
+}
+
 func TestBuildPostSpeechHoldBridgesShortGap(t *testing.T) {
 	// Segments are laid end to end by Build, so a gap only exists if a segment
 	// has zero duration. Assert the no-op case explicitly: a gapless reel must

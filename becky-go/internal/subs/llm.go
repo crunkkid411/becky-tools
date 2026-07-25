@@ -68,6 +68,7 @@ func PlanChunks(ctx context.Context, model ModelFunc, segments []Segment, opt Op
 	pass1 := make([][][]Word, len(segments))
 	inRange := WordsPerSegment(segments)
 	for i := range segments {
+		inRange[i] = absorbShortWords(inRange[i], opt.FPS)
 		pass1[i] = Pass1Chunks(inRange[i], opt.MaxChars, opt.GapSeconds)
 	}
 	if model == nil {
