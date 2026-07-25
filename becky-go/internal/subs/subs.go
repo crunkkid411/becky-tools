@@ -209,6 +209,15 @@ func WordsInRange(words []Word, start, end float64) []Word {
 // The rule: a word wholly inside a clip always belongs to it (so a deliberately
 // repeated moment still captions twice). A word only PARTLY inside competes, and
 // the clip holding the largest share of it wins. Ties go to the earlier clip.
+//
+// A word that overlaps NO segment at all is rescued, never dropped: Parakeet's
+// timing is measurably less accurate than the cut points (2026-07-25, the
+// 27_walmart footage: "but" and "I" landed 79-89ms past a kept clip's edge while
+// still clearly audible inside it — the cut did not trim them, the transcript's
+// clock just drifted). Jordan's rule is that the cut is ground truth and the
+// transcript's timing is the less-trustworthy signal, so a stray word is
+// retimed onto its nearest same-source cut instead of vanishing from the
+// caption.
 func WordsPerSegment(segments []Segment) [][]Word {
 	type claim struct {
 		seg     int
@@ -221,6 +230,7 @@ func WordsPerSegment(segments []Segment) [][]Word {
 		idx    int
 	}
 	best := map[key]claim{}
+	claimed := map[key]bool{} // every (source, word index) that overlapped >=1 segment
 
 	type cand struct {
 		idx       int
@@ -237,6 +247,7 @@ func WordsPerSegment(segments []Segment) [][]Word {
 			if strings.TrimSpace(w.Word) == "" {
 				continue
 			}
+			claimed[key{seg.Source, wi}] = true
 			contained := w.Start >= seg.Start && w.End <= seg.End
 			cands[si] = append(cands[si], cand{idx: wi, word: w, contained: contained})
 			if contained {
@@ -261,7 +272,73 @@ func WordsPerSegment(segments []Segment) [][]Word {
 		}
 		out[si] = kept
 	}
+
+	// Rescue pass: a word that missed every segment window goes to its nearest
+	// same-source segment, clamped to fit inside it (the cut wins, per Jordan's
+	// rule above). Segments sharing a Source share that source's one word slice,
+	// so walking it once per source (via the first segment seen) covers every
+	// word without re-scanning duplicates.
+	bySource := map[string][]int{}
+	for si, seg := range segments {
+		bySource[seg.Source] = append(bySource[seg.Source], si)
+	}
+	sourceDone := map[string]bool{}
+	for _, seg := range segments {
+		if sourceDone[seg.Source] {
+			continue
+		}
+		sourceDone[seg.Source] = true
+		segIdxs := bySource[seg.Source]
+		for wi, w := range seg.Words {
+			if strings.TrimSpace(w.Word) == "" || claimed[key{seg.Source, wi}] {
+				continue
+			}
+			nearest := segIdxs[0]
+			nearestGap := segmentGap(segments[nearest], w)
+			for _, si := range segIdxs[1:] {
+				if g := segmentGap(segments[si], w); g < nearestGap {
+					nearest, nearestGap = si, g
+				}
+			}
+			cw := w
+			cw.Start = clampToSpan(cw.Start, segments[nearest].Start, segments[nearest].End)
+			cw.End = clampToSpan(cw.End, segments[nearest].Start, segments[nearest].End)
+			if cw.End < cw.Start {
+				cw.End = cw.Start
+			}
+			out[nearest] = append(out[nearest], cw)
+		}
+	}
+	for si := range out {
+		sort.SliceStable(out[si], func(a, b int) bool { return out[si][a].Start < out[si][b].Start })
+	}
 	return out
+}
+
+// segmentGap is 0 when w overlaps seg, else the time distance from w to
+// whichever edge of seg is nearer — how WordsPerSegment picks the nearest
+// segment to rescue a stray word onto.
+func segmentGap(seg Segment, w Word) float64 {
+	if w.End <= seg.Start {
+		return seg.Start - w.End
+	}
+	if w.Start >= seg.End {
+		return w.Start - seg.End
+	}
+	return 0
+}
+
+// clampToSpan pins x inside [lo,hi]. Used to retime a rescued word onto its new
+// segment: a word rescued for being entirely past the segment's end needs BOTH
+// its Start and End brought back inside, not just one relative to the other.
+func clampToSpan(x, lo, hi float64) float64 {
+	if x < lo {
+		return lo
+	}
+	if x > hi {
+		return hi
+	}
+	return x
 }
 
 // ChunkWords is the deterministic pass-1 chunker. Two rules, in order: break at

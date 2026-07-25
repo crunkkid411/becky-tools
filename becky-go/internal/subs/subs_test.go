@@ -558,6 +558,42 @@ func TestWordFullyInsideTwoClipsIsKeptTwice(t *testing.T) {
 	}
 }
 
+func TestWordsPerSegmentRescuesStrayWordAtCutEdge(t *testing.T) {
+	// Jordan's real bug (2026-07-25, 27_walmart/KOIC0575_converted): Parakeet
+	// timed "but" and "I" a few dozen ms into the GAP between two kept clips —
+	// both words are audible in the kept footage; only the transcript's clock
+	// drifted. The old code silently dropped any word that missed every segment
+	// window; Jordan's rule is the cut is ground truth, so the fix retimes the
+	// word onto whichever clip is nearer instead of losing it.
+	words := []Word{
+		w("often", 30.5, 31.6),
+		w("but", 31.68, 31.68), // 0.08s past clip A's end; Parakeet gives ~49% of words zero duration
+		w("I", 31.99, 31.99),   // 0.01s before clip B's start
+		w("went", 32.1, 32.4),
+	}
+	segs := []Segment{
+		{Source: "a.mp4", Start: 30.0, End: 31.6, Words: words}, // clip A
+		{Source: "a.mp4", Start: 32.0, End: 33.0, Words: words}, // clip B — gap [31.6,32.0) is the removed pause
+	}
+	per := WordsPerSegment(segs)
+
+	if len(per[0]) != 2 || per[0][0].Word != "often" || per[0][1].Word != "but" {
+		t.Fatalf("clip A words = %v, want [often but] (\"but\" is 0.08s from A, 0.32s from B — rescued onto A's tail)", per[0])
+	}
+	if len(per[1]) != 2 || per[1][0].Word != "I" || per[1][1].Word != "went" {
+		t.Fatalf("clip B words = %v, want [I went] (\"I\" is 0.01s from B, 0.39s from A — rescued onto B's head)", per[1])
+	}
+	// A rescued word must be clamped inside its new clip's span, never outside it.
+	but := per[0][1]
+	if but.Start < segs[0].Start-eps || but.End > segs[0].End+eps {
+		t.Errorf("\"but\" = [%.3f,%.3f], want clamped inside clip A [%.3f,%.3f]", but.Start, but.End, segs[0].Start, segs[0].End)
+	}
+	iWord := per[1][0]
+	if iWord.Start < segs[1].Start-eps || iWord.End > segs[1].End+eps {
+		t.Errorf("\"I\" = [%.3f,%.3f], want clamped inside clip B [%.3f,%.3f]", iWord.Start, iWord.End, segs[1].Start, segs[1].End)
+	}
+}
+
 func TestBuildPostSpeechHoldBridgesShortGap(t *testing.T) {
 	// Segments are laid end to end by Build, so a gap only exists if a segment
 	// has zero duration. Assert the no-op case explicitly: a gapless reel must
