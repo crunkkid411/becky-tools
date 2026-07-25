@@ -561,13 +561,16 @@ void rebuildDerivedCaptions() {
     for (auto& cap : g_caps) {
         if (cap.clipId.empty()) { kept.push_back(cap); continue; }  // legacy/unanchored: leave as drawn
         Caption c = cap;
-        // A DERIVED caption (its words still match its text) whose words now extend
-        // beyond its clip - a clip split landed INSIDE it - is divided to just this
-        // clip's words, so it is not the whole caption duplicated onto both halves (the
-        // other half is re-seeded onto the new clip below). A hand-EDITED caption (text
-        // no longer matches its words) is left untouched.
+        // Word-level split: when a clip split lands INSIDE a caption's word span,
+        // divide the words to just this clip's window. The text is rebuilt from the
+        // surviving words (captionForClipWindow does this). Always attempted when
+        // per-word timing exists - the old exact-text-match gate (capNormalize ==
+        // c.text) was too strict and failed after energy alignment, punctuation
+        // differences, or caption_chunks formatting, causing the right half to lose
+        // its words entirely (Jordan 2026-07-25: "it simply deletes captions to the
+        // right of the cut").
         Clip* bnd = clipById(c.clipId);
-        if (bnd && !c.words.empty() && capNormalize(joinWords(c.words)) == c.text) {
+        if (bnd && !c.words.empty()) {
             bool spans = false;
             for (auto& wd : c.words)
                 if (wd.start < bnd->in || wd.end > bnd->out) { spans = true; break; }
