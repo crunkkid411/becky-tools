@@ -32,74 +32,6 @@ func TestChunkWordsBreaksOnPause(t *testing.T) {
 	}
 }
 
-func TestChunkWordsBreaksOnCharLimit(t *testing.T) {
-	// No pauses at all: only the 22-char limit can break these. The full run
-	// ("aaaaa bbbbb ccccc ddddd" = 23 chars) is over the cap, so it must break —
-	// but with LOOKAHEAD, not greedily: the greedy fill gave 3 words + a
-	// stranded "ddddd", which is the exact defect from Jordan's real edit
-	// ("media", "videos", "fundamentals" alone on a line). The balanced split
-	// leaves no lone word.
-	words := []Word{
-		w("aaaaa", 0.0, 0.1),
-		w("bbbbb", 0.1, 0.2),
-		w("ccccc", 0.2, 0.3),
-		w("ddddd", 0.3, 0.4),
-	}
-	got := ChunkWords(words, 22, 0.120)
-	if len(got) != 2 {
-		t.Fatalf("chunks = %d, want 2", len(got))
-	}
-	if len(got[0]) != 2 || len(got[1]) != 2 {
-		t.Errorf("chunks = %d + %d words, want 2 + 2 (no stranded lone word)", len(got[0]), len(got[1]))
-	}
-}
-
-// TestChunkWordsDoesNotStrandTheCapOverflowWord is the root cause of the 8
-// remaining one-word captions on Jordan's post_constantly edit: with
-// ASR-quantised timings every gap is equal, the old greedy chunker filled the
-// line to exactly the 22-char cap, and whatever word landed after the cap
-// ("videos" here) was stranded alone. The rebalance pass then could not fix it
-// either, because its re-split's >= tie-break on equal gaps picked the same
-// greedy boundary back. The chunker must pick a split that leaves both lines
-// multi-word.
-func TestChunkWordsDoesNotStrandTheCapOverflowWord(t *testing.T) {
-	// "and understand posting" = 22 chars exactly; " videos" overflows.
-	words := []Word{
-		w("and", 0.00, 0.10),
-		w("understand", 0.12, 0.40),
-		w("posting", 0.42, 0.60),
-		w("videos", 0.62, 0.80),
-	}
-	got := ChunkWords(words, 22, 0.120)
-	for i, c := range got {
-		if len(c) < 2 {
-			t.Fatalf("chunk %d = %+v is a lone word — the cap overflow was stranded", i, c)
-		}
-	}
-	if len(got) != 2 || got[0][len(got[0])-1].Word != "understand" {
-		t.Errorf("chunks = %v, want \"and understand\" | \"posting videos\"", renderChunks(got))
-	}
-}
-
-// TestChunkWordsDoesNotStrandALongOverflowWord: a LONG lone word
-// ("fundamentals", 12 chars) passes the char-based minPiece guard, so char
-// length alone cannot catch this — the no-lone-word preference has to be about
-// word count.
-func TestChunkWordsDoesNotStrandALongOverflowWord(t *testing.T) {
-	words := []Word{
-		w("learn", 0.00, 0.20),
-		w("the", 0.22, 0.30),
-		w("actual", 0.32, 0.55),
-		w("fundamentals", 0.57, 1.10),
-	}
-	got := ChunkWords(words, 22, 0.120)
-	for i, c := range got {
-		if len(c) < 2 {
-			t.Fatalf("chunk %d = %+v is a lone word — long words must not be stranded either", i, c)
-		}
-	}
-}
-
 // TestChunkWordsStillBreaksAtRealPausesFirst: the pause rule outranks the cap.
 // A word after a real pause "genuinely stands alone" (Jordan's rule) and must
 // stay its own caption, never be merged to fix a cosmetic lone-word count.
@@ -236,7 +168,7 @@ func TestSingleWordChunkFromPaceSurvives(t *testing.T) {
 func TestSingleWordChunkAfterQuestionSurvives(t *testing.T) {
 	words := []Word{
 		w("what", 0.00, 0.20), w("i", 0.22, 0.30), w("miss?", 0.32, 0.55),
-		w("good", 0.60, 1.25), // no pause before (the ? breaks it), drawn out
+		w("good", 0.60, 1.25),                                // no pause before (the ? breaks it), drawn out
 		w("offensive", 1.90, 2.25), w("content", 2.30, 2.65), // 0.65s pause before = jumpcut
 	}
 	want := []string{"what i miss?", "good", "offensive content"}
@@ -353,34 +285,22 @@ func TestBuildQuantisesWhenFPSSet(t *testing.T) {
 	}
 }
 
-// TestBuildSpansCutWhenSpeechIsContinuous is the post_constantly bug: a clip
-// holding just "can" was captioned alone because BuildFromChunks chunked each
-// clip independently, even though the next clip opens on "you post" with
-// almost no silence trimmed at the join — the cut removed dead air, not a
-// beat in the sentence. The caption must span the cut into one line instead
-// of stranding "can" by itself.
-func TestBuildSpansCutWhenSpeechIsContinuous(t *testing.T) {
+// A CUT ENDS THE CHUNK (Jordan 2026-07-24). Captions never span a cut, even when
+// speech runs straight across it: "can" on one clip and "you post" on the next stay
+// two separate captions. (The old build MERGED them; that is gone.)
+func TestBuildDoesNotSpanACut(t *testing.T) {
 	opt := Options{MaxChars: 22, GapSeconds: 0.25, Lowercase: true}
-	// Same source, ONE shared word list with ABSOLUTE source times (as real segments have -
-	// every clip of a source shares that source's word slice). "can you post" is three
-	// consecutive words; the edit keeps it as two CONTIGUOUS clips (a frame-cut mid-phrase, no
-	// content removed), so the boundary words "can" (ends 0.35) and "you" (starts 0.40) are
-	// only 0.05s apart in the source -> the caption should span the cut.
 	src := []Word{w("can", 0.05, 0.35), w("you", 0.40, 0.60), w("post", 0.65, 0.85)}
 	segs := []Segment{
 		{Start: 0.00, End: 0.38, Words: src}, // holds "can"
 		{Start: 0.38, End: 0.90, Words: src}, // holds "you", "post"
 	}
 	cues := Build(segs, opt)
-	if len(cues) != 1 {
-		t.Fatalf("cues = %d, want 1 (the cut should be spanned): %+v", len(cues), cues)
+	if len(cues) != 2 {
+		t.Fatalf("cues = %d, want 2 (a cut is a hard break): %+v", len(cues), cues)
 	}
-	if cues[0].Text != "can you post" {
-		t.Errorf("text = %q, want %q", cues[0].Text, "can you post")
-	}
-	if !closeTo(cues[0].Start, 0) || !closeTo(cues[0].End, 0.9) {
-		t.Errorf("cue = {%.4f %.4f}, want {0.0000 0.9000} (anchored to the outer cut points)",
-			cues[0].Start, cues[0].End)
+	if cues[0].Text != "can" || cues[1].Text != "you post" {
+		t.Errorf("texts = %q / %q, want %q / %q", cues[0].Text, cues[1].Text, "can", "you post")
 	}
 }
 

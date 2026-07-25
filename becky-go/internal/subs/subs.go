@@ -277,17 +277,31 @@ func WordsPerSegment(segments []Segment) [][]Word {
 // boundaries where the pause was suppressed by the 22-char limit" — and the
 // deterministic stand-in for a clause boundary is the run's biggest pause,
 // which is exactly what splitAtBiggestPause picks.
-// endsSentence reports whether a word ends a sentence with ? or ! - tolerating a trailing
-// closing quote or bracket after the mark ("done?" / `over!"` / "really?)"). A break there
-// starts the next sentence on its own caption line.
-func endsSentence(word string) bool {
+// breaksAfter reports whether a word ENDS a caption chunk. Jordan's cli-cut rule
+// (2026-07-24): "? and ! are the only punctuation allowed; where a period or comma
+// would be, a split occurs." So a word ending in ? ! . or , closes its line - the ?
+// and ! stay (endsSentence), the . and , are dropped by normalize. This is WHERE to
+// break; normalize decides what punctuation survives.
+func breaksAfter(word string) bool {
 	s := strings.TrimRight(strings.TrimSpace(word), `"'’”)]}`)
-	return strings.HasSuffix(s, "?") || strings.HasSuffix(s, "!")
+	return strings.HasSuffix(s, "?") || strings.HasSuffix(s, "!") ||
+		strings.HasSuffix(s, ".") || strings.HasSuffix(s, ",")
 }
 
+// ChunkWords is the ONE deterministic caption chunker — Jordan's rules (2026-07-24),
+// grounded in cli-cut's _chunk_words_pass1. Two clean passes:
+//
+//  1. PHRASE RUNS. Walk the words and close a run at every natural boundary: a real
+//     speaker PAUSE (gap > gapSeconds — pace is rule #1), and any word ending in
+//     ? ! . or , (? and ! are kept by normalize, . and , are dropped — a period or
+//     comma is a split point, not a printed mark). Words with no pause and no
+//     punctuation between them stay together — that is a phrase.
+//
+//  2. FIT THE CAP. A run longer than 22 chars is broken at its biggest INTERNAL
+//     pause (splitToFit) — never a dumb character wrap — and no line is left ending
+//     on a/the/to/and... (pushDanglers). 22 is a hard failsafe; a one-word line is
+//     fine.
 func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
-	// First pass: cut the stream at real pauses only. Every break here is one
-	// the speaker actually made.
 	var runs [][]Word
 	var cur []Word
 	for _, w := range words {
@@ -299,10 +313,7 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 			cur = nil
 		}
 		cur = append(cur, w)
-		// A sentence-ending ? or ! forces a break: the next sentence starts its own
-		// caption, no matter how tight the pause (Jordan). This runs AFTER appending, so
-		// the mark's own word closes the line it belongs to.
-		if endsSentence(w.Word) {
+		if breaksAfter(w.Word) {
 			runs = append(runs, cur)
 			cur = nil
 		}
@@ -311,56 +322,12 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 		runs = append(runs, cur)
 	}
 
-	// Second pass: a run that cannot fit on one line breaks where the speaker
-	// paused longest, with lookahead across the whole run — never at the
-	// character the cap happened to land on.
 	var chunks [][]Word
 	for _, run := range runs {
-		if maxChars > 0 && lineLen(run) > maxChars {
-			chunks = append(chunks, splitAtBiggestPause(run, maxChars)...)
-			continue
-		}
-		chunks = append(chunks, run)
+		chunks = append(chunks, splitToFit(run, maxChars)...)
 	}
-	return chunks
+	return pushDanglers(chunks, maxChars)
 }
-
-// splitAtHardBoundaries re-asserts Jordan's two INVIOLABLE break rules on chunks
-// that some later step may have merged across: a caption line ENDS at a ? or !
-// (endsSentence), and it ENDS at a real speaker pause (a gap wider than gapSeconds
-// — "match the speaker's pace", his rule 1). These are compiled in, not left to the
-// model: the LLM regroup ignores its own punctuation instruction, and
-// rebalanceCapSplits folds a lone word back onto a question when the combined line
-// happens to fit ("what i miss?" + "good" -> "miss? good"). It only ever SPLITS an
-// existing chunk at an internal boundary — never moves a word between chunks — so
-// the result is still a strict in-order partition, and where the break was already
-// there it is a no-op.
-func splitAtHardBoundaries(chunks [][]Word, gapSeconds float64) [][]Word {
-	out := make([][]Word, 0, len(chunks))
-	for _, c := range chunks {
-		start := 0
-		for i := 1; i < len(c); i++ {
-			pause := c[i].Start-c[i-1].End > gapSeconds+gapEps
-			if endsSentence(c[i-1].Word) || pause {
-				out = append(out, c[start:i])
-				start = i
-			}
-		}
-		if start < len(c) {
-			out = append(out, c[start:])
-		}
-	}
-	return out
-}
-
-// noPause disables the pause half of splitAtHardBoundaries, leaving ONLY the
-// sentence-end (?/!) rule. Used where a pause break would fight a dangling-word
-// push that already ran (RepairDangling moves "to"/"the" across a pause on purpose;
-// re-breaking at that pause would strand it again). A ? word is never a dangler, so
-// the sentence rule never has that conflict and is always safe to apply last.
-const noPause = 1e18
-
-func splitAtSentenceEnds(chunks [][]Word) [][]Word { return splitAtHardBoundaries(chunks, noPause) }
 
 // Build turns kept source segments into output-timeline cues with cut-snapped,
 // gap-free timing. Segments are laid end to end in the order given: segment i
@@ -376,49 +343,6 @@ func Build(segments []Segment, opt Options) []Cue {
 		chunks[i] = Pass1Chunks(perSeg[i], opt.MaxChars, opt.GapSeconds)
 	}
 	return BuildFromChunks(segments, chunks, opt)
-}
-
-// continuesAcrossCut reports whether the speech closing one clip runs straight
-// into the speech opening the next, so a caption for it should not be forced
-// to fracture at the cut.
-//
-// BuildFromChunks chunks each segment independently, so a clip that holds only
-// one or two words — because Jordan's cut landed a beat after the word instead
-// of a clause later — gets its own one-word caption: "can" | "you post" from a
-// clip boundary that split "can you post". The words are still adjacent in the
-// OUTPUT audio (the cut removed dead air, not a pause in the sentence), so the
-// caption can safely span the cut instead of fracturing there.
-//
-// Segments are always laid end to end on the output timeline (see the package
-// doc), so the OUTPUT-time pause across a cut is exactly the silence trimmed
-// off the end of the outgoing clip (after its last word) plus the silence
-// trimmed off the start of the incoming one (before its first word) — no
-// offset arithmetic needed, both halves are local to their own segment. This
-// is the same pause measure ChunkWords already uses to break WITHIN a
-// segment, so a cut is treated as no different from any other pause once its
-// two sides are known.
-func continuesAcrossCut(prevSeg Segment, prevChunks [][]Word, nextSeg Segment, nextChunks [][]Word, gapSeconds float64) bool {
-	if len(prevChunks) == 0 || len(nextChunks) == 0 {
-		return false // one side is silence (or filtered to nothing) — a real break, not a mid-phrase cut
-	}
-	last := prevChunks[len(prevChunks)-1]
-	first := nextChunks[0]
-	if len(last) == 0 || len(first) == 0 {
-		return false
-	}
-	// A caption may only span a cut that split a TIGHT phrase - i.e. the last word of the
-	// outgoing clip and the first word of the incoming one are CONSECUTIVE in the same source
-	// with no real pause between them (the cut removed a frame or two, not content). A
-	// different source, or a source-time gap larger than the pause threshold - a SIGNIFICANT
-	// jumpcut that removed content, or a trimmed real pause - is a genuine break and must NOT
-	// be spanned (Jordan: "words from before or after a significant jumpcut are still placed
-	// together"). Both words are from the same source's word slice, so their Start/End are on
-	// the same clock and their gap is exactly the speech gap the editor cut through.
-	if prevSeg.Source != nextSeg.Source {
-		return false
-	}
-	srcGap := first[0].Start - last[len(last)-1].End
-	return srcGap >= -gapEps && srcGap <= gapSeconds+gapEps
 }
 
 // BuildFromChunks is Build with the word grouping already decided — used when
@@ -515,29 +439,10 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 			}
 		}
 
-		// Span the cut into the previous caption when the speech is continuous
-		// across it (continuesAcrossCut) — fold this segment's first cue into
-		// the last cue already in out rather than starting a new, often
-		// one-word, caption.
-		//
-		// TWO hard limits Jordan's rules put on this (2026-07-24): (1) NEVER span a
-		// cut when the previous caption ENDS a sentence — a ? or ! is a hard boundary
-		// even when the speech runs on, and this merge was gluing "them?" onto
-		// "drinking!" across a cut, the exact defect he saw; (2) the merged line must
-		// stay within the HARD 22 cap, not the phrase-slack, so a spanned caption can
-		// never exceed what fits on screen. A single word left behind is fine — he
-		// allows one-word captions.
-		if i > 0 && len(out) > 0 && i-1 < len(chunksPerSeg) && i < len(chunksPerSeg) &&
-			!endsSentence(out[len(out)-1].Text) &&
-			continuesAcrossCut(segments[i-1], chunksPerSeg[i-1], segments[i], chunksPerSeg[i], opt.GapSeconds) {
-			joined := normalize(out[len(out)-1].Text+" "+cues[0].Text, opt.Lowercase)
-			if opt.MaxChars <= 0 || len(joined) <= opt.MaxChars {
-				out[len(out)-1].End = cues[0].End
-				out[len(out)-1].Text = joined
-				cues = cues[1:]
-			}
-		}
-
+		// A CUT ENDS THE CHUNK (Jordan 2026-07-24: "when there's a cut, that's also
+		// the end of the chunk"). Captions never span a cut — each segment's chunks
+		// stay as they are. (This used to fold the next segment's first caption back
+		// into the previous one when speech ran on; that merge is gone.)
 		out = append(out, cues...)
 	}
 	// Clamp AFTER quantising: rounding two boundaries to frames can itself put a
@@ -592,11 +497,19 @@ func clampOverlaps(cues []Cue) []Cue {
 	return cues
 }
 
-// normalize applies the cli-cut caption look: collapse whitespace, drop trailing
-// sentence punctuation, and (optionally) lowercase.
+// normalize applies the caption look: only ? and ! survive as punctuation (Jordan
+// 2026-07-24) — a period, comma, semicolon or colon is a SPLIT point in chunking,
+// never a printed mark, so strip them everywhere. Collapse whitespace, and
+// (optionally) lowercase.
 func normalize(s string, lower bool) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '.', ',', ';', ':':
+			return -1
+		}
+		return r
+	}, s)
 	s = strings.Join(strings.Fields(s), " ")
-	s = strings.TrimRight(s, ".,;:")
 	if lower {
 		s = strings.ToLower(s)
 	}
