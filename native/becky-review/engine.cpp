@@ -698,12 +698,67 @@ static void wasapiLoop() {
     CoUninitialize();
 }
 
+// P5 (2026-07-25): warm audio decoder pool. Keeps AVFormatContext + AVCodecContext
+// + SwrContext open per source across segment boundaries, so a 20-clip reel from
+// 10 sources doesn't re-open each file from scratch on every playback pass. The
+// video thread's SrcPool already proves this pattern; this is the audio equivalent.
+struct AudioDec {
+    AVFormatContext* fmt = nullptr;
+    AVCodecContext* ctx = nullptr;
+    SwrContext* swr = nullptr;
+    int astream = -1;
+    bool ok = false;
+    bool open(const char* path) {
+        if (avformat_open_input(&fmt, path, nullptr, nullptr) < 0) return false;
+        if (avformat_find_stream_info(fmt, nullptr) < 0) { close(); return false; }
+        astream = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+        if (astream < 0) { close(); return false; }
+        AVStream* st = fmt->streams[astream];
+        const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
+        if (!dec) { close(); return false; }
+        ctx = avcodec_alloc_context3(dec);
+        avcodec_parameters_to_context(ctx, st->codecpar);
+        if (avcodec_open2(ctx, dec, nullptr) < 0) { close(); return false; }
+        AVChannelLayout outL = AV_CHANNEL_LAYOUT_STEREO;
+        if (swr_alloc_set_opts2(&swr, &outL, AV_SAMPLE_FMT_FLT, 48000,
+                                &ctx->ch_layout, ctx->sample_fmt,
+                                ctx->sample_rate, 0, nullptr) < 0 || swr_init(swr) < 0) {
+            close(); return false;
+        }
+        ok = true;
+        return true;
+    }
+    void flush() { if (ctx) avcodec_flush_buffers(ctx); }
+    void close() {
+        if (swr) swr_free(&swr);
+        if (ctx) avcodec_free_context(&ctx);
+        if (fmt) avformat_close_input(&fmt);
+        ok = false; astream = -1;
+    }
+};
+struct AudioPool {
+    std::vector<std::pair<std::string, AudioDec*>> open;
+    static const int MAX = 8;
+    AudioDec* get(const std::string& p) {
+        for (auto& e : open) if (e.first == p) { e.second->flush(); return e.second; }
+        // Evict oldest if at capacity.
+        if ((int)open.size() >= MAX) { open[0].second->close(); delete open[0].second; open.erase(open.begin()); }
+        AudioDec* d = new AudioDec();
+        if (!d->open(p.c_str())) { d->close(); delete d; return nullptr; }
+        open.push_back({p, d});
+        crashLog("engine: audio pool OPEN " + p.substr(p.find_last_of("/\\") + 1));
+        return d;
+    }
+    void clear() { for (auto& e : open) { e.second->close(); delete e.second; } open.clear(); }
+};
+
 // Audio segment-chain decode: sample-exact butt splices (probe-proven).
 static void audioDecLoop() {
     const int RATE = 48000, CH = 2;
     uint32_t myGen = (uint32_t)-1;
     Prog prog;
     double startSec = 0;
+    AudioPool pool;
     while (!g_quit.load()) {
         uint32_t gen = g_progGen.load();
         if (gen != myGen) {
@@ -729,31 +784,13 @@ static void audioDecLoop() {
             segOff = 0;
             int64_t needSamples = llround((sg.out - segIn) * RATE);
             if (needSamples <= 0) continue;
-            AVFormatContext* fmt = nullptr;
-            AVCodecContext* actx = nullptr;
-            SwrContext* swr = nullptr;
-            int astream = -1;
-            bool okA = false;
-            if (avformat_open_input(&fmt, sg.source.c_str(), nullptr, nullptr) == 0 &&
-                avformat_find_stream_info(fmt, nullptr) >= 0) {
-                astream = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-                if (astream >= 0) {
-                    AVStream* st = fmt->streams[astream];
-                    const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
-                    if (dec) {
-                        actx = avcodec_alloc_context3(dec);
-                        avcodec_parameters_to_context(actx, st->codecpar);
-                        if (avcodec_open2(actx, dec, nullptr) == 0) {
-                            AVChannelLayout outL = AV_CHANNEL_LAYOUT_STEREO;
-                            if (swr_alloc_set_opts2(&swr, &outL, AV_SAMPLE_FMT_FLT, RATE,
-                                                    &actx->ch_layout, actx->sample_fmt,
-                                                    actx->sample_rate, 0, nullptr) >= 0 &&
-                                swr_init(swr) >= 0)
-                                okA = true;
-                        }
-                    }
-                }
-            }
+            // P5: warm pool - reuse the decoder if this source is already open.
+            AudioDec* adec = pool.get(sg.source);
+            AVFormatContext* fmt = adec ? adec->fmt : nullptr;
+            AVCodecContext* actx = adec ? adec->ctx : nullptr;
+            SwrContext* swr = adec ? adec->swr : nullptr;
+            int astream = adec ? adec->astream : -1;
+            bool okA = adec && adec->ok;
             // 2x speed audio (2026-07-23): time-stretch via libavfilter's atempo
             // (WSOLA-family, pitch-preserved) - reuse, not hand-rolled DSP. Only
             // built when this generation's rate isn't 1.0; okA-false or graph-
@@ -928,9 +965,8 @@ static void audioDecLoop() {
                     ringPushed += chunk;
                 }
             }
-            if (swr) swr_free(&swr);
-            if (actx) avcodec_free_context(&actx);
-            if (fmt) avformat_close_input(&fmt);
+            // P5: pool owns the decoder - do NOT close here. The pool keeps it
+            // warm for the next segment from the same source (or the next pass).
         }
         // chain finished (or interrupted): wait for a new generation/play state
         while (!g_quit.load() && g_progGen.load() == myGen && g_playing.load()) {
@@ -963,6 +999,7 @@ static void audioDecLoop() {
             Sleep(20);
         }
     }
+    pool.clear();   // P5: release all warm decoders on thread exit.
 }
 
 // ------------------------------------------------------------ public API
