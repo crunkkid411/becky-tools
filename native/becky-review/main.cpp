@@ -2338,7 +2338,10 @@ int main(int argc, char** argv) {
         // clips, or use Load Reel" message (drawn whenever g_track[0].empty(), see
         // the timeline pane) instead of a look-alike uneditable surface.
         recomputeDur(); relabel(0); relabel(1);
-        for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+        // BPK4 fix (2026-07-25): peaksRequest DEFERRED to the render loop (fires 2s
+        // after the first video frame is shown). Firing here at boot saturated disk
+        // I/O with 6 concurrent ffmpeg audio decodes on the same source file the
+        // video engine was trying to seek, starving the preview for 15+ minutes.
         g_bootDone.store(true);
     }).detach();
 
@@ -3245,6 +3248,17 @@ int main(int argc, char** argv) {
         }
         wasComposeContinuous = composeContinuous;
         if (engineReadyNow) engineArmedOnce = true;
+        // BPK4 deferred peaks: fire waveform decode 2s after the first video frame
+        // is composed, so the preview isn't starved by disk I/O contention.
+        static double s_peaksDeferredAt = -1;
+        static bool s_peaksFired = false;
+        if (!s_peaksFired && g_bootDone.load() && engineArmedOnce && !g_track[0].empty()) {
+            if (s_peaksDeferredAt < 0) s_peaksDeferredAt = nowSec();
+            if (nowSec() - s_peaksDeferredAt > 2.0) {
+                for (auto& c : g_track[0]) peaksRequest(c.source, c.in - 1.0, c.out + 5.0);
+                s_peaksFired = true;
+            }
+        }
         if (g_resize) { resizeD3D(); g_resize = false; }
         stageMark("playback-engine-block");
 
