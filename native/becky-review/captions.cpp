@@ -729,8 +729,8 @@ void rebuildDerivedCaptions() {
                 for (long long b = centerBin - searchBins; b <= centerBin + searchBins / 2; b++) {
                     if (b < 1 || b >= (long long)pk->x0.size()) continue;
                     // Rising edge: previous bin quiet, this bin loud.
-                    float prev = std::max(std::abs((float)pk->n0[b-1]), std::abs((float)pk->x0[b-1])) / 127.0f;
-                    float cur  = std::max(std::abs((float)pk->n0[b]),   std::abs((float)pk->x0[b]))   / 127.0f;
+                    float prev = std::max(std::abs((float)pk->n0[b-1]), std::abs((float)pk->x0[b-1])) / 32767.0f;
+                    float cur  = std::max(std::abs((float)pk->n0[b]),   std::abs((float)pk->x0[b]))   / 32767.0f;
                     if (prev < onsetThr && cur >= onsetThr) {
                         double binSec = (double)b / bps - pk->avSkew;
                         double dist = std::abs(binSec - cap.srcIn);
@@ -756,8 +756,8 @@ void rebuildDerivedCaptions() {
                 for (long long b = centerBin - searchBins / 2; b <= centerBin + searchBins; b++) {
                     if (b < 1 || b >= (long long)pk->x0.size()) continue;
                     // Falling edge: this bin loud, next bin quiet.
-                    float cur  = std::max(std::abs((float)pk->n0[b]),   std::abs((float)pk->x0[b]))   / 127.0f;
-                    float next = std::max(std::abs((float)pk->n0[b+1]), std::abs((float)pk->x0[b+1])) / 127.0f;
+                    float cur  = std::max(std::abs((float)pk->n0[b]),   std::abs((float)pk->x0[b]))   / 32767.0f;
+                    float next = std::max(std::abs((float)pk->n0[b+1]), std::abs((float)pk->x0[b+1])) / 32767.0f;
                     if (cur >= onsetThr && next < onsetThr) {
                         double binSec = (double)(b + 1) / bps - pk->avSkew;
                         double dist = std::abs(binSec - cap.srcOut);

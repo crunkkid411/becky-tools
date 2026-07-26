@@ -1161,14 +1161,14 @@ static std::vector<std::pair<double, double>> computeQuietRangesNow() {
                 if (gi < (long long)pk->n0.size() && gi < (long long)pk->x0.size()) {
                     float mn = std::abs((float)pk->n0[gi]);
                     float mx = std::abs((float)pk->x0[gi]);
-                    loud = std::max(mn, mx) / 127.0f;
+                    loud = std::max(mn, mx) / 32767.0f;
                 }
                 runSum += loud;
                 if (i >= smoothBins) {
                     long long old = b0 + i - smoothBins;
                     float oldLoud = 0;
                     if (old < (long long)pk->n0.size() && old < (long long)pk->x0.size())
-                        oldLoud = std::max(std::abs((float)pk->n0[old]), std::abs((float)pk->x0[old])) / 127.0f;
+                        oldLoud = std::max(std::abs((float)pk->n0[old]), std::abs((float)pk->x0[old])) / 32767.0f;
                     runSum -= oldLoud;
                 }
                 int window = (int)std::min((long long)smoothBins, i + 1);
@@ -1912,8 +1912,8 @@ void drawWave(ImDrawList* dl, const std::string& source, double cin, double cout
                 for (long long i = b0; i < b1; i++) { mn = std::min(mn, (int)pk->n0[i]); mx = std::max(mx, (int)pk->x0[i]); }
             }
             if (mn > mx) { missed = true; continue; }
-            float top = std::min(1.0f, std::max(-1.0f, (mx * gain) / 127.0f));
-            float bot = std::min(1.0f, std::max(-1.0f, (mn * gain) / 127.0f));
+            float top = std::min(1.0f, std::max(-1.0f, (mx * gain) / 32767.0f));
+            float bot = std::min(1.0f, std::max(-1.0f, (mn * gain) / 32767.0f));
             float yTop = mid - top * half;
             float yBot = mid - bot * half;
             if (yBot - yTop < 1.0f) { yTop = mid - 0.5f; yBot = mid + 0.5f; }
