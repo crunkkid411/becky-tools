@@ -1890,7 +1890,7 @@ void drawWave(ImDrawList* dl, const std::string& source, double cin, double cout
             }
         }
         float gain = 1.0f;
-        if (clipPeak >= 6) gain = std::min(16.0f, 115.0f / (float)clipPeak);  // fill ~90%; <~-26dB stays flat
+        if (clipPeak >= 1500) gain = std::min(16.0f, 29000.0f / (float)clipPeak);  // BPK4: fill ~90% of lane; <~-26dB stays flat
         int x0 = (int)std::floor(wx0), x1 = (int)std::ceil(wx1);
         for (int x = x0; x < x1; x++) {
             double s0 = cin + (x - clipX0) / pps, s1 = s0 + 1.0 / pps;
