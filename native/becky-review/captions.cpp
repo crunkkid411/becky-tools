@@ -57,6 +57,7 @@ double quantToFrame(double t) {
 // character position guessed from a time fraction. Empty for a loaded .srt (no
 // word timing) - the split falls back to the fraction guess there.
 std::vector<Caption> g_caps;
+std::vector<PendingCaptionSplit> g_pendingCaptionSplits;
 // Clip ids whose captions have already been seeded (from a sidecar .srt or the
 // source transcript). A clip is seeded exactly once; after that, the ABSENCE of a
 // caption on it is a deliberate user removal (issue 5: "the user chooses to remove
@@ -555,22 +556,71 @@ void rebuildDerivedCaptions() {
         for (auto& id : g_capSeededClips) if (present.count(id)) keepSeed.insert(id);
         g_capSeededClips.swap(keepSeed);
     }
+    // 0. Process pending caption splits (from manual S-key or AI agent splits).
+    // This is the ONLY path that uses word-level timestamps to divide a caption.
+    // It runs ONCE per split, divides the ONE caption at the split point, and both
+    // halves fill their clip entirely (srcIn=clip.in, srcOut=clip.out). The general
+    // reproject gate below protects all other captions from being re-windowed.
+    if (!g_pendingCaptionSplits.empty()) {
+        for (auto& ps : g_pendingCaptionSplits) {
+            Clip* leftClip = clipById(ps.parentId);
+            Clip* rightClip = clipById(ps.newId);
+            if (!leftClip || !rightClip) continue;
+            // Find the caption on the parent (left) clip that spans the split point.
+            for (auto& cap : g_caps) {
+                if (cap.clipId != ps.parentId) continue;
+                if (cap.srcOut <= ps.splitSrcT || cap.srcIn >= ps.splitSrcT) continue;
+                if (cap.words.empty()) break;   // no word timing - can't divide
+                // Divide words at the split point (word midpoint determines side).
+                std::vector<CapWord> leftWords, rightWords;
+                for (auto& wd : cap.words) {
+                    double mid = (wd.start + wd.end) * 0.5;
+                    if (mid < ps.splitSrcT) leftWords.push_back(wd);
+                    else rightWords.push_back(wd);
+                }
+                // Update the LEFT caption: trim to left words, fill left clip entirely.
+                if (!leftWords.empty()) {
+                    cap.words = leftWords;
+                    cap.text = capNormalize(joinWords(leftWords));
+                    cap.srcIn = leftClip->in;
+                    cap.srcOut = ps.splitSrcT;
+                    cap.start = leftClip->compStart;
+                    cap.end = leftClip->compStart + (ps.splitSrcT - leftClip->in);
+                }
+                // Create the RIGHT caption: right words, fill right clip entirely.
+                if (!rightWords.empty()) {
+                    Caption rc;
+                    rc.clipId = ps.newId;
+                    rc.words = rightWords;
+                    rc.text = capNormalize(joinWords(rightWords));
+                    rc.srcIn = ps.splitSrcT;
+                    rc.srcOut = rightClip->out;
+                    rc.start = rightClip->compStart;
+                    rc.end = rightClip->compStart + (rightClip->out - rightClip->in);
+                    g_caps.push_back(rc);
+                }
+                g_capSeededClips.insert(ps.newId);   // don't re-seed from transcript
+                break;   // only one caption per split point
+            }
+        }
+        g_pendingCaptionSplits.clear();
+    }
     // 1. Reproject existing captions; drop only those whose clip was deleted.
     std::vector<Caption> kept;
     kept.reserve(g_caps.size());
     for (auto& cap : g_caps) {
         if (cap.clipId.empty()) { kept.push_back(cap); continue; }  // legacy/unanchored: leave as drawn
         Caption c = cap;
-        // Word-level split: when a clip split lands INSIDE a caption's word span,
-        // divide the words to just this clip's window. The text is rebuilt from the
-        // surviving words (captionForClipWindow does this). Always attempted when
-        // per-word timing exists - the old exact-text-match gate (capNormalize ==
-        // c.text) was too strict and failed after energy alignment, punctuation
-        // differences, or caption_chunks formatting, causing the right half to lose
-        // its words entirely (Jordan 2026-07-25: "it simply deletes captions to the
-        // right of the cut").
+        // Word-level split: ONLY when a clip split lands INSIDE a caption's word
+        // span AND the caption is still derived (words match text). The gate protects
+        // manually-adjusted captions (whose text no longer matches the raw word join)
+        // from being re-windowed on every rebuild - those were tuned by hand to fill
+        // every frame, and the 6-month-dialed auto-cut cadence is ground truth.
+        // The exception (splitting at the word boundary) is handled separately below
+        // via g_pendingCaptionSplits - only the ONE caption at a fresh split point
+        // gets divided, and both halves fill their clip entirely.
         Clip* bnd = clipById(c.clipId);
-        if (bnd && !c.words.empty()) {
+        if (bnd && !c.words.empty() && capNormalize(joinWords(c.words)) == c.text) {
             bool spans = false;
             for (auto& wd : c.words)
                 if (wd.start < bnd->in || wd.end > bnd->out) { spans = true; break; }

@@ -3065,6 +3065,14 @@ int main(int argc, char** argv) {
                         // returns, so selecting new_id alone - clearing everything
                         // else first - is exactly "the left half is de-selected".
                         if (!newId.empty()) { g_sel.clear(); g_sel.insert(newId); g_selAnchor = newId; emitSelect(); }
+                        // Caption split: queue the split info so rebuildDerivedCaptions
+                        // divides the ONE caption at this split point using word timestamps.
+                        if (!newId.empty()) {
+                            std::string parentId = res.req.args.value("id", std::string());
+                            double splitAt = res.req.args.value("at", 0.0);
+                            if (!parentId.empty() && splitAt > 0)
+                                g_pendingCaptionSplits.push_back({parentId, newId, splitAt});
+                        }
                         break;
                     }
                     case 1: // remove
