@@ -3737,6 +3737,28 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
                 inputFocusBorder();
+                // Match counter: show "N/M" beside the search box, or red "0 results".
+                if (g_withinBuf[0]) {
+                    ImGui::SameLine();
+                    if (g_withinMatchCount > 0)
+                        ImGui::TextColored(ImVec4(0.08f, 1.0f, 0.22f, 1.0f), "%d/%d", g_withinMatchIdx + 1, g_withinMatchCount);
+                    else
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "0 results");
+                    // "x" button: clears the search and returns arrow keys to paragraph nav.
+                    ImGui::SameLine();
+                    float xw = ImGui::GetFrameHeight();
+                    ImVec2 wxp = ImGui::GetCursorScreenPos();
+                    if (ImGui::InvisibleButton("##withinclr", ImVec2(xw, xw))) {
+                        g_withinBuf[0] = 0; g_withinMatchIdx = 0; g_withinMatchCount = 0; g_withinLast.clear();
+                    }
+                    bool wxh = ImGui::IsItemHovered();
+                    ImU32 wxc = wxh ? IM_COL32(0xDC, 0x14, 0x3C, 255) : IM_COL32(150, 158, 170, 255);
+                    ImVec2 wxm = ImVec2(wxp.x + xw * 0.5f, wxp.y + xw * 0.5f);
+                    float wxk = xw * 0.22f;
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(wxm.x - wxk, wxm.y - wxk), ImVec2(wxm.x + wxk, wxm.y + wxk), wxc, 2.0f);
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(wxm.x - wxk, wxm.y + wxk), ImVec2(wxm.x + wxk, wxm.y - wxk), wxc, 2.0f);
+                    if (wxh) ImGui::SetTooltip("clear search (returns arrows to paragraph navigation)");
+                }
                 ImGui::SameLine();
                 // Item 3c: auto-cut, placed here per the old app's layout (the button
                 // sat immediately right of this same field). Runs on the video whose
@@ -3779,17 +3801,36 @@ int main(int argc, char** argv) {
                     if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { g_cueSel = std::min(nCues - 1, g_cueSel + 1); cueMoved = true; }
                     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  { g_cueSel = std::max(0, g_cueSel - 1); cueMoved = true; }
                     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-                        std::vector<bool> para = cueParagraphStarts();
-                        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-                            int j = g_cueSel + 1; while (j < nCues && !para[j]) j++;
-                            if (j < nCues) { g_cueSel = j; cueMoved = true; }
-                        }
-                        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-                            int ps = g_cueSel; while (ps > 0 && !para[ps]) ps--;        // start of the current paragraph
-                            if (ps < g_cueSel) { g_cueSel = ps; cueMoved = true; }      // not yet at it -> go there
-                            else if (ps > 0) {                                          // already at it -> previous paragraph
-                                int pp = ps - 1; while (pp > 0 && !para[pp]) pp--;
-                                g_cueSel = pp; cueMoved = true;
+                        std::string withinNav(g_withinBuf);
+                        if (!withinNav.empty() && g_withinMatchCount > 0) {
+                            // Search active: UP/DOWN jump between matching cues (like global search).
+                            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+                                g_withinMatchIdx = (g_withinMatchIdx + 1) % g_withinMatchCount;
+                            } else {
+                                g_withinMatchIdx = (g_withinMatchIdx - 1 + g_withinMatchCount) % g_withinMatchCount;
+                            }
+                            // Walk cues to find the Nth match and select it.
+                            int seen = 0;
+                            for (int j = 0; j < nCues; j++) {
+                                if (ciContains(g_cues[j].text, withinNav)) {
+                                    if (seen == g_withinMatchIdx) { g_cueSel = j; cueMoved = true; break; }
+                                    seen++;
+                                }
+                            }
+                        } else {
+                            // No search: paragraph navigation (original behavior).
+                            std::vector<bool> para = cueParagraphStarts();
+                            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+                                int j = g_cueSel + 1; while (j < nCues && !para[j]) j++;
+                                if (j < nCues) { g_cueSel = j; cueMoved = true; }
+                            }
+                            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+                                int ps = g_cueSel; while (ps > 0 && !para[ps]) ps--;        // start of the current paragraph
+                                if (ps < g_cueSel) { g_cueSel = ps; cueMoved = true; }      // not yet at it -> go there
+                                else if (ps > 0) {                                          // already at it -> previous paragraph
+                                    int pp = ps - 1; while (pp > 0 && !para[pp]) pp--;
+                                    g_cueSel = pp; cueMoved = true;
+                                }
                             }
                         }
                     }
@@ -3810,7 +3851,17 @@ int main(int argc, char** argv) {
                 std::string within(g_withinBuf);
                 bool searchChanged = (within != g_withinLast);
                 g_withinLast = within;
+                // Count matches and reset index when the search term changes.
+                if (searchChanged) {
+                    g_withinMatchIdx = 0;
+                    g_withinMatchCount = 0;
+                    if (!within.empty()) {
+                        for (size_t mi = 0; mi < g_cues.size(); mi++)
+                            if (ciContains(g_cues[mi].text, within)) g_withinMatchCount++;
+                    }
+                }
                 bool scrolledToMatch = false;
+                int withinMatchSeen = 0; // running count of matches encountered during render
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 // Item 10: the selected cue's highlight is a FILL, not a hairline
                 // outline - but the fill has to sit BEHIND the words (which are
@@ -3866,7 +3917,7 @@ int main(int argc, char** argv) {
                         // all 15 words of the sentence it was in.
                         if (isMatch && ciContains(word, within)) {
                             ImVec2 p0 = ImGui::GetCursorScreenPos();
-                            dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0xFF, 0xD7, 0x00, 60), 2.0f);
+                            dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0x14, 0xFF, 0x39, 60), 2.0f);
                         }
                         ImGui::PushID((int)wstart);
                         ImVec2 wp0 = ImGui::GetCursorScreenPos();
@@ -3931,7 +3982,15 @@ int main(int argc, char** argv) {
                         cueSplit.SetCurrentChannel(dl, 1);
                     }
                     if (g_cueSel == (int)i && g_cueScrollPending) { ImGui::SetScrollHereY(0.3f); g_cueScrollPending = false; }
-                    if (isMatch && searchChanged && !scrolledToMatch) { ImGui::SetScrollHereY(0.2f); scrolledToMatch = true; }
+                    // Auto-scroll to the current match (g_withinMatchIdx) on search change.
+                    // UP/DOWN nav scroll is handled by the g_cueScrollPending line above
+                    // (we set g_cueSel to the target match in the keyboard handler).
+                    if (isMatch) {
+                        if (withinMatchSeen == g_withinMatchIdx && !scrolledToMatch && searchChanged) {
+                            ImGui::SetScrollHereY(0.3f); scrolledToMatch = true;
+                        }
+                        withinMatchSeen++;
+                    }
                     if (cueHovered) ImGui::SetTooltip("%s - click to play; double-click to add to the timeline", c.timecode.c_str());
                     ImGui::PopID();
                 }
