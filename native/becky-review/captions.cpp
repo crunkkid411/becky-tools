@@ -63,6 +63,16 @@ std::vector<PendingCaptionSplit> g_pendingCaptionSplits;
 // caption on it is a deliberate user removal (issue 5: "the user chooses to remove
 // SOME of them - that's a creative decision") and must NOT be re-seeded.
 static std::set<std::string> g_capSeededClips;
+// Dormant captions: captions whose clip was deleted (PROJ_GONE). Kept so an undo
+// that brings the clip back also restores its captions (instead of re-seeding from
+// the transcript with word-level timing). Pruned when a new reel is loaded.
+static std::vector<Caption> g_capsDormant;
+// Applied caption splits: the ORIGINAL caption saved before a split divided it,
+// keyed by the two clip ids the split produced. When the right clip (newId)
+// disappears while the parent survives - i.e. the split was UNDONE - both halves
+// are removed and the original is restored verbatim. Pruned on new reel load.
+struct AppliedCaptionSplit { std::string parentId, newId; double splitSrcT; Caption original; };
+static std::vector<AppliedCaptionSplit> g_appliedCapSplits;
 std::string g_capPath;        // the .srt on disk; "" = no reel loaded, lane hidden
 // A-1 (Jordan: "i don't see captions"): captions no longer require a saved reel
 // sidecar. Every timeline clip whose SOURCE video has a transcript (.srt beside
@@ -284,15 +294,38 @@ static void loadCapStyle();   // defined just below - needs g_capPath, which thi
 // seeded: the sidecar is the COMPLETE caption set, so refresh must not also add raw
 // transcript captions on clips the sidecar happened to leave blank.
 static void anchorLoadedCaptions() {
-    for (auto& cap : g_caps) reanchorCap(cap);
+    for (auto& cap : g_caps) {
+        reanchorCap(cap);
+        // Midpoint fell in a gap / a hair past a clip edge: bind by largest time
+        // OVERLAP instead, so no sidecar cue is ever left unanchored (an unbound
+        // cue cannot follow its clip through a reorder - it reads as deleted).
+        if (cap.clipId.empty()) {
+            Clip* best = nullptr; double bestOv = 0;
+            for (auto& cl : g_track[0]) {
+                double d = cl.out - cl.in;
+                double ov = std::min(cap.end, cl.compStart + d) - std::max(cap.start, cl.compStart);
+                if (ov > bestOv) { bestOv = ov; best = &cl; }
+            }
+            if (best) {
+                cap.clipId = best->id;
+                cap.srcIn  = best->in + std::max(0.0, cap.start - best->compStart);
+                cap.srcOut = best->in + std::min(best->out - best->in, cap.end - best->compStart);
+                if (cap.srcOut <= cap.srcIn) cap.srcOut = cap.srcIn + 0.5;
+            } else {
+                editLog("CAP anchor MISS (no clip overlaps) '" + cap.text.substr(0, 24) + "'");
+            }
+        }
+    }
     for (auto& c : g_track[0]) g_capSeededClips.insert(c.id);
 }
 void loadCaptions(const std::string& reelPath) {
     g_caps.clear(); g_capErr.clear(); g_capPath.clear();
     g_capSel = -1; g_capEdit = -1; g_capEditFocus = false;
     g_capSidecar = false;
-    // New reel: forget the previous reel's seeded clips + caption undo history.
+    // New reel: forget the previous reel's seeded clips + caption undo history + dormant.
     g_capSeededClips.clear(); g_capUndo.clear(); g_capRedo.clear(); g_lastUndoWasCaption = false;
+    g_capsDormant.clear();
+    g_appliedCapSplits.clear();
     if (reelPath.empty()) return;
     std::string p = reelPath; fwslash(p);
     size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
@@ -546,21 +579,81 @@ void saveCaptions() {
 // reorder/trim/split) and SEEDS a clip's captions from its source transcript exactly
 // ONCE - after that, an empty clip is a deliberate removal, not a re-seed target.
 void rebuildDerivedCaptions() {
-    // Prune the seeded set to CURRENT clips: a deleted clip that comes back via
-    // Ctrl+Z is then re-seeded (its captions had been dropped on delete). A clip
-    // that merely moved/trimmed keeps its id, so it stays seeded and its edits hold.
+    // Split-undo restore: a recorded split was UNDONE when its RIGHT clip (newId)
+    // vanished AND the parent re-extended past the split point (undo rejoins the
+    // halves). A manual DELETE of the right half also removes newId, but the parent
+    // still ENDS at the cut - that is an edit, not an undo, and must NOT restore
+    // (found live: it resurrected the pre-split caption and orphaned every chunk
+    // after the cut as zero-width ghosts). Remove both halves and put the ORIGINAL
+    // caption back exactly as it was before the split.
+    if (!g_appliedCapSplits.empty()) {
+        for (auto it = g_appliedCapSplits.begin(); it != g_appliedCapSplits.end();) {
+            Clip* pc = clipById(it->parentId);
+            bool newAlive = clipById(it->newId) != nullptr;
+            bool parentCovers = pc && pc->out > it->splitSrcT + 0.001;   // undone: parent spans the cut again
+            if (pc && !newAlive && parentCovers) {
+                const double eps = 1e-6;
+                // Drop both halves: they sit INSIDE the original caption's source
+                // span, on either of the two ids. Neighbour captions that merely
+                // REBOUND to newId after the clip split (their span is outside the
+                // original's) are NOT halves - rebind them back to the parent.
+                g_caps.erase(std::remove_if(g_caps.begin(), g_caps.end(), [&](const Caption& c) {
+                    return (c.clipId == it->newId || c.clipId == it->parentId) &&
+                           c.srcIn >= it->original.srcIn - eps && c.srcOut <= it->original.srcOut + eps;
+                }), g_caps.end());
+                for (auto& c : g_caps)
+                    if (c.clipId == it->newId) c.clipId = it->parentId;
+                // A half that already went dormant (a rebuild ran between the undo
+                // and now) must not resurrect later; a rebound neighbour that went
+                // dormant rebinds back to the surviving parent.
+                g_capsDormant.erase(std::remove_if(g_capsDormant.begin(), g_capsDormant.end(),
+                    [&](const Caption& c) { return c.clipId == it->newId &&
+                        c.srcIn >= it->original.srcIn - eps && c.srcOut <= it->original.srcOut + eps; }), g_capsDormant.end());
+                for (auto& c : g_capsDormant)
+                    if (c.clipId == it->newId) c.clipId = it->parentId;
+                g_caps.push_back(it->original);
+                it = g_appliedCapSplits.erase(it);
+            } else if (!pc && !newAlive) {
+                it = g_appliedCapSplits.erase(it);   // whole clip gone - nothing to restore into
+            } else {
+                // Both alive (split still standing), or right half manually deleted
+                // (parent still ends at the cut): keep the record - an undo can still
+                // bring the deleted half back and, later, genuinely undo the split.
+                ++it;
+            }
+        }
+    }
+    // Restore dormant captions whose clip came back (undo of a delete).
+    if (!g_capsDormant.empty()) {
+        std::vector<Caption> stillDormant;
+        for (auto& dc : g_capsDormant) {
+            if (clipById(dc.clipId)) {
+                g_caps.push_back(dc);   // clip is back - re-activate
+                g_capSeededClips.insert(dc.clipId);  // don't re-seed from transcript
+            } else {
+                stillDormant.push_back(dc);
+            }
+        }
+        g_capsDormant.swap(stillDormant);
+    }
+    // Prune the seeded set to CURRENT clips + dormant clips: a deleted clip that
+    // comes back via Ctrl+Z keeps its seeded status (its dormant captions restore).
+    // A clip with NO dormant captions and not present is truly gone.
     if (!g_capSeededClips.empty()) {
         std::set<std::string> present;
         for (auto& c : g_track[0]) present.insert(c.id);
+        for (auto& dc : g_capsDormant) present.insert(dc.clipId);  // dormant clips stay seeded
         std::set<std::string> keepSeed;
         for (auto& id : g_capSeededClips) if (present.count(id)) keepSeed.insert(id);
         g_capSeededClips.swap(keepSeed);
     }
     // 0. Process pending caption splits (from manual S-key or AI agent splits).
-    // This is the ONLY path that uses word-level timestamps to divide a caption.
-    // It runs ONCE per split, divides the ONE caption at the split point, and both
-    // halves fill their clip entirely (srcIn=clip.in, srcOut=clip.out). The general
-    // reproject gate below protects all other captions from being re-windowed.
+    // ONLY the ONE caption spanning the split point is divided, AT the split point.
+    // It keeps its own outer boundaries (srcIn/srcOut) - neighbouring caption
+    // chunks on the same clip are NEVER touched (Jordan: "the cut point should be
+    // where the captions are split, and the only other thing affected should be
+    // which word appears on each side of the cut"). Word timestamps decide word
+    // assignment only; they never re-time the caption edges.
     if (!g_pendingCaptionSplits.empty()) {
         for (auto& ps : g_pendingCaptionSplits) {
             Clip* leftClip = clipById(ps.parentId);
@@ -570,33 +663,62 @@ void rebuildDerivedCaptions() {
             for (auto& cap : g_caps) {
                 if (cap.clipId != ps.parentId) continue;
                 if (cap.srcOut <= ps.splitSrcT || cap.srcIn >= ps.splitSrcT) continue;
-                if (cap.words.empty()) break;   // no word timing - can't divide
-                // Divide words at the split point (word midpoint determines side).
-                std::vector<CapWord> leftWords, rightWords;
-                for (auto& wd : cap.words) {
-                    double mid = (wd.start + wd.end) * 0.5;
-                    if (mid < ps.splitSrcT) leftWords.push_back(wd);
-                    else rightWords.push_back(wd);
+                // Save the pre-split original so an undo can restore it verbatim.
+                g_appliedCapSplits.push_back({ ps.parentId, ps.newId, ps.splitSrcT, cap });
+                if (g_appliedCapSplits.size() > 200) g_appliedCapSplits.erase(g_appliedCapSplits.begin());
+                const double origSrcIn = cap.srcIn, origSrcOut = cap.srcOut;
+                std::string leftText, rightText;
+                if (!cap.words.empty()) {
+                    // Divide words at the split point (word midpoint determines side).
+                    std::vector<CapWord> leftWords, rightWords;
+                    for (auto& wd : cap.words) {
+                        double mid = (wd.start + wd.end) * 0.5;
+                        if (mid < ps.splitSrcT) leftWords.push_back(wd);
+                        else rightWords.push_back(wd);
+                    }
+                    leftText  = leftWords.empty()  ? std::string() : capNormalize(joinWords(leftWords));
+                    rightText = rightWords.empty() ? std::string() : capNormalize(joinWords(rightWords));
+                } else {
+                    // No word timing (sidecar .srt): divide text by time fraction.
+                    double dur = origSrcOut - origSrcIn;
+                    double frac = (dur > 0) ? (ps.splitSrcT - origSrcIn) / dur : 0.5;
+                    std::vector<std::string> toks;
+                    { std::string tok;
+                      for (char ch : cap.text) {
+                          if (ch == ' ' || ch == '\n' || ch == '\r') { if (!tok.empty()) { toks.push_back(tok); tok.clear(); } }
+                          else tok += ch;
+                      }
+                      if (!tok.empty()) toks.push_back(tok); }
+                    int leftN = (int)(toks.size() * frac + 0.5);
+                    if (leftN < 0) leftN = 0;
+                    if (leftN > (int)toks.size()) leftN = (int)toks.size();
+                    for (int ti = 0; ti < (int)toks.size(); ti++) {
+                        if (ti < leftN) { if (!leftText.empty()) leftText += " "; leftText += toks[ti]; }
+                        else { if (!rightText.empty()) rightText += " "; rightText += toks[ti]; }
+                    }
                 }
-                // Update the LEFT caption: trim to left words, fill left clip entirely.
-                if (!leftWords.empty()) {
-                    cap.words = leftWords;
-                    cap.text = capNormalize(joinWords(leftWords));
-                    cap.srcIn = leftClip->in;
+                if (rightText.empty()) {
+                    // All words are left of the cut: caption stays on the parent,
+                    // clipped to end AT the cut. Nothing lands on the right clip.
                     cap.srcOut = ps.splitSrcT;
-                    cap.start = leftClip->compStart;
-                    cap.end = leftClip->compStart + (ps.splitSrcT - leftClip->in);
-                }
-                // Create the RIGHT caption: right words, fill right clip entirely.
-                if (!rightWords.empty()) {
+                    cap.words.clear();
+                } else if (leftText.empty()) {
+                    // All words are right of the cut: the whole caption MOVES to the
+                    // right clip, starting AT the cut.
+                    cap.clipId = ps.newId;
+                    cap.srcIn = ps.splitSrcT;
+                    cap.words.clear();
+                } else {
+                    // Words on both sides: left half keeps its own srcIn, ends at the
+                    // cut; right half starts at the cut, keeps the original srcOut.
+                    cap.text = leftText;
+                    cap.srcOut = ps.splitSrcT;
+                    cap.words.clear();
                     Caption rc;
                     rc.clipId = ps.newId;
-                    rc.words = rightWords;
-                    rc.text = capNormalize(joinWords(rightWords));
+                    rc.text = rightText;
                     rc.srcIn = ps.splitSrcT;
-                    rc.srcOut = rightClip->out;
-                    rc.start = rightClip->compStart;
-                    rc.end = rightClip->compStart + (rightClip->out - rightClip->in);
+                    rc.srcOut = origSrcOut;
                     g_caps.push_back(rc);
                 }
                 g_capSeededClips.insert(ps.newId);   // don't re-seed from transcript
@@ -609,7 +731,20 @@ void rebuildDerivedCaptions() {
     std::vector<Caption> kept;
     kept.reserve(g_caps.size());
     for (auto& cap : g_caps) {
-        if (cap.clipId.empty()) { kept.push_back(cap); continue; }  // legacy/unanchored: leave as drawn
+        if (cap.clipId.empty()) {
+            // Unanchored cue (sidecar anchoring missed it - its midpoint fell in a
+            // gap or a hair past a clip edge at load time). LATE-ANCHOR it now by
+            // its absolute midpoint so it follows drags like every other caption,
+            // instead of being stranded "as drawn" forever (found live: reorder
+            // moved the clip, the stranded cues stayed behind and read as deleted).
+            Caption c = cap;
+            reanchorCap(c);
+            if (c.clipId.empty()) { kept.push_back(cap); continue; }  // still nothing under it: leave as drawn
+            editLog("CAP late-anchor '" + c.text.substr(0, 24) + "' -> clip " + c.clipId);
+            if (projectCap(c) != PROJ_GONE) kept.push_back(c);
+            else { g_capsDormant.push_back(c); editLog("CAP -> dormant (late-anchor) '" + c.text.substr(0, 24) + "'"); }
+            continue;
+        }
         Caption c = cap;
         // Word-level split: ONLY when a clip split lands INSIDE a caption's word
         // span AND the caption is still derived (words match text). The gate protects
@@ -635,6 +770,10 @@ void rebuildDerivedCaptions() {
             if (pr == PROJ_VISIBLE) g_capSeededClips.insert(c.clipId);  // it holds captions now - don't ALSO re-seed this clip from the transcript (that was the duplicate cues)
         }
         if (pr != PROJ_GONE) kept.push_back(c);
+        else {
+            g_capsDormant.push_back(c);   // clip deleted: keep dormant for undo restore
+            editLog("CAP -> dormant (clip " + c.clipId + " gone) '" + c.text.substr(0, 24) + "'");
+        }
     }
     // 2. Seed captions for clips not yet seeded, from their source transcript.
     bool waiting = false;
@@ -708,7 +847,10 @@ void rebuildDerivedCaptions() {
     // Only adjusts when BPK3 data is available AND the correction is within 300ms
     // (larger corrections likely mean the ASR boundary is correct and the energy
     // edge belongs to a different utterance).
-    {
+    // GATED on !g_capSidecar: sidecar captions were already snapped to cut points
+    // by becky-subtitle - energy alignment would shift them AWAY from the cuts
+    // (the cut IS the ground truth, not the audio onset).
+    if (!g_capSidecar) {
         const double maxShift = 0.300;   // max correction window (300ms)
         const double onsetThr = 0.08;    // energy must rise above this to count as onset
         for (auto& cap : g_caps) {

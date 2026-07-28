@@ -3019,6 +3019,19 @@ int main(int argc, char** argv) {
                         editLog("REJECTED verb=" + res.req.verb + " - showing user");
                         continue;
                     }
+                    // Caption split: queue BEFORE loadTimelineView so the rebuild
+                    // inside it processes the split in the same pass (previously it
+                    // was queued AFTER, so the first rebuild re-windowed the caption
+                    // using word timestamps before the split could divide it).
+                    if (res.req.kind == 0) {
+                        std::string newId = res.data.value("new_id", std::string());
+                        if (!newId.empty()) {
+                            std::string parentId = res.req.args.value("id", std::string());
+                            double splitAt = res.req.args.value("at", 0.0);
+                            if (!parentId.empty() && splitAt > 0)
+                                g_pendingCaptionSplits.push_back({parentId, newId, splitAt});
+                        }
+                    }
                     if (res.data.contains("__timeline")) {
                         loadTimelineView(res.data["__timeline"]);
                         // I-6 verification bar (BUILD_1.md SS4-E-18): "split 20x rapidly, assert
@@ -3068,14 +3081,6 @@ int main(int argc, char** argv) {
                         // returns, so selecting new_id alone - clearing everything
                         // else first - is exactly "the left half is de-selected".
                         if (!newId.empty()) { g_sel.clear(); g_sel.insert(newId); g_selAnchor = newId; emitSelect(); }
-                        // Caption split: queue the split info so rebuildDerivedCaptions
-                        // divides the ONE caption at this split point using word timestamps.
-                        if (!newId.empty()) {
-                            std::string parentId = res.req.args.value("id", std::string());
-                            double splitAt = res.req.args.value("at", 0.0);
-                            if (!parentId.empty() && splitAt > 0)
-                                g_pendingCaptionSplits.push_back({parentId, newId, splitAt});
-                        }
                         break;
                     }
                     case 1: // remove
