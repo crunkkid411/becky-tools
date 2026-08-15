@@ -40,7 +40,7 @@ These encode the exact behaviors Jordan is tired of. Violating one means the ste
 
 - **Gemini 2.5 Flash realtime is the FIRST and ONLY model wired for v1** (`gemini-2.5-flash-native-audio`, the
   one whoretana already uses). Reason (Jordan): if it doesn't work, we KNOW it's the wiring, not the model.
-  **LFM2.5-Audio / Gemma-4-local are explicitly LATER** (Phase 4, after v1 works on real use). Do not start with
+  **LFM2.5-Audio / NeuTTS + Gemma-4-local are explicitly LATER** (Phase 4, after v1 works on real use). Do not start with
   a local model.
 - **Tool packs / workflows are declarative files, not hardcoded Go** (Phase 0 Step 3). This is the fix for
   "I can't say 'run it like this when I ask for X'."

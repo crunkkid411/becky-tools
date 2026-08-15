@@ -52,9 +52,11 @@ type Card map[string]json.RawMessage
 type Board []Card
 
 const (
-	keyAgent = "agent"
-	keyCol   = "col"
-	keyText  = "text"
+	keyAgent   = "agent"
+	keyCol     = "col"
+	keyText    = "text"   // legacy field, kept for old cards
+	keyDetails = "details" // v2 canonical text field (MissionControl renames text->details)
+	keyRev     = "rev"    // v2 optimistic-concurrency revision, bumped on every move
 )
 
 // defaultStore is MissionControl's live Board file. Hardcoding the machine path
@@ -79,8 +81,35 @@ func (c Card) str(key string) string {
 	return s
 }
 
-// Text returns the card's text field ("" if absent).
+// Text returns the card's legacy text field ("" if absent).
 func (c Card) Text() string { return c.str(keyText) }
+
+// Details returns the card's v2 text. MissionControl's v2 schema renamed the
+// card's body from "text" to "details"; older cards still carry "text". Read
+// the v2 field first and fall back to the legacy field so BOTH card shapes
+// render and edit correctly (this is the same text->details fold the GUI's
+// ParseKanbanCard does - it prevents the Whoretana voice-note data-loss bug
+// where a legacy "text" key was silently dropped on save).
+func (c Card) Details() string {
+	if d := c.str(keyDetails); d != "" {
+		return d
+	}
+	return c.str(keyText)
+}
+
+// Rev returns the card's v2 revision counter (0 if absent). A fresh/legacy card
+// is rev 0; every move bumps it so concurrent writers can detect a stale save.
+func (c Card) Rev() int {
+	raw, ok := c[keyRev]
+	if !ok {
+		return 0
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return 0
+	}
+	return int(f)
+}
 
 // Agent returns the card's agent field ("" if absent).
 func (c Card) Agent() string { return c.str(keyAgent) }
@@ -116,14 +145,17 @@ func (c Card) setInt(key string, n int) {
 // move/note). Extra on-disk fields are intentionally not shown here - the
 // envelope is informational; the on-disk store is what preserves them.
 type CardView struct {
-	Index int    `json:"index"`
-	Agent string `json:"agent"`
-	Col   int    `json:"col"`
-	Text  string `json:"text"`
+	Index   int    `json:"index"`
+	Agent   string `json:"agent"`
+	Col     int    `json:"col"`
+	Rev     int    `json:"rev"`
+	Text    string `json:"text,omitempty"`    // legacy field, shown only when present
+	Details string `json:"details,omitempty"` // v2 body; the field list/note actually use
 }
 
 func view(i int, c Card) CardView {
-	return CardView{Index: i, Agent: c.Agent(), Col: c.Col(), Text: c.Text()}
+	return CardView{Index: i, Agent: c.Agent(), Col: c.Col(), Rev: c.Rev(),
+		Text: c.Text(), Details: c.Details()}
 }
 
 // Result is becky-kanban's stdout JSON envelope. Card is set for single-card
@@ -257,7 +289,10 @@ func resolveSelector(board Board, sel string) (int, error) {
 	needle := strings.ToLower(sel)
 	var matches []int
 	for i, c := range board {
-		if strings.Contains(strings.ToLower(c.Text()), needle) {
+		// FOLLOW-UP #3: match the v2 body (Details, which falls back to the
+		// legacy "text" field) so text-match move/note works on BOTH card
+		// shapes. Matching only c.Text() silently never matched v2 cards.
+		if strings.Contains(strings.ToLower(c.Details()), needle) {
 			matches = append(matches, i)
 		}
 	}
@@ -301,7 +336,9 @@ func doAdd(path, text, colStr, agent string) Result {
 	c := Card{}
 	c.setStr(keyAgent, agent)
 	c.setInt(keyCol, col)
-	c.setStr(keyText, text)
+	// v2 shape: the body lives in "details" (MissionControl renamed text->details).
+	c.setStr(keyDetails, text)
+	c.setInt(keyRev, 0)
 	board = append(board, c)
 	if err := save(path, board); err != nil {
 		return failResult("add", err)
@@ -354,12 +391,16 @@ func doMove(path, sel, colStr string) Result {
 		return failResult("move", err)
 	}
 	board[idx].setInt(keyCol, col)
+	// FOLLOW-UP #3: bump the v2 rev so a concurrent writer (the GUI, Whoretana)
+	// can detect a stale-save window and re-read before overwriting. Legacy
+	// cards start at rev 0 and climb from there.
+	board[idx].setInt(keyRev, board[idx].Rev()+1)
 	if err := save(path, board); err != nil {
 		return failResult("move", err)
 	}
 	v := view(idx, board[idx])
 	return Result{OK: true, Action: "move", Store: path, Card: &v, Count: len(board),
-		Message: fmt.Sprintf("moved card %d to col %d", idx, col)}
+		Message: fmt.Sprintf("moved card %d to col %d (rev %d)", idx, col, v.Rev)}
 }
 
 func doNote(path, sel, text string) Result {
@@ -375,13 +416,28 @@ func doNote(path, sel, text string) Result {
 	if err != nil {
 		return failResult("note", err)
 	}
-	cur := board[idx].Text()
-	if cur == "" {
-		cur = text
+	// FOLLOW-UP #3: append to the SAME body field the card uses. A v2 card
+	// (has "details") gets the note appended to details; a legacy card (only
+	// "text") keeps using text. This stops note from silently writing a
+	// "text" key that the v2 GUI drops on its next save (the Whoretana
+	// voice-note loss bug), and means list reads the note back correctly.
+	if board[idx].str(keyDetails) != "" || board[idx].str(keyText) == "" {
+		cur := board[idx].str(keyDetails)
+		if cur == "" {
+			cur = text
+		} else {
+			cur = cur + " " + text
+		}
+		board[idx].setStr(keyDetails, cur)
 	} else {
-		cur = cur + " " + text
+		cur := board[idx].str(keyText)
+		if cur == "" {
+			cur = text
+		} else {
+			cur = cur + " " + text
+		}
+		board[idx].setStr(keyText, cur)
 	}
-	board[idx].setStr(keyText, cur)
 	if err := save(path, board); err != nil {
 		return failResult("note", err)
 	}

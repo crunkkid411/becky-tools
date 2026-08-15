@@ -20,7 +20,7 @@ func TestAddDefaultsThenList(t *testing.T) {
 	if !r.OK || r.Card == nil {
 		t.Fatalf("add failed: %+v", r)
 	}
-	if r.Card.Index != 0 || r.Card.Text != "fix the orb" || r.Card.Col != 0 || r.Card.Agent != "claude" {
+	if r.Card.Index != 0 || r.Card.Details != "fix the orb" || r.Card.Col != 0 || r.Card.Agent != "claude" {
 		t.Fatalf("unexpected card: %+v", r.Card)
 	}
 
@@ -70,6 +70,11 @@ func TestMoveByIndexAndMatch(t *testing.T) {
 	if r := run("move", []string{"beta", "2"}, o); !r.OK || r.Card.Index != 1 || r.Card.Col != 2 {
 		t.Fatalf("move by match failed: %+v", r)
 	}
+	// FOLLOW-UP #3: move bumps rev. beta was moved once above (rev -> 1); this
+	// second move on beta takes it to rev 2.
+	if r := run("move", []string{"beta", "0"}, o); !r.OK || r.Card.Rev != 2 {
+		t.Fatalf("second move should bump rev to 2, got: %+v", r.Card)
+	}
 	// missing destination column rejected
 	if r := run("move", []string{"0"}, o); r.OK {
 		t.Fatalf("expected move with no column to fail")
@@ -106,11 +111,11 @@ func TestNoteAppends(t *testing.T) {
 	run("add", []string{"launch"}, o)
 
 	r := run("note", []string{"0", "[WORKING]"}, o)
-	if !r.OK || r.Card.Text != "launch [WORKING]" {
+	if !r.OK || r.Card.Details != "launch [WORKING]" {
 		t.Fatalf("first note failed: %+v", r.Card)
 	}
 	r = run("note", []string{"0", "[DONE]"}, o)
-	if !r.OK || r.Card.Text != "launch [WORKING] [DONE]" {
+	if !r.OK || r.Card.Details != "launch [WORKING] [DONE]" {
 		t.Fatalf("second note should append: %+v", r.Card)
 	}
 	// empty note rejected
@@ -132,12 +137,12 @@ func TestListColFilter(t *testing.T) {
 
 	fo := o
 	fo.col = "2"
-	if r := run("list", nil, fo); !r.OK || r.Count != 1 || r.Cards[0].Text != "b" {
+	if r := run("list", nil, fo); !r.OK || r.Count != 1 || r.Cards[0].Details != "b" {
 		t.Fatalf("filter col 2 wrong: %+v", r)
 	}
 	fo0 := o
 	fo0.col = "0"
-	if r := run("list", nil, fo0); !r.OK || r.Count != 1 || r.Cards[0].Text != "a" {
+	if r := run("list", nil, fo0); !r.OK || r.Count != 1 || r.Cards[0].Details != "a" {
 		t.Fatalf("filter col 0 wrong: %+v", r)
 	}
 }
@@ -159,8 +164,8 @@ func TestPersistenceAcrossLoads(t *testing.T) {
 	if board[0].Col() != 2 {
 		t.Fatalf("card 0 col not persisted: %d", board[0].Col())
 	}
-	if board[1].Text() != "second progress" {
-		t.Fatalf("card 1 text not persisted: %q", board[1].Text())
+	if board[1].Details() != "second progress" {
+		t.Fatalf("card 1 text not persisted: %q", board[1].Details())
 	}
 }
 
@@ -194,17 +199,18 @@ func TestPreservesUnknownFields(t *testing.T) {
 	}
 }
 
-// TestPreservesExistingKeyOrder confirms the on-disk field order matches the
-// existing kanban.json convention (agent, col, text - which is alphabetical, and
-// how encoding/json emits map keys).
+// TestPreservesExistingKeyOrder confirms the on-disk field order for a freshly
+// added (v2) card is agent, col, details, rev - which is alphabetical, and how
+// encoding/json emits map keys. A legacy card that already carries "text"
+// (no "details") keeps its own order untouched (see TestPreservesUnknownFields).
 func TestPreservesExistingKeyOrder(t *testing.T) {
 	o := tempStore(t)
 	run("add", []string{"x"}, o)
 	raw, _ := os.ReadFile(o.store)
 	s := string(raw)
-	ai, ci, ti := indexOfKey(s, `"agent"`), indexOfKey(s, `"col"`), indexOfKey(s, `"text"`)
-	if !(ai >= 0 && ci > ai && ti > ci) {
-		t.Fatalf("expected agent<col<text ordering, got positions %d,%d,%d in %s", ai, ci, ti, s)
+	ai, ci, di, ri := indexOfKey(s, `"agent"`), indexOfKey(s, `"col"`), indexOfKey(s, `"details"`), indexOfKey(s, `"rev"`)
+	if !(ai >= 0 && ci > ai && di > ci && ri > di) {
+		t.Fatalf("expected agent<col<details<rev ordering, got positions %d,%d,%d,%d in %s", ai, ci, di, ri, s)
 	}
 }
 
@@ -269,4 +275,56 @@ func TestEmptyBoardOps(t *testing.T) {
 	if r := run("move", []string{"0", "1"}, o); r.OK {
 		t.Fatalf("move on empty board should fail")
 	}
+}
+
+// TestV2Awareness is the FOLLOW-UP #3 contract: a v2 card (body in "details")
+// renders its text via list, move bumps rev, and a legacy card (body in "text",
+// no "details") still reads and edits correctly. This is what prevents the
+// Whoretana voice-note data-loss bug where a "text" key was silently dropped.
+func TestV2Awareness(t *testing.T) {
+	o := tempStore(t)
+
+	// add a v2 card, then move twice - rev should climb 0 -> 1 -> 2
+	r := run("add", []string{"v2 task"}, o)
+	if !r.OK || r.Card.Rev != 0 {
+		t.Fatalf("new v2 card should be rev 0, got %+v", r.Card)
+	}
+	if r := run("move", []string{"0", "1"}, o); !r.OK || r.Card.Rev != 1 {
+		t.Fatalf("first move should bump rev to 1, got %+v", r.Card)
+	}
+	if r := run("move", []string{"0", "2"}, o); !r.OK || r.Card.Rev != 2 {
+		t.Fatalf("second move should bump rev to 2, got %+v", r.Card)
+	}
+
+	// list shows the v2 body in Details
+	lr := run("list", nil, o)
+	if !lr.OK || lr.Cards[0].Details != "v2 task" || lr.Cards[0].Text != "" {
+		t.Fatalf("v2 card list should surface details not text: %+v", lr.Cards[0])
+	}
+
+	// legacy card (text only, no details) - list still reads it, note edits text
+	seed := `[{"agent":"claude","col":0,"text":"legacy task"}]`
+	if err := os.WriteFile(o.store, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lr = run("list", nil, o)
+	if !lr.OK || lr.Cards[0].Details != "legacy task" || lr.Cards[0].Text != "legacy task" {
+		t.Fatalf("legacy card should read via Details fallback: %+v", lr.Cards[0])
+	}
+	nr := run("note", []string{"0", "updated"}, o)
+	if !nr.OK || nr.Card.Details != "legacy task updated" {
+		t.Fatalf("note on legacy card should append to its text body: %+v", nr.Card)
+	}
+	board, _ := load(o.store)
+	if _, ok := board[0]["details"]; ok {
+		t.Fatalf("note on a text-only card must not invent a details field: %s", string(mustMarshal(board[0])))
+	}
+	if board[0].Text() != "legacy task updated" {
+		t.Fatalf("legacy text body not updated: %q", board[0].Text())
+	}
+}
+
+func mustMarshal(c Card) []byte {
+	b, _ := json.Marshal(c)
+	return b
 }

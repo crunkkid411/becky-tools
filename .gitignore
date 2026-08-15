@@ -2,6 +2,8 @@
 *.exe
 becky-go/bin/
 bin/
+# Fetched mpv runtime for becky-review (D-1) - installed by fetch-mpv.ps1, not committed
+native/becky-review/runtime/
 # .NET build intermediates (WPF guis: BeckyWindow / BeckyReview / Whoretana)
 obj/
 # Secrets - the real .env is never committed (use .env.example as the template)

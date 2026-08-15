@@ -39,7 +39,7 @@ A SHORTER line that is phrase-complete always beats a longer line that splits a
 phrase. Do NOT pad a line toward the character cap.
 
 Also:
-- A line must never END on: a number, "that", "and", "the", "of", "to", "a",
+- Unless the presentation makes sense, lines generally should not END on: a number, "that", "and", "the", "of", "to", "a",
   "an", "is", "it", "you", "but", "so", "in", "on", "my", "we", "i", "for",
   "with", "at", "your", "this", "very", "really", "just", "more", "most".
 - SPLIT at clause boundaries (after a complete thought, before a conjunction

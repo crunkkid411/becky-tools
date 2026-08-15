@@ -35,3 +35,10 @@ Audio/voice is a channel he values, and his reading has limits — but the answe
 **high-contrast visual + a good spoken option**, not pretending he's blind. A feature
 that removes his color cues or speaks in a voice he hates is a regression, even if it
 "adds accessibility." Match the real human, not an assumed one.
+
+## Interaction
+
+If you have a question about video footage, **PULL IT UP** in the becky review gui
+If you have a question that can be VISUALIZED, **CREATE THE VISUAL**
+
+Eventually we'll have a conversational realtime ai to discuss things with Jordan, for now just be mindful and creative in your approach
