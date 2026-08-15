@@ -105,6 +105,12 @@ brain" launcher (boot `llama-server` on 11435 with a resident GGUF) is the immed
    one-click `Start Becky REAPER Brain.bat`) boots a llama.cpp `llama-server` on :11435 serving
    `/v1/chat/completions`. `internal/reaperbrain` resolves a chat GGUF + the binary from env/disk;
    degrade-never-crash; 12 tests. `open-becky-daw.ps1` auto-starts it. Local: build + sound-check.
+   **SUPERSEDED (2026-07-22, `claude/reaper-chat-resource-errors-fuz41p`):** the llama-server
+   brain hogged the machine (4B GGUF on the GPU) and REAPER Chat errored at every REAPER launch
+   when it wasn't up. `internal/reaperbrain` is now a **featherweight Go proxy** on :11435 —
+   answers come from **Claude Code OAuth** (`claude -p`, default, already paid by Max) or
+   **OpenCode Zen free models** (free-only ENFORCED in `IsZenFree`, the cmd/subtitle
+   `isFreeModel` twin). Work order: `HANDOFF-REAPER-BRAIN.md`.
 1. **ReaScript VST emitter** — generate a `.lua` from the arrangement that loads his
    real plugins onto tracks (`TrackFX_AddByName`) so a generated session opens with
    Serum/TAL-Drum/Maschine already inserted. (The hard, high-value next piece.)

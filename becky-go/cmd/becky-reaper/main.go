@@ -74,10 +74,13 @@ func usage() {
   song     --genre crunkcore [--do "mute the sfx"]... --out song.rpp   compose + edit + author in ONE step
   open     [--rpp song.rpp]                 author a session + open it in REAPER's GUI
   render   --rpp song.rpp [--out out.wav] render an existing .rpp via REAPER
-  brain    [--start|--check]               serve REAPER Chat's llama backend on :11435
+  brain    [--start|--check|--selftest] [--backend claude|zen]
+           serve REAPER Chat's backend on :11435 (lightweight proxy, no GPU)
 
 env: BECKY_REAPER overrides the REAPER executable path.
-     BECKY_LLAMA_SERVER / BECKY_REAPER_MODEL override the brain's binary/GGUF.
+     BECKY_REAPER_BACKEND picks the brain backend (claude|zen).
+     BECKY_CLAUDE_BIN / BECKY_CLAUDE_MODEL tune the claude backend.
+     OPENCODE_API_KEY / BECKY_ZEN_MODEL tune the zen backend (free models only).
 `)
 }
 

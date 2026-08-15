@@ -51,6 +51,10 @@
 - `HANDOFF-TEMPLATE.md` — **the STANDARD skeleton every cloud→local runtime handoff copies** (the
   "provable handoff": a one-command offline proof cloud already ran + an ordered checkboxed work
   order). Mandatory per `STANDARDS-WORKFLOW.md` §7 + CLAUDE.md §2/§4. Copy it; don't hand off prose.
+- `HANDOFF-REAPER-BRAIN.md` — **the REAPER Chat brain v2 work order**: the llama-server brain
+  hogged the machine and errored at every REAPER launch; `internal/reaperbrain` is now a
+  featherweight :11435 proxy answering via Claude OAuth or OpenCode Zen free models (spend guard
+  in code). Local: kill the machine-side llama-server autostart, chat-test in real REAPER.
 - `HANDOFF-ROUTING-CANVAS.md` — **how to wire the deterministic label→bus routing (`internal/autoroute`,
   `becky-route`) into becky-canvas + REAPER**, and the Hydrogen-can't-host-VSTs fact. Jordan's
   workflow: lightweight WRITING, then apply his routing/plugins at the END (or a routed default), so

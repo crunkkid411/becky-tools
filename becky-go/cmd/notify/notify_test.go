@@ -11,6 +11,17 @@ import (
 
 var errFakeNetwork = errors.New("fake network failure")
 
+// isolateHome points the chat-id cache (os.UserHomeDir) at a throwaway dir on
+// EVERY platform. USERPROFILE alone only isolates Windows; on Linux/CI the
+// DiscoversAndCaches test was writing the cache into the real $HOME, which the
+// NoneDiscoverable test then read — an order-dependent false pass/fail.
+func isolateHome(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("HOME", dir)
+}
+
 func TestExtractJSONFlag(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -165,19 +176,9 @@ func (f *fakeGetter) PostForm(_ string, _ url.Values) (*http.Response, error) {
 	return &http.Response{Body: io.NopCloser(strings.NewReader(f.postBody))}, nil
 }
 
-// isolateHome points the chat-id cache file at a throwaway dir on every OS.
-// os.UserHomeDir reads USERPROFILE on Windows but HOME on Linux — setting only
-// the former let the caching test below write its fake "555" into the REAL
-// home on Linux CI, which the none-discoverable test then found and returned.
-func isolateHome(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("USERPROFILE", dir)
-	t.Setenv("HOME", dir)
-}
-
 func TestResolveChatID_EnvOverride(t *testing.T) {
 	t.Setenv("BECKY_TELEGRAM_CHAT_ID", "999")
-	isolateHome(t)
+	isolateHome(t) // isolate from any real cache file
 	got, err := resolveChatID("token", &fakeGetter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

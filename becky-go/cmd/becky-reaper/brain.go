@@ -2,65 +2,110 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"becky-go/internal/reaperbrain"
 )
 
-// cmdBrain boots (or inspects) the local llama-server that REAPER's "REAPER Chat"
-// extension connects to on port 11435 — the fix for the live blocker in
-// reaper1.jpg. With no flags it prints the resolved plan + whether something is
-// already serving. --start actually launches the server (foreground, until Ctrl-C
-// or REAPER is closed). --check only probes the port.
+// cmdBrain runs the featherweight proxy REAPER's "REAPER Chat" extension
+// connects to on port 11435. This replaced the llama-server brain (2026-07-22):
+// no GPU, no GGUF, a few MB of RAM — the fix for "the chatbox hogs system
+// resources and errors every time I open REAPER". The thinking happens in the
+// chosen backend: Claude Code OAuth (default, already paid) or OpenCode Zen
+// (free models only, enforced in code).
 //
-//	becky-reaper brain            # show the plan + connection status
-//	becky-reaper brain --start    # launch the brain so REAPER Chat works
-//	becky-reaper brain --check    # is REAPER Chat able to connect right now?
+//	becky-reaper brain                       # show the plan + connection status
+//	becky-reaper brain --start               # serve the brain so REAPER Chat works
+//	becky-reaper brain --start --backend zen # use OpenCode Zen free models instead
+//	becky-reaper brain --check               # can REAPER Chat connect right now?
+//	becky-reaper brain --selftest            # offline proof of the real code path
 func cmdBrain(args []string) error {
-	start, check := false, false
-	for _, a := range args {
-		switch a {
+	var start, check, selftest bool
+	backendName := os.Getenv(reaperbrain.EnvBackend)
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--start":
 			start = true
 		case "--check":
 			check = true
+		case "--selftest":
+			selftest = true
+		case "--backend":
+			i++
+			if i < len(args) {
+				backendName = args[i]
+			}
 		case "-h", "--help":
-			fmt.Println("becky-reaper brain [--start|--check] - serve REAPER Chat's llama backend on :11435")
+			fmt.Println("becky-reaper brain [--start|--check|--selftest] [--backend claude|zen] - serve REAPER Chat's backend on :11435")
 			return nil
 		}
 	}
 
-	cfg, resErr := reaperbrain.NewResolver().Resolve()
-	ctx := context.Background()
-
-	if check {
-		return reportHealth(ctx, cfg)
+	if selftest {
+		return brainSelftest()
 	}
 
-	fmt.Println("REAPER Chat brain (llama.cpp llama-server; Ollama is banned):")
-	fmt.Printf("  endpoint : %s\n", cfg.ChatCompletionsURL())
-	fmt.Printf("  server   : %s\n", cfg.Server)
-	fmt.Printf("  model    : %s\n", cfg.Model)
-	fmt.Printf("  command  : %s\n", cfg.CommandLine())
+	port := reaperbrain.DefaultPort
+	if p := strings.TrimSpace(os.Getenv(reaperbrain.EnvPort)); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 && n <= 65535 {
+			port = n
+		}
+	}
 
-	// Is something already serving? (idempotent — don't double-launch.)
-	if err := reaperbrain.CheckHealth(ctx, cfg.BaseURL(), 1*time.Second); err == nil {
-		fmt.Printf("  status   : ALREADY RUNNING - REAPER Chat can connect now.\n")
+	ctx := context.Background()
+	baseURL := fmt.Sprintf("http://%s:%d", reaperbrain.DefaultHost, port)
+	if check {
+		if err := reaperbrain.CheckHealth(ctx, baseURL, 2*time.Second); err != nil {
+			fmt.Printf("REAPER Chat CANNOT connect: %s/v1/chat/completions is not serving (%v)\n", baseURL, err)
+			fmt.Println("Run: becky-reaper brain --start   (or the 'Start Becky REAPER Brain' one-click)")
+			return nil
+		}
+		fmt.Printf("OK - REAPER Chat can connect: %s/v1/chat/completions is live.\n", baseURL)
 		return nil
 	}
 
-	if resErr != nil {
-		fmt.Printf("  status   : NOT READY - %v\n", resErr)
-		if start {
-			return fmt.Errorf("cannot start the brain: %w", resErr)
+	backend, err := reaperbrain.SelectBackend(backendName)
+	if err != nil {
+		return err
+	}
+	srv := reaperbrain.NewServer(backend, reaperbrain.DefaultHost, port)
+	srv.Logf = func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
+
+	fmt.Println("REAPER Chat brain (lightweight proxy - no local model, no GPU):")
+	fmt.Printf("  endpoint : %s\n", srv.ChatCompletionsURL())
+	fmt.Printf("  backend  : %s (%s)\n", backend.Name(), backend.Model())
+	if backend.Name() == "claude" {
+		fmt.Println("             answers via your Claude Code login - already covered by Claude Max")
+	} else {
+		fmt.Println("             answers via OpenCode Zen - FREE models only (enforced)")
+	}
+
+	// Is something already serving? (idempotent — don't double-launch.)
+	if err := reaperbrain.CheckHealth(ctx, srv.BaseURL(), 1*time.Second); err == nil {
+		fmt.Println("  status   : ALREADY RUNNING - REAPER Chat can connect now.")
+		return nil
+	}
+
+	if err := backend.Ready(); err != nil {
+		fmt.Printf("  status   : NOT READY - %v\n", err)
+		if backend.Name() == "zen" {
+			fmt.Println("\nFix: put your OpenCode Zen API key in the OPENCODE_API_KEY environment")
+			fmt.Println("variable (key from opencode.ai/zen), or switch to --backend claude.")
+		} else {
+			fmt.Println("\nFix: install Claude Code (the claude CLI) and sign in, or switch to --backend zen.")
 		}
-		fmt.Println("\nFix: install llama.cpp's llama-server and a chat GGUF, or set")
-		fmt.Printf("  %s / %s, then re-run with --start.\n", reaperbrain.EnvServer, reaperbrain.EnvModel)
+		if start {
+			return fmt.Errorf("cannot start the brain: %w", err)
+		}
 		return nil
 	}
 
@@ -68,57 +113,136 @@ func cmdBrain(args []string) error {
 		fmt.Println("  status   : ready to start - re-run with --start (or use the one-click launcher).")
 		return nil
 	}
-	return startBrain(ctx, cfg)
-}
 
-// startBrain launches llama-server in the foreground and waits, streaming its
-// logs. It blocks until the server exits or the user interrupts (Ctrl-C), which
-// is the natural lifetime for "keep the brain alive while I use REAPER".
-func startBrain(ctx context.Context, cfg reaperbrain.Config) error {
-	fmt.Printf("\nstarting REAPER brain on :%d (Ctrl-C to stop) ...\n", cfg.Port)
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	fmt.Printf("\nstarting REAPER brain on :%d (Ctrl-C to stop) ...\n", port)
+	fmt.Printf(">>> Leave this window open while you use REAPER Chat.\n")
+	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	cmd := exec.CommandContext(ctx, cfg.Server, cfg.Args()...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("launch llama-server (%s): %w", cfg.Server, err)
+	if err := srv.ListenAndServe(runCtx); err != nil {
+		return err
 	}
-
-	// Announce readiness once /health is up, so Jordan knows REAPER Chat will work.
-	go func() {
-		for i := 0; i < 180; i++ {
-			if ctx.Err() != nil {
-				return
-			}
-			if err := reaperbrain.CheckHealth(ctx, cfg.BaseURL(), 2*time.Second); err == nil {
-				fmt.Printf("\n>>> REAPER brain is LIVE at %s\n", cfg.ChatCompletionsURL())
-				fmt.Println(">>> In REAPER Chat, ask it to control your DAW now. Leave this window open.")
-				return
-			}
-			time.Sleep(1 * time.Second)
-		}
-	}()
-
-	err := cmd.Wait()
-	if ctx.Err() != nil {
-		// Interrupted on purpose — a clean stop, not a failure.
-		fmt.Println("\nREAPER brain stopped.")
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("llama-server exited: %w", err)
-	}
+	fmt.Println("\nREAPER brain stopped.")
 	return nil
 }
 
-func reportHealth(ctx context.Context, cfg reaperbrain.Config) error {
-	if err := reaperbrain.CheckHealth(ctx, cfg.BaseURL(), 2*time.Second); err != nil {
-		fmt.Printf("REAPER Chat CANNOT connect: %s is not serving (%v)\n", cfg.ChatCompletionsURL(), err)
-		fmt.Println("Run: becky-reaper brain --start   (or the 'Start Becky REAPER Brain' one-click)")
-		return nil
+// brainSelftest is THE PROVABLE HANDOFF proof: it exercises the REAL wire path
+// REAPER Chat uses — a live TCP listener, a real HTTP POST of an OpenAI chat
+// request (plain AND streamed), the /health and /v1/models probes — with a
+// deterministic echo backend, plus the Zen spend guard. No network, no models,
+// no GPU; measurable output; non-zero exit on any failure.
+func brainSelftest() error {
+	fail := func(step string, err error) error { return fmt.Errorf("SELFTEST FAIL [%s]: %v", step, err) }
+
+	// An OS-assigned port so the selftest never collides with a live brain.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fail("listen", err)
 	}
-	fmt.Printf("OK - REAPER Chat can connect: %s is live.\n", cfg.ChatCompletionsURL())
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	echo := echoBackend{}
+	srv := reaperbrain.NewServer(echo, "127.0.0.1", port)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.ListenAndServe(ctx)
+
+	if err := waitHealthy(srv.BaseURL()); err != nil {
+		return fail("health", err)
+	}
+	fmt.Printf("selftest: /health OK on %s\n", srv.BaseURL())
+
+	// 1. The exact POST REAPER Chat sends.
+	body := `{"model":"x","messages":[{"role":"system","content":"You control REAPER."},{"role":"user","content":"change tempo to 128"}]}`
+	resp, err := http.Post(srv.ChatCompletionsURL(), "application/json", strings.NewReader(body))
+	if err != nil {
+		return fail("chat POST", err)
+	}
+	raw := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		return fail("chat POST", fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw))
+	}
+	var out struct {
+		Choices []struct {
+			Message reaperbrain.Message `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return fail("chat decode", err)
+	}
+	if len(out.Choices) != 1 || !strings.Contains(out.Choices[0].Message.Content, "change tempo to 128") {
+		return fail("chat content", fmt.Errorf("unexpected reply %q", raw))
+	}
+	fmt.Printf("selftest: chat completion OK (%d bytes, echoed the user turn)\n", len(raw))
+
+	// 2. The streamed variant some OpenAI clients request.
+	resp, err = http.Post(srv.ChatCompletionsURL(), "application/json",
+		strings.NewReader(`{"stream":true,"messages":[{"role":"user","content":"ping"}]}`))
+	if err != nil {
+		return fail("stream POST", err)
+	}
+	sraw := readAll(resp)
+	if !strings.Contains(sraw, `"chat.completion.chunk"`) || !strings.Contains(sraw, "data: [DONE]") {
+		return fail("stream body", fmt.Errorf("not valid SSE: %q", sraw))
+	}
+	fmt.Printf("selftest: streaming (SSE) OK (%d bytes, chunks + [DONE])\n", len(sraw))
+
+	// 3. /v1/models answers (some clients probe it before chatting).
+	mresp, err := http.Get(srv.BaseURL() + "/v1/models")
+	if err != nil || mresp.StatusCode != http.StatusOK {
+		return fail("models", fmt.Errorf("%v HTTP %v", err, mresp))
+	}
+	readAll(mresp)
+	fmt.Println("selftest: /v1/models OK")
+
+	// 4. The Zen SPEND GUARD refuses paid ids and passes free ones.
+	if reaperbrain.IsZenFree("claude-sonnet-5") || reaperbrain.IsZenFree("gpt-5.5") {
+		return fail("spend guard", fmt.Errorf("a PAID model id passed IsZenFree"))
+	}
+	if !reaperbrain.IsZenFree(reaperbrain.DefaultZenModel) || !reaperbrain.IsZenFree("deepseek-v4-flash-free") {
+		return fail("spend guard", fmt.Errorf("a free model id was refused"))
+	}
+	fmt.Println("selftest: Zen spend guard OK (paid ids refused, free ids allowed)")
+
+	fmt.Println("SELFTEST PASS: the exact wire path REAPER Chat uses is serving correctly.")
 	return nil
+}
+
+// echoBackend is the deterministic selftest backend: replies with the last user
+// message so the round trip is measurable without any model.
+type echoBackend struct{}
+
+func (echoBackend) Name() string  { return "selftest-echo" }
+func (echoBackend) Model() string { return "selftest/echo" }
+func (echoBackend) Complete(_ context.Context, msgs []reaperbrain.Message) (string, error) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return "echo: " + msgs[i].Content, nil
+		}
+	}
+	return "echo: (no user message)", nil
+}
+
+func waitHealthy(baseURL string) error {
+	var last error
+	for i := 0; i < 50; i++ {
+		if last = reaperbrain.CheckHealth(context.Background(), baseURL, 500*time.Millisecond); last == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return last
+}
+
+func readAll(resp *http.Response) string {
+	defer resp.Body.Close()
+	var b strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		b.Write(buf[:n])
+		if err != nil {
+			return b.String()
+		}
+	}
 }
