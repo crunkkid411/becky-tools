@@ -277,7 +277,16 @@ own source).
 explicit warning that AVA scores overstate in-the-wild performance. Mitigated by naming
 GateFusion as the escalation.
 
-**Untested** — nothing in §7 has been built or run. This is model research, not a proven pipeline.
+**Untested** — the reframing half (§7 items 1-4) has not been built or run. This is model
+research, not a proven pipeline.
+
+**Update, 2026-08-15 (same day):** Jordan ratified §7 — *"as for mediapipe and opencv, yes.
+absolutely we NEED to use them. weve been cutting corners and all that does is waste my time,
+not save time."* The §6 finding is therefore settled policy, not a proposal: the pure-Go
+degrade path stops being the default for vision work. Steps 1-2 of the pipeline
+(`internal/moment` + `cmd/becky-moment`, and `internal/facetrack`) are now **built and tested**
+— see `HANDOFF-SHORTS-PIPELINE.md` §5. Neither needed a new model, which is the point of §2:
+five of the six stages were never a model-selection problem.
 
 ---
 

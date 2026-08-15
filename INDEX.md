@@ -147,9 +147,15 @@
   (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
   `HANDOFF-VIDEOAGENT-SEAM.md`.
-- `research/shorts-models.md` + `HANDOFF-SHORTS-PIPELINE.md` — **RESEARCH + RECOMMENDATION ONLY
-  (2026-08-15, cloud; NOTHING BUILT). Read before any short-form / 9:16 / auto-reframe /
-  active-speaker work.** The research doc is the model-by-model comparison of what the field's
+- `research/shorts-models.md` + `HANDOFF-SHORTS-PIPELINE.md` — **the short-form repurposing
+  arc (2026-08-15, cloud). Steps 0-2 BUILT + proven; steps 3-6 need the native CV dep Jordan
+  ratified. Read before any short-form / 9:16 / auto-reframe / active-speaker work.** Ships
+  `becky-moment` (`cmd/becky-moment` + `internal/moment`: structure measured deterministically,
+  CONTENT judged by an LLM via **OpenCode Zen**, the two corroborated — disagreement is HELD at
+  the lower signal, never averaged; `--selftest` 13/13) and `internal/facetrack` (persistent
+  track IDs via IoU + ArcFace, **deliberately not wired** because `face_embed.py` returns only
+  one face per frame — the work order is HANDOFF §7 step E). The research doc is the
+  model-by-model comparison of what the field's
   OSS shorts tools use vs what becky has: becky's model is BETTER at three stages (SCRFD-10GF
   vs UltraFace — 83.1% vs 43.8% WIDER FACE **Hard**; Falcon-Perception vs GroundingDINO's class;
   Parakeet vs Whisper, incl. why a transducer can't hallucinate a fake "viral moment" into a
