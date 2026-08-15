@@ -147,6 +147,32 @@
   (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
   `HANDOFF-VIDEOAGENT-SEAM.md`.
+- `research/shorts-models.md` + `HANDOFF-SHORTS-PIPELINE.md` — **the short-form repurposing
+  arc (2026-08-15, cloud). Steps 0-2 BUILT + proven; steps 3-6 need the native CV dep Jordan
+  ratified. Read before any short-form / 9:16 / auto-reframe / active-speaker work.** Ships
+  `becky-moment` (`cmd/becky-moment` + `internal/moment`: structure measured deterministically,
+  CONTENT judged by an LLM via **OpenCode Zen**, the two corroborated — disagreement is HELD at
+  the lower signal, never averaged; `--selftest` 13/13) and `internal/facetrack` (persistent
+  track IDs via IoU + ArcFace, **deliberately not wired** because `face_embed.py` returns only
+  one face per frame — the work order is HANDOFF §7 step E). The research doc is the
+  model-by-model comparison of what the field's
+  OSS shorts tools use vs what becky has: becky's model is BETTER at three stages (SCRFD-10GF
+  vs UltraFace — 83.1% vs 43.8% WIDER FACE **Hard**; Falcon-Perception vs GroundingDINO's class;
+  Parakeet vs Whisper, incl. why a transducer can't hallucinate a fake "viral moment" into a
+  silent gap), and becky has **nothing** at five others (person detection, tracking, ASD,
+  crop-path, virality rubric). Names **LR-ASD** (IJCV 2025; 1.0M params, 94.45% mAP AVA) as the
+  one new model worth adopting, and CORRECTS an earlier dismissal of MediaPipe/OpenCV — MAR
+  variance is obsolete, but the LIBRARIES (Pose Landmarker, 52 blendshapes, optical flow,
+  camera-path smoothing) are load-bearing and becky uses neither. **Its §6 is the important
+  part:** becky's vision layer is largely the *degrade path* of a stack never fully built,
+  because heavy-CV options were repeatedly rejected as "cloud can't build cgo/OpenCV" and then
+  never built locally either — an architecture shaped by what the cloud agent could compile,
+  which is the real reason vision flopped on the forensic footage. The HANDOFF doc is the
+  engineering half: why this pipeline fails if built the usual way (**every seam bug in
+  `STATE-OF-MASTER.md` was a wiring failure, not a model failure — and a shorts pipeline fails
+  *silently*, since a wrong-speaker crop still renders fine**), the preconditions (fix
+  `becky-reel`'s +1.27 s drift FIRST; seam tests not unit tests; every stage declares confidence
+  and may REFUSE), and a 6-step build order where step 1 ships value with zero new models.
 - **PRIORITY BUILDS — 2026-06-23 (the "adopt a mature host, add the becky layer" pivot; see
   `BECKY-CANVAS-ROADMAP.md` + the `research/daw-nle-*` + `research/bookmarks-*` docs):**
   - `SPEC-BECKY-NLE.md` — **the real video NLE, to be built FIRST** (Jordan's priority). ADOPT
