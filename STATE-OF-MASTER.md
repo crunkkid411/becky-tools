@@ -8,6 +8,12 @@
 
 ### Current state of master (as of 2026-07-23 01:45, `c21537e`)
 
+> **OPEN CLOUD BRANCH — do not merge-and-stop:** `claude/vegas-becky-captions-70imte` ships
+> `vegas/BeckyCaptions.cs` (captions on the VEGAS timeline, becky-timed) + becky-subtitle's
+> `--timeline`/`--cues` seam. Gates 1–4 pass and `becky-subtitle --selftest` was RUN by cloud
+> (output pasted in the handoff). **Local still owes gate 5 + one run in VEGAS on a real cut
+> edit** — the ordered work order is `HANDOFF-VEGAS-CAPTIONS.md`.
+
 Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
 blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
 FAIL is pre-existing/environmental and machine-dependent (the local TTS model is present, so

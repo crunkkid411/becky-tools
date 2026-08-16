@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"becky-go/internal/edl"
 	"becky-go/internal/subs"
 )
 
@@ -124,6 +125,59 @@ func runSelftest() {
 	got := subs.DefaultStyle().ForceStyle()
 	check("default style is white text with a black outline", got == want,
 		fmt.Sprintf("got %s", got))
+
+	// 9. THE VEGAS PLACEMENT PROOF. The same two cuts, but as a live Vegas
+	//    timeline where the second event sits at 10.0 on the ruler instead of
+	//    butted at 4.0. Every caption of cut 2 must come back shifted by that
+	//    6-second gap — this is the arithmetic that decides whether a caption
+	//    lands under the right frame or six seconds early.
+	tl := edl.VegasTimeline{
+		Version: "1",
+		FPS:     30,
+		Events: []edl.VegasEvent{
+			{Source: `C:\v\a.mp4`, In: 10, Out: 14, Timeline: 0},
+			{Source: `C:\v\a.mp4`, In: 40, Out: 42, Timeline: 10},
+		},
+	}
+	doc, _ := buildCues(cues, &tl, 30, `C:\v\a.srt`)
+	fmt.Println()
+	fmt.Println("  placed on a Vegas timeline whose second cut sits at 10.000:")
+	for _, c := range doc.Cues {
+		fmt.Printf("        %7.3f -> %7.3f  %q\n", c.Start, c.End, c.Text)
+	}
+	fmt.Println()
+
+	check("every caption was placed", doc.Count == len(cues),
+		fmt.Sprintf("placed %d of %d", doc.Count, len(cues)))
+	check("placed cues are on the vegas clock", doc.Base == "vegas-timeline",
+		fmt.Sprintf("base is %q", doc.Base))
+	check("first caption still starts at 0.000", len(doc.Cues) > 0 && near(doc.Cues[0].Start, 0),
+		fmt.Sprintf("starts at %.4f", doc.Cues[0].Start))
+
+	// Cut 1 lives in [0,4) on the ruler; cut 2 in [10,12). NOTHING may land in
+	// the 4..10 hole — that is the bug an EDL export would have produced.
+	inHole := -1
+	for i, c := range doc.Cues {
+		if c.Start > 4.0+1e-6 && c.Start < 10.0-1e-6 {
+			inHole = i
+			break
+		}
+	}
+	check("no caption lands in the timeline's empty 4.000-10.000 gap", inHole < 0,
+		fmt.Sprintf("caption %d starts at %.4f, inside the hole", inHole, doc.Cues[max(inHole, 0)].Start))
+
+	lastPlaced := doc.Cues[len(doc.Cues)-1]
+	check("last caption ends where the second event ends (12.000)", near(lastPlaced.End, 12.0),
+		fmt.Sprintf("ends at %.4f", lastPlaced.End))
+
+	// The total spoken span is unchanged by the move: 6s of captions, just
+	// positioned around the gap rather than compressed into it.
+	var placedSpan float64
+	for _, c := range doc.Cues {
+		placedSpan += c.End - c.Start
+	}
+	check("placed captions still cover 6.000s of speech", near(round3(placedSpan), 6.0),
+		fmt.Sprintf("cover %.4fs", placedSpan))
 
 	fmt.Println()
 	if fails > 0 {

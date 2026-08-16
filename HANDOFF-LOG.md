@@ -10,6 +10,51 @@
 
 ---
 
+## becky captions on the VEGAS timeline — louismathy's script, becky's brain (2026-08-16, cloud, `claude/vegas-becky-captions-70imte`)
+
+Jordan found [louismathy/vegas-script](https://github.com/louismathy/vegas-script)'s
+`WhisperAutoSubtitles.cs` — transcribes footage and drops captions onto the VEGAS timeline —
+and asked for it to use becky-captions + becky's chunking "without breaking the thing".
+(The link he first sent, `RatinFX/VegasProData`, is a scripting-API constants library, not
+the captions tool. Noted so nobody re-chases it.)
+
+`vegas/BeckyCaptions.cs` is that script with its front half replaced. **Kept as-is:** the
+style dialog with its live preview, the elapsed-clock progress window, the RTF text handling
+for Titles & Text, the placement loop. **Replaced:**
+
+1. `whisper` → `becky-subtitle`, which asks **becky-captions** first whether a trustworthy
+   official transcript exists (and refuses one shortened by a YouTube edit) before spending
+   an ASR run — becky's settled acquisition order, now honoured by becky-subtitle too
+   (`cmd/subtitle/acquire.go`).
+2. fixed-N-word splitting → **becky's chunker** (pause-driven breaks, 22-char cap, no
+   danglers, min-duration floor, zero gaps).
+3. **The edit is read instead of ignored.** This was the real bug, not a style nit: the
+   original transcribes ONE file and lays captions from ruler 0, so the moment you cut
+   anything the words drift off the picture, and a timeline with gaps could never be right.
+
+That third one needed a new seam, because the EDL/XML exporters describe a *gapless
+programme* and throw the ruler positions away. `--timeline` (`internal/edl/vegastimeline.go`)
+takes a LIVE timeline from a script running inside the NLE — source, in/out, and each event's
+real ruler position — and `--cues` returns the finished captions **on the Vegas clock**,
+mapped back through the gaps, so the script places each one with no arithmetic of its own.
+Field order in the cues JSON is contractual: a Vegas script has no JSON parser it can rely
+on, so it reads the file with one regex (verified against becky's real output — 4/4 cues
+identical to a real parser, escaped quotes/backslashes included).
+
+Proof cloud ran, not just compiled: `becky-subtitle --selftest` gained a placement block —
+same two cuts, but the second event sitting at 10.000 on the ruler. The `.srt` puts caption 4
+at 4.000 (programme) and the placed cue at 10.000 (Vegas), nothing lands in the empty
+4.000–10.000 hole, and the 6.000s of speech is preserved. Full output in
+`HANDOFF-VEGAS-CAPTIONS.md`, which also carries the checkboxed local work order.
+
+Honest limit, coded and warned rather than papered over: an official `.srt` is cue-level, so
+when that is the transcript we end up with, each official cue becomes one caption (still
+cut-snapped) and the run says so. No fake word times are interpolated.
+
+**Left for local:** `build-all-tools.bat` (gate 5), then run it in VEGAS on a real cut edit
+and check the cuts by eye. The Titles & Text generator name is probed from a list and has
+never been tried against a real install — that is the most likely thing to need a pin.
+
 ## Post-swap backlog round — undo at finger speed, 2x audio, search fixed (2026-07-23 02:10–03:20, local, two sonnet workers → `master` `ed4bcb1`)
 
 Two parallel workers on disjoint ground, both live-verified on the real reel/corpus:

@@ -31,8 +31,10 @@ import (
 	"strings"
 
 	"becky-go/internal/beckyio"
+	"becky-go/internal/captions"
 	"becky-go/internal/config"
 	"becky-go/internal/edl"
+	"becky-go/internal/pathx"
 	"becky-go/internal/proc"
 	"becky-go/internal/subs"
 )
@@ -66,6 +68,8 @@ func main() {
 	fs := flag.NewFlagSet("becky-subtitle", flag.ExitOnError)
 	reelPath := fs.String("reel", "", "path to a Reel JSON (the edit: what was kept, in order)")
 	editPath := fs.String("edit", "", "instead of --reel: an already-cut edit exported from your NLE (Vegas 'EDL TXT' .txt or Final Cut 7 .xml). Imported in place, no separate step")
+	timelinePath := fs.String("timeline", "", "instead of --reel: a live timeline handed over by a script running INSIDE the NLE (vegas/BeckyCaptions.cs writes this). Unlike an export it keeps each event's real ruler position, so captions can be placed back onto gaps")
+	cuesOut := fs.String("cues", "", "also write the finished captions as JSON for a caller that PLACES them itself (the Vegas script). With --timeline the times are Vegas ruler seconds")
 	transcript := fs.String("transcript", "", "becky-transcribe JSON for the source media (word-level). Omit to look for a sidecar beside each source")
 	autoTranscribe := fs.Bool("transcribe", true, "when a source has no transcript, run becky-transcribe to make one (this is the slow step)")
 	out := fs.String("out", "", "output .srt path (default: <reel name>.srt beside the reel)")
@@ -97,16 +101,28 @@ func main() {
 		runSelftest()
 		return
 	}
-	if *reelPath == "" && *editPath == "" {
-		beckyio.Fatalf("--reel <reel.json> or --edit <vegas .txt|.xml> is required (or use --selftest)")
+	if *reelPath == "" && *editPath == "" && *timelinePath == "" {
+		beckyio.Fatalf("--reel <reel.json>, --edit <vegas .txt|.xml> or --timeline <vegas-timeline.json> is required (or use --selftest)")
 	}
 
 	// One call does the whole job: an NLE edit is imported in place, so there is
 	// no separate import step to remember.
 	var reel edl.Reel
 	var preWarnings []string
+	// vegasTL is set only for --timeline. It is what maps a finished caption back
+	// onto the real Vegas ruler, gaps and all, for --cues.
+	var vegasTL *edl.VegasTimeline
 	basePath := *reelPath
-	if *editPath != "" {
+	if *timelinePath != "" {
+		tl, err := edl.LoadVegasTimeline(*timelinePath)
+		if err != nil {
+			beckyio.Fatalf("read timeline %s: %v", pathx.Base(*timelinePath), err)
+		}
+		vegasTL = &tl
+		reel = tl.Reel()
+		basePath = *timelinePath
+		beckyio.Logf(*verbose, "live timeline: %d events from %s", len(tl.Events), pathx.Base(*timelinePath))
+	} else if *editPath != "" {
 		res, err := edl.ImportTimeline(*editPath)
 		if err != nil {
 			beckyio.Fatalf("import %s: %v", filepath.Base(*editPath), err)
@@ -132,6 +148,12 @@ func main() {
 	// sequence), never a guess. Captions are then snapped to whole frames at the
 	// media's REAL rate, so the timeline and the .srt agree exactly.
 	fps := *fpsFlag
+	if fps <= 0 && vegasTL != nil {
+		// The project rate the Vegas script reported. It is the rate the ruler
+		// itself uses, so snapping to it is what makes a placed event land on a
+		// frame boundary rather than between two.
+		fps = vegasTL.FPS
+	}
 	if fps <= 0 {
 		for _, c := range reel.Clips {
 			if c.Meta.SourceFPS > 0 {
@@ -224,6 +246,17 @@ func main() {
 	f.Close()
 	beckyio.Logf(*verbose, "wrote %d captions -> %s", len(cues), srtPath)
 
+	// The placed-cues view, for a caller that lays the captions out itself. The
+	// .srt above is still written either way — one artifact, two views of it.
+	if *cuesOut != "" {
+		doc, cw := buildCues(cues, vegasTL, fps, mustAbs(srtPath))
+		warnings = append(warnings, cw...)
+		if err := writeCues(*cuesOut, doc); err != nil {
+			beckyio.Fatalf("write %s: %v", *cuesOut, err)
+		}
+		beckyio.Logf(*verbose, "wrote %d placed captions (%s clock) -> %s", doc.Count, doc.Base, *cuesOut)
+	}
+
 	rep := report{
 		Reel:     mustAbs(basePath),
 		SRT:      mustAbs(srtPath),
@@ -295,8 +328,37 @@ func segmentsFor(reel edl.Reel, explicit string, autoTranscribe, verbose bool) (
 			} else {
 				path := findTranscript(c.Source)
 				if path == "" && autoTranscribe && !missing[c.Source] {
-					// No transcript yet: make one. This is the slow step, so say
-					// so on stderr rather than looking hung.
+					// CAPTION ACQUISITION, in becky's settled order: ask
+					// becky-captions whether a complete official transcript
+					// already exists (or can be fetched) BEFORE spending an ASR
+					// run on it. Only when it says local_needed — or it isn't
+					// installed — do we transcribe.
+					official := ""
+					if dec, ok := askCaptions(c.Source, verbose); ok {
+						beckyio.Logf(verbose, "becky-captions %s: %s (%s)", pathx.Base(c.Source), dec.Action, dec.Reason)
+						if dec.Action == captions.ActionUseOfficial && dec.OfficialSRT != "" {
+							official = dec.OfficialSRT
+						}
+					}
+					if official != "" {
+						w, err := wordsFromOfficialSRT(official)
+						if err != nil {
+							warnings = append(warnings, "official transcript "+pathx.Base(official)+": "+err.Error())
+						} else {
+							// Honest degrade: an official .srt is cue-level, so
+							// becky's word-timed pacing cannot apply. These are the
+							// official lines, still snapped to the edit's cuts.
+							warnings = append(warnings, "used the official transcript for "+pathx.Base(c.Source)+
+								" — it is cue-level, so captions follow its lines rather than becky's pacing; delete "+
+								pathx.Base(official)+" and re-run to force local ASR instead")
+							cache[c.Source] = w
+							allWords = append(allWords, w...)
+							segs = append(segs, subs.Segment{Source: c.Source, Start: c.In, End: c.Out, Words: w})
+							continue
+						}
+					}
+					// No trustworthy official transcript: make one locally. This is
+					// the slow step, so say so on stderr rather than looking hung.
 					sidecar := defaultSidecar(c.Source)
 					fmt.Fprintf(os.Stderr, "transcribing %s (one-time, this is the slow part)...\n", filepath.Base(c.Source))
 					if err := runTranscribe(c.Source, sidecar, verbose); err != nil {

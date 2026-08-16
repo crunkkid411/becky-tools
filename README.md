@@ -65,6 +65,19 @@ becky-subtitle --edit post_constantly.xml --burn post_constantly.mp4
 
 One-click: **`Caption This Edit.bat`** (drag a Vegas edit onto it).
 
+Or caption **without leaving VEGAS**: `vegas/BeckyCaptions.cs` runs from Tools ▸ Scripting,
+reads the events already on your timeline, and lays becky's captions back onto a "Becky
+Captions" track as text events. It talks to the same tool over a small JSON seam:
+
+```bat
+becky-subtitle --timeline timeline.json --cues cues.json --out captions.srt
+```
+
+`--timeline` is a *live* timeline handed over by a script inside the NLE. Unlike an EDL/XML
+export it keeps each event's real ruler position, so `--cues` comes back on the **Vegas
+clock** — gaps in the edit included — and the script places each caption with no arithmetic
+of its own. See `vegas/README.md`.
+
 Two things worth knowing:
 
 - **The pause threshold is derived from the transcript, not hardcoded.** `cli-cut`'s 0.120s constant

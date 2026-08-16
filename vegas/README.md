@@ -1,4 +1,92 @@
-# Becky → VEGAS Pro 18 review timeline
+# Becky → VEGAS Pro
+
+Two scripts live here. They do different jobs:
+
+| Script | What it does |
+|---|---|
+| **`BeckyCaptions.cs`** | Captions the edit you already have open — transcribes with becky and lays one text event per caption on a "Becky Captions" track. **Start here for captions.** |
+| `BeckyReviewTimeline.cs` | Builds a *review* timeline from a list of forensic hits (path + in/out), each as a named Region. Nothing to do with captions. |
+
+---
+
+# 1. `BeckyCaptions.cs` — captions on the timeline, timed by becky
+
+Adapted from **[louismathy/vegas-script](https://github.com/louismathy/vegas-script)**
+(`WhisperAutoSubtitles.cs`). His style dialog with the live preview, the progress
+window, the RTF text handling and the placement loop are kept as they were.
+
+## What changed, and why
+
+1. **Transcription → becky.** The original shells out to `whisper`. This calls
+   `becky-subtitle`, which asks **`becky-captions`** first whether a trustworthy
+   official transcript already exists for the media — and refuses one that is
+   short because the stream was YouTube-edited — before spending an ASR run.
+2. **Chunking → becky.** The original splits every N words, which is why lines
+   break mid-thought. becky's chunker (`internal/subs`) breaks where the speaker
+   actually **pauses**, caps a line at **22 characters**, never ends a line on a
+   dangling "a"/"the"/"to", floors every caption so none is a one-frame flash, and
+   closes every gap so nothing blinks off between two captions.
+3. **Your edit is read, not ignored.** This is the real fix. The original
+   transcribes one media file and lays captions from 0, so the moment you cut
+   anything the words drift away from the picture. This hands becky **every event
+   on the track** — the source file, the `[in,out]` of that source, and where the
+   event sits on the ruler — so captions are snapped to *your* cuts and placed
+   back at the right ruler position, **gaps included**.
+4. Whisper's model / language / split-mode prompts are gone; becky decides those.
+   The style dialog is untouched.
+
+## Before you run it
+
+`becky-subtitle.exe` and `becky-transcribe.exe` must exist — run
+`build-all-tools.bat`. The script finds them by, in order: `BECKY_SUBTITLE`,
+`..\becky-go\bin\` relative to this script, then `PATH`.
+
+## Run it
+
+1. Open your edit in VEGAS.
+2. **Select the events you want captioned.** Select nothing and it captions the
+   whole first video track that has media. Empty timeline → it asks for a file.
+3. **Tools ▸ Scripting ▸ Run Script…** → `BeckyCaptions.cs`.
+4. Pick the font/size/colours in the style dialog and press OK.
+5. Wait — the first run on a file has to transcribe it. Captions land on a track
+   called **Becky Captions**.
+
+To pin it in the menu, copy it into `C:\Users\<you>\Documents\Vegas Script Menu\`
+and restart VEGAS.
+
+## Notes
+
+- **Re-running replaces, it does not stack.** The script clears the existing
+  "Becky Captions" track rather than adding a second one.
+- **The `.srt` is written too**, into the run's temp folder (the success box
+  shows the path), so you can burn it later or hand it to another tool.
+- **`BECKY_CAPTIONS_REVIEW=0`** skips becky's model pass that regroups lines onto
+  phrase boundaries. It is on by default and degrades to deterministic chunking
+  on its own when no free/OAuth reviewer key is available.
+- **Speed-changed events** are handled (the in/out is scaled by the playback
+  rate), but heavy time-stretching will still drift — captions are timed off the
+  source audio.
+- **VEGAS 13 or older:** change `using ScriptPortal.Vegas;` to `using Sony.Vegas;`.
+
+## The seam, if you are debugging it
+
+The script writes a timeline JSON, becky writes a cues JSON, the script places
+the cues. Both files are left in `%TEMP%\BeckyVegasCaptions\<guid>\` along with
+`becky.log`.
+
+```bat
+becky-subtitle --timeline timeline.json --cues cues.json --out captions.srt --verbose
+```
+
+`timeline.json` in, `cues.json` out — and the times in `cues.json` are **Vegas
+ruler seconds**, already mapped back through the gaps in the edit, so the script
+places each event at `cue.start` with no arithmetic of its own. The contract is
+`becky-go/internal/edl/vegastimeline.go`; the placement maths is proven offline
+by `becky-subtitle --selftest`.
+
+---
+
+# 2. `BeckyReviewTimeline.cs` — the forensic review timeline
 
 `BeckyReviewTimeline.cs` lets you **review becky's forensic clip hits immediately in
 VEGAS Pro 18** — the editor you already know — while we decide the long-term host.
