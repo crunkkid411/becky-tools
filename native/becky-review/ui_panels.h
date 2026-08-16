@@ -175,6 +175,8 @@ void applyFolderView(const json& d, const std::string& fallbackRoot);
 bool loadFolder(const std::string& folder);
 void openInFileBrowser(const std::string& path);
 std::string pickOpenReelFile(HWND owner);
+// Modern Explorer-style folder chooser (see the definition). "" = cancelled.
+std::string pickCaseFolderNative(HWND owner, const std::string& startDir);
 bool hasExtCI(const std::string& path, const char* ext);
 std::string convertEditIfNeeded(const std::string& path);
 void seekToSpan(const std::string& source, double a, double b, bool startPlaying,

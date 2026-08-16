@@ -118,6 +118,37 @@ std::string baseName(const std::string& p) {
     size_t i = p.find_last_of("/\\");
     return i == std::string::npos ? p : p.substr(i + 1);
 }
+static std::string dirName(const std::string& p) {
+    size_t i = p.find_last_of("/\\");
+    return i == std::string::npos ? std::string() : p.substr(0, i);
+}
+
+// ---- a video dropped on the DESKTOP SHORTCUT ----
+// Windows hands the dropped file to the shortcut's target as an argument, and
+// "Open Becky Review 3.bat" forwards it to us. Boot then does three things with
+// it (bootWork below): the clip's OWN folder becomes the case folder, the clip
+// goes on the timeline, and its library row is selected. Read through
+// CommandLineToArgvW rather than main's argv because argv is ANSI - a path with
+// any non-ASCII character would already be mangled by the CRT before we saw it.
+static std::string g_bootClip;   // "" = ordinary launch
+static void parseBootClip() {
+    int n = 0;
+    LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &n);
+    if (!wargv) return;
+    for (int i = 1; i < n && g_bootClip.empty(); i++) {
+        if (!wargv[i] || wargv[i][0] == L'-' || wargv[i][0] == L'/') continue;  // a switch, not a path
+        DWORD attr = GetFileAttributesW(wargv[i]);
+        if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        int len = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, nullptr, 0, nullptr, nullptr);
+        if (len > 1) {
+            std::string p(len - 1, '\0');
+            WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, p.data(), len, nullptr, nullptr);
+            fwslash(p);
+            g_bootClip = p;
+        }
+    }
+    LocalFree(wargv);
+}
 
 // T-1: set true (once, from bootWork's background thread, as its LAST write) once the
 // engine has started and the initial reel/folder load has finished. The render loop
@@ -1955,6 +1986,8 @@ double snapComp(double t, double pps, double curSec, int exclIdx, float px) {
 int main(int argc, char** argv) {
     crashLogInit();
     crashLog("=== becky-review starting ===");
+    parseBootClip();   // a clip dropped on the desktop shortcut (see g_bootClip)
+    if (!g_bootClip.empty()) crashLog("boot clip: " + g_bootClip);
     editLogInit();
     frameTraceInit();
     scrubLogInit();
@@ -2293,13 +2326,42 @@ int main(int argc, char** argv) {
                     loadCaptions(std::string(rp));   // "<reel stem>.srt" beside the reel
                 }
             }
-            // Boot a default folder if supplied (env); else A-3: reopen whatever
-            // folder was open last session, so the app is never blank on relaunch.
+            // Boot a default folder if supplied (env); else the folder of a clip
+            // dropped on the desktop shortcut (Jordan 2026-08-16: "that should
+            // change the working directory... to the location of the clip");
+            // else A-3: reopen whatever folder was open last session, so the app
+            // is never blank on relaunch.
             if (const char* fp = getenv("BECKY_REVIEW_FOLDER")) {
                 loadFolder(std::string(fp));
+            } else if (!g_bootClip.empty()) {
+                std::string d = dirName(g_bootClip);
+                if (!d.empty()) loadFolder(d);
             } else {
                 std::string last = recallFolder();
                 if (!last.empty()) loadFolder(last);
+            }
+            // ...and the dropped clip itself goes on the timeline, so the app opens
+            // WITH it (same add_external verb a drop onto the window uses; the
+            // timeline verb then pulls the authoritative state, exactly like the
+            // BECKY_REVIEW_REEL path above).
+            if (!g_bootClip.empty()) {
+                json r = engineCall("add_external", { {"path", g_bootClip}, {"at", 0} }, 30.0);
+                if (r.value("ok", false)) {
+                    json tv = engineCall("timeline", {}, 10.0);
+                    if (tv.value("ok", false)) loadTimelineView(tv["data"]);
+                } else {
+                    g_renderMsg = "Could not open " + baseName(g_bootClip) + ": " +
+                                  r.value("error", std::string("add failed"));
+                    g_renderMsgAt = nowSec();
+                }
+                // Select its row in the library so the clip he dropped is the one
+                // highlighted (paths from the engine are forward-slashed like ours;
+                // Windows filenames are case-insensitive, so compare that way).
+                for (size_t i = 0; i < g_videos.size(); i++) {
+                    if (_stricmp(g_videos[i].path.c_str(), g_bootClip.c_str()) == 0) {
+                        g_libSel = (int)i; g_libScrollPending = true; break;
+                    }
+                }
             }
             if (const char* rp = getenv("BECKY_REVIEW_REEL")) {
                 json tv = engineCall("timeline", {}, 10.0);
@@ -3301,22 +3363,27 @@ int main(int argc, char** argv) {
             // glyph, no "Open Folder" text) styled like the toolbar's emoji buttons - dark
             // fill + thin border via refBtn. Ctrl+O still opens it (handled by the key map).
             if (refBtn("\xF0\x9F\x93\x81##openfolder")) {   // folder emoji only
-                // Native folder dialog via the engine (pick_folder verb on Windows).
-                // Gap 4 fix: this was a 600s synchronous engineCall right on the menu
-                // handler - the dialog itself runs in the ENGINE's own process, so this
-                // thread was just blocked reading a pipe the whole time. Even with the
-                // native picker legitimately open, OUR window's message pump wasn't
-                // running, so Windows would show it as "Not Responding" - indexing a big
-                // case folder afterward (see loadFolder's comment) could stretch that
-                // for minutes. Same engineCallAsync shape as the toolbar buttons.
-                engineCallAsync("pick_folder", {}, 600.0, "Opening folder...", [](const json& r) {
-                    if (r.value("ok", false)) {
-                        const json& d = r.contains("data") ? r["data"] : r;
-                        if (d.value("picked", false) && d.contains("folder")) { g_folderErr.clear(); applyFolderView(d["folder"], std::string()); }
-                    } else {
-                        g_folderErr = r.value("error", std::string("pick_folder failed"));
-                    }
-                });
+                // 2026-08-16: the dialog is now OURS (pickCaseFolderNative), not the
+                // engine's pick_folder verb. That verb shells out to PowerShell's
+                // WinForms FolderBrowserDialog - the old grey "Browse For Folder" tree
+                // that starts at Desktop every time - and Jordan wants the Explorer-style
+                // chooser the reference app puts up, which remembers where he was. The
+                // picker itself is a modal OS dialog on this thread (the same shape the
+                // Load Reel button already uses); only the INDEXING, which is the part
+                // that can run for minutes on a big case folder, stays async - so the
+                // "Not Responding" window Gap 4 fixed does not come back.
+                std::string picked = pickCaseFolderNative(hwnd, g_folderRoot);
+                if (!picked.empty()) {
+                    engineCallAsync("open_folder", { {"folder", picked} }, 600.0, "Opening folder...",
+                                    [picked](const json& r) {
+                        if (r.value("ok", false)) {
+                            g_folderErr.clear();
+                            applyFolderView(r.contains("data") ? r["data"] : r, picked);
+                        } else {
+                            g_folderErr = r.value("error", std::string("open_folder failed"));
+                        }
+                    });
+                }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a case folder  (Ctrl+O)");
             // Item 3: the "%.2fs / %.0fs" playhead readout that used to sit next to Open
@@ -4108,7 +4175,20 @@ int main(int argc, char** argv) {
                                 endPreviewRestore(curSec, playing, lastComposed);
                                 requestAddExternal(v.path, insertIndexAtPlayhead(curSec));
                             } else {
-                                openTranscript(v.path); g_libJustViewedIdx = i;
+                                // 2026-08-16: clicking a video PREVIEWS it, transcript or
+                                // not. The reference app does exactly this and always did
+                                // (gui/BeckyReviewNative ui/app.js onFileClick: mpvPlay
+                                // (v.path, 0) FIRST, then load the cues) - here the whole
+                                // video plays in the non-destructive audition preview, so
+                                // the real reel is untouched and comes back on the next
+                                // timeline click. Without it, footage with no transcript
+                                // could not be watched at all.
+                                previewPlaySpan(v.path, 0.0, 0.0, curSec, playing, lastComposed);
+                                // Only drill into the transcript view when there IS one -
+                                // opening it for a transcript-less video would swap the
+                                // library list for an error card and hide the row he just
+                                // clicked (the reference showed an empty list instead).
+                                if (v.hasTranscript) { openTranscript(v.path); g_libJustViewedIdx = i; }
                             }
                         }
                         if (res.plus) { g_libSel = i; requestTranscribe(v.path, v.name); }
@@ -4188,7 +4268,15 @@ int main(int argc, char** argv) {
                 // search-via-Enter every time), and Space in a query string ALSO played the
                 // selected video mid-keystroke.
                 if (libFocusedNow && !ImGui::GetIO().WantTextInput && g_libSel >= 0 && g_libSel < (int)g_videos.size()) {
-                    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) { openTranscript(g_videos[g_libSel].path); g_libJustViewedIdx = g_libSel; }
+                    // 2026-08-16: Enter on a selected VIDEO puts the WHOLE video on the
+                    // timeline - the same thing Enter on a selected QUOTE does for its
+                    // span, and the same call Ctrl+click already used. (It used to open
+                    // the transcript, which a plain single click has done since B-4, so
+                    // nothing is lost.)
+                    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+                        endPreviewRestore(curSec, playing, lastComposed);
+                        requestAddExternal(g_videos[g_libSel].path, insertIndexAtPlayhead(curSec));
+                    }
                     if (ImGui::IsKeyPressed(ImGuiKey_Space)) playWholeVideo(g_videos[g_libSel].path, curSec, playing, lastComposed);
                 }
             }
@@ -4201,8 +4289,15 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowPos({ libW + splitHalf, topY }); ImGui::SetNextWindowSize({ vidW - splitHalf, topH });
         if (ImGui::Begin("video", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool haveClip = !g_track[0].empty();
-            int vw = 0, vh = 0;
-            ID3D11ShaderResourceView* vsrv = engine::currentFrameSRV(g_dev, &vw, &vh);
+            int vw = 0, vh = 0, vrot = 0;
+            ID3D11ShaderResourceView* vsrv = engine::currentFrameSRV(g_dev, &vw, &vh, &vrot);
+            // ROTATION (2026-08-16, Jordan: "it does not honor the clip's aspect ratio
+            // or rotation"). His iPhone footage is coded 1920x1080 with a display matrix
+            // of -90: the decoder hands us a landscape frame that is meant to be shown
+            // portrait. The frame TEXTURE stays as decoded (no extra GPU pass); only the
+            // fit math and the four UV corners below turn it, so a 1080x1920 portrait
+            // clip letterboxes as a tall frame instead of a sideways stretched one.
+            if (vrot == 90 || vrot == 270) std::swap(vw, vh);
             if (engine::available() && haveClip) {
                 ImVec2 origin = ImGui::GetCursorScreenPos();
                 ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -4221,7 +4316,21 @@ int main(int argc, char** argv) {
                     float fw = (float)vw * sc, fh = (float)vh * sc;
                     ImVec2 at{ origin.x + (avail.x - fw) * 0.5f, origin.y + (videoH - fh) * 0.5f };
                     ImGui::GetWindowDrawList()->AddRectFilled(origin, { origin.x + avail.x, origin.y + videoH }, IM_COL32(0, 0, 0, 255));
-                    ImGui::GetWindowDrawList()->AddImage((ImTextureID)vsrv, at, { at.x + fw, at.y + fh });
+                    if (vrot == 0) {
+                        ImGui::GetWindowDrawList()->AddImage((ImTextureID)vsrv, at, { at.x + fw, at.y + fh });
+                    } else {
+                        // Same destination rectangle, UV corners walked round by the
+                        // rotation: corner order is TL, TR, BR, BL for both arrays, so
+                        // rot=90 (clockwise) maps the source's bottom-left into the
+                        // pane's top-left, and so on.
+                        ImVec2 p1{ at.x, at.y }, p2{ at.x + fw, at.y }, p3{ at.x + fw, at.y + fh }, p4{ at.x, at.y + fh };
+                        ImVec2 uv[4];
+                        if (vrot == 90)       { uv[0] = {0,1}; uv[1] = {0,0}; uv[2] = {1,0}; uv[3] = {1,1}; }
+                        else if (vrot == 180) { uv[0] = {1,1}; uv[1] = {0,1}; uv[2] = {0,0}; uv[3] = {1,0}; }
+                        else                  { uv[0] = {1,0}; uv[1] = {1,1}; uv[2] = {0,1}; uv[3] = {0,0}; }
+                        ImGui::GetWindowDrawList()->AddImageQuad((ImTextureID)vsrv, p1, p2, p3, p4,
+                                                                 uv[0], uv[1], uv[2], uv[3]);
+                    }
                     // provenance overlay + captions, drawn by ImGui ON the frame
                     drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh }, sc);   // sc = fit scale = displayedH/sourceH (item 25)
                     // Item 1 (round 4): during a preview, g_caps deliberately still

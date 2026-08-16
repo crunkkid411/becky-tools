@@ -36,6 +36,10 @@ extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_d3d11va.h>
 #include <libavutil/pixdesc.h>
+// Rotation: a phone clip is coded 1920x1080 LANDSCAPE with a display matrix that
+// says "turn me 90 degrees". The decoder never applies it (ffmpeg's own -autorotate
+// is a FILTER), so without reading it here Jordan's portrait footage plays sideways.
+#include <libavutil/display.h>
 #include <libswresample/swresample.h>
 // 2x speed audio (2026-07-23): atempo is a real WSOLA-family time-stretch
 // (pitch-preserved), already inside the avfilter closure the app is built
@@ -137,6 +141,7 @@ struct Decoder {
     int64_t    startTs = 0;
     int        width = 0, height = 0;
     int64_t    nbFrames = 0;
+    int        rotation = 0;   // 0/90/180/270, CLOCKWISE, from the stream display matrix
 
     bool open(const char* path) {
         if (avformat_open_input(&fmt, path, nullptr, nullptr) < 0) return false;
@@ -156,6 +161,18 @@ struct Decoder {
         ctx->extra_hw_frames = 10; // 4 delay-unref + ring-pass headroom
         if (avcodec_open2(ctx, dec, nullptr) < 0) return false;
         width = ctx->width; height = ctx->height;
+        // ffmpeg 8 (libavformat 62) dropped av_stream_get_side_data; the display
+        // matrix now hangs off codecpar->coded_side_data. Same sign convention as
+        // ffmpeg's own get_rotation(): theta = -av_display_rotation_get, so an
+        // iPhone portrait clip (matrix rotation -90) yields 90 = "rotate the
+        // decoded frame 90 degrees CLOCKWISE to display it upright".
+        if (const AVPacketSideData* dm = av_packet_side_data_get(
+                st->codecpar->coded_side_data, st->codecpar->nb_coded_side_data,
+                AV_PKT_DATA_DISPLAYMATRIX)) {
+            double theta = -av_display_rotation_get((const int32_t*)dm->data);
+            int r = (int)llround(theta / 90.0) * 90;
+            rotation = ((r % 360) + 360) % 360;
+        }
         nbFrames = st->nb_frames > 0 ? st->nb_frames
                  : (int64_t)((double)fmt->duration / AV_TIME_BASE * av_q2d(fps));
         return true;
@@ -276,6 +293,7 @@ struct RingSlot {
     ID3D11RenderTargetView* rtv = nullptr;
     HANDLE shared = nullptr;
     int w = 0, h = 0;
+    int rot = 0;                            // this frame's source display rotation (CW degrees)
     uint32_t gen = 0;                       // bumped when tex is recreated
     // app-side cache (owned here, created on the app device)
     ID3D11Texture2D* appTex = nullptr;
@@ -288,7 +306,9 @@ static std::atomic<int64_t> g_lastShown{-1};
 static std::atomic<uint32_t> g_ringGen{1};
 
 // Convert the decoded frame into slot's BGRA texture (decode thread only).
-static bool ringStore(AVFrame* f, int64_t idx) {
+// rot travels WITH the frame (per-slot, not global) because a reel can mix a
+// portrait phone clip and a landscape screen capture in one timeline.
+static bool ringStore(AVFrame* f, int64_t idx, int rot) {
     if (f->format != AV_PIX_FMT_D3D11) {
         static bool once = false;
         if (!once) { crashLog("engine: frame not d3d11 (sw fallback has no draw path yet)"); once = true; }
@@ -390,6 +410,7 @@ static bool ringStore(AVFrame* f, int64_t idx) {
     ID3D11RenderTargetView* nulRt = nullptr;
     g_decCtx->OMSetRenderTargets(1, &nulRt, nullptr);
     g_decCtx->Flush(); // submit before publishing (cross-device visibility)
+    slot.rot = rot;    // written BEFORE the release-store that publishes the slot
     slot.frame.store(idx, std::memory_order_release);
     return true;
 }
@@ -525,7 +546,7 @@ static void videoLoop() {
             if (r != 1) return r;
         }
         curSeg = si; dd = d; lastSrcFrame = srcFrame;
-        ringStore(f, F);
+        ringStore(f, F, d->rotation);
         holdFrame(f);
         return 1;
     };
@@ -1193,7 +1214,7 @@ double clockSec() {
     return f / fpsv;
 }
 
-ID3D11ShaderResourceView* currentFrameSRV(ID3D11Device* appDev, int* w, int* h) {
+ID3D11ShaderResourceView* currentFrameSRV(ID3D11Device* appDev, int* w, int* h, int* rot) {
     if (!g_videoUp.load() || !appDev) return nullptr;
     auto appSide = [&](RingSlot& s) -> ID3D11ShaderResourceView* {
         if (s.appGen != s.gen || !s.appSrv) {
@@ -1213,6 +1234,7 @@ ID3D11ShaderResourceView* currentFrameSRV(ID3D11Device* appDev, int* w, int* h) 
         }
         if (w) *w = s.w;
         if (h) *h = s.h;
+        if (rot) *rot = s.rot;
         return s.appSrv;
     };
     int64_t want = wantNow();

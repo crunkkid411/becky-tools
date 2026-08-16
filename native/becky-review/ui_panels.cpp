@@ -1,4 +1,5 @@
 #include "ui_panels.h"
+#include <shobjidl.h>   // IFileOpenDialog / SHCreateItemFromParsingName (pickCaseFolderNative)
 // --------------- left panel: library / search / transcript (ImGui) ---------------
 // The left panel is the LIBRARY: a scrollable list of the open folder's videos
 // (with transcript pairing), a search box whose hits render as structured rows
@@ -711,6 +712,54 @@ std::string pickOpenReelFile(HWND owner) {
     std::string s = wideToUtf8(file);
     fwslash(s);
     return s;
+}
+
+// pickCaseFolderNative: the MODERN Explorer-style folder chooser (IFileOpenDialog
+// with FOS_PICKFOLDERS) - address bar, Quick Access sidebar, search box, and the
+// shell's own memory of where you were last. It is the same dialog the reference
+// app puts up (gui/BeckyReviewNative uses .NET's Microsoft.Win32.OpenFolderDialog,
+// which is this COM object), and it replaces the engine's PowerShell
+// FolderBrowserDialog - the grey "Browse For Folder" tree that always reopened at
+// Desktop no matter which case folder was already loaded (Jordan, 2026-08-16).
+// startDir preselects the folder to open IN (normally the current case folder);
+// empty leaves the shell on its own last-used location. "" = cancelled.
+std::string pickCaseFolderNative(HWND owner, const std::string& startDir) {
+    // The dialog needs an STA. RPC_E_CHANGED_MODE means this thread is already
+    // initialised in another mode - not ours to undo, and the dialog still shows.
+    HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    std::string out;
+    IFileOpenDialog* dlg = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_PPV_ARGS(&dlg)))) {
+        DWORD opts = 0;
+        dlg->GetOptions(&opts);
+        dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        dlg->SetTitle(L"Pick a case folder");
+        if (!startDir.empty()) {
+            std::wstring w = utf8ToWide(startDir);
+            for (auto& ch : w) if (ch == L'/') ch = L'\\';   // the shell parser wants backslashes
+            IShellItem* si = nullptr;
+            if (SUCCEEDED(SHCreateItemFromParsingName(w.c_str(), nullptr, IID_PPV_ARGS(&si)))) {
+                dlg->SetFolder(si);
+                si->Release();
+            }
+        }
+        if (SUCCEEDED(dlg->Show(owner))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item))) {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    out = wideToUtf8(path);
+                    fwslash(out);
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+    if (SUCCEEDED(hrInit)) CoUninitialize();
+    return out;
 }
 
 bool hasExtCI(const std::string& path, const char* ext) {

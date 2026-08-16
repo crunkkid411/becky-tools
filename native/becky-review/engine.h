@@ -43,7 +43,10 @@ double clockSec();               // composition seconds while reel is active, el
 
 // The current frame as a BGRA SRV usable on the APP's render device (shared
 // texture opened lazily). May return null before the first frame decodes.
-// w/h receive the video's display dimensions.
-ID3D11ShaderResourceView* currentFrameSRV(ID3D11Device* appDev, int* w, int* h);
+// w/h receive the frame's CODED dimensions; rot (optional) receives the source's
+// display rotation in CLOCKWISE degrees (0/90/180/270) - a phone portrait clip is
+// coded landscape and only looks right once the drawing side applies it, so at 90
+// or 270 the DISPLAY size is h x w, not w x h.
+ID3D11ShaderResourceView* currentFrameSRV(ID3D11Device* appDev, int* w, int* h, int* rot = nullptr);
 
 } // namespace engine

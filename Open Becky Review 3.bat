@@ -30,7 +30,13 @@ if not exist "%EXE%" (
 )
 if not exist "%EXE%" goto BUILDFAIL
 
-start "" /D "%PROJ%" "%EXE%"
+REM A video dropped onto the desktop shortcut arrives here as %1 - pass it on so
+REM the app opens that clip and makes its folder the case folder.
+if "%~1"=="" (
+  start "" /D "%PROJ%" "%EXE%"
+) else (
+  start "" /D "%PROJ%" "%EXE%" "%~1"
+)
 exit /b 0
 
 :BUILDFAIL
