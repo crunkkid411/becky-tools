@@ -31,6 +31,7 @@ import (
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/proc"
 	"becky-go/internal/pyhelpers"
 )
 
@@ -55,6 +56,7 @@ func main() {
 	export := flag.String("export", "mp4", "export type: mp4, kdenlive")
 	codec := flag.String("codec", "", "video codec (default from config: h264_nvenc)")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD post-pass")
+	threshold := flag.String("threshold", "auto", "audio detection threshold: \"auto\" (from the file's own level), or an auto-editor value like -27dB / 4%")
 	dryRun := flag.Bool("dry-run", false, "print edit decisions without encoding")
 	emitTimeline := flag.String("emit-timeline", "", "write the v1 timeline JSON to <path> as a first-class artifact (works in dry-run too)")
 	keepTemp := flag.Bool("keep-temp", false, "keep temp XML/timeline/segment files")
@@ -90,27 +92,48 @@ func main() {
 		beckyio.Fatalf("%v", err)
 	}
 
+	// The --edit expression, made relative to THIS recording's level (level.go
+	// has the measurement and the reasoning). "auto" is the default; anything
+	// else is passed to auto-editor as-is, so `--threshold -27dB` or
+	// `--threshold 4%` still work by hand.
+	editArg := "audio"
+	thresholdNote := "auto-editor default"
+	switch strings.TrimSpace(strings.ToLower(*threshold)) {
+	case "auto", "":
+		if meanDB, mErr := measureMeanVolumeDB(cfg.FFmpeg, input); mErr != nil {
+			beckyio.Logf(*verbose, "level measure failed (%v); using auto-editor's default threshold", mErr)
+		} else {
+			t := detectThresholdDB(meanDB)
+			editArg = editExpr(t)
+			thresholdNote = fmt.Sprintf("%.1fdB (file mean %.1fdB)", t, meanDB)
+			beckyio.Logf(*verbose, "level: mean %.1f dBFS -> threshold %.1f dB", meanDB, t)
+		}
+	default:
+		editArg = fmt.Sprintf("audio:%s,stream=all", strings.TrimSpace(*threshold))
+		thresholdNote = strings.TrimSpace(*threshold) + " (--threshold)"
+	}
+
 	// Kdenlive export: hand off to auto-editor's own exporter (VAD post-pass is
 	// only applied for mp4 rendering).
 	if *export == "kdenlive" {
-		beckyio.Logf(*verbose, "auto-editor kdenlive export (margin=%s)...", *margin)
+		beckyio.Logf(*verbose, "auto-editor kdenlive export (margin=%s, edit=%s)...", *margin, editArg)
 		if err := runStream(*verbose, cfg.AutoEditor, input,
-			"--edit", "audio", "--margin", *margin, "--export", "kdenlive",
+			"--edit", editArg, "--margin", *margin, "--export", "kdenlive",
 			"-o", outputPath, "--progress", "none"); err != nil {
 			beckyio.Fatalf("kdenlive export failed: %v", err)
 		}
 		beckyio.PrintJSON(map[string]any{
 			"input": input, "output": outputPath, "export": "kdenlive",
-			"vad_applied": false, "rendered": true,
+			"vad_applied": false, "rendered": true, "threshold": thresholdNote,
 		})
 		return
 	}
 
 	// Step 1: auto-editor native detection -> Premiere XML.
 	premiere := filepath.Join(os.TempDir(), fmt.Sprintf("becky_cut_premiere_%d.xml", os.Getpid()))
-	beckyio.Logf(*verbose, "auto-editor detection (margin=%s)...", *margin)
+	beckyio.Logf(*verbose, "auto-editor detection (margin=%s, edit=%s)...", *margin, editArg)
 	if err := runStream(*verbose, cfg.AutoEditor, input,
-		"--edit", "audio", "--margin", *margin, "--export", "premiere",
+		"--edit", editArg, "--margin", *margin, "--export", "premiere",
 		"-o", premiere, "--progress", "none"); err != nil {
 		beckyio.Fatalf("auto-editor failed: %v", err)
 	}
@@ -170,6 +193,7 @@ func main() {
 		"total_chunks":   len(chunks),
 		"removed_by_vad": removed,
 		"vad_applied":    vadApplied,
+		"threshold":      thresholdNote,
 	}
 
 	// --emit-timeline: write the v1 timeline JSON to a caller-chosen path as a
@@ -370,7 +394,32 @@ func buildChunks(segments [][2]int, srcFrames int) []chunk {
 
 // vadPass extracts each keep segment's audio, runs Silero VAD on it, and flips
 // segments whose speech percentage is below minPct to cuts. Returns the count.
+// vadPass flips a keep segment to a cut when it holds less than minPct speech —
+// the coughs, chair squeaks and door thuds auto-editor's level detection can't
+// tell from a word.
+//
+// ONE WHOLE-FILE VAD PASS (2026-08-16). This used to extract every keep segment
+// to its own WAV and run the VAD on that. It was slow (a python start + onnx
+// model load PER SEGMENT) and, worse, it deleted real speech: sherpa-onnx's
+// VoiceActivityDetector is a STREAMING detector and cannot latch onto speech
+// that is already running at sample 0 — and every auto-editor keep segment
+// begins exactly at speech onset, by construction. Measured on Jordan's
+// IMG_9624.MP4: the per-segment call returned 0% speech for 7 segments; the
+// SAME audio with 0.5s of silence prepended returned 85%, and the proven Python
+// wrapper (torch silero, non-streaming) scored those same segments 55-100%.
+// Those "0%" segments were cut, so whole words vanished from the edit.
+//
+// Scoring each segment against ONE whole-file span list has no such edge (the
+// only speech-at-sample-0 is the file's own first frame) and runs in about a
+// second for a 90s clip instead of 31 subprocesses.
 func vadPass(cfg config.Config, vadScript, input string, fps float64, chunks []chunk, threshold, minPct float64, keepTemp, verbose bool) int {
+	spans, err := wholeFileSpeechSpans(cfg, vadScript, input, threshold, keepTemp)
+	if err != nil {
+		// Degrade, never delete: a VAD we could not run must not remove anything.
+		beckyio.Logf(true, "warning: VAD post-pass skipped (%v); every segment kept", err)
+		return 0
+	}
+	beckyio.Logf(verbose, "  whole-file VAD: %d speech spans", len(spans))
 	removed := 0
 	for i := range chunks {
 		if chunks[i].Speed != keepSpeed {
@@ -381,80 +430,86 @@ func vadPass(cfg config.Config, vadScript, input string, fps float64, chunks []c
 		if endSec-startSec < minVADSeconds {
 			continue
 		}
-		seg := filepath.Join(os.TempDir(), fmt.Sprintf("becky_cut_seg_%d_%d.wav", os.Getpid(), i))
-		if !extractSegment(cfg.FFmpeg, input, seg, startSec, endSec) {
-			continue
-		}
-		speechPct, err := runVAD(cfg.Python, vadScript, cfg.SileroVADModel, seg, threshold, i)
-		if !keepTemp {
-			os.Remove(seg)
-		}
-		if err != nil {
-			beckyio.Logf(verbose, "  segment %d: VAD error (%v) — kept", i, err)
-			continue
-		}
-		if speechPct < minPct {
+		pct := speechPct(spans, startSec, endSec)
+		if pct < minPct {
 			chunks[i].Speed = cutSpeed
 			removed++
-			beckyio.Logf(verbose, "  segment %d: %.1fs-%.1fs %.0f%% speech -> CUT", i, startSec, endSec, speechPct)
+			beckyio.Logf(verbose, "  segment %d: %.1fs-%.1fs %.0f%% speech -> CUT", i, startSec, endSec, pct)
 		} else {
-			beckyio.Logf(verbose, "  segment %d: %.1fs-%.1fs %.0f%% speech -> keep", i, startSec, endSec, speechPct)
+			beckyio.Logf(verbose, "  segment %d: %.1fs-%.1fs %.0f%% speech -> keep", i, startSec, endSec, pct)
 		}
 	}
 	return removed
 }
 
-func extractSegment(ffmpeg, input, outPath string, startSec, endSec float64) bool {
-	dur := endSec - startSec
-	if dur <= 0 {
-		return false
+// span is one speech region of the source, in seconds.
+type span struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+}
+
+// speechPct is the percentage of [start,end) covered by speech spans. Spans may
+// be in any order and may overlap the window partially. PURE — unit-tested.
+func speechPct(spans []span, start, end float64) float64 {
+	if end <= start {
+		return 0
 	}
-	cmd := exec.Command(ffmpeg, "-y",
-		"-ss", fmt.Sprintf("%.3f", startSec), "-i", input,
-		"-t", fmt.Sprintf("%.3f", dur),
-		"-vn", "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
-		"-loglevel", "error", outPath)
-	cmd.Run() // tolerate per-segment failures, like the proven wrapper
-	return fileExists(outPath)
+	covered := 0.0
+	for _, s := range spans {
+		lo := math.Max(start, s.Start)
+		hi := math.Min(end, s.End)
+		if hi > lo {
+			covered += hi - lo
+		}
+	}
+	return 100 * covered / (end - start)
 }
 
-// vadResult mirrors vad_silero.py's stdout for a single segment.
+// vadResult mirrors vad_silero.py's output.
 type vadResult struct {
-	Skipped   bool     `json:"skipped"`
-	Reason    string   `json:"reason"`
-	SpeechPct *float64 `json:"speech_pct"`
+	Skipped  bool   `json:"skipped"`
+	Reason   string `json:"reason"`
+	Segments []span `json:"segments"`
 }
 
-// runVAD runs the sherpa-onnx Silero helper on one segment WAV and returns the
-// percentage of that segment that is speech.
-func runVAD(python, script, model, audio string, threshold float64, idx int) (float64, error) {
-	outFile := filepath.Join(os.TempDir(), fmt.Sprintf("becky_vad_%d_%d.json", os.Getpid(), idx))
+// wholeFileSpeechSpans extracts the input's audio once (16 kHz mono, the rate
+// Silero wants) and returns every speech span the VAD finds in it.
+func wholeFileSpeechSpans(cfg config.Config, vadScript, input string, threshold float64, keepTemp bool) ([]span, error) {
+	wav := filepath.Join(os.TempDir(), fmt.Sprintf("becky_cut_vad_%d.wav", os.Getpid()))
+	cmd := exec.Command(cfg.FFmpeg, "-y", "-nostdin", "-i", input,
+		"-vn", "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
+		"-loglevel", "error", wav)
+	proc.NoWindow(cmd)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("audio extract failed: %w", err)
+	}
+	if !keepTemp {
+		defer os.Remove(wav)
+	}
+	outFile := filepath.Join(os.TempDir(), fmt.Sprintf("becky_cut_vad_%d.json", os.Getpid()))
 	defer os.Remove(outFile)
-	cmd := exec.Command(python, script,
-		audio,
-		"--model", model,
+	vad := exec.Command(cfg.Python, vadScript, wav,
+		"--model", cfg.SileroVADModel,
 		"--threshold", fmt.Sprintf("%.3f", threshold),
 		"--output", outFile)
+	proc.NoWindow(vad)
 	var errBuf strings.Builder
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		return 0, fmt.Errorf("%v: %s", err, tail(errBuf.String()))
+	vad.Stderr = &errBuf
+	if err := vad.Run(); err != nil {
+		return nil, fmt.Errorf("%v: %s", err, tail(errBuf.String()))
 	}
 	data, err := os.ReadFile(outFile)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var res vadResult
 	if err := json.Unmarshal(data, &res); err != nil {
-		return 0, fmt.Errorf("unexpected VAD output: %s", tail(string(data)))
+		return nil, fmt.Errorf("unexpected VAD output: %s", tail(string(data)))
 	}
 	if res.Skipped {
-		return 0, fmt.Errorf("vad skipped: %s", res.Reason)
+		return nil, fmt.Errorf("vad skipped: %s", res.Reason)
 	}
-	if res.SpeechPct == nil {
-		return 0, fmt.Errorf("vad output missing speech_pct")
-	}
-	return *res.SpeechPct, nil
+	return res.Segments, nil
 }
 
 // writeTimeline serializes chunks as an auto-editor v1 timeline JSON.

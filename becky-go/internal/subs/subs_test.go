@@ -729,3 +729,102 @@ func TestEscapeFilterPathEscapesDriveColon(t *testing.T) {
 		t.Errorf("EscapeFilterPath = %s, want single-quoted", got)
 	}
 }
+
+// TestWordsPerSegmentClampsOverhangingWordsToTheCut is the regression test for
+// the broken .srt Jordan's IMG_9624 edit shipped on 2026-08-16: a cue that ended
+// BEFORE it started (00:29,363 --> 00:28,662). A word straddling the out-point
+// kept its real end (past the cut), absorbShortWords then pulled the next word's
+// start out there too, and the cue landed outside its own segment.
+func TestWordsPerSegmentClampsOverhangingWordsToTheCut(t *testing.T) {
+	segs := []Segment{{
+		Source: "a.mp4", Start: 54.3, End: 55.467,
+		Words: []Word{
+			{Word: "always", Start: 54.72, End: 55.04},
+			{Word: "do.", Start: 55.28, End: 56.16}, // straddles the cut
+			{Word: "And", Start: 56.4, End: 56.4},   // past the cut: rescued
+		},
+	}}
+	got := WordsPerSegment(segs)
+	if len(got) != 1 {
+		t.Fatalf("want 1 segment, got %d", len(got))
+	}
+	for _, w := range got[0] {
+		if w.Start < segs[0].Start-1e-9 || w.End > segs[0].End+1e-9 {
+			t.Errorf("word %q spans %.3f-%.3f, outside its cut %.3f-%.3f",
+				w.Word, w.Start, w.End, segs[0].Start, segs[0].End)
+		}
+		if w.End < w.Start {
+			t.Errorf("word %q ends before it starts (%.3f -> %.3f)", w.Word, w.Start, w.End)
+		}
+	}
+}
+
+// TestBuildEmitsNoBackwardsCue asserts the whole pipeline's structural invariant
+// on the same shape of input: every cue moves forward, and no cue starts before
+// the previous one ends.
+func TestBuildEmitsNoBackwardsCue(t *testing.T) {
+	segs := []Segment{
+		{Source: "a.mp4", Start: 54.3, End: 55.467, Words: []Word{
+			{Word: "just", Start: 54.0, End: 54.16},
+			{Word: "like", Start: 54.32, End: 54.32},
+			{Word: "you", Start: 54.56, End: 54.56},
+			{Word: "always", Start: 54.72, End: 55.04},
+			{Word: "do.", Start: 55.28, End: 56.16},
+			{Word: "And", Start: 56.4, End: 56.4},
+		}},
+		{Source: "a.mp4", Start: 57.333, End: 59.667, Words: []Word{
+			{Word: "totally", Start: 57.2, End: 57.52},
+			{Word: "believe", Start: 57.68, End: 57.84},
+			{Word: "you", Start: 58.0, End: 58.0},
+		}},
+	}
+	cues := Build(segs, Options{MaxChars: 22, GapSeconds: 0.4, MinDuration: 0.1, PostSpeechHold: 0.35, FPS: 29.97})
+	if len(cues) == 0 {
+		t.Fatal("no cues built")
+	}
+	for i, c := range cues {
+		if c.End < c.Start {
+			t.Errorf("cue %d ends before it starts: %.3f -> %.3f (%q)", i+1, c.Start, c.End, c.Text)
+		}
+		if i > 0 && c.Start+1e-9 < cues[i-1].Start {
+			t.Errorf("cue %d starts before cue %d (%.3f < %.3f)", i+1, i, c.Start, cues[i-1].Start)
+		}
+	}
+}
+
+// TestNoInvisibleCaptions: every cue must be on screen for at least one frame.
+// Jordan's IMG_9624 edit shipped two zero-length cues ("you", "and") - the words
+// were in the .srt and never appeared on the video, which reads exactly like the
+// cut ate them. Parakeet stamps several words at the identical time, so two
+// chunks legitimately began together and the earlier one was gap-filled to zero.
+func TestNoInvisibleCaptions(t *testing.T) {
+	segs := []Segment{{
+		Source: "a.mp4", Start: 10.0, End: 13.0,
+		Words: []Word{
+			{Word: "not", Start: 10.1, End: 10.4},
+			{Word: "you.", Start: 10.5, End: 10.9},
+			{Word: "you", Start: 11.4, End: 11.4},     // collapsed timing
+			{Word: "keep", Start: 11.4, End: 11.4},    // ...same instant
+			{Word: "scrolling", Start: 11.9, End: 12.4},
+		},
+	}}
+	opt := Options{MaxChars: 22, GapSeconds: 0.4, MinDuration: 0.1, PostSpeechHold: 0.35, FPS: 29.97}
+	cues := Build(segs, opt)
+	frame := 1 / opt.FPS
+	for i, c := range cues {
+		if c.End-c.Start < frame*0.9 {
+			t.Errorf("cue %d (%q) is on screen for %.4fs - under one frame, so nobody sees it",
+				i+1, c.Text, c.End-c.Start)
+		}
+	}
+	// and no word may be lost in the process
+	all := ""
+	for _, c := range cues {
+		all += " " + c.Text
+	}
+	for _, w := range []string{"not", "you", "keep", "scrolling"} {
+		if !strings.Contains(all, w) {
+			t.Errorf("word %q vanished from the captions: %q", w, strings.TrimSpace(all))
+		}
+	}
+}

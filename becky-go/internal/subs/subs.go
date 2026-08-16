@@ -268,7 +268,21 @@ func WordsPerSegment(segments []Segment) [][]Word {
 			if !c.contained && best[key{segments[si].Source, c.idx}].seg != si {
 				continue // a clip with more of this word says it
 			}
-			kept = append(kept, c.word)
+			// A word this segment WON but that hangs over the cut is clamped to
+			// the cut, exactly like a rescued word below - the cut wins. Without
+			// this, a word straddling the out-point kept its real (outside) end,
+			// absorbShortWords then pulled the next word's start out there with
+			// it, and the cue came out AFTER its own segment: Jordan's
+			// IMG_9624 edit shipped an "and" cue running 00:29,363 --> 00:28,662
+			// (an end before its start, which is a broken .srt, not just an ugly
+			// one). Found 2026-08-16.
+			w := c.word
+			w.Start = clampToSpan(w.Start, segments[si].Start, segments[si].End)
+			w.End = clampToSpan(w.End, segments[si].Start, segments[si].End)
+			if w.End < w.Start {
+				w.End = w.Start
+			}
+			kept = append(kept, w)
 		}
 		out[si] = kept
 	}
@@ -339,6 +353,59 @@ func clampToSpan(x, lo, hi float64) float64 {
 		return hi
 	}
 	return x
+}
+
+// PrepareWords is THE per-segment word preparation every caption path runs
+// before chunking. It exists because there were TWO copies of this recipe —
+// Build's and PlanChunks' — and becky-subtitle only ever calls PlanChunks. A
+// rule fixed in Build (this is how estimateMissingEnds first shipped, 2026-08-16)
+// therefore never reached a single caption Jordan saw, which is a large part of
+// why "the hard rules keep getting lost". One function, both callers, no drift.
+func PrepareWords(words []Word, fps float64) []Word {
+	return absorbShortWords(estimateMissingEnds(words), fps)
+}
+
+// perCharSeconds is how long one character of speech takes at a normal talking
+// pace. Measured on Jordan's own transcripts: of the words that DO carry a
+// duration, the median is 0.040 s/char - and those durations are themselves
+// short (see estimateMissingEnds), so 0.05 is the honest middle. It is only ever
+// used to fill in a MISSING end time, never to override a real one.
+const perCharSeconds = 0.05
+
+// estimateMissingEnds gives a word that came back with NO duration a plausible
+// one, capped by when the next word starts.
+//
+// WHY (2026-08-16). Parakeet via onnx-asr reports a per-TOKEN START time, and
+// merge_tokens_to_words sets a word's end to its LAST TOKEN'S START — so every
+// single-token word arrives with end == start. That is 98 of the 184 words (53%)
+// in Jordan's IMG_9624 transcript. Everything downstream then measures the pause
+// before the next word from this word's START, which counts the time he spent
+// SAYING the word as silence. Pace is caption rule #1, so those phantom pauses
+// became wrong line breaks: 20 gaps in that clip crossed the 0.4s threshold and
+// 9 of them vanish once a word is allowed to have a length ("your last | three"
+// split because "last" measured 0.00s long).
+//
+// This does NOT invent timing where the transcript has some: a word with a real
+// duration is returned untouched, and an estimate never runs past the next word.
+func estimateMissingEnds(words []Word) []Word {
+	if len(words) == 0 {
+		return words
+	}
+	out := make([]Word, len(words))
+	copy(out, words)
+	for i := range out {
+		if out[i].End > out[i].Start {
+			continue // the transcript knows; leave it alone
+		}
+		est := out[i].Start + perCharSeconds*float64(len([]rune(strings.TrimSpace(out[i].Word))))
+		if i+1 < len(out) && est > out[i+1].Start {
+			est = out[i+1].Start // a word never runs into the next one
+		}
+		if est > out[i].Start {
+			out[i].End = est
+		}
+	}
+	return out
 }
 
 // maxAbsorbFrames is Jordan's threshold (2026-07-25): a word lasting this many
@@ -463,7 +530,7 @@ func Build(segments []Segment, opt Options) []Cue {
 	perSeg := WordsPerSegment(segments)
 	chunks := make([][][]Word, len(segments))
 	for i := range segments {
-		words := absorbShortWords(perSeg[i], opt.FPS)
+		words := PrepareWords(perSeg[i], opt.FPS)
 		chunks[i] = Pass1Chunks(words, opt.MaxChars, opt.GapSeconds)
 	}
 	return BuildFromChunks(segments, chunks, opt)
@@ -488,7 +555,7 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 
 		var segChunks [][]Word
 		if si < len(chunksPerSeg) {
-			segChunks = chunksPerSeg[si]
+			segChunks = joinCollidingChunks(chunksPerSeg[si], opt.MaxChars)
 		}
 		for _, chunk := range segChunks {
 			if len(chunk) == 0 {
@@ -499,8 +566,14 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 			if localStart < 0 {
 				localStart = 0
 			}
+			if localStart > dur {
+				localStart = dur // a cue can never begin after its own cut
+			}
 			if localEnd > dur {
 				localEnd = dur
+			}
+			if localEnd < localStart {
+				localEnd = localStart
 			}
 			words := make([]string, 0, len(chunk))
 			for _, w := range chunk {
@@ -571,7 +644,65 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 	}
 	// Clamp AFTER quantising: rounding two boundaries to frames can itself put a
 	// caption a frame past the next one's start.
-	return clampOverlaps(QuantizeToFrames(out, opt.FPS))
+	return ensureVisible(clampOverlaps(QuantizeToFrames(out, opt.FPS)), opt.FPS)
+}
+
+// joinCollidingChunks merges a chunk into the previous one when the two begin at
+// the SAME instant, as long as the joined line still fits the cap.
+//
+// Two captions cannot share a start time: the gap-fill gives the earlier one a
+// span of zero and it is never drawn — the word is simply missing from the video,
+// which is indistinguishable from the cut eating it. It happens because Parakeet
+// hands back several words stamped at the identical time (its token timings
+// collapse, see estimateMissingEnds), so two chunks legitimately start together.
+// Jordan's IMG_9624 edit shipped 2 of these in 66 cues ("you", "and").
+// Joining them is also the better caption: "you" + "keep scrolling" reads as
+// "you keep scrolling", one line, 18 characters.
+func joinCollidingChunks(chunks [][]Word, maxChars int) [][]Word {
+	out := make([][]Word, 0, len(chunks))
+	for _, c := range chunks {
+		if len(c) == 0 {
+			continue
+		}
+		if n := len(out); n > 0 {
+			prev := out[n-1]
+			if len(prev) > 0 && c[0].Start <= prev[0].Start+1e-9 {
+				joined := append(append([]Word{}, prev...), c...)
+				if maxChars <= 0 || lineLen(joined) <= maxChars {
+					out[n-1] = joined
+					continue
+				}
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// ensureVisible is the last-resort floor: a caption that survived every timing
+// rule with less than one frame on screen borrows a frame from the next one.
+// A caption nobody can read is the same as a lost word, and losing words is the
+// whole complaint this pass exists to end. Never crushes the next caption below
+// a frame - if there is no room, the timing stands rather than cascade damage.
+func ensureVisible(cues []Cue, fps float64) []Cue {
+	if fps <= 0 || len(cues) == 0 {
+		return cues
+	}
+	frame := 1 / fps
+	for i := range cues {
+		if cues[i].End-cues[i].Start >= frame-1e-9 {
+			continue
+		}
+		want := cues[i].Start + frame
+		if i+1 < len(cues) {
+			if cues[i+1].End-want < frame-1e-9 {
+				continue // no room next door
+			}
+			cues[i+1].Start = want
+		}
+		cues[i].End = want
+	}
+	return cues
 }
 
 // QuantizeToFrames snaps every caption boundary to a whole frame at fps, and is
