@@ -75,21 +75,22 @@ public class EntryPoint
                 );
             }
 
-            SubtitleStyleSettings style = ShowStyleDialog(events);
-            if (style == null)
-            {
-                return;
-            }
+            // No style prompt. The look is becky-review-3's, settled long ago, and
+            // asking again every run is the opposite of deterministic.
+            SubtitleStyleSettings style = BeckyStyle();
 
             string beckyExe = ResolveBeckySubtitle();
             EnsureBeckyExecutable(beckyExe);
 
+            // The two JSON files and the log are machinery - they stay in temp.
             string workDir = Path.Combine(Path.GetTempPath(), "BeckyVegasCaptions", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(workDir);
 
             string timelineJson = Path.Combine(workDir, "timeline.json");
             string cuesJson = Path.Combine(workDir, "cues.json");
-            string srtPath = Path.Combine(workDir, "captions.srt");
+            // The .srt is a DELIVERABLE, so it lands beside the clip it captions,
+            // not in AppData.
+            string srtPath = SrtPathBesideClip(events, workDir);
             WriteTimelineJson(timelineJson, vegas, events);
 
             RunBeckyWithProgress(beckyExe, timelineJson, cuesJson, srtPath, workDir, events.Count);
@@ -106,15 +107,8 @@ public class EntryPoint
 
             AddSubtitlesToTimeline(vegas, captions, style);
 
-            MessageBox.Show(
-                "Captions created.\n\n" +
-                "Captions : " + captions.Count + "\n" +
-                "From     : " + events.Count + " event(s) on the timeline\n" +
-                "Subtitle : " + srtPath,
-                "Becky Captions",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information
-            );
+            // No "done" box. The captions ARE the confirmation - they are on the
+            // timeline in front of you. One click in, captions out.
         }
         catch (Exception ex)
         {
@@ -424,12 +418,17 @@ public class EntryPoint
         args.Append(" --out ").Append(Quote(srtPath));
         args.Append(" --verbose");
 
-        // becky's caption REVIEW pass has a model regroup the lines so they break
-        // on thoughts. It needs a free/OAuth reviewer key; without one becky
-        // degrades to deterministic chunking on its own. Set
-        // BECKY_CAPTIONS_REVIEW=0 to skip it outright when you want speed.
+        // The LLM regroup pass is OFF, matching becky-review-3 (Jordan 2026-07-24,
+        // "pause the llm step"): the deterministic pace chunker already honours
+        // every caption rule on his real footage. becky-subtitle's own --review
+        // default is still true, which is why the first VEGAS run sat through two
+        // 90-second OpenCode Zen timeouts and then fell back to exactly these
+        // deterministic captions anyway. Off means instant and identical.
+        // Set BECKY_CAPTIONS_REVIEW=1 to opt back in.
         string review = Environment.GetEnvironmentVariable("BECKY_CAPTIONS_REVIEW");
-        if (!string.IsNullOrWhiteSpace(review) && (review.Trim() == "0" || review.Trim().ToLowerInvariant() == "false"))
+        bool wantReview = !string.IsNullOrWhiteSpace(review) &&
+                          (review.Trim() == "1" || review.Trim().ToLowerInvariant() == "true");
+        if (!wantReview)
         {
             args.Append(" --review=false");
         }
@@ -816,211 +815,116 @@ public class EntryPoint
         return "\"" + value.Replace("\"", "\\\"") + "\"";
     }
 
-    // ------------------------------------------------------------- the dialog
-    // Unchanged from the original apart from the title, the caption sample, and
-    // the line-break control moving in here from the old text prompts.
+    // -------------------------------------------------------------- the style
+    // becky-review-3's caption look, as constants. There is no style dialog: the
+    // look was settled long ago and re-asking every run is the opposite of
+    // deterministic. To change the house style, change it here.
+    //
+    // The source of truth is subs.DefaultStyle() (becky-go/internal/subs/style.go)
+    // as drawn by native/becky-review/captions.cpp: white text, thin black
+    // outline, no shadow, centred.
 
-    private static SubtitleStyleSettings ShowStyleDialog(List<SourceEvent> events)
+    // The Windows FAMILY name. becky's libass style says "ProximaNova-Semibold";
+    // on Windows the installed family is "Proxima Nova", and RTF wants the family.
+    private const string BeckyFontName = "Proxima Nova";
+
+    // Point size for the Titles & Text generator.
+    //
+    // NOT VERIFIED BY EYE, and deliberately left at the value Jordan already ran
+    // and did not complain about. becky-review-3 draws captions at 12 units on
+    // the 288-unit ASS canvas (4.17% of frame height), but the VEGAS generator
+    // sizes RTF against its own canvas rather than the project frame, so the
+    // matching point size cannot be derived - it has to be measured on screen.
+    // vegas.SaveSnapshot() returns fully transparent frames when VEGAS is driven
+    // by -SCRIPT, so that measurement could not be automated; it needs one look
+    // at a real preview. This is the ONE number to change if the captions come
+    // out too big or too small.
+    private const int BeckyFontPointSize = 24;
+
+    // Thin black outline, no shadow - subs.DefaultStyle() is Outline=1, Shadow=0.
+    // Also the value Jordan already ran.
+    private const int BeckyOutlineWidth = 2;
+
+    // The captions .srt is named "<clip>.becky.srt", NOT "<clip>.srt". That is
+    // deliberate: becky-captions treats "<stem>.srt" beside a video as an
+    // OFFICIAL transcript (internal/captions/captions.go), so writing there would
+    // make the next run mistake becky's own output for an official subtitle,
+    // skip transcription, and collapse each cue into one caption. Same folder as
+    // the clip, distinct name, no self-poisoning.
+    private const string BeckySrtSuffix = ".becky.srt";
+
+    private static SubtitleStyleSettings BeckyStyle()
     {
-        string defaultFont = Environment.GetEnvironmentVariable("BECKY_SUB_FONT");
-        if (string.IsNullOrWhiteSpace(defaultFont))
+        return new SubtitleStyleSettings
         {
-            defaultFont = "Arial";
-        }
-
-        SubtitleStyleSettings settings = new SubtitleStyleSettings
-        {
-            FontName = defaultFont,
-            FontSize = 24,
+            FontName = BeckyFontName,
+            FontSize = BeckyFontPointSize,
             TextColor = Color.White,
             OutlineColor = Color.Black,
-            OutlineWidth = 2,
+            OutlineWidth = BeckyOutlineWidth,
+            // becky already decided where every line breaks, using the pause
+            // pacing and the 22-character cap. Re-wrapping here would undo it.
             UseLineBreaks = false,
-            WordsPerLine = 4
+            WordsPerLine = 0
         };
+    }
 
-        using (Form form = new Form())
+    // SrtPathBesideClip puts the .srt in the same folder as the clip it captions,
+    // because the .srt is a deliverable, not machinery. Falls back to the work
+    // directory when that folder cannot be written (a read-only or protected
+    // evidence drive) rather than failing the run.
+    private static string SrtPathBesideClip(List<SourceEvent> events, string fallbackDir)
+    {
+        foreach (SourceEvent ev in events)
         {
-            form.Text = "Becky Captions - style";
-            form.Width = 500;
-            form.Height = 520;
-            form.StartPosition = FormStartPosition.CenterScreen;
-            form.FormBorderStyle = FormBorderStyle.FixedDialog;
-            form.MaximizeBox = false;
-            form.MinimizeBox = false;
-
-            int y = 15;
-
-            Label whatLabel = new Label
+            if (ev == null || string.IsNullOrEmpty(ev.Source))
             {
-                Text = "Captioning " + events.Count + " event(s). becky decides the wording and timing.",
-                Left = 15,
-                Top = y,
-                Width = 455
-            };
-
-            y += 28;
-
-            Label fontLabel = new Label { Text = "Font:", Left = 15, Top = y, Width = 80 };
-            ComboBox fontCombo = new ComboBox { Left = 100, Top = y - 3, Width = 200, DropDownStyle = ComboBoxStyle.DropDownList };
-            foreach (FontFamily ff in FontFamily.Families)
-            {
-                fontCombo.Items.Add(ff.Name);
-            }
-            fontCombo.SelectedItem = defaultFont;
-            if (fontCombo.SelectedIndex < 0 && fontCombo.Items.Count > 0)
-            {
-                fontCombo.SelectedIndex = 0;
+                continue;
             }
 
-            y += 35;
-
-            Label sizeLabel = new Label { Text = "Font Size:", Left = 15, Top = y, Width = 80 };
-            NumericUpDown sizeInput = new NumericUpDown { Left = 100, Top = y - 3, Width = 80, Minimum = 8, Maximum = 120, Value = 24 };
-            Label sizePreviewLabel = new Label { Text = "pt", Left = 185, Top = y, Width = 30 };
-
-            y += 35;
-
-            Label textColorLabel = new Label { Text = "Text Color:", Left = 15, Top = y, Width = 80 };
-            Panel textColorPanel = new Panel { Left = 100, Top = y - 3, Width = 40, Height = 25, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
-            Button textColorBtn = new Button { Text = "Pick...", Left = 150, Top = y - 4, Width = 60, Height = 27 };
-
-            y += 35;
-
-            Label outlineColorLabel = new Label { Text = "Outline Color:", Left = 15, Top = y, Width = 80 };
-            Panel outlineColorPanel = new Panel { Left = 100, Top = y - 3, Width = 40, Height = 25, BackColor = Color.Black, BorderStyle = BorderStyle.FixedSingle };
-            Button outlineColorBtn = new Button { Text = "Pick...", Left = 150, Top = y - 4, Width = 60, Height = 27 };
-
-            y += 35;
-
-            Label outlineWidthLabel = new Label { Text = "Outline Width:", Left = 15, Top = y, Width = 80 };
-            NumericUpDown outlineWidthInput = new NumericUpDown { Left = 100, Top = y - 3, Width = 80, Minimum = 0, Maximum = 10, Value = 2 };
-            Label outlineWidthPx = new Label { Text = "px", Left = 185, Top = y, Width = 30 };
-
-            y += 35;
-
-            CheckBox lineBreakCheck = new CheckBox
+            string dir;
+            string stem;
+            try
             {
-                Text = "Wrap onto a second line every",
-                Left = 15,
-                Top = y,
-                Width = 200
-            };
-            NumericUpDown wordsPerLineInput = new NumericUpDown { Left = 220, Top = y - 3, Width = 60, Minimum = 1, Maximum = 12, Value = 4, Enabled = false };
-            Label wordsPerLineLabel = new Label { Text = "words", Left = 285, Top = y, Width = 60 };
-            lineBreakCheck.CheckedChanged += (sender, e) => wordsPerLineInput.Enabled = lineBreakCheck.Checked;
-
-            y += 38;
-
-            Label previewLabel = new Label { Text = "Preview:", Left = 15, Top = y, Width = 80 };
-            y += 20;
-            Panel previewPanel = new Panel { Left = 15, Top = y, Width = 455, Height = 120, BackColor = Color.FromArgb(40, 40, 40), BorderStyle = BorderStyle.FixedSingle };
-
-            y += 135;
-
-            Button okButton = new Button { Text = "OK", Left = 295, Top = y, Width = 80, DialogResult = DialogResult.OK };
-            Button cancelButton = new Button { Text = "Cancel", Left = 385, Top = y, Width = 80, DialogResult = DialogResult.Cancel };
-
-            previewPanel.Paint += (sender, e) =>
+                dir = Path.GetDirectoryName(ev.Source);
+                stem = Path.GetFileNameWithoutExtension(ev.Source);
+            }
+            catch (ArgumentException)
             {
-                // becky's captions are short, lowercase and punctuation-free by
-                // default, so the sample shows what you will actually get.
-                string sampleText = "can you post";
-                string fontName = fontCombo.SelectedItem != null ? fontCombo.SelectedItem.ToString() : "Arial";
-                int fontSize = (int)sizeInput.Value;
-                Color textColor = textColorPanel.BackColor;
-                Color outlineColor = outlineColorPanel.BackColor;
-                int outlineWidth = (int)outlineWidthInput.Value;
-
-                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-
-                using (Font font = new Font(fontName, fontSize, FontStyle.Bold, GraphicsUnit.Point))
-                using (GraphicsPath path = new GraphicsPath())
-                {
-                    SizeF textSize = e.Graphics.MeasureString(sampleText, font);
-                    float x = (previewPanel.Width - textSize.Width) / 2;
-                    float y2 = (previewPanel.Height - textSize.Height) / 2;
-
-                    path.AddString(sampleText, font.FontFamily, (int)FontStyle.Bold, fontSize * 1.33f,
-                                   new PointF(x, y2), StringFormat.GenericDefault);
-
-                    if (outlineWidth > 0)
-                    {
-                        float scaledOutline = outlineWidth * 0.75f;
-                        using (Pen outlinePen = new Pen(outlineColor, scaledOutline))
-                        {
-                            outlinePen.LineJoin = LineJoin.Round;
-                            e.Graphics.DrawPath(outlinePen, path);
-                        }
-                    }
-
-                    using (SolidBrush textBrush = new SolidBrush(textColor))
-                    {
-                        e.Graphics.FillPath(textBrush, path);
-                    }
-                }
-            };
-
-            EventHandler updatePreview = (sender, e) => previewPanel.Invalidate();
-            fontCombo.SelectedIndexChanged += updatePreview;
-            sizeInput.ValueChanged += updatePreview;
-            outlineWidthInput.ValueChanged += updatePreview;
-
-            textColorBtn.Click += (sender, e) =>
-            {
-                using (ColorDialog cd = new ColorDialog { Color = textColorPanel.BackColor, FullOpen = true })
-                {
-                    if (cd.ShowDialog() == DialogResult.OK)
-                    {
-                        textColorPanel.BackColor = cd.Color;
-                        previewPanel.Invalidate();
-                    }
-                }
-            };
-
-            outlineColorBtn.Click += (sender, e) =>
-            {
-                using (ColorDialog cd = new ColorDialog { Color = outlineColorPanel.BackColor, FullOpen = true })
-                {
-                    if (cd.ShowDialog() == DialogResult.OK)
-                    {
-                        outlineColorPanel.BackColor = cd.Color;
-                        previewPanel.Invalidate();
-                    }
-                }
-            };
-
-            form.Controls.AddRange(new Control[] {
-                whatLabel,
-                fontLabel, fontCombo,
-                sizeLabel, sizeInput, sizePreviewLabel,
-                textColorLabel, textColorPanel, textColorBtn,
-                outlineColorLabel, outlineColorPanel, outlineColorBtn,
-                outlineWidthLabel, outlineWidthInput, outlineWidthPx,
-                lineBreakCheck, wordsPerLineInput, wordsPerLineLabel,
-                previewLabel, previewPanel,
-                okButton, cancelButton
-            });
-
-            form.AcceptButton = okButton;
-            form.CancelButton = cancelButton;
-
-            if (form.ShowDialog() == DialogResult.OK)
-            {
-                settings.FontName = fontCombo.SelectedItem != null ? fontCombo.SelectedItem.ToString() : "Arial";
-                settings.FontSize = (int)sizeInput.Value;
-                settings.TextColor = textColorPanel.BackColor;
-                settings.OutlineColor = outlineColorPanel.BackColor;
-                settings.OutlineWidth = (int)outlineWidthInput.Value;
-                settings.UseLineBreaks = lineBreakCheck.Checked;
-                settings.WordsPerLine = (int)wordsPerLineInput.Value;
-                return settings;
+                continue; // an unusable path on this event; try the next one
             }
 
-            return null;
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(stem) || !Directory.Exists(dir))
+            {
+                continue;
+            }
+
+            if (!FolderIsWritable(dir))
+            {
+                continue;
+            }
+
+            return Path.Combine(dir, stem + BeckySrtSuffix);
+        }
+
+        return Path.Combine(fallbackDir, "captions.srt");
+    }
+
+    private static bool FolderIsWritable(string dir)
+    {
+        string probe = Path.Combine(dir, ".becky-write-probe.tmp");
+        try
+        {
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
+
 
     // ---------------------------------------------------------- the placement
     // The original's loop. The only change: it reuses and clears a "Becky
@@ -1033,7 +937,13 @@ public class EntryPoint
             VideoTrack subtitleTrack = FindCaptionTrack(vegas);
             if (subtitleTrack == null)
             {
-                subtitleTrack = new VideoTrack(vegas.Project, vegas.Project.Tracks.Count, CaptionTrackName);
+                // Index 0 = TOPMOST track, so the captions are never hidden behind
+                // the picture. The constructor's index is what places the track;
+                // Tracks.Insert(0, t) LOOKS like the obvious call and compiles, but
+                // it throws NotSupportedException at runtime (VEGAS 18 leaves it
+                // unimplemented). Verified on VEGAS Pro 18.0 build 527 before this
+                // was written - do not "simplify" it back to Insert.
+                subtitleTrack = new VideoTrack(vegas.Project, 0, CaptionTrackName);
                 vegas.Project.Tracks.Add(subtitleTrack);
             }
             else

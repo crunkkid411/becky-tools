@@ -41,28 +41,54 @@ window, the RTF text handling and the placement loop are kept as they were.
 `build-all-tools.bat`. The script finds them by, in order: `BECKY_SUBTITLE`,
 `..\becky-go\bin\` relative to this script, then `PATH`.
 
+## Install it (do this once, and after every update)
+
+**VEGAS only lists scripts that live in its own `Script Menu` folder**
+(`C:\Program Files\VEGAS\VEGAS Pro <ver>\Script Menu`). A script sitting in this
+repo will not appear in the menu.
+
+Double-click **`Install Vegas Scripts.bat`** at the repo root and click **Yes** on
+the Windows prompt. That folder is under `C:\Program Files`, so the copy needs
+administrator rights — the prompt is Windows asking for them, and it is the only
+click involved. The installer finds every installed VEGAS Pro version and copies
+every `.cs` in this folder into each one.
+
 ## Run it
 
 1. Open your edit in VEGAS.
 2. **Select the events you want captioned.** Select nothing and it captions the
    whole first video track that has media. Empty timeline → it asks for a file.
-3. **Tools ▸ Scripting ▸ Run Script…** → `BeckyCaptions.cs`.
-4. Pick the font/size/colours in the style dialog and press OK.
-5. Wait — the first run on a file has to transcribe it. Captions land on a track
-   called **Becky Captions**.
+3. **Tools ▸ Scripting ▸ BeckyCaptions**.
 
-To pin it in the menu, copy it into `C:\Users\<you>\Documents\Vegas Script Menu\`
-and restart VEGAS.
+That is the whole interaction. **No style dialog, no "done" box** — one click,
+then captions on the timeline. A progress window counts up while it works (the
+first run on a file has to transcribe it; after that the transcript is cached
+beside the clip and a re-run is near-instant) and closes itself. The only box you
+will ever see is an error, if something actually fails.
+
+Captions land on a track called **Becky Captions**, created as the **topmost**
+track so nothing hides them.
 
 ## Notes
 
 - **Re-running replaces, it does not stack.** The script clears the existing
   "Becky Captions" track rather than adding a second one.
-- **The `.srt` is written too**, into the run's temp folder (the success box
-  shows the path), so you can burn it later or hand it to another tool.
-- **`BECKY_CAPTIONS_REVIEW=0`** skips becky's model pass that regroups lines onto
-  phrase boundaries. It is on by default and degrades to deterministic chunking
-  on its own when no free/OAuth reviewer key is available.
+- **The `.srt` lands beside the clip**, as `<clip>.becky.srt` — same folder as the
+  video, so you can burn it later or hand it to another tool. It is deliberately
+  **not** named `<clip>.srt`: becky-captions treats `<stem>.srt` next to a video
+  as an *official* transcript, so writing there would make the next run mistake
+  becky's own output for an official subtitle, skip transcription, and collapse
+  each cue into a single caption. If the clip's folder cannot be written (a
+  read-only or protected evidence drive) it falls back to the temp work folder.
+- **The style is fixed**, matching becky-review-3: Proxima Nova, white text, thin
+  black outline, no shadow. Change the constants at the top of the style section
+  in `BeckyCaptions.cs` — `BeckyFontPointSize` is the one to touch if the
+  captions come out too big or too small.
+- **becky's model review pass is OFF**, matching becky-review-3 (Jordan
+  2026-07-24, "pause the llm step"). The deterministic pace chunker already
+  honours every caption rule. Leaving it on is what made the first VEGAS run sit
+  through two 90-second OpenCode Zen timeouts before falling back to exactly the
+  same captions. Set **`BECKY_CAPTIONS_REVIEW=1`** to opt back in.
 - **Speed-changed events** are handled (the in/out is scaled by the playback
   rate), but heavy time-stretching will still drift — captions are timed off the
   source audio.
