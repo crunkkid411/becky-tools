@@ -6,20 +6,53 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### Current state of master (as of 2026-07-23 01:45, `c21537e`)
+### Current state of master (as of 2026-08-15, cloud PR #33 merged)
 
-> **OPEN CLOUD BRANCH — do not merge-and-stop:** `claude/vegas-becky-captions-70imte` ships
-> `vegas/BeckyCaptions.cs` (captions on the VEGAS timeline, becky-timed) + becky-subtitle's
-> `--timeline`/`--cues` seam. Gates 1–4 pass and `becky-subtitle --selftest` was RUN by cloud
-> (output pasted in the handoff). **Local still owes gate 5 + one run in VEGAS on a real cut
-> edit** — the ordered work order is `HANDOFF-VEGAS-CAPTIONS.md`.
+> **AWAITING JORDAN — one step, and it needs VEGAS Pro open:** `vegas/BeckyCaptions.cs`
+> (captions on the VEGAS timeline, becky-timed) + becky-subtitle's `--timeline`/`--cues` seam
+> landed 2026-08-16. Local has now RUN gates 1–5: `go build`/`go vet` clean, `internal/edl`
+> green, `build-all-tools.bat` builds every `.exe` (vision smoke gate PASS), and
+> `becky-subtitle.exe --selftest` reproduces cloud's block verbatim ending `OK`. **The only
+> thing left is the eyeball test inside VEGAS** — run the script on a real cut edit with a gap,
+> confirm captions sit under the right frame at each cut and that a second run replaces rather
+> than stacks. Work order: `HANDOFF-VEGAS-CAPTIONS.md`.
 
-Green and pushed. `go build/vet/test ./...` clean + `gofmt` clean-modulo-CRLF (the repo's `.go`
-blobs are CRLF throughout — cosmetic on Windows per §4, CI-green on Linux); the lone `cmd/tts` test
-FAIL is pre-existing/environmental and machine-dependent (the local TTS model is present, so
-"degrades when no model" inverts); `build-all-tools.bat` builds all `.exe`s, INCLUDING the
-`becky-review-engine.exe` alias (its own build script silently didn't, once — see below). Recent
-landings (details in `HANDOFF-LOG.md`):
+`go build/vet/test ./...` is **NOT fully green on CI** — two known failures, neither caused by
+this merge: `cmd/clip TestAudioLevels_ThreadsFpsAndParses` (environmental: `auto-editor` is not
+on the CI runners) and `internal/assistant TestHandleTier2Funnel` (a real regression — `frontier
+plan actions = [], want add_clip(s)` — pre-existing since before 2026-07-24, not yet root-caused).
+CI has been red on every run since 2026-07-24 because of these two; `go vet` has consequently been
+**skipped** on every run (it sits after `go test` in the one CI job, so a test failure short-
+circuits it). Both are open, unowned work. Locally (2026-08-16) both reproduce on this machine
+along with `cmd/tts TestRun_DegradesWhenNoModel`, which inverts here because the TTS model IS
+installed. None of the three import anything the 2026-08-16 merges touched.
+
+**Landed 2026-08-16 (cloud → local, `claude/vegas-becky-captions-70imte`):** becky-timed captions
+on the VEGAS Pro timeline. `vegas/BeckyCaptions.cs` (adapted from louismathy/vegas-script) now
+reads every event on the track and maps cues onto the Vegas ruler, so captions follow *your* cuts
+and skip gaps instead of drifting after the first edit; `becky-subtitle` gained a
+`--timeline`/`--cues` seam plus `becky-captions`-before-ASR (`acquire.go`), with the placement
+maths unit-tested in `internal/edl/vegastimeline_test.go`. Gates 1–5 run locally and green;
+`becky-subtitle.exe --selftest` reproduces cloud's evidence verbatim. **Still owed: the eyeball
+run inside VEGAS** — see the banner above and `HANDOFF-VEGAS-CAPTIONS.md`.
+
+**Landed 2026-08-15 (cloud, PR #33, `research/shorts-models.md` + `HANDOFF-SHORTS-PIPELINE.md`):**
+steps 1-2 of the short-form repurposing pipeline. `becky-moment` (`cmd/becky-moment` +
+`internal/moment`) finds hook/build/payoff moments in existing transcripts, structure measured
+deterministically + content judged via OpenCode Zen, corroborated (disagreement held at the LOWER
+signal, never averaged); `--selftest` 13/13. `internal/facetrack` gives persistent face-track IDs
+(IoU + ArcFace rescue) but is deliberately NOT wired to a detector yet — `face_embed.py` returns
+only one face per image, and a tracker needs all of them; that's the next local step. Both packages
+pass build/vet/test on Ubuntu and Windows CI. See `HANDOFF-SHORTS-PIPELINE.md` §5 for the evidence
+and §7 for the ordered work order (verify the Zen model id on real footage; wire the multi-face
+detector; spike gocv/MediaPipe for the crop path, which Jordan ratified using).
+
+Older baseline below (as of 2026-07-23 01:45, `c21537e`): `go build/vet/test ./...` clean +
+`gofmt` clean-modulo-CRLF (the repo's `.go` blobs are CRLF throughout — cosmetic on Windows per
+§4, CI-green on Linux); the lone `cmd/tts` test FAIL is pre-existing/environmental and
+machine-dependent (the local TTS model is present, so "degrades when no model" inverts);
+`build-all-tools.bat` builds all `.exe`s, INCLUDING the `becky-review-engine.exe` alias (its own
+build script silently didn't, once — see below). Recent landings (details in `HANDOFF-LOG.md`):
 
 - **mpv is gone — native video engine replaces it (2026-07-23 00:00–01:45, local, → `c21537e`):**
   the whole mpv-replacement mission landed overnight — libavcodec/D3D11VA decode in-process,
@@ -72,10 +105,12 @@ landings (details in `HANDOFF-LOG.md`):
   **Two findings worth carrying forward:** (1) `cli-cut`'s 0.120 s pause constant does not transfer
   to Parakeet (49% of its words have `end == start`, so ordinary speech reads as a 0.16-0.24 s "gap"
   and every word became its own caption) — the threshold is now derived from the transcript's own
-  p90; (2) **`becky-reel render` drifts +1.27 s over 88 cuts** (renders at 30.0 fps against 29.97
-  sources and does not quantise per-clip durations to output frames) — harmless for Jordan today
-  because he renders from Vegas, but it is a real bug and any caption burned onto a *becky-reel*
-  render would desync by ~38 frames. Not fixed here.
+  p90; (2) **`becky-reel render` drifted +1.27 s over 88 cuts** (renders at 30.0 fps against 29.97
+  sources and did not quantise per-clip durations to output frames) — not fixed at the time this
+  entry was written. **FIXED since** (`internal/reel/args.go`: `framesFor` quantises every clip to
+  whole output frames, enforced per-clip by `trim=end_frame=N` in the filter graph;
+  `TestRender_FrameCountMatchesReelExactly` renders through real ffmpeg and asserts the exact frame
+  count). Confirmed still in place and passing 2026-08-15.
 
 - **Becky Review round-5 fixes — 12 reported bugs + 3 new features, all live-verified (2026-07-02,
   local):** the real root cause of "scroll-to-zoom randomly stops working" was found —
