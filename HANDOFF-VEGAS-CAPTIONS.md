@@ -107,10 +107,15 @@ Gate 5 (`build-all-tools.bat`) is local's — cloud has no Windows.
 
 ## WORK ORDER — local agent
 
-- [ ] `git fetch origin && git checkout claude/vegas-becky-captions-70imte`
-- [ ] `cd becky-go && go build ./... && go test ./internal/edl/`
-- [ ] `becky-go\build-all-tools.bat`  ← gate 5, cloud could not run this
-- [ ] `becky-go\bin\becky-subtitle.exe --selftest`  → expect the block above, ending `OK`
+- [x] `git fetch origin && git checkout claude/vegas-becky-captions-70imte` — merged to `master`
+      (`b2840f6`, 2026-08-16) alongside the other open cloud branch; both branches deleted.
+- [x] `cd becky-go && go build ./... && go test ./internal/edl/` — build + vet clean, `edl` green.
+- [x] `becky-go\build-all-tools.bat` — gate 5 done. Every `.exe` built, `becky-review-engine.exe`
+      alias included, and the becky-vision smoke gate PASSed (4/4).
+- [x] `becky-go\bin\becky-subtitle.exe --selftest` — reproduced the block above verbatim,
+      all 15 PASS lines, exit 0, ending `OK`.
+- [x] **Generator + style params verified against the real VEGAS install** (see "Known gaps"
+      below — both of cloud's flagged unknowns are now retired, no code change needed).
 - [ ] Open VEGAS Pro with a **real edit that has at least one cut and one gap**.
 - [ ] Select two or three events. **Tools ▸ Scripting ▸ Run Script… → `vegas\BeckyCaptions.cs`**
 - [ ] Style dialog appears → press OK. Progress window counts up while it transcribes.
@@ -130,12 +135,26 @@ rather than stacking. "It compiles" is not done.
 
 ## Known gaps / next
 
-- **The generator name is probed, not known.** `FindTextGenerator` tries "Titles & Text",
-  "Legacy Text", "VEGAS Titles & Text", "Titler Pro", then anything matching text/title.
-  Untested against a real VEGAS install — if it picks the wrong generator, note which
-  names your version actually exposes and pin it.
-- **Style is set through the OFX params by name matching** (inherited from the original).
-  If font/outline don't take, that is where to look.
+- ~~**The generator name is probed, not known.**~~ **RETIRED 2026-08-16 (local).** Probed the
+  real install — **VEGAS Pro 18.0 build 527**, 101 generators. `FindTextGenerator` resolves on
+  the *third* preferred name: `"Titles & Text"` → not found, `"Legacy Text"` → not found,
+  **`"VEGAS Titles & Text"` → FOUND**, and that node instantiates with a video stream and
+  `IsOFX = True`. No pinning needed, the probe order already works. Two near-miss names to be
+  aware of if this ever moves machines: this install spells legacy text `"(Legacy) Text"` — with
+  the parentheses — so the `"Legacy Text"` entry can never match it, and it also ships
+  `"VEGAS ProType Titler"`, which the text/title substring fallback would grab if the preferred
+  names ever stopped matching. Neither bites today because the preferred name hits first.
+- ~~**Style is set through the OFX params by name matching.**~~ **RETIRED 2026-08-16 (local).**
+  Checked every parameter the real generator exposes against the matching code:
+  `Text | Text` matches and already **holds RTF**, so the RTF branch is the one taken;
+  `OutlineWidth | Outline width` (double) and `OutlineColor | Outline color` (RGBA) both match
+  `ApplyOutlineSettings`; `OutlineGroup` matches "outline" but is neither double nor RGBA and is
+  skipped harmlessly. **`ApplyGeneratedFont` is a no-op on this generator** — there is no
+  font/typeface choice parameter at all (the only choice params are `collection | Animation` and
+  `Alignment | Anchor Point`). That is fine, not a bug: the font name and size travel inside the
+  RTF font table (`\fonttbl … \f0\fs<half-points>`) that `ConvertToRtf` writes, which is the path
+  actually used. If a font ever fails to take, fix the RTF, not the OFX scan.
+  Probe log: `%TEMP%\becky-vegas-probe.txt`.
 - Heavy time-stretching will still drift; captions are timed off the source audio.
 - becky's caption style sidecar (`.capstyle.json`, the height Jordan drags in the review
   apps) is not read by the Vegas placement yet — the Vegas track position governs there.
