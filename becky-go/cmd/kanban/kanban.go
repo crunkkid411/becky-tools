@@ -54,9 +54,9 @@ type Board []Card
 const (
 	keyAgent   = "agent"
 	keyCol     = "col"
-	keyText    = "text"   // legacy field, kept for old cards
+	keyText    = "text"    // legacy field, kept for old cards
 	keyDetails = "details" // v2 canonical text field (MissionControl renames text->details)
-	keyRev     = "rev"    // v2 optimistic-concurrency revision, bumped on every move
+	keyRev     = "rev"     // v2 optimistic-concurrency revision, bumped on every move
 )
 
 // defaultStore is MissionControl's live Board file. Hardcoding the machine path

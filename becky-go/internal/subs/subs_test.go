@@ -803,8 +803,8 @@ func TestNoInvisibleCaptions(t *testing.T) {
 		Words: []Word{
 			{Word: "not", Start: 10.1, End: 10.4},
 			{Word: "you.", Start: 10.5, End: 10.9},
-			{Word: "you", Start: 11.4, End: 11.4},     // collapsed timing
-			{Word: "keep", Start: 11.4, End: 11.4},    // ...same instant
+			{Word: "you", Start: 11.4, End: 11.4},  // collapsed timing
+			{Word: "keep", Start: 11.4, End: 11.4}, // ...same instant
 			{Word: "scrolling", Start: 11.9, End: 12.4},
 		},
 	}}
