@@ -18,9 +18,38 @@ video and put it into a searchable database is what caught my eye… I pay for Q
 documentary from the forensic footage, where a frontier VLM does the human-review pass before
 he does; (2) TikTok/YouTube repurposing, back-catalogue indexing, livestream highlights.
 
-**Deliverables: `research/qwen38-max-video.md` (cited research) + `SPEC-BECKY-EYES.md`
-(proposal). No Go written, nothing in `becky-go/` touched — Jordan asked how to use it, not
-for a build.** Four findings that change the plan:
+> **REWRITTEN 2026-08-17 after Jordan rejected the first version, correctly.** The original
+> draft claimed "100 hours is not one API call" and proposed `becky-eyes`, a tool feeding
+> 20-image batches through the Qoder CLI. Two errors: (a) a **token-math mistake** — video is
+> not costed per-frame; Qwen's own model card recommends `longest_edge=469,762,048` =
+> **224K video tokens for an entire hour-scale video**, ~14× cheaper than the frame-by-frame
+> arithmetic I used; (b) **letting a distribution channel define the capability** — Qoder is
+> image-only, so I designed around 20-image batches instead of researching the native video
+> path that was actually asked about. Jordan's words: *"cutting corners is not an option."*
+> `SPEC-BECKY-EYES.md` has been **deleted**; `research/qwen38-max-video.md` rewritten. The
+> corrected findings are below; the struck-through ones are kept only so nobody re-derives
+> them.
+
+**Deliverable: `research/qwen38-max-video.md` (cited research). No Go written, nothing in
+`becky-go/` touched.** Corrected findings:
+
+1. **"Entire shows and livestreams" is literal.** One request accepts **up to 64 videos, each
+   up to 2 hours / 2 GB — 128 hours of footage**, plus 2,048 image URLs, into a 1M-token
+   context. Corroborated across the Vercel model page and its FAQ. No frame extraction step.
+2. **Video tokens are a configurable whole-video budget, not a per-frame cost.** ~224K tokens
+   buys genuine hour-scale understanding, so 100 h of high-fidelity review is **~$20–45** at
+   $2/M — a modest bill, not a technical barrier. The tradeoff that matters is fidelity vs
+   coverage: 128 h crammed into 1M ctx is ~15K tokens per video, i.e. a glance, and the model
+   will still answer confidently. Set the budget deliberately and record it.
+3. **Audio is not a listed input modality** — text/image/video in, text out, on every card
+   checked (Model Studio, Vercel, and the open `Qwen3.8-27B`). The omni model is a *different*
+   one (`qwen3.5-omni-plus`). The consumer site demonstrably understands speech in uploaded
+   video; the likely mechanism (**candidate, not established**) is an ASR pass — Alibaba ships
+   Qwen3-ASR/fun-asr with timestamps. Practical rule: **website = audio just works; API = pass
+   a timestamped transcript alongside the video.**
+4. **Qoder is a dead end for this** — CLI and IDE take images and PDFs, never video.
+
+Original (superseded) findings, for the record:
 
 1. **The 90–99% discount expired on 3 Aug 2026.** That was the Qwen3.8-Max-**Preview**
    campaign (0.05x all-day / 0.01x off-peak, 19 Jul → 3 Aug). Live rate: Qwen3.8-Max
@@ -43,27 +72,15 @@ for a build.** Four findings that change the plan:
    text-only. 27B@Q4 ≈ 16 GB vs the 3070's 8 GB — so `SPEC-VIDEO-ANALYSIS.md` §2's "no local
    video-LLM in 8 GB" verdict stands, and hosted is the only route to this class.
 
-**Proposal (`SPEC-BECKY-EYES.md`):** `becky-eyes` — frames in → grounded description out.
-Emits **`candidate` only, never `corroborated`**, by construction: it has one signal, so a
-hosted model's prose can never become a timeline entry on its own (the 2026-06-24 failure
-mode, closed structurally rather than by discipline). Two guards enforced in code, copying
-`cmd/subtitle/openrouter.go`'s `isFreeModel` shape: **`--i-am-paying`** (any pay-per-token
-backend refuses to send a request without it) and **`--max-credits`** (checked before and
-during a run). Adds rungs 2–3 to `becky-validate`'s existing E4B→12B ladder rather than
-building a parallel escalation system. Estimated cost to visually index 100 h: **~216 credits
-(~11% of a $20 Pro month)** on 3.7-Plus off-peak, vs ~1,350 on 3.8-Max — hence sweep cheap,
-escalate rare. Every cost figure is an **estimate** off Qoder's published task medians
-(Qoder publishes no token→credit formula); the spec's §8 makes measuring it local step 1.
-
-**NOT ready to build, and said plainly:** cloud has no Qoder subscription and no signed-in
-CLI, so there is no provable handoff per `STANDARDS-WORKFLOW.md` §7. `SPEC-BECKY-EYES.md` §8
-is the ordered checklist, and **step 1 is a single command** that either proves the
-`--attachment` seam or invalidates the spec (fallbacks: the Agent SDK, or Model Studio at
-$2/M with a 1M-token/model free tier, Singapore region only).
-
-Also flagged for Jordan's decision (§9.1): using a **coding** subscription for bulk video
-frame analysis is neither blessed nor forbidden by any source found. Recommendation is one
-hour of real footage first, watch the account, scale only if clean.
+**The deleted proposal, and why:** `SPEC-BECKY-EYES.md` proposed a `becky-eyes` tool
+extracting frames and shipping ≤20-image batches to the Qoder CLI, with `--i-am-paying` /
+`--max-credits` guards and a two-model price ladder (Qwen3.7-Plus sweeping at 0.04x
+off-peak, Qwen3.8-Max escalating at 0.25x). The guards and the escalation shape were fine;
+the premise was not. It existed only because Qoder cannot accept video, and it would have
+thrown away the native 2-hours-per-video path to fit a coding subscription. **Deleted, not
+parked** — if hosted vision gets picked up later, start from the native video API, not from
+frame batches. The lesson worth keeping: a channel's limits are not the capability's limits,
+and researching the channel is not researching the model.
 
 ---
 

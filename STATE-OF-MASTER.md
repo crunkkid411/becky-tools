@@ -9,15 +9,20 @@
 ### Open branch: `claude/qwen-video-analysis-research-x408kl` (2026-08-17, cloud) — DOCS ONLY, safe to merge
 
 **Nothing in `becky-go/` was touched — no build/test risk.** Adds
-`research/qwen38-max-video.md` (cited research on Qwen3.8-Max + Qoder) and
-`SPEC-BECKY-EYES.md` (proposal, awaiting Jordan's approval), plus INDEX/HANDOFF-LOG entries.
-Headline for anyone picking this up: the Qoder **90–99% discount expired 3 Aug** (live:
-Qwen3.8-Max 0.25x off-peak, **Qwen3.7-Plus 0.04x**, off-peak 14:00–00:00 UTC); the
-"100-hour video" claim is **chunk-index-retrieve**, and becky already owns every stage of
-that pipeline except good eyes; Qoder accepts **images via CLI `--attachment`, not video**.
-**Do not start building `becky-eyes` before running §8 step 1** — one `qoder --print
---attachment` command that either proves the seam or invalidates the spec. Full entry at the
-top of `HANDOFF-LOG.md`.
+`research/qwen38-max-video.md` — research on Qwen3.8-Max's **native** video understanding.
+Headline: **"entire shows and livestreams" is literal** — one request accepts **64 videos ×
+2 h each = 128 hours**, no frame extraction. **Audio is NOT a listed input modality**, so on
+the API pass a timestamped transcript alongside the video (the consumer website evidently
+runs its own ASR). **Qoder cannot take video at all** — images/PDFs only — so the coding
+subscription is not the vehicle; use chat.qwen.ai (free) or Model Studio (1M free tokens per
+model, 90 days, Singapore region).
+
+> **A first draft of this branch was wrong and has been rewritten.** It claimed 100 hours
+> couldn't fit in one call (a token-math error — the real figure is ~224K video tokens for a
+> whole hour-scale video per Qwen's own model card, ~14× cheaper than per-frame arithmetic)
+> and proposed a `becky-eyes` tool feeding 20-image batches through the Qoder CLI. That spec
+> has been **deleted**: it let a coding-agent's image-only limit dictate the architecture
+> instead of using the model's native video path. Don't resurrect it.
 
 ### Current state of master (as of 2026-08-15, cloud PR #33 merged)
 
