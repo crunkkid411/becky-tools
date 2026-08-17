@@ -295,7 +295,15 @@ func probeFirstClip(ffprobe, source string) (w, h int, fps float64, ok bool) {
 	if err != nil || info.Width <= 0 || info.Height <= 0 {
 		return 0, 0, 0, false
 	}
-	return info.Width, info.Height, info.FPS, true
+	// DISPLAY dimensions, not coded ones. A phone portrait clip is stored
+	// landscape (1920x1080) with a display matrix that says "turn me 90". ffmpeg
+	// applies that rotation while decoding, so the picture reaching the filter
+	// chain is 1080x1920 — but this function used to hand back the coded 1920x1080,
+	// and buildRenderArgs then scaled the upright picture DOWN to fit a landscape
+	// frame and pillarboxed it in black. That is the "my vertical video rendered
+	// horizontal" bug (proved on IMG_9624.MP4, rotation -90, which rendered
+	// 1920x1080). Asking for the display size makes the output match the source.
+	return info.DisplayWidth(), info.DisplayHeight(), info.FPS, true
 }
 
 // shouldFallbackToLibx264 reports whether a failed render with the given codec
