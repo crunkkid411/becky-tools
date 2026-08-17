@@ -156,6 +156,19 @@
   (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
   `HANDOFF-VIDEOAGENT-SEAM.md`.
+- `research/qwen38-max-video.md` + `SPEC-BECKY-EYES.md` — **frontier vision for becky, paid
+  for with the Qoder subscription (2026-08-17, cloud, RESEARCH + SPEC ONLY — nothing built).
+  Read before any "should we use a hosted vision model" work, and before re-chasing a local
+  video-LLM.** Findings that change plans: (1) the Qoder **90–99% discount EXPIRED 3 Aug** —
+  live rate is Qwen3.8-Max 0.25x off-peak / **Qwen3.7-Plus 0.04x**, off-peak = 14:00–00:00
+  UTC (= your US working day); (2) the "100-hour livestream" headline is **chunk-index-
+  retrieve, not one API call** (1M ctx ≈ 3 h of 720p) — and becky **already owns** every
+  piece of that pipeline except good eyes; (3) Qoder takes **images, not video**, via CLI
+  `--attachment` in `--print` mode, which is all becky needs since it picks its own frames;
+  (4) open Qwen3.8 **vision** weights are 27B — still out of reach on the 8 GB 3070, so
+  `SPEC-VIDEO-ANALYSIS.md` §2 stands. Proposal is `becky-eyes` (frames in → grounded
+  description out, always `candidate`, never a conclusion) + a 4th rung on becky-validate's
+  escalation ladder. Estimated ~216 credits (~11% of a Pro month) to visually index 100 h.
 - `research/shorts-models.md` + `HANDOFF-SHORTS-PIPELINE.md` — **the short-form repurposing
   arc (2026-08-15, cloud). Steps 0-2 BUILT + proven; steps 3-6 need the native CV dep Jordan
   ratified. Read before any short-form / 9:16 / auto-reframe / active-speaker work.** Ships
@@ -249,6 +262,9 @@
   `SPEC-OCR-ENSEMBLE.md` (PROPOSAL, cloud 2026-06-27 — multi-model OCR ensemble +
   adversarial ≥2-engine corroboration; additive enhancement to `becky-ocr`/`SPEC-OCR.md`),
   `SPEC-PERSON-CLUSTERING.md`, `SPEC-VIDEO-ANALYSIS.md`,
+  `SPEC-BECKY-EYES.md` (PROPOSAL, cloud 2026-08-17 — `becky-eyes`: frontier vision over
+  becky-selected frames via the Qoder CLI subscription; two enforced guards
+  (`--i-am-paying`, `--max-credits`); see `research/qwen38-max-video.md`),
   `SPEC-BECKY-COMPOSE.md` (BUILT — `becky-compose`: deterministic genre→multi-track
   MIDI; genre DB in `internal/music/profiles/`).
 - **BUILT 2026-06-15 (deterministic Go cores; online/model boundary stubbed):** `SPEC-DEEP-RESEARCH.md` (`becky-research`

@@ -10,6 +10,63 @@
 
 ---
 
+## Qwen3.8-Max as becky's frontier eyes — research + spec, nothing built (2026-08-17, cloud, `claude/qwen-video-analysis-research-x408kl`)
+
+Jordan sent the Qwen3.8-Max announcement — *"the ability to ingest 100 hours of livestream
+video and put it into a searchable database is what caught my eye… I pay for Qoder and it's
+90-99% discounted… how can I be using this?"* — with two use cases: (1) a journalistic
+documentary from the forensic footage, where a frontier VLM does the human-review pass before
+he does; (2) TikTok/YouTube repurposing, back-catalogue indexing, livestream highlights.
+
+**Deliverables: `research/qwen38-max-video.md` (cited research) + `SPEC-BECKY-EYES.md`
+(proposal). No Go written, nothing in `becky-go/` touched — Jordan asked how to use it, not
+for a build.** Four findings that change the plan:
+
+1. **The 90–99% discount expired on 3 Aug 2026.** That was the Qwen3.8-Max-**Preview**
+   campaign (0.05x all-day / 0.01x off-peak, 19 Jul → 3 Aug). Live rate: Qwen3.8-Max
+   **0.5x → 0.25x off-peak** (50% off). The genuinely near-free model is **Qwen3.7-Plus at
+   0.04x off-peak (96% off)**. Off-peak is **14:00–00:00 UTC = 10:00–20:00 US Eastern** —
+   the cheap window is his working day, not the middle of the night.
+2. **"100 hours in one go" is false as an API claim.** Context is 1M tokens; at 32×
+   compression a 720p frame is ~900 visual tokens, so 1M ≈ **3.1 h at 1 frame/10 s** and
+   100 h ≈ 32M tokens. The "video memory graph" is a **QwenWork product** (China-only public
+   beta) doing chunk→describe→embed→retrieve. **becky already owns every stage of that
+   except the describing** — `becky-clip`, `becky-transcribe`, `becky-identify`,
+   `becky-embed`, `beckydb`, `becky-search` are all built. That is the whole insight: this
+   is a one-stage upgrade, not a new system.
+3. **Qoder takes images, not video** — but that's fine, because becky picks its own frames.
+   Verified from three independent signals: CLI overview advertises multimodal image/PDF
+   input; release notes v0.1.14 added `--attachment` for images in headless mode; v1.1.19
+   (11 Aug) fixed "switching to a non-vision model with image context". Seam is
+   `qoder --print --output-format json --model <id> --attachment f1.jpg … --disallowed-tools "Write,Edit,Bash"`.
+4. **Open Qwen3.8 vision weights are the 27B** (Apache-2.0); the 2.4T open weights are
+   text-only. 27B@Q4 ≈ 16 GB vs the 3070's 8 GB — so `SPEC-VIDEO-ANALYSIS.md` §2's "no local
+   video-LLM in 8 GB" verdict stands, and hosted is the only route to this class.
+
+**Proposal (`SPEC-BECKY-EYES.md`):** `becky-eyes` — frames in → grounded description out.
+Emits **`candidate` only, never `corroborated`**, by construction: it has one signal, so a
+hosted model's prose can never become a timeline entry on its own (the 2026-06-24 failure
+mode, closed structurally rather than by discipline). Two guards enforced in code, copying
+`cmd/subtitle/openrouter.go`'s `isFreeModel` shape: **`--i-am-paying`** (any pay-per-token
+backend refuses to send a request without it) and **`--max-credits`** (checked before and
+during a run). Adds rungs 2–3 to `becky-validate`'s existing E4B→12B ladder rather than
+building a parallel escalation system. Estimated cost to visually index 100 h: **~216 credits
+(~11% of a $20 Pro month)** on 3.7-Plus off-peak, vs ~1,350 on 3.8-Max — hence sweep cheap,
+escalate rare. Every cost figure is an **estimate** off Qoder's published task medians
+(Qoder publishes no token→credit formula); the spec's §8 makes measuring it local step 1.
+
+**NOT ready to build, and said plainly:** cloud has no Qoder subscription and no signed-in
+CLI, so there is no provable handoff per `STANDARDS-WORKFLOW.md` §7. `SPEC-BECKY-EYES.md` §8
+is the ordered checklist, and **step 1 is a single command** that either proves the
+`--attachment` seam or invalidates the spec (fallbacks: the Agent SDK, or Model Studio at
+$2/M with a 1M-token/model free tier, Singapore region only).
+
+Also flagged for Jordan's decision (§9.1): using a **coding** subscription for bulk video
+frame analysis is neither blessed nor forbidden by any source found. Recommendation is one
+hour of real footage first, watch the account, scale only if clean.
+
+---
+
 ## becky captions on the VEGAS timeline — louismathy's script, becky's brain (2026-08-16, cloud, `claude/vegas-becky-captions-70imte`)
 
 Jordan found [louismathy/vegas-script](https://github.com/louismathy/vegas-script)'s

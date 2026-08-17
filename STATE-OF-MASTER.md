@@ -6,6 +6,19 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### Open branch: `claude/qwen-video-analysis-research-x408kl` (2026-08-17, cloud) — DOCS ONLY, safe to merge
+
+**Nothing in `becky-go/` was touched — no build/test risk.** Adds
+`research/qwen38-max-video.md` (cited research on Qwen3.8-Max + Qoder) and
+`SPEC-BECKY-EYES.md` (proposal, awaiting Jordan's approval), plus INDEX/HANDOFF-LOG entries.
+Headline for anyone picking this up: the Qoder **90–99% discount expired 3 Aug** (live:
+Qwen3.8-Max 0.25x off-peak, **Qwen3.7-Plus 0.04x**, off-peak 14:00–00:00 UTC); the
+"100-hour video" claim is **chunk-index-retrieve**, and becky already owns every stage of
+that pipeline except good eyes; Qoder accepts **images via CLI `--attachment`, not video**.
+**Do not start building `becky-eyes` before running §8 step 1** — one `qoder --print
+--attachment` command that either proves the seam or invalidates the spec. Full entry at the
+top of `HANDOFF-LOG.md`.
+
 ### Current state of master (as of 2026-08-15, cloud PR #33 merged)
 
 > **AWAITING JORDAN — one step, and it needs VEGAS Pro open:** `vegas/BeckyCaptions.cs`
