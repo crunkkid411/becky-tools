@@ -824,6 +824,20 @@ public class EntryPoint
     // as drawn by native/becky-review/captions.cpp: white text, thin black
     // outline, no shadow, centred.
 
+    // THE STYLE LIVES IN A VEGAS PRESET, not in this file.
+    //
+    // "becky-captions" is a Titles & Text preset Jordan built by hand in VEGAS,
+    // where a caption style can actually be judged. When it is present it wins
+    // outright and every constant below is ignored: the script applies the
+    // preset and swaps only the words. That is also how VEGAS's own subtitle
+    // tools (and the UltraPaste extension) do it.
+    //
+    // On this machine the preset is Proxima Nova bold 9pt, white, outline width
+    // 10, shadow on - none of which this script could have guessed.
+    private const string BeckyPresetName = "becky-captions";
+
+    // ---- fallback only: used when a machine has no "becky-captions" preset ----
+
     // The Windows FAMILY name. becky's libass style says "ProximaNova-Semibold";
     // the family VEGAS wants on this machine is "Proxima Nova Lt" (Jordan, after
     // seeing it render - the plain "Proxima Nova" family came out wrong).
@@ -1086,6 +1100,24 @@ public class EntryPoint
             return;
         }
 
+        // PREFERRED PATH: Jordan's own "becky-captions" Titles & Text preset.
+        //
+        // The preset IS the style - font, size, bold, outline width, shadow, all
+        // of it - set up by hand in VEGAS where it can actually be seen. Applying
+        // it and changing only the words means this script stops guessing at a
+        // look through OFX parameters, which is what made these captions behave
+        // unlike every other title in VEGAS. Nothing below touches font, colour,
+        // outline or shadow on this path; the preset owns them.
+        if (generator.IsOFX && generator.OFXEffect != null && ApplyBeckyPreset(generator))
+        {
+            if (SetTextKeepingPreset(generator.OFXEffect, text))
+            {
+                return;
+            }
+            // preset applied but its text field could not be rewritten - fall
+            // through rather than leaving every caption reading "becky"
+        }
+
         if (generator.IsOFX && generator.OFXEffect != null)
         {
             SetOFXText(generator.OFXEffect, text, style);
@@ -1093,6 +1125,64 @@ public class EntryPoint
         }
 
         SetLegacyText(generator);
+    }
+
+    // ApplyBeckyPreset selects the named preset if this install has it. Returns
+    // false (quietly) when it does not, so the script still works on a machine
+    // where the preset was never created.
+    private static bool ApplyBeckyPreset(Effect generator)
+    {
+        try
+        {
+            foreach (EffectPreset preset in generator.Presets)
+            {
+                if (preset == null || preset.Name == null)
+                {
+                    continue;
+                }
+                if (string.Equals(preset.Name, BeckyPresetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    generator.Preset = preset.Name;
+                    return true;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // an install whose preset list cannot be read is not a failure worth
+            // stopping the run for - the constants path below still works
+        }
+        return false;
+    }
+
+    // SetTextKeepingPreset swaps the WORDS inside the preset's own RTF and
+    // changes nothing else, so \b, \fs, the font table and the alignment the
+    // preset carries all survive.
+    private static bool SetTextKeepingPreset(OFXEffect ofx, string text)
+    {
+        foreach (OFXParameter parameter in ofx.Parameters)
+        {
+            OFXStringParameter stringParameter = parameter as OFXStringParameter;
+            if (stringParameter == null)
+            {
+                continue;
+            }
+            if (!string.Equals(stringParameter.Name, "Text", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string swapped = ReplaceRtfWords(stringParameter.Value, text);
+            if (swapped == null)
+            {
+                return false;
+            }
+
+            stringParameter.Value = swapped;
+            stringParameter.ParameterChanged();
+            return true;
+        }
+        return false;
     }
 
     private static void SetOFXText(OFXEffect ofx, string text, SubtitleStyleSettings style)
@@ -1238,6 +1328,116 @@ public class EntryPoint
         }
     }
 
+    // ReplaceRtfWords replaces the readable words in an RTF string and leaves
+    // every formatting instruction untouched.
+    //
+    // In RTF everything is either a group ({...}), a control word (\b, \fs18,
+    // \par) or literal text. The preset's text sits as literal text in the
+    // outermost group - the font table is a nested group, so it is never
+    // mistaken for words. Walking the string once and rewriting just that run is
+    // what lets the preset keep its font, size, bold and alignment.
+    //
+    // Returns null if no literal text was found, so the caller can fall back.
+    private static string ReplaceRtfWords(string rtf, string text)
+    {
+        if (string.IsNullOrEmpty(rtf))
+        {
+            return null;
+        }
+
+        int first = -1;
+        int last = -1;
+        int depth = 0;
+        int i = 0;
+
+        while (i < rtf.Length)
+        {
+            char c = rtf[i];
+
+            if (c == '{') { depth++; i++; continue; }
+            if (c == '}') { depth--; i++; continue; }
+
+            if (c == '\\')
+            {
+                int j = i + 1;
+                if (j < rtf.Length && IsAsciiLetter(rtf[j]))
+                {
+                    while (j < rtf.Length && IsAsciiLetter(rtf[j])) { j++; }      // \fs
+                    if (j < rtf.Length && rtf[j] == '-') { j++; }                  // \fi-360
+                    while (j < rtf.Length && rtf[j] >= '0' && rtf[j] <= '9') { j++; } // \fs18
+                    if (j < rtf.Length && rtf[j] == ' ') { j++; }                  // the delimiting space belongs to the word
+                    i = j;
+                    continue;
+                }
+
+                // \\ \{ \} are escaped literal characters, i.e. words
+                if (depth == 1)
+                {
+                    if (first < 0) { first = i; }
+                    last = i + 2;
+                }
+                i += 2;
+                continue;
+            }
+
+            if (c == '\r' || c == '\n') { i++; continue; }  // line breaks are not content in RTF
+
+            if (depth == 1)
+            {
+                if (first < 0) { first = i; }
+                last = i + 1;
+            }
+            i++;
+        }
+
+        if (first < 0 || last <= first)
+        {
+            return null;
+        }
+
+        return rtf.Substring(0, first) + EscapeRtf(text) + rtf.Substring(last);
+    }
+
+    private static bool IsAsciiLetter(char c)
+    {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    // EscapeRtf makes caption text safe to drop into an RTF string. Anything
+    // above ASCII is written as \'hh, because the generator's RTF is \ansi and a
+    // raw high byte would render as mojibake.
+    private static string EscapeRtf(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return " ";
+        }
+
+        StringBuilder sb = new StringBuilder(text.Length + 16);
+        foreach (char c in text)
+        {
+            switch (c)
+            {
+                case '\\': sb.Append("\\\\"); break;
+                case '{': sb.Append("\\{"); break;
+                case '}': sb.Append("\\}"); break;
+                case '\r': break;
+                case '\n': sb.Append("\\par "); break;
+                default:
+                    if (c > 127)
+                    {
+                        sb.Append("\\'").Append(((int)c & 0xFF).ToString("x2"));
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
     private static string ConvertToRtf(string plainText, SubtitleStyleSettings style)
     {
         if (string.IsNullOrEmpty(plainText))
@@ -1245,11 +1445,7 @@ public class EntryPoint
             plainText = " ";
         }
 
-        string escaped = plainText
-            .Replace("\\", "\\\\")
-            .Replace("{", "\\{")
-            .Replace("}", "\\}")
-            .Replace("\n", "\\par ");
+        string escaped = EscapeRtf(plainText);
 
         StringBuilder rtf = new StringBuilder();
         rtf.Append("{\\rtf1\\ansi\\deff0");
