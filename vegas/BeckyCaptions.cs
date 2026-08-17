@@ -825,25 +825,25 @@ public class EntryPoint
     // outline, no shadow, centred.
 
     // The Windows FAMILY name. becky's libass style says "ProximaNova-Semibold";
-    // on Windows the installed family is "Proxima Nova", and RTF wants the family.
-    private const string BeckyFontName = "Proxima Nova";
+    // the family VEGAS wants on this machine is "Proxima Nova Lt" (Jordan, after
+    // seeing it render - the plain "Proxima Nova" family came out wrong).
+    private const string BeckyFontName = "Proxima Nova Lt";
 
-    // Point size for the Titles & Text generator.
+    // Point size for the Titles & Text generator. 24 rendered too big on screen
+    // (Jordan, after looking at it), so this is now becky's own caption size:
+    // subs.DefaultStyle().FontSize, the 12 that becky-review-3 draws with.
     //
-    // NOT VERIFIED BY EYE, and deliberately left at the value Jordan already ran
-    // and did not complain about. becky-review-3 draws captions at 12 units on
-    // the 288-unit ASS canvas (4.17% of frame height), but the VEGAS generator
-    // sizes RTF against its own canvas rather than the project frame, so the
-    // matching point size cannot be derived - it has to be measured on screen.
-    // vegas.SaveSnapshot() returns fully transparent frames when VEGAS is driven
-    // by -SCRIPT, so that measurement could not be automated; it needs one look
-    // at a real preview. This is the ONE number to change if the captions come
-    // out too big or too small.
-    private const int BeckyFontPointSize = 24;
+    // Still the ONE number to change if the captions come out too big or small.
+    // It cannot be checked from here - vegas.SaveSnapshot() returns fully
+    // transparent frames when VEGAS is driven by -SCRIPT, so the only way to
+    // judge the size is to look at a real preview.
+    private const int BeckyFontPointSize = 12;
 
     // Thin black outline, no shadow - subs.DefaultStyle() is Outline=1, Shadow=0.
-    // Also the value Jordan already ran.
-    private const int BeckyOutlineWidth = 2;
+    // Dropped from 2 to 1 alongside the font size: an outline is only "thin"
+    // relative to the text it edges, and keeping 2 under a 12pt font would have
+    // doubled its apparent weight. Bump back to 2 if it reads too faint.
+    private const int BeckyOutlineWidth = 1;
 
     // The captions .srt is named "<clip>.becky.srt", NOT "<clip>.srt". That is
     // deliberate: becky-captions treats "<stem>.srt" beside a video as an
@@ -1103,6 +1103,7 @@ public class EntryPoint
         }
 
         ApplyOutlineSettings(ofx, style);
+        ApplyTextColor(ofx, style);
 
         string rtfText = ConvertToRtf(text, style);
 
@@ -1199,6 +1200,44 @@ public class EntryPoint
         }
     }
 
+    // ApplyTextColor paints the caption through the generator's own TextColor
+    // parameter rather than through the RTF. That is what keeps the Titles & Text
+    // edit box readable (black on white) while the rendered caption is white -
+    // see the comment in ConvertToRtf. "TextColor" is the exact parameter name on
+    // VEGAS Pro 18's "VEGAS Titles & Text"; the name/label match keeps it working
+    // if another version spells it differently.
+    private static void ApplyTextColor(OFXEffect ofx, SubtitleStyleSettings style)
+    {
+        foreach (OFXParameter parameter in ofx.Parameters)
+        {
+            OFXRGBAParameter rgba = parameter as OFXRGBAParameter;
+            if (rgba == null)
+            {
+                continue;
+            }
+
+            string name = (parameter.Name ?? string.Empty).ToLowerInvariant();
+            string label = (parameter.Label ?? string.Empty).ToLowerInvariant();
+
+            // the TEXT colour only - not outline, shadow or background
+            bool isTextColor = (name == "textcolor") ||
+                               ((name.Contains("text") || label.Contains("text")) &&
+                                (name.Contains("color") || label.Contains("color")));
+            if (!isTextColor)
+            {
+                continue;
+            }
+
+            rgba.Value = new OFXColor(
+                style.TextColor.R / 255.0,
+                style.TextColor.G / 255.0,
+                style.TextColor.B / 255.0,
+                1.0);
+            rgba.ParameterChanged();
+            return;
+        }
+    }
+
     private static string ConvertToRtf(string plainText, SubtitleStyleSettings style)
     {
         if (string.IsNullOrEmpty(plainText))
@@ -1220,14 +1259,20 @@ public class EntryPoint
         rtf.Append(font);
         rtf.Append(";}}");
 
-        rtf.Append("{\\colortbl ;");
-        rtf.AppendFormat("\\red{0}\\green{1}\\blue{2};", style.TextColor.R, style.TextColor.G, style.TextColor.B);
-        rtf.AppendFormat("\\red{0}\\green{1}\\blue{2};", style.OutlineColor.R, style.OutlineColor.G, style.OutlineColor.B);
-        rtf.Append("}");
+        // NO colour table, and NO \cf colour selector. This is deliberate.
+        //
+        // Titles & Text shows the RTF in its edit box on a white background, and
+        // it renders the picture using its own TextColor parameter. The original
+        // script baked the caption colour into the RTF as "\cf1" -> white, so the
+        // edit box drew WHITE TEXT ON WHITE and you could not see what you were
+        // editing. Leaving the colour out lets the edit box use its default black
+        // (normal VEGAS behaviour) while the rendered caption stays white, because
+        // the colour that actually paints the frame is the TextColor OFX parameter
+        // set in ApplyTextColor.
 
         int fontSizeHalfPts = style.FontSize * 2;
 
-        rtf.AppendFormat("\\pard\\qc\\cf1\\f0\\fs{0} ", fontSizeHalfPts);
+        rtf.AppendFormat("\\pard\\qc\\f0\\fs{0} ", fontSizeHalfPts);
         rtf.Append(escaped);
         rtf.Append("}");
 
