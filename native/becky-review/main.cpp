@@ -2552,9 +2552,9 @@ int main(int argc, char** argv) {
                     else { playing = true; g_playingExt = true; }
                 }
             }
-            // ENTER = STOP WHERE IT IS (item 59). The counterpart to pause: pause
-            // gives him his place back, Enter keeps the frame he just heard. Both
-            // go through stopPlayback so "stop" can only ever mean one thing.
+            // ENTER = PLAY / STOP WHERE IT IS (item 59). The counterpart to Space:
+            // Space's pause gives him his place back, Enter keeps the frame he just
+            // heard. Stopping goes through stopPlayback so "stop" means one thing.
             //
             // Gated with every other key here on !WantCaptureKeyboard, so Enter in
             // the search / ask / caption boxes still belongs to the text box.
@@ -2564,7 +2564,15 @@ int main(int argc, char** argv) {
             // it, Enter on a search hit would ALSO stop playback - one key, two
             // owners. g_libFocused is last frame's value, which is what the other
             // cross-panel guard in this loop already uses.
-            if ((GetAsyncKeyState(VK_RETURN) & 1) && playing && !g_libFocused) stopPlayback(curSec, playing, false);
+            //
+            // It is a TOGGLE, not a stop. It carried an `&& playing` guard, so it
+            // could only ever stop: pressing Enter on a paused timeline did
+            // nothing at all, and Jordan reported it exactly that way ("it pauses
+            // - but doesn't play"). Play/stop-in-place is one key, both directions.
+            if ((GetAsyncKeyState(VK_RETURN) & 1) && !g_libFocused) {
+                if (playing) stopPlayback(curSec, playing, false);   // stop HERE - keep the frame he just heard
+                else { playing = true; g_playingExt = true; }        // same start as Space, below
+            }
             // NOTE (fixes the "split-brain edit model" the adversarial review flagged as
             // priority #1): track 0 is no longer mutated locally by these handlers. The
             // engine's reel is the ONE model - every S/Del/O/I keypress calls a REAL verb
@@ -3405,41 +3413,39 @@ int main(int argc, char** argv) {
 
                 // ---- optional second badge: where a render would actually LAND ----
                 // Mirrors the ENGINE's real decision chain (cmd/clip renderDirPath ->
-                // reel.RenderDirFor): the first usable clip source NOT on the evidence
-                // drive (E:) wins; an all-evidence timeline falls back to the browsed
-                // folder if IT isn't evidence, else to the engine's temp workdir
-                // (%TEMP%\becky-clip). When clips are SELECTED the selection decides -
-                // Render Selection renders those sources, so the badge must follow
-                // them, not the whole timeline's first clip. Shown only when the
-                // destination drive differs from the folder he's browsing, so it is
-                // silent normally and loud exactly when "renders go somewhere else"
-                // is true - including the evidence-drive redirect the engine now does.
+                // reel.RenderDirFor): output goes in a "render" subfolder OF THE RAW
+                // FOOTAGE - the first usable clip source wins, with SELECTED clips
+                // deciding when there is a selection (Render Selection renders those
+                // sources, so the badge must follow them, not the timeline's first
+                // clip). Only with no usable source at all does the browsed folder
+                // decide. Shown only when the destination drive differs from the
+                // folder he is browsing, so it is silent normally and speaks up
+                // exactly when "the render lands on another drive" is true.
+                //
+                // This mirror used to carry an extra rule the engine no longer has:
+                // it refused the E: evidence drive and pointed at %TEMP%ecky-clip
+                // instead. That is what Jordan saw as "renders -> C:", and it was
+                // TRUE - renders really were going to temp, where Windows later
+                // deleted forensic clips he had already delivered to law enforcement.
+                // Both sides now follow the footage. Keep them in step: if the
+                // engine's rule changes, this block changes with it or the badge lies.
                 std::string warnDir;
                 if (haveFolder && !g_track[0].empty()) {
-                    auto onEvidence = [](const std::string& s) {
-                        return s.size() > 1 && s[1] == ':' && toupper((unsigned char)s[0]) == 'E';
-                    };
                     std::string dest;
                     for (auto& c : g_track[0]) {
                         if (!g_sel.empty() && !g_sel.count(c.id)) continue;   // selection first
-                        if (c.source.empty() || onEvidence(c.source)) continue;
+                        if (c.source.empty()) continue;
                         size_t i = c.source.find_last_of("/\\");
                         if (i == std::string::npos) continue;
                         std::string dir = c.source.substr(0, i);
-                        dest = (baseName(dir) == "Rendered") ? dir : dir + "\\Rendered";
+                        dest = (_stricmp(baseName(dir).c_str(), "render") == 0) ? dir : dir + "\\render";
                         break;
                     }
-                    if (dest.empty()) {   // every usable source is on the evidence drive
-                        if (!onEvidence(g_folderRoot)) dest = g_folderRoot + "\\Rendered";
-                        else {
-                            char tmp[MAX_PATH]; DWORD n = GetTempPathA(MAX_PATH, tmp);
-                            dest = (n > 0 && n < MAX_PATH) ? std::string(tmp) + "becky-clip"
-                                                           : std::string("C:\\becky-clip");
-                        }
-                    }
+                    if (dest.empty()) dest = g_folderRoot + "\\render";   // no usable source on the timeline
                     if (dest.size() > 1 && toupper((unsigned char)dest[0]) != toupper((unsigned char)g_folderRoot[0]))
                         warnDir = dest;
                 }
+
                 const std::string warnTxt = warnDir.empty() ? std::string()
                                                             : std::string("renders -> ") + warnDir.substr(0, 2);
 

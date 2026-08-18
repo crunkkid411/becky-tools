@@ -112,14 +112,15 @@ func TestClipSourcesPickTheFirstRealSource(t *testing.T) {
 	}
 }
 
-// The exact 2026-07-21/22 incident, reproduced end-to-end through the App:
-// Jordan had E:\TakingBack2007 open in the library AND every clip on the
-// timeline (a "Render Selection" of reddit hits) was itself sourced from E:.
-// "Output goes with the footage" alone landed the render, its .edl, and its
-// .srt on the evidence drive (clips_01-02-reddit_0001.mp4, 24,190,779 bytes).
-// With no non-evidence source anywhere and the browsed folder ALSO on E:, the
-// destination must fall all the way to the work dir — never a path on E:.
-func TestRenderNeverLandsOnEvidenceDriveEvenWhenAllFootageIsThere(t *testing.T) {
+// The reversal of the deleted ProtectedDrive rule, through the App: a
+// "Render Selection" whose every clip is sourced from the evidence drive
+// renders BESIDE THAT FOOTAGE, on that drive — not into the work dir.
+//
+// The old assertion here demanded the work dir (%TEMP%\becky-clip). That is
+// where Jordan's delivered forensic clips went, and Windows cleared it. The
+// test is inverted rather than deleted so the old behaviour can never quietly
+// return: this is the one that has to fail if someone re-adds a drive rule.
+func TestRenderFollowsTheFootageEvenOnTheEvidenceDrive(t *testing.T) {
 	a := &App{
 		folder:  `E:\TakingBack2007`,
 		workDir: t.TempDir(),
@@ -131,27 +132,40 @@ func TestRenderNeverLandsOnEvidenceDriveEvenWhenAllFootageIsThere(t *testing.T) 
 
 	got := a.renderDirPath(sources...)
 
-	if strings.HasPrefix(strings.ToUpper(got), "E:") {
-		t.Fatalf("render dir = %q — NEVER the forensic evidence drive, even when it's where the footage lives", got)
+	want := filepath.Join(`E:\TakingBack2007`, reel.RenderSubdir)
+	if !strings.EqualFold(got, want) {
+		t.Errorf("render dir = %q, want %q — output goes with the raw footage", got, want)
 	}
-	if !strings.EqualFold(got, a.workDir) {
-		t.Errorf("render dir = %q, want the work dir %q — no real-footage source and the browsed folder is also E:", got, a.workDir)
+	if strings.EqualFold(got, a.workDir) {
+		t.Fatal("render dir fell through to the work dir — that is the temp folder that lost his clips")
 	}
 }
 
-// Same evidence-sourced timeline, but browsing a NORMAL (non-evidence) folder:
-// the destination must still avoid E: and fall back to that browsed folder,
-// exactly the existing "no usable source" behavior — evidence sources are
-// simply invisible to the destination decision, they don't poison it further.
-func TestRenderFallsBackToNonEvidenceBrowsedFolderWhenAllFootageIsEvidence(t *testing.T) {
-	folder := t.TempDir() // stands in for a normal, non-evidence folder (e.g. X:\...)
+// With a real clip source present, the browsed folder never gets a vote —
+// whichever drive either one is on.
+func TestRenderIgnoresTheBrowsedFolderWhenFootageIsKnown(t *testing.T) {
+	folder := t.TempDir()
 	a := &App{folder: folder, workDir: t.TempDir()}
 	sources := []string{`E:\TakingBack2007\clips_01-02-reddit_source_a.mp4`}
 
 	got := a.renderDirPath(sources...)
 
-	want := filepath.Join(folder, reel.RenderSubdir)
-	if got != want {
+	want := filepath.Join(`E:\TakingBack2007`, reel.RenderSubdir)
+	if !strings.EqualFold(got, want) {
 		t.Errorf("render dir = %q, want %q", got, want)
+	}
+}
+
+// The work dir is reachable ONLY with no source and no folder. Anything else
+// reaching it is the temp-folder data-loss bug returning.
+func TestWorkDirIsTheLastResortOnly(t *testing.T) {
+	a := &App{folder: "", workDir: t.TempDir()}
+	if got := a.renderDirPath(); got != a.workDir {
+		t.Errorf("render dir = %q, want the work dir %q for a call with no source and no folder", got, a.workDir)
+	}
+	folder := t.TempDir()
+	b := &App{folder: folder, workDir: t.TempDir()}
+	if got := b.renderDirPath(); got == b.workDir {
+		t.Errorf("render dir = %q — an open folder must beat the temp work dir", got)
 	}
 }

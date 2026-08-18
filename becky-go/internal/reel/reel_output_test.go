@@ -71,45 +71,57 @@ func TestRenderFallsBackWhenThereIsNoSource(t *testing.T) {
 	}
 }
 
-// The exact 2026-07-21/22 incident: a "Render Selection" whose clips are
-// sourced FROM the evidence drive. "Output goes with the footage" alone put
-// the render right back on E:\TakingBack2007\Rendered\ — 24MB of it, plus its
-// .edl/.srt sidecars, sitting on live case evidence. RenderDirFor must refuse
-// an evidence-drive source entirely, not just prefer non-evidence ones.
-func TestRenderDirForRefusesTheEvidenceDriveEvenAsTheOnlySource(t *testing.T) {
+// A reel sourced FROM the evidence drive renders BESIDE ITS OWN FOOTAGE, on
+// that same drive. This is the direct reversal of the deleted ProtectedDrive
+// rule, and it is the behaviour Jordan asked for in the first place: output
+// lives in a render/ subfolder of the raw footage, whatever volume that is.
+//
+// The rule it replaces refused every E: path, which sent forensic renders to
+// %TEMP%\becky-clip; Windows cleared it and clips already delivered to law
+// enforcement were lost. A render is a NEW file in a NEW subfolder — it never
+// alters an original, so the forensic invariant is not what was at stake.
+func TestRenderDirForFollowsTheFootageOntoTheEvidenceDrive(t *testing.T) {
 	got := RenderDirFor(`E:\TakingBack2007\clips_01-02-reddit.mp4`)
-	if got != "" {
-		t.Errorf("RenderDirFor(all-evidence) = %q, want \"\" so the caller falls back — never a path on E:", got)
+	want := filepath.Join(`E:\TakingBack2007`, RenderSubdir)
+	if !strings.EqualFold(got, want) {
+		t.Errorf("RenderDirFor(E: source) = %q, want %q — renders sit with their own footage", got, want)
 	}
 }
 
-// A mixed-source list must skip the evidence-drive entries and land on the
-// first REAL (non-evidence) source, not just the first non-empty one.
-func TestRenderDirForSkipsEvidenceDriveSourcesInFavorOfRealFootage(t *testing.T) {
+// The destination is the FIRST usable source, with no drive playing favourites.
+func TestRenderDirForUsesTheFirstUsableSource(t *testing.T) {
 	got := RenderDirFor(
-		`E:\TakingBack2007\clip_a.mp4`,
+		"",
 		`X:\Videos\2025\11_November\raw\FLYV9992.mp4`,
+		`E:\TakingBack2007\clip_a.mp4`,
 	)
 	want := filepath.Join(`X:\Videos\2025\11_November\raw`, RenderSubdir)
 	if !strings.EqualFold(got, want) {
-		t.Errorf("RenderDirFor(evidence, real) = %q, want %q", got, want)
+		t.Errorf("RenderDirFor = %q, want %q", got, want)
 	}
 }
 
-func TestOnProtectedDrive(t *testing.T) {
-	cases := []struct {
-		path string
-		want bool
-	}{
-		{`E:\TakingBack2007\clip.mp4`, true},
-		{`e:\TakingBack2007\clip.mp4`, true}, // lowercase drive letter still counts
-		{`X:\Videos\raw\a.mp4`, false},
-		{`C:\Users\only1\AppData\Local\Temp\becky-clip`, false},
-		{"", false},
+// The folder name is "render" — lowercase and singular, Jordan's explicit
+// choice. Asserted by literal so a future rename to "Rendered"/"Renders"
+// fails here instead of silently scattering his output across two folder names.
+func TestRenderSubdirIsLowercaseRender(t *testing.T) {
+	if RenderSubdir != "render" {
+		t.Errorf("RenderSubdir = %q, want \"render\"", RenderSubdir)
 	}
-	for _, c := range cases {
-		if got := OnProtectedDrive(c.path); got != c.want {
-			t.Errorf("OnProtectedDrive(%q) = %v, want %v", c.path, got, c.want)
+}
+
+// A render must NEVER be decided into a temp directory. This is the regression
+// test for the incident that destroyed delivered forensic clips: any source at
+// all means the answer is beside that source, never %TEMP%.
+func TestRenderDirForNeverAnswersWithATempPath(t *testing.T) {
+	for _, src := range []string{
+		`E:\TakingBack2007\clip.mp4`,
+		`X:\Videos\raw\a.mp4`,
+		`C:\Users\only1\Videos\b.mp4`,
+	} {
+		got := strings.ToLower(RenderDirFor(src))
+		if got == "" || strings.Contains(got, `\temp\`) || strings.Contains(got, "becky-clip") {
+			t.Errorf("RenderDirFor(%q) = %q — a render may never be routed to a temp dir", src, got)
 		}
 	}
 }

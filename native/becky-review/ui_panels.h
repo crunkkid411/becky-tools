@@ -44,6 +44,13 @@ const char* ico(const char* iconLabel, const char* textLabel);
 // --------------- structs ---------------
 struct VideoRow {
     std::string path, name, date; bool hasTranscript = false;
+    // The FILE's modification time (unix seconds), straight from the engine.
+    // This - not `date` - is what newest/oldest sorts by. `date` is the optional
+    // RECORDING date from a .beckymeta.json sidecar that almost no raw footage
+    // has, so sorting on it compared "" to "" and did nothing at all, while A-Z
+    // and Z-A kept working because they compare the name. Keep them separate:
+    // date is for DISPLAY on the card, mtime is for ORDER.
+    long long mtime = 0;
     // #4 (Jordan 2026-07-24): true when a saved auto-cut reel exists beside this
     // video (reelPathForVideo). The blue robot then LOADS that cut in one click
     // instead of re-analysing. Set on folder load.

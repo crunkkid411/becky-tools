@@ -515,14 +515,14 @@ func (a *App) thumbDirPath(sources ...string) string {
 	return filepath.Join(a.renderDirPath(sources...), "timeline_thumbnails")
 }
 
-// renderDir is where HUMAN-FACING outputs go: a Rendered/ subfolder OF THE RAW
+// renderDir is where HUMAN-FACING outputs go: a render/ subfolder OF THE RAW
 // FOOTAGE the render is made from — reel.RenderDirFor decides, from the given
 // clip sources. Save next to the originals, where a human can find them, NEVER in
 // a hidden AppData/temp dir. Created on demand; writing a NEW file into a NEW
 // subfolder never modifies an original (the forensic invariant holds).
 //
-// It used to be a "render" subfolder of the OPEN CASE FOLDER — whatever the
-// library happened to be browsing. That is the bug: browsing E:\TakingBack2007 (a
+// It used to be a subfolder of the OPEN CASE FOLDER — whatever the library
+// happened to be browsing. That is the bug: browsing E:\TakingBack2007 (a
 // REMOVABLE FORENSIC DRIVE holding evidence for a live criminal case) while the
 // timeline held footage from X:\Videos put eight renders of Jordan's personal
 // YouTube skits onto the evidence volume. The browsed folder answers "what am I
@@ -541,18 +541,15 @@ func (a *App) renderDir(sources ...string) (string, error) {
 }
 
 // renderDirPath is the destination DECISION alone, no disk I/O. Split from
-// renderDir so the never-on-the-wrong-drive rule is testable on machines that
-// don't have the footage's drive at all — CI has no X:, so a test that mkdirs
-// the decided path fails on Windows runners (and litters `X:\...`-named
-// directories on Linux ones) even though the decision it guards is correct.
+// renderDir so the destination rule is testable on machines that don't have the
+// footage's drive at all — CI has no X:, so a test that mkdirs the decided path
+// fails on Windows runners (and litters `X:\...`-named directories on Linux
+// ones) even though the decision it guards is correct.
 //
-// reel.RenderDirFor already refuses to answer with a source on the evidence
-// drive (see its ProtectedDrive doc — the 2026-07-21/22 "Render Selection"
-// incident: a forensic reel's own footage IS the evidence drive, so following
-// the footage landed the render right back on E:). This function's OTHER two
-// branches must refuse the same way, or the browsed folder just reopens the
-// same hole: browsing the evidence drive with an all-evidence timeline used to
-// fall through to `folder + Rendered`, which is E: again.
+// The work dir is the LAST resort only — reached when there is no usable clip
+// source AND no open folder. It must never be reachable in normal use: it is a
+// temp directory, Windows clears it, and renders that landed there have already
+// been lost once (see the deleted ProtectedDrive note in internal/reel/reel.go).
 func (a *App) renderDirPath(sources ...string) string {
 	if dir := reel.RenderDirFor(sources...); dir != "" {
 		return dir
@@ -561,7 +558,7 @@ func (a *App) renderDirPath(sources ...string) string {
 	folder := a.folder
 	work := a.workDir
 	a.mu.Unlock()
-	if strings.TrimSpace(folder) != "" && !reel.OnProtectedDrive(folder) {
+	if strings.TrimSpace(folder) != "" {
 		return filepath.Join(folder, reel.RenderSubdir)
 	}
 	return work

@@ -333,43 +333,48 @@ func checkSourcesReadable(r edl.Reel) error {
 // code could enforce it: "RENDER = A SUBFOLDER OF THE RAW, UNTOUCHED FOOTAGE."
 // A subfolder, so the render sits with the job it belongs to but can never be
 // confused with, or overwrite, the untouched originals.
-const RenderSubdir = "Rendered"
+//
+// The name is "render", SINGULAR AND LOWERCASE, and that is his explicit
+// choice, not a typo to be helpfully corrected. An agent once mis-read the rule
+// and shipped "render"; he kept it deliberately, because the odd-looking name
+// is how he spots at a glance that a folder is becky's dumping ground rather
+// than something he made. It was later "fixed" to "Rendered" without being
+// asked. Do not rename it again.
+const RenderSubdir = "render"
 
-// ProtectedDrive is the one drive letter no becky-written file may ever land
-// on: Jordan's removable criminal-case evidence volume. A third incident
-// (2026-07-21/22, this time via the review app's "Render Selection") proved
-// "output goes with the footage" is not itself enough — when the FOOTAGE is
-// forensic evidence, following it lands the render right back on the evidence
-// volume. A forensic reel plays FROM evidence; its render is a NEW file, and
-// new files never touch the evidence volume, no exceptions. Hardcoded, not a
-// config value: this is a specific, named safety boundary Jordan stated in
-// those words, not a cosmetic default (contrast the UI's drive-colour badge,
-// which deliberately has no hardcoded drive list — that's cosmetics, this is
-// the boundary itself).
-const ProtectedDrive = 'E'
+// NOTE — the deleted "ProtectedDrive" rule (2026-08-18).
+//
+// This file used to hardcode `ProtectedDrive = 'E'`: a rule that no becky-written
+// file may EVER land on the E: volume, because that is Jordan's removable
+// criminal-case evidence drive. It was added on top of the (correct) "output goes
+// with the footage" fix, by an agent, on its own initiative.
+//
+// It caused real harm and has been removed. Jordan's forensic footage LIVES on E:.
+// So for every forensic reel, RenderDirFor refused to answer, the browsed-folder
+// fallback was refused for the same reason, and the destination fell all the way
+// through to %TEMP%ecky-clip. He rendered clips for law enforcement into that
+// temp folder under deadline; Windows later cleared it and the clips were gone.
+//
+// The genuine bug this was piled on top of was DIFFERENT: renders were being
+// aimed at the BROWSED FOLDER, so browsing E: while the timeline held footage
+// from X: wrote personal videos onto the evidence volume. That fix is the one
+// below and it stays — the destination is derived from THE FOOTAGE, never from
+// the cwd and never from whatever the library happens to be showing. Once the
+// destination follows the footage, footage from X: renders to X: and footage
+// from E: renders to E:, beside itself, which is exactly the rule Jordan gave.
+//
+// Writing a NEW file into a NEW subfolder is not modifying evidence; the forensic
+// invariant ("never alter an original") is untouched. Do not reintroduce a
+// hardcoded drive exclusion. If output ever needs to avoid a volume, that is
+// Jordan's call to make explicitly, not a safety rule an agent infers.
 
-// OnProtectedDrive reports whether p sits on the evidence drive. Exported so
-// cmd/clip can apply the identical rule to the browsed-folder fallback
-// (RenderDirFor only ever sees clip sources, not that folder).
-func OnProtectedDrive(p string) bool {
-	p = strings.TrimSpace(p)
-	if len(p) < 2 || p[1] != ':' {
-		return false
-	}
-	d := p[0]
-	if d >= 'a' && d <= 'z' {
-		d -= 'a' - 'A'
-	}
-	return rune(d) == ProtectedDrive
-}
-
-// RenderDirFor returns the Rendered/ folder belonging to the FIRST usable,
-// NON-EVIDENCE source path given — i.e. where output for that footage goes.
-// "" when no such source exists (every source is empty, unusable, or itself on
-// the evidence drive), so the caller picks its own last resort.
+// RenderDirFor returns the render/ folder belonging to the FIRST usable source
+// path given — i.e. where output for that footage goes. "" only when no usable
+// source exists at all (every source is empty or has no directory), so the
+// caller picks its own last resort.
 //
 // The destination must be derived from THE FOOTAGE, never from ambient state.
-// Twice now, ambient state has written Jordan's personal YouTube skits onto E:\,
+// Twice, ambient state has written Jordan's personal YouTube skits onto E:\,
 // a REMOVABLE FORENSIC DRIVE holding evidence for a live criminal case: once
 // from the process cwd (a test run had left it there), and once from the folder
 // the review app's LIBRARY happened to be browsing while the timeline held
@@ -377,9 +382,7 @@ func OnProtectedDrive(p string) bool {
 // business on an evidence volume, and neither the cwd nor the browsed folder
 // carries the information that would prevent it. The source footage does — it is
 // the only thing that says which job this render belongs to, so it decides.
-// Never the cwd, never the browsed folder, never a hardcoded drive — EXCEPT the
-// one hardcoded exclusion above, which exists to protect the evidence drive
-// itself, not to pick a destination.
+// Never the cwd, never the browsed folder, never a hardcoded drive list.
 //
 // This is exported so cmd/clip (the review app's render + thumbnail paths) uses
 // the SAME rule as Render(). It was duplicated prose in two packages, and the
@@ -387,7 +390,7 @@ func OnProtectedDrive(p string) bool {
 func RenderDirFor(sources ...string) string {
 	for _, s := range sources {
 		s = strings.TrimSpace(s)
-		if s == "" || OnProtectedDrive(s) {
+		if s == "" {
 			continue
 		}
 		dir := pathx.Dir(s)

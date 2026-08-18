@@ -308,10 +308,20 @@ type FolderView struct {
 }
 
 // VideoView is one indexed video for the UI list.
+//
+// Mtime (file mod time, unix seconds) is ALWAYS sent — no omitempty — because
+// it is what the library's newest/oldest sort actually orders by. Date is the
+// RECORDING date read from an optional .beckymeta.json sidecar, and almost no
+// raw footage has one; sorting on it silently compared empty string to empty
+// string, so newest/oldest did nothing while A-Z/Z-A (which compare the name)
+// kept working. That is exactly how Jordan reported it. Date stays for DISPLAY;
+// Mtime is the sort key, and it is the same value folderView already orders by
+// here, so the list and the UI can no longer disagree about what "newest" means.
 type VideoView struct {
 	Path          string  `json:"path"`
 	Name          string  `json:"name"`
 	HasTranscript bool    `json:"has_transcript"`
+	Mtime         int64   `json:"mtime"`
 	Date          string  `json:"date,omitempty"`
 	Person        string  `json:"person,omitempty"`
 	Location      string  `json:"location,omitempty"`
@@ -338,6 +348,7 @@ func (a *App) folderView() FolderView {
 			Path:          v.Path,
 			Name:          v.Name,
 			HasTranscript: v.HasTranscript,
+			Mtime:         v.Mtime,
 			Date:          v.Meta.Date,
 			Person:        v.Meta.Person,
 			Location:      v.Meta.Location,
