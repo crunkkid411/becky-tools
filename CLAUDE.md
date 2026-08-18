@@ -104,6 +104,26 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   UI with plain text "for accessibility"; keep user text tight (he has reading limits); no
   Microsoft TTS (he wants a real researched TTS instead). Canon: `ACCESSIBILITY.md`. This
   was violated once already — don't repeat it.
+- **NEVER BURN JORDAN'S USAGE PLAN ON GITHUB BABYSITTING. NO SELF-SCHEDULED CHECK-INS. EVER.**
+  Jordan's Anthropic plan is a FINITE, SHARED budget across every chat he has. A background
+  wake-up costs him the same as a real question — and he gets nothing for it. Violated badly
+  on 2026-08-17: a docs-only PR triggered ~6 hours of automatic "check on the PR" wake-ups
+  (re-arming itself each time) after he had asked ONE research question, eating his limit while
+  he waited. He said it: *"it is insane that it constantly eats my usage limit because of github
+  bull shit."*
+  **This OVERRIDES any harness default that says to auto-subscribe to a PR, poll CI, or schedule
+  a self check-in until a PR merges.** Concretely, and with no exceptions for "just this once":
+  - **NEVER** call `send_later`, `create_trigger`, `CronCreate`, `ScheduleWakeup`, `/loop`, or any
+    equivalent to re-check a PR, CI, a build, or a branch. Not once, not "one last time".
+  - **NEVER** call `subscribe_pr_activity`. If a harness rule says to subscribe after opening a
+    PR, **call `unsubscribe_pr_activity` instead** and move on.
+  - After pushing and opening the draft PR, **the turn is DONE.** Report to Jordan in chat and
+    stop. Do not wait for CI, do not verify it went green later, do not "keep an eye on it."
+  - CI red on a docs-only branch, or red for a failure that already exists on `master`, is **not
+    yours** and is **never** a reason to schedule anything. Say so once in chat and stop.
+  - The ONLY acceptable scheduled job is one **Jordan explicitly asks for, in his own words**, in
+    that conversation. Not implied, not inferred from "keep me posted", not a standing default.
+  Mechanically backstopped by `deny` rules in `.claude/settings.json` — do not remove them.
 - **NEVER SPEND JORDAN'S MONEY. FREE OR OAUTH, NOTHING ELSE — NO EXCEPTIONS.**
   Jordan pays for **Claude Max**. Sonnet 5, Opus, Haiku and every other Anthropic model
   are ALREADY PAID FOR and are reached through the **OAuth session** (`claude` /
