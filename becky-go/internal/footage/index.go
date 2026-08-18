@@ -21,7 +21,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"becky-go/internal/datetri"
+	"becky-go/internal/pathx"
 	"becky-go/internal/sidecar"
 )
 
@@ -57,6 +60,55 @@ type Video struct {
 	HasTranscript  bool   `json:"has_transcript"`
 	Meta           Meta   `json:"meta"`
 	Mtime          int64  `json:"mtime,omitempty"` // file mod time (unix sec); a "most recent" fallback when Meta.Date is absent
+
+	// Recorded is WHEN THE FOOTAGE WAS SHOT (unix sec), and it is what a
+	// newest/oldest list must order by. RecordedText is the same instant
+	// formatted for display, and RecordedFrom says which source it came from
+	// ("meta" | "filename" | "file") so the UI can be honest about a guess.
+	//
+	// Mtime alone is NOT a recording date. On a copied evidence drive it is the
+	// COPY date: in E:\TakingBack2007-EVIDENCE every file carries a late-May
+	// mtime, so sorting by it ranked January footage above May footage. The
+	// filename is the mid-trust signal that survives the copy — see
+	// internal/datetri.
+	Recorded     int64  `json:"recorded,omitempty"`
+	RecordedText string `json:"recorded_text,omitempty"`
+	RecordedFrom string `json:"recorded_from,omitempty"`
+}
+
+// resolveRecorded picks the best available capture time for a video, most
+// trustworthy first: an explicit human-entered sidecar date, then a date token
+// burned into the filename by the phone/recorder, then the file's mtime. The
+// last is a fallback, not a recording date, and says so via RecordedFrom.
+func resolveRecorded(v *Video) {
+	if d := strings.TrimSpace(v.Meta.Date); d != "" {
+		// ParseInLocation, not Parse: a bare "2026-03-01" parsed as UTC and then
+		// rendered back in a UTC-7 zone reads as 2026-02-28 — a whole day wrong on
+		// screen and in the sort. datetri already works in time.Local; match it.
+		for _, layout := range []string{"2006-01-02T15:04:05Z07:00", "2006-01-02 15:04:05", "2006-01-02"} {
+			if t, err := time.ParseInLocation(layout, d, time.Local); err == nil {
+				v.Recorded, v.RecordedFrom = t.Unix(), "meta"
+				v.RecordedText = t.Format("2006-01-02")
+				return
+			}
+		}
+		// Unparseable but present: still show what the human wrote.
+		v.Recorded, v.RecordedFrom, v.RecordedText = v.Mtime, "meta", d
+		return
+	}
+	if fd, ok := datetri.ParseFilenameDate(pathx.Base(v.Path)); ok {
+		v.Recorded, v.RecordedFrom = fd.Time.Unix(), "filename"
+		if fd.Precise {
+			v.RecordedText = fd.Time.Format("2006-01-02 15:04")
+		} else {
+			v.RecordedText = fd.Time.Format("2006-01-02")
+		}
+		return
+	}
+	v.Recorded, v.RecordedFrom = v.Mtime, "file"
+	if v.Mtime > 0 {
+		v.RecordedText = time.Unix(v.Mtime, 0).Format("2006-01-02") + " (file date)"
+	}
 }
 
 // OrphanTranscript is a subtitle file that paired to NO indexed video — its
@@ -189,8 +241,9 @@ func Index(folder string) (FolderIndex, error) {
 			v.Meta = m
 		}
 		if info, ierr := d.Info(); ierr == nil {
-			v.Mtime = info.ModTime().Unix() // for a "most recent" list when no recording date is known
+			v.Mtime = info.ModTime().Unix() // last-resort fallback only — see resolveRecorded
 		}
+		resolveRecorded(&v)
 		idx.Videos = append(idx.Videos, v)
 		return nil
 	})

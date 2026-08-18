@@ -32,6 +32,18 @@ var (
 	// '.' or ':' as the time separator (macOS uses "19.14.31"). Matches
 	// "2025-07-04 19.14.31", "2025-07-04", "2025.07.04", "2025-07-04 at 9.01.05".
 	dashedDateRe = regexp.MustCompile(`(?:^|[^0-9])(\d{4})[.\-](\d{2})[.\-](\d{2})(?:(?:\s+at\s+|[ _T])(\d{1,2})[.:](\d{2})(?:[.:](\d{2}))?)?`)
+
+	// usDate: MM-DD-YYYY — the US-ordered form Windows screen recorders and
+	// Jordan's own clip-numbering write ("ScreenRecording_04-25-2026 23-12-01_1",
+	// "15_01-14-2026", "23_05-18-2026-clips"). Time may follow separated by a
+	// space, '-' or '_', with '-'/':'/'.'  between its parts.
+	//
+	// Without this, five of thirteen files in a real evidence folder parsed to NO
+	// date and fell back to the file mtime — which on a copied evidence drive is
+	// the COPY date, not the capture date. That put January footage above May
+	// footage in the "newest" list. Year-first is tried before this so an
+	// unambiguous ISO token can never be re-read in the US order.
+	usDateRe = regexp.MustCompile(`(?:^|[^0-9])(\d{2})[.\-](\d{2})[.\-](\d{4})(?:[ _\-](\d{1,2})[-.:](\d{2})(?:[-.:](\d{2}))?)?`)
 )
 
 // minYear / maxYearOffset bound a plausible capture date: reject obviously-wrong
@@ -50,7 +62,41 @@ func ParseFilenameDate(base string) (FilenameDate, bool) {
 	if d, ok := parseCompact(base); ok {
 		return d, true
 	}
+	if d, ok := parseUS(base); ok {
+		return d, true
+	}
 	return FilenameDate{}, false
+}
+
+// parseUS reads MM-DD-YYYY. Order is decided by the numbers themselves, not by a
+// locale guess: a first field over 12 cannot be a month, so it is read as
+// DD-MM-YYYY. A genuinely ambiguous pair like "01-02-2026" takes the US reading,
+// which is what every unambiguous file in Jordan's corpus uses ("04-25-2026",
+// "01-14-2026", "05-18-2026" — all month-first).
+func parseUS(base string) (FilenameDate, bool) {
+	m := usDateRe.FindStringSubmatch(base)
+	if m == nil {
+		return FilenameDate{}, false
+	}
+	a, b, y := atoi(m[1]), atoi(m[2]), atoi(m[3])
+	mo, d := a, b
+	if a > 12 {
+		mo, d = b, a
+	}
+	if !plausible(y, mo, d) {
+		return FilenameDate{}, false
+	}
+	precise := m[4] != ""
+	hh, mm, ss := atoi(m[4]), atoi(m[5]), atoi(m[6])
+	if precise && !plausibleClock(hh, mm, ss) {
+		precise = false
+		hh, mm, ss = 0, 0, 0
+	}
+	return FilenameDate{
+		Time:    time.Date(y, time.Month(mo), d, hh, mm, ss, 0, time.Local),
+		Precise: precise,
+		Raw:     trimToken(m[0]),
+	}, true
 }
 
 func parseCompact(base string) (FilenameDate, bool) {

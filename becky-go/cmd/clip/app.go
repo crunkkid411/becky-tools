@@ -309,20 +309,26 @@ type FolderView struct {
 
 // VideoView is one indexed video for the UI list.
 //
-// Mtime (file mod time, unix seconds) is ALWAYS sent — no omitempty — because
-// it is what the library's newest/oldest sort actually orders by. Date is the
-// RECORDING date read from an optional .beckymeta.json sidecar, and almost no
-// raw footage has one; sorting on it silently compared empty string to empty
-// string, so newest/oldest did nothing while A-Z/Z-A (which compare the name)
-// kept working. That is exactly how Jordan reported it. Date stays for DISPLAY;
-// Mtime is the sort key, and it is the same value folderView already orders by
-// here, so the list and the UI can no longer disagree about what "newest" means.
+// Mtime carries the RESOLVED capture time (unix seconds) that newest/oldest
+// orders by, and Date carries the same instant as text for the card to SHOW.
+// Both are always sent — no omitempty — because a sort the user cannot see is
+// a sort the user cannot trust.
+//
+// Two separate bugs lived here. First, Date was the recording date from an
+// optional .beckymeta.json sidecar that almost no raw footage has, so it was ""
+// for every row: the sort compared blanks and did nothing, while A-Z/Z-A kept
+// working because they compare the name. Then it was "fixed" to sort by the raw
+// file mtime — which on a copied evidence drive is the COPY date, so January
+// footage outranked May footage and the list was still wrong, with no date on
+// screen to reveal it. footage.resolveRecorded now picks the real capture time
+// (sidecar → filename token → file date) and the card displays it.
 type VideoView struct {
 	Path          string  `json:"path"`
 	Name          string  `json:"name"`
 	HasTranscript bool    `json:"has_transcript"`
 	Mtime         int64   `json:"mtime"`
-	Date          string  `json:"date,omitempty"`
+	Date          string  `json:"date"`
+	DateFrom      string  `json:"date_from,omitempty"`
 	Person        string  `json:"person,omitempty"`
 	Location      string  `json:"location,omitempty"`
 	SourceFPS     float64 `json:"source_fps,omitempty"`
@@ -337,8 +343,8 @@ func (a *App) folderView() FolderView {
 	vids := make([]footage.Video, len(a.index.Videos))
 	copy(vids, a.index.Videos)
 	sort.SliceStable(vids, func(i, j int) bool {
-		if vids[i].Mtime != vids[j].Mtime {
-			return vids[i].Mtime > vids[j].Mtime
+		if vids[i].Recorded != vids[j].Recorded {
+			return vids[i].Recorded > vids[j].Recorded
 		}
 		return vids[i].Name < vids[j].Name
 	})
@@ -348,8 +354,9 @@ func (a *App) folderView() FolderView {
 			Path:          v.Path,
 			Name:          v.Name,
 			HasTranscript: v.HasTranscript,
-			Mtime:         v.Mtime,
-			Date:          v.Meta.Date,
+			Mtime:         v.Recorded,
+			Date:          v.RecordedText,
+			DateFrom:      v.RecordedFrom,
 			Person:        v.Meta.Person,
 			Location:      v.Meta.Location,
 			SourceFPS:     v.Meta.SourceFPS,

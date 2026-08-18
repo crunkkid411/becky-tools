@@ -354,15 +354,15 @@ std::string elideMiddle(const std::string& s, float maxW) {
 // ---- library helpers ----
 // Sort g_videos in place per g_sortMode (B-3).
 void sortLibrary() {
-    // newest/oldest order by the FILE's mtime (see VideoRow::mtime for why it is
-    // not `date`), with a name tiebreak so equal timestamps still give a stable,
-    // deterministic order instead of shuffling between clicks.
+    // newest/oldest order by WHEN THE FOOTAGE WAS SHOT (VideoRow::recorded), with
+    // a name tiebreak so equal timestamps give a stable, deterministic order
+    // instead of shuffling between clicks.
     auto cmp = [](const VideoRow& a, const VideoRow& b) -> bool {
         switch (g_sortMode) {
-        case 1: return a.mtime != b.mtime ? a.mtime < b.mtime : a.name < b.name;   // oldest
-        case 2: return a.name < b.name;                                            // name A-Z
-        case 3: return a.name > b.name;                                            // name Z-A
-        default: return a.mtime != b.mtime ? a.mtime > b.mtime : a.name < b.name;  // newest first
+        case 1: return a.recorded != b.recorded ? a.recorded < b.recorded : a.name < b.name;   // oldest
+        case 2: return a.name < b.name;                                                        // name A-Z
+        case 3: return a.name > b.name;                                                        // name Z-A
+        default: return a.recorded != b.recorded ? a.recorded > b.recorded : a.name < b.name;  // newest first
         }
     };
     std::sort(g_videos.begin(), g_videos.end(), cmp);
@@ -644,7 +644,7 @@ void applyFolderView(const json& d, const std::string& fallbackRoot) {
             row.path = v.value("path", std::string());
             row.name = v.value("name", std::string());
             row.date = v.value("date", std::string());
-            row.mtime = v.value("mtime", (long long)0);
+            row.recorded = v.value("mtime", (long long)0);   // engine key stayed "mtime"; the VALUE is the resolved capture time
             row.hasTranscript = v.value("has_transcript", false);
             row.hasSavedCut = !row.path.empty() && std::ifstream(reelPathForVideo(row.path)).good();
             if (!row.name.empty()) g_videos.push_back(row);
