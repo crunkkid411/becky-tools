@@ -46,6 +46,7 @@ import (
 	"becky-go/internal/moment"
 	"becky-go/internal/pathx"
 	"becky-go/internal/sidecar"
+	"becky-go/internal/transcribex"
 )
 
 const toolVersion = "becky-moment v1.0.0"
@@ -123,7 +124,7 @@ func main() {
 		ExtendBudget: *extend,
 	}
 
-	sources, err := collectTranscripts(target, *folder)
+	sources, made, err := collectTranscripts(target, *folder, func(f string, a ...any) { logIf(true, f, a...) })
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "becky-moment: %v\n", err)
 		os.Exit(1)
@@ -133,12 +134,15 @@ func main() {
 		// deserves a valid empty result with the reason.
 		emit(report{
 			Tool:  toolVersion,
-			Notes: []string{"no transcript sidecars found — run becky-transcribe first"},
+			Notes: []string{"nothing to work with here: no videos or transcripts in that location"},
 		}, *out)
 		return
 	}
 
 	rep := report{Tool: toolVersion, Transcripts: len(sources)}
+	if made > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("transcribed %d file(s) that had no transcript", made))
+	}
 	var allCands []moment.Candidate
 
 	for _, src := range sources {
@@ -234,25 +238,43 @@ func main() {
 	emit(rep, *out)
 }
 
-// collectTranscripts resolves the CLI target(s) to transcript sidecar paths. A
-// video path resolves through sidecar.FindSubtitle; a transcript path is used
-// directly; a folder is scanned.
-func collectTranscripts(target, folder string) ([]string, error) {
+// collectTranscripts resolves the CLI target(s) to transcript paths, TRANSCRIBING
+// anything that does not have one yet.
+//
+// It never returns "no transcript — run becky-transcribe first". becky-tools is
+// where transcripts come from, and CLAUDE.md's central principle is that the
+// caller makes one dumb call while becky does the thinking inside it. Telling
+// Jordan to go run another tool first is not an instruction he can act on, it is
+// a dead end. The transcript is written beside the video, so this cost is paid
+// once per file, ever.
+func collectTranscripts(target, folder string, logf transcribex.Logf) ([]string, int, error) {
 	var out []string
+	made := 0
+
 	if target != "" {
-		if isTranscript(target) {
+		switch {
+		case isTranscript(target):
 			out = append(out, target)
-		} else if s := sidecar.FindSubtitle(target); s != "" {
+		default:
+			s, mk, err := transcribex.EnsureSRT(target, logf)
+			if err != nil {
+				return nil, made, err
+			}
+			if mk {
+				made++
+			}
 			out = append(out, s)
-		} else {
-			return nil, fmt.Errorf("no transcript sidecar beside %s", pathx.Base(target))
 		}
 	}
+
 	if folder != "" {
 		entries, err := os.ReadDir(folder)
 		if err != nil {
-			return nil, err
+			return nil, made, err
 		}
+		// Transcripts already present win; a video only gets transcribed when it
+		// has none, so re-running over a folder is cheap after the first pass.
+		var needy []string
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
@@ -260,11 +282,33 @@ func collectTranscripts(target, folder string) ([]string, error) {
 			p := filepath.Join(folder, e.Name())
 			if isTranscript(p) {
 				out = append(out, p)
+				continue
+			}
+			if transcribex.IsMedia(p) && sidecar.FindSubtitle(p) == "" {
+				needy = append(needy, p)
 			}
 		}
+		if len(needy) > 0 && logf != nil {
+			logf("%d file(s) in this folder have no transcript yet — making them now", len(needy))
+		}
+		for _, v := range needy {
+			s, mk, err := transcribex.EnsureSRT(v, logf)
+			if err != nil {
+				// One unreadable file must not sink the whole folder.
+				if logf != nil {
+					logf("skipping %s: %v", pathx.Base(v), err)
+				}
+				continue
+			}
+			if mk {
+				made++
+			}
+			out = append(out, s)
+		}
 	}
+
 	sort.Strings(out)
-	return dedupe(out), nil
+	return dedupe(out), made, nil
 }
 
 func isTranscript(p string) bool {

@@ -42,6 +42,13 @@ L_SHOULDER, R_SHOULDER = 11, 12
 L_HIP, R_HIP = 23, 24
 
 
+# FACE_BAND is how much of the crop width the face centre may roam across before
+# the crop is pushed to follow. 0.34 keeps the face in the middle third - loose
+# enough that small head movements do not drag the camera, tight enough that the
+# subject is never pinned to an edge.
+FACE_BAND = 0.34
+
+
 def parse_aspect(s):
     """'9:16' -> 0.5625 (width / height)."""
     if ":" in s:
@@ -111,6 +118,8 @@ def main():
                     help="subject drift, as a fraction of crop width, before the camera moves")
     ap.add_argument("--ease", type=float, default=0.14, help="0..1 glide rate once moving")
     ap.add_argument("--min-visibility", type=float, default=0.5)
+    ap.add_argument("--min-crop-frac", type=float, default=0.34,
+                    help="crop width may never fall below this fraction of the source width")
     args = ap.parse_args()
 
     import cv2
@@ -145,6 +154,7 @@ def main():
     )
 
     times, cxs, cys, widths = [], [], [], []
+    faces_l, faces_r = [], []
     found = 0
     step = 1.0 / max(args.fps, 0.5)
 
@@ -161,6 +171,7 @@ def main():
 
             cx = cy = None
             crop_w = None
+            face_l = face_r = face_t = None
             if res.pose_landmarks:
                 lm = res.pose_landmarks[0]
 
@@ -176,25 +187,59 @@ def main():
                 nose = pt(NOSE)
                 lear, rear = pt(L_EAR), pt(R_EAR)
 
-                # Horizontal centre: shoulder midpoint is the most stable anchor a
-                # human operator would use. Fall back to the head if the shoulders
-                # are out of frame or occluded.
-                if ls and rs:
+                # SCALE comes from the shoulders; POSITION comes from the FACE.
+                #
+                # Framing on the shoulder midpoint looks right only when someone
+                # faces the camera squarely. Lean over - cutting your own hair,
+                # reaching for something - and the torso centroid is nowhere near
+                # your head, so the crop centres on your chest and shears the face
+                # off the edge. That is what a first pass on Jordan's own footage
+                # did: half a frame of empty wall, his head clipped at the right.
+                # An operator puts the FACE where it belongs and uses the body only
+                # to decide how wide to be.
+                head_pts = [q for q in (nose, le, re, lear, rear) if q]
+                if head_pts:
+                    cx = sum(q[0] for q in head_pts) / len(head_pts)
+                elif ls and rs:
                     cx = 0.5 * (ls[0] + rs[0])
+
+                # SCALE comes from the HEAD, not the shoulders.
+                #
+                # Shoulder width looks like the natural scale reference until the
+                # subject leans over or turns: the two shoulders collapse together
+                # in x, the "span" goes tiny, and the crop zooms into a close-up of
+                # the top of someone's head. That happened on Jordan's own footage
+                # the moment he bent forward. Head width barely changes with pose,
+                # so it is the stable ruler; shoulders are only a sanity check.
+                head_w = None
+                if lear and rear:
+                    head_w = abs(lear[0] - rear[0])
+                elif le and re:
+                    head_w = abs(le[0] - re[0]) * 2.2  # eyes span ~45% of head width
+                elif head_pts and len(head_pts) > 1:
+                    head_w = max(q[0] for q in head_pts) - min(q[0] for q in head_pts)
+
+                if head_w and head_w > 1:
+                    # A head-and-shoulders frame is roughly 3.4 head widths across.
+                    shoulder_span = head_w * 3.4 * args.shoulder_frac / 0.46
+                elif ls and rs and abs(ls[0] - rs[0]) > 1:
                     shoulder_span = abs(ls[0] - rs[0])
-                elif nose:
-                    cx = nose[0]
-                    # No shoulders: infer scale from the head. Ear-to-ear is roughly
-                    # a third of shoulder width on an adult.
-                    if lear and rear:
-                        shoulder_span = abs(lear[0] - rear[0]) * 3.0
-                    else:
-                        shoulder_span = src_w * 0.25
                 else:
                     shoulder_span = None
 
+                # Keep the whole head, with margin, as a hard constraint later.
+                if head_pts:
+                    face_l = min(q[0] for q in head_pts)
+                    face_r = max(q[0] for q in head_pts)
+                    face_t = min(q[1] for q in head_pts)
+                else:
+                    face_l = face_r = face_t = None
+
                 if cx is not None and shoulder_span and shoulder_span > 1:
                     crop_w = shoulder_span / max(args.shoulder_frac, 0.05)
+                    # Never tighter than a third of the frame: past that it stops
+                    # being a shot of a person and becomes a texture close-up.
+                    crop_w = max(crop_w, src_w * args.min_crop_frac)
                     crop_h = crop_w / aspect
                     # Vertical: put the eyes on the eye-line. Without eyes, use the
                     # nose, and without that sit the shoulders low in frame.
@@ -209,13 +254,18 @@ def main():
                     cy = eye_y + (0.5 - args.eye_line) * crop_h
                     found += 1
 
-            if cx is None:
+            # cx can be known (from the face) while the SCALE is not (shoulders
+            # out of frame, which happens constantly when someone leans over).
+            # Guard on every value the path needs, not just cx: a None reaching
+            # the median filter sorts against floats and kills the whole run.
+            if cx is None or cy is None or crop_w is None:
                 # Carry the last good framing rather than snapping to centre: a
                 # missed detection is usually a blink of occlusion, not the subject
                 # teleporting. Only fall back to a centre crop if nothing was ever
                 # found.
                 if cxs:
                     cx, cy, crop_w = cxs[-1], cys[-1], widths[-1]
+                    face_l, face_r = faces_l[-1], faces_r[-1]
                 else:
                     crop_w = min(src_w, src_h * aspect)
                     cx, cy = src_w / 2.0, src_h / 2.0
@@ -224,6 +274,8 @@ def main():
             cxs.append(cx)
             cys.append(cy)
             widths.append(crop_w)
+            faces_l.append(face_l if face_l is not None else cx)
+            faces_r.append(face_r if face_r is not None else cx)
             t += step
 
     cap.release()
@@ -241,7 +293,7 @@ def main():
     widths = smooth_path(median_filter(widths, k), deadband=0.10 * median(widths), ease=0.06)
 
     path = []
-    for t, cx, cy, cw in zip(times, cxs, cys, widths):
+    for t, cx, cy, cw, fl, fr in zip(times, cxs, cys, widths, faces_l, faces_r):
         ch = cw / aspect
         # Never ask for more than the source has; scale the rect down to fit.
         if cw > src_w:
@@ -250,6 +302,30 @@ def main():
             ch, cw = float(src_h), src_h * aspect
         x = cx - cw / 2.0
         y = cy - ch / 2.0
+        # HARD CONSTRAINT: the face must be COMPOSED, not merely present.
+        #
+        # "Inside the frame" is not good enough. Smoothing lags a moving subject
+        # by design, so a face can sit legally inside the crop while jammed
+        # against its edge - which is exactly what a first pass on Jordan's
+        # footage produced: him pinned right, half the frame empty wall. Requiring
+        # the face CENTRE to stay within the middle band forces the composition an
+        # operator would hold, and the smoother still does the work of getting
+        # there gracefully.
+        fc = 0.5 * (fl + fr)
+        lo = x + (0.5 - FACE_BAND / 2) * cw
+        hi = x + (0.5 + FACE_BAND / 2) * cw
+        if fc > hi:
+            x += fc - hi
+        elif fc < lo:
+            x -= lo - fc
+
+        # And the whole head stays in, with margin, whatever the band says.
+        margin = 0.05 * cw
+        if fr + margin > x + cw:
+            x = fr + margin - cw
+        if fl - margin < x:
+            x = fl - margin
+
         # Clamp inside the frame: a crop rect that runs off the edge gives ffmpeg
         # black bars, which reads instantly as a broken auto-crop.
         x = max(0.0, min(x, src_w - cw))
