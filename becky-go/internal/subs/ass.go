@@ -47,13 +47,24 @@ func DefaultJordanStyle(outputHeight int) ASSStyle {
 		fontSize = 28
 	}
 	return ASSStyle{
-		FontName:      "ProximaNova-Semibold", // same family as DefaultStyle; "heavy rounded sans" is the ask
-		FontSize:      fontSize,
-		Bold:          1,
-		Outline:       3,
-		Shadow:        1,
-		Alignment:     2,
-		MarginV:       90,
+		FontName:  "ProximaNova-Semibold", // same family as DefaultStyle; "heavy rounded sans" is the ask
+		FontSize:  fontSize,
+		Bold:      1,
+		Outline:   3,
+		Shadow:    1,
+		Alignment: 2,
+		// MEASURED, not guessed at: with MarginV 90 the block sat at 84-93% of
+		// frame height - hard against the bottom edge - while Jordan's own
+		// captions sit visibly higher, in the lower-middle over the chest, with
+		// the bottom of the frame left for hands and whatever is on the table
+		// (research/jordan-edit-reverse-engineered.md). Proportional to height so
+		// it holds at any output size.
+		//
+		// STILL HIS CALL: this puts the block in the right REGION. The exact
+		// height, the font, and the glow he uses have not been approved - the
+		// point of --caption-style=jordan is that he can look at it and say
+		// tighter/higher/heavier.
+		MarginV:       outputHeight * 26 / 100,
 		EmphasisColor: "&HFFFF00&", // cyan (R=00 G=FF B=FF -> BB GG RR = FF FF 00)
 	}
 }
