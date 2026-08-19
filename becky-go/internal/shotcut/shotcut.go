@@ -1,0 +1,294 @@
+// Package shotcut finds HARD CUT points already present in a video — the shot
+// boundaries an editor already made, not silence and not a becky-cut decision.
+//
+// Method (research/jordan-edit-reverse-engineered.md, "Finding 1"): decode
+// frames at the video's TRUE fps (never resampled — Jordan's rule is that this
+// pipeline analyses at the real frame rate, always), downscale hard to 96x54,
+// convert to greyscale, take the mean absolute difference between consecutive
+// frames, and call a frame a candidate cut when that difference clears
+// median + 6*MAD — floored at a minimum so a static shot with near-zero
+// variance cannot manufacture cuts out of compression noise. Adjacent
+// detections (a hard cut occasionally straddles two encoded frames) collapse
+// into one cut at the first frame of the run.
+//
+// A candidate then has to be CONFIRMED (confirmedCut): a real cut is a
+// PERMANENT change of picture, so a frame a few frames before and a frame a
+// few frames after the spike must also differ by a real amount — this catches
+// a one-frame encoder glitch or flash that isn't a real, lasting change. It
+// is NOT what catches the false positive this package was actually measured
+// against, below — that one needed a higher floor, not a wider comparison
+// window (see minDiffFloor).
+//
+// MEASURED FALSE POSITIVE, kept as the reason minDiffFloor is what it is:
+// the first version of this detector (minDiffFloor=6.0, no confirmation)
+// found two "cuts" in test-for-clips.mp4 (raw footage, a head whip and a
+// hand raising scissors) that visual inspection showed were the SAME
+// continuous shot. The diff trace there was not a one-frame spike at all —
+// it was a smooth ~1s RAMP up to a peak of ~7.1 and back down, because fast
+// motion blurs across many consecutive frames. A real hard cut in this same
+// source's edited reference footage is an ISOLATED single-frame jump to
+// ~60-80 — 10x the motion-blur peak, with the ordinary content on both sides
+// sitting at 1-4. confirmedCut's before/after comparison could not tell
+// these apart (170ms either side of the peak is STILL inside the same
+// ramp), but the two populations are separated by a wide enough margin
+// (~7 vs ~12 for the WEAKEST real cut measured) that a plain, higher floor
+// does the job cleanly — see shotcut_test.go's real-footage regression for
+// both cases.
+//
+// This is a starting point, not a promise of perfection on every source — it
+// is validated against a hand-verified cut list from real footage in
+// shotcut_test.go's precision/recall numbers, not asserted blind.
+package shotcut
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"math"
+	"os/exec"
+	"sort"
+
+	"becky-go/internal/mediainfo"
+)
+
+// downscaleW/H is the frame-diff working resolution: small enough to be fast
+// and to average away compression macroblock noise, big enough that a real
+// cut (a different scene, a different framing) still dominates the frame.
+// 96x54 keeps the source 16:9 ratio; a non-16:9 source is still fine to diff,
+// it just is not literally square pixels — the diff doesn't care.
+const (
+	downscaleW = 96
+	downscaleH = 54
+)
+
+// Options configure one detection run.
+type Options struct {
+	// Video is the source file.
+	Video string
+	// Start/End window bounds, in seconds, source-absolute. End<=Start means
+	// "to end of file".
+	Start, End float64
+	// FFmpeg overrides the ffmpeg binary; "" means "ffmpeg" on PATH.
+	FFmpeg string
+	// FFprobe overrides the ffprobe binary used to read the true fps.
+	FFprobe string
+	// MinDiff floors the cut threshold so a static/near-static shot (whose
+	// median+6*MAD can be a hair above zero) cannot manufacture cuts from
+	// encoder noise alone. 0 uses the researched default (see minDiffFloor).
+	MinDiff float64
+}
+
+// minDiffFloor is the default MinDiff: mean abs difference on a 0-255
+// greyscale, 96x54 frame. MEASURED (shotcut_test.go's real-footage cases):
+// the weakest genuine cut in the BLINDFOLD reference list peaks at 12.08;
+// the fast-motion false positive in raw footage (test-for-clips.mp4) peaks
+// at 7.12. 8.0 sits with margin on both sides of that gap.
+const minDiffFloor = 8.0
+
+// madScale is the "6" in "median + 6*MAD" from the research doc's method.
+const madScale = 6.0
+
+// confirmSeconds is how far before/after a candidate spike confirmedCut looks
+// to check the change actually stuck. 100ms is short enough to sit inside
+// even the shortest real shot ever measured off Jordan's own edit (0.53s,
+// research/jordan-edit-reverse-engineered.md) — so it cannot accidentally
+// straddle two real cuts — and long enough that a one-frame motion-blur
+// spike has clearly decayed back by the time it's checked.
+const confirmSeconds = 0.1
+
+// confirmFrac is how much of the threshold the FAR diff (frames well before
+// vs. well after the spike) must still clear to confirm a candidate as a
+// real, lasting cut rather than a transient blur that snapped back.
+const confirmFrac = 0.5
+
+// Detect returns hard-cut times (source-absolute seconds) inside
+// [opt.Start, opt.End]. A cut time is the timestamp of the FIRST frame of the
+// new shot. Degrades with an error (never crashes) on a source ffmpeg/ffprobe
+// cannot read — the caller treats "no cuts found" and "detection unavailable"
+// as the same thing: fall back to raw-footage behaviour.
+func Detect(opt Options) ([]float64, error) {
+	ffmpegBin := opt.FFmpeg
+	if ffmpegBin == "" {
+		ffmpegBin = "ffmpeg"
+	}
+	ffprobeBin := opt.FFprobe
+	if ffprobeBin == "" {
+		ffprobeBin = "ffprobe"
+	}
+	info, err := mediainfo.Probe(ffprobeBin, opt.Video)
+	if err != nil || info.FPS <= 0 {
+		return nil, fmt.Errorf("could not read the true frame rate of %s: %v", opt.Video, err)
+	}
+	fps := info.FPS
+
+	dur := opt.End - opt.Start
+	if dur <= 0 {
+		dur = info.Duration - opt.Start
+	}
+	if dur <= 0 {
+		return nil, fmt.Errorf("empty window")
+	}
+
+	// Decode at the source's OWN frame rate — no `fps=` resample filter. A cut
+	// lands on a specific encoded frame; resampling can merge or duplicate the
+	// two frames either side of it and blur the exact boundary away.
+	cmd := exec.Command(ffmpegBin, "-v", "error",
+		"-ss", fmt.Sprintf("%.6f", opt.Start), "-t", fmt.Sprintf("%.6f", dur),
+		"-i", opt.Video,
+		"-vf", fmt.Sprintf("scale=%d:%d,format=gray", downscaleW, downscaleH),
+		"-pix_fmt", "gray", "-f", "rawvideo", "-")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("ffmpeg start failed: %w", err)
+	}
+
+	frames, ferr := decodeFrames(stdout)
+	waitErr := cmd.Wait()
+	if ferr != nil {
+		return nil, ferr
+	}
+	if waitErr != nil && len(frames) == 0 {
+		return nil, fmt.Errorf("ffmpeg decode failed: %w", waitErr)
+	}
+
+	minDiff := opt.MinDiff
+	if minDiff <= 0 {
+		minDiff = minDiffFloor
+	}
+	confirmFrames := int(math.Round(confirmSeconds * fps))
+	if confirmFrames < 1 {
+		confirmFrames = 1
+	}
+	return cutTimes(frames, opt.Start, fps, minDiff, confirmFrames), nil
+}
+
+// decodeFrames reads every raw gray8 frame from r into memory. Windows this
+// package is actually called on (a becky-short job's clip window) are tens of
+// seconds, a few MB at this resolution — trivial to hold whole, and holding
+// them is what lets cutTimes look BOTH at consecutive-frame diffs and at the
+// wider before/after comparison confirmedCut needs.
+func decodeFrames(r io.Reader) ([][]byte, error) {
+	const frameSize = downscaleW * downscaleH
+	br := bufio.NewReaderSize(r, frameSize*4)
+	var frames [][]byte
+	for {
+		buf := make([]byte, frameSize)
+		n, err := io.ReadFull(br, buf)
+		if n == frameSize {
+			frames = append(frames, buf)
+		}
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return frames, nil
+			}
+			return frames, err
+		}
+	}
+}
+
+func meanAbsDiff(a, b []byte) float64 {
+	var sum int
+	for i := range a {
+		d := int(a[i]) - int(b[i])
+		if d < 0 {
+			d = -d
+		}
+		sum += d
+	}
+	return float64(sum) / float64(len(a))
+}
+
+// cutTimes thresholds consecutive-frame diffs at median+6*MAD (floored at
+// minDiff), collapses adjacent detections into one candidate per run, then
+// CONFIRMS each candidate (confirmedCut) before calling it a cut.
+func cutTimes(frames [][]byte, start, fps, minDiff float64, confirmFrames int) []float64 {
+	if len(frames) < 2 {
+		return nil
+	}
+	diffs := make([]float64, len(frames)-1)
+	for i := 0; i+1 < len(frames); i++ {
+		diffs[i] = meanAbsDiff(frames[i], frames[i+1])
+	}
+
+	med := median(diffs)
+	mad := medianAbsDev(diffs, med)
+	threshold := med + madScale*mad
+	if threshold < minDiff {
+		threshold = minDiff
+	}
+
+	// runGap tolerates up to a TWO-frame dip below threshold inside a run
+	// before starting a new candidate. A real hard cut occasionally
+	// straddles more than one encoded frame (motion blur / a partial blend
+	// the encoder produced across the transition) whose diff dips just under
+	// threshold in the middle — without this it counts as two adjacent cuts
+	// a few milliseconds apart instead of one. MEASURED at 1 first, then
+	// raised to 2 after raising minDiffFloor (8.0, to reject a raw-footage
+	// false positive — see the header comment) split what used to be one
+	// blend-run into two on the BLINDFOLD reference footage.
+	const runGap = 2
+
+	var cuts []float64
+	lastHit := -1 - runGap
+	for i, d := range diffs {
+		if d <= threshold {
+			continue
+		}
+		if i-lastHit > runGap+1 {
+			// diffs[i] is the jump INTO frame i+1, so a candidate at this
+			// index means the new shot starts at frame i+1.
+			frameIdx := i + 1
+			if confirmedCut(frames, frameIdx, threshold, confirmFrames) {
+				cuts = append(cuts, start+float64(frameIdx)/fps)
+			}
+		}
+		lastHit = i
+	}
+	return cuts
+}
+
+// confirmedCut checks that a candidate cut at frames[frameIdx] is a LASTING
+// picture change, not a transient spike (fast motion blur) that snaps back.
+// It compares a frame confirmFrames before the outgoing shot's last frame to
+// one confirmFrames into the new shot — skipping the spike itself — and
+// requires that far comparison to still clear confirmFrac of the threshold.
+//
+// Too close to either edge of the decoded window to check both sides: kept,
+// not rejected — this function can only rule OUT a false positive, never
+// manufacture a true one, so "can't tell" defaults to trusting the spike.
+func confirmedCut(frames [][]byte, frameIdx int, threshold float64, confirmFrames int) bool {
+	lo := frameIdx - 1 - confirmFrames
+	hi := frameIdx + confirmFrames
+	if lo < 0 || hi >= len(frames) {
+		return true
+	}
+	return meanAbsDiff(frames[lo], frames[hi]) > threshold*confirmFrac
+}
+
+func median(vals []float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), vals...)
+	sort.Float64s(s)
+	n := len(s)
+	if n%2 == 1 {
+		return s[n/2]
+	}
+	return 0.5 * (s[n/2-1] + s[n/2])
+}
+
+func medianAbsDev(vals []float64, med float64) float64 {
+	dev := make([]float64, len(vals))
+	for i, v := range vals {
+		d := v - med
+		if d < 0 {
+			d = -d
+		}
+		dev[i] = d
+	}
+	return median(dev)
+}

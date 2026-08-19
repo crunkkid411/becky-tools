@@ -33,6 +33,7 @@ import (
 	"becky-go/internal/config"
 	"becky-go/internal/crop"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/shotcut"
 	"becky-go/internal/subs"
 	"becky-go/internal/transcribex"
 )
@@ -57,16 +58,27 @@ type keepSpan struct {
 }
 
 // jumpcutPlan is the pacing decision for one short: which spans of the window
-// survive becky-cut's cut, and how much dead air that removes.
+// survive the cut, and how much time that removes.
 type jumpcutPlan struct {
 	Spans          []keepSpan
 	RemovedSeconds float64
+	// ExistingCuts/PreservedCuts/Cuts are only set by planShotSpans, when the
+	// SOURCE ITSELF already carries hard cuts inside the window (Finding 1,
+	// research/jordan-edit-reverse-engineered.md) — zero/nil for the plain
+	// becky-cut silence path (planJumpcuts), which has no notion of a "shot".
+	ExistingCuts  int
+	PreservedCuts int
+	Cuts          []float64
 }
 
 // planJumpcuts intersects becky-cut's WHOLE-FILE keep decisions (cached per
 // source in cache) with j's window, dropping any resulting sliver shorter
 // than jumpcutMinSpan. Pure once cache is populated — no I/O — so it is
 // unit-tested directly against a canned cache.
+//
+// This is the RAW-FOOTAGE path: no existing cuts, so becky-cut's own silence
+// threshold decides where the cuts go. planPacing only reaches this when
+// shotcut.Detect found nothing to preserve.
 func planJumpcuts(cache *cutCache, j job) (jumpcutPlan, error) {
 	all, err := cache.wholeFileSpans(j.Src)
 	if err != nil {
@@ -86,17 +98,147 @@ func planJumpcuts(cache *cutCache, j job) (jumpcutPlan, error) {
 	return jumpcutPlan{Spans: kept, RemovedSeconds: windowDur - keptDur}, nil
 }
 
+// defaultTighten is Jordan's OWN measured tightening rate on already-edited
+// footage — 150ms per cut, not a raw-footage silence threshold
+// (research/jordan-edit-reverse-engineered.md, "Finding 2": he removes 10.3%
+// of a 32s span across 22 cuts; becky-cut --dry-run alone removed 51% of a
+// raw window, the wrong instinct entirely once the source is already cut).
+// Used only where becky-cut finds no real dead air right at a given
+// boundary (boundaryTighten); --tighten overrides it.
+const defaultTighten = 0.15
+
+// tightenSearchRadius is how far from an existing cut boundary boundaryTighten
+// looks for a becky-cut REMOVE (dead-air) decision to derive the trim from
+// REAL silence at that exact cut, instead of always applying the flag
+// default blindly.
+const tightenSearchRadius = 0.4
+
+// boundaryTighten returns the TOTAL trim at one existing-cut boundary: the
+// length of a becky-cut REMOVE span found within tightenSearchRadius of the
+// boundary — real dead air, trimmed exactly, capped so a long silence
+// elsewhere in the shot can't swallow the whole cut — else flagDefault.
+// Split in half by the caller: half comes off the end of the earlier span,
+// half off the start of the later one, so the boundary itself is centred.
+func boundaryTighten(removeSpans []keepSpan, boundary, flagDefault float64) float64 {
+	for _, rs := range removeSpans {
+		if rs.Out < boundary-tightenSearchRadius || rs.In > boundary+tightenSearchRadius {
+			continue
+		}
+		d := rs.Out - rs.In
+		if d <= 0 {
+			continue
+		}
+		if capAt := flagDefault * 4; d > capAt {
+			d = capAt
+		}
+		return d
+	}
+	return flagDefault
+}
+
+// planShotSpans builds a jumpcutPlan for a window where the SOURCE ITSELF
+// already carries hard cuts (Finding 1, research/jordan-edit-reverse-engineered.md):
+// Jordan did not choose most of his cuts, he inherited them — 11 of 14
+// confidently-aligned cuts in his own vertical land within 100ms of a cut
+// that already existed in the master, 8 of them frame-exact. The existing
+// shot boundaries become the span boundaries, PRESERVED AS-IS; becky-cut is
+// used only to TIGHTEN a small amount at each one (boundaryTighten), never
+// to invent a new cut list or apply a raw-footage silence threshold.
+//
+// cuts are source-absolute seconds inside (j.In, j.Out) (internal/shotcut).
+// Pure — no I/O — given cuts and removeSpans already resolved.
+func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float64) jumpcutPlan {
+	bounds := []float64{j.In}
+	existing := 0
+	for _, c := range cuts {
+		if c <= j.In || c >= j.Out {
+			continue
+		}
+		existing++
+		// A cut too close to the window's own edge cannot be a usable span
+		// boundary — the resulting sliver span would be dropped anyway
+		// (jumpcutMinSpan), so it never becomes one.
+		if c > j.In+jumpcutMinSpan && c < j.Out-jumpcutMinSpan {
+			bounds = append(bounds, c)
+		}
+	}
+	bounds = append(bounds, j.Out)
+
+	var spans []keepSpan
+	var removed float64
+	for i := 0; i < len(bounds)-1; i++ {
+		in, out := bounds[i], bounds[i+1]
+		if i > 0 {
+			trim := boundaryTighten(removeSpans, bounds[i], tighten) / 2
+			in += trim
+			removed += trim
+		}
+		if i < len(bounds)-2 {
+			trim := boundaryTighten(removeSpans, bounds[i+1], tighten) / 2
+			out -= trim
+			removed += trim
+		}
+		if out-in < jumpcutMinSpan {
+			continue
+		}
+		spans = append(spans, keepSpan{In: in, Out: out})
+	}
+	return jumpcutPlan{Spans: spans, RemovedSeconds: removed, ExistingCuts: existing,
+		PreservedCuts: len(bounds) - 2, Cuts: cuts}
+}
+
+// planPacing decides how to pace one short's window: if the SOURCE already
+// carries hard cuts inside it, PRESERVE them (planShotSpans); otherwise fall
+// back to becky-cut's own silence-based jumpcuts exactly as before
+// (planJumpcuts) — raw footage with no existing edit is the other real case,
+// and it must render unchanged.
+//
+// Shot detection is scoped to just this window (shotcut.Detect decodes only
+// [j.In,j.Out], unlike becky-cut it is cheap enough to run per job with no
+// cache), so a detection failure (ffmpeg missing, etc.) degrades to the
+// raw-footage path rather than failing the render.
+func planPacing(cfg config.Config, cache *cutCache, j job, tighten float64) (jumpcutPlan, error) {
+	cuts, err := shotcut.Detect(shotcut.Options{
+		Video: j.Src, Start: j.In, End: j.Out, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,
+	})
+	if err != nil || len(cuts) == 0 {
+		return planJumpcuts(cache, j)
+	}
+	return planShotSpans(cuts, cache.wholeFileRemoveSpans(j.Src), j, tighten), nil
+}
+
+// cutsWithinSpan filters cuts to the ones strictly INSIDE (in,out) — the ones
+// this one span's own crop.Run call must reset the smoother at. Normally
+// empty: planShotSpans already puts a span boundary at every usable cut, so
+// a span IS one shot. Kept as a real filter (not assumed empty) so a span
+// that for any reason still spans more than one shot is still handled
+// correctly rather than silently smoothing across it.
+func cutsWithinSpan(cuts []float64, in, out float64) []float64 {
+	var inside []float64
+	for _, c := range cuts {
+		if c > in && c < out {
+			inside = append(inside, c)
+		}
+	}
+	return inside
+}
+
 // cutCache memoises becky-cut's whole-file --dry-run decisions (and any
 // failure to get them) per source path, so a --reel job cutting several
 // shorts from the same source runs becky-cut exactly once for it — becky-cut
-// always analyses the whole file, never just a window.
+// always analyses the whole file, never just a window. Both KEEP and REMOVE
+// (dead-air) decisions are cached from the same run: keep spans drive the
+// raw-footage jumpcut path (planJumpcuts), remove spans inform how much to
+// TIGHTEN at an existing shot boundary (planShotSpans/boundaryTighten) —
+// never a second becky-cut invocation for the second use.
 type cutCache struct {
-	spans map[string][]keepSpan
-	errs  map[string]error
+	spans       map[string][]keepSpan
+	removeSpans map[string][]keepSpan
+	errs        map[string]error
 }
 
 func newCutCache() *cutCache {
-	return &cutCache{spans: map[string][]keepSpan{}, errs: map[string]error{}}
+	return &cutCache{spans: map[string][]keepSpan{}, removeSpans: map[string][]keepSpan{}, errs: map[string]error{}}
 }
 
 func (c *cutCache) wholeFileSpans(src string) ([]keepSpan, error) {
@@ -106,27 +248,48 @@ func (c *cutCache) wholeFileSpans(src string) ([]keepSpan, error) {
 	if err, ok := c.errs[src]; ok {
 		return nil, err
 	}
-	spans, err := c.compute(src)
+	keep, remove, err := c.compute(src)
 	if err != nil {
 		c.errs[src] = err
 		return nil, err
 	}
-	c.spans[src] = spans
-	return spans, nil
+	c.spans[src] = keep
+	c.removeSpans[src] = remove
+	return keep, nil
 }
 
-func (c *cutCache) compute(src string) ([]keepSpan, error) {
+// wholeFileRemoveSpans is the dead-air twin of wholeFileSpans, for tightening
+// near an existing cut. Best-effort: a source becky-cut can't decide for
+// (not built, timed out, ...) just returns nil, and the caller falls back to
+// the flag default tighten amount rather than failing the whole render —
+// tightening is a refinement on top of Part A's cuts, not a requirement of
+// them.
+func (c *cutCache) wholeFileRemoveSpans(src string) []keepSpan {
+	if r, ok := c.removeSpans[src]; ok {
+		return r
+	}
+	keep, remove, err := c.compute(src)
+	if err != nil {
+		c.errs[src] = err
+		return nil
+	}
+	c.spans[src] = keep
+	c.removeSpans[src] = remove
+	return remove
+}
+
+func (c *cutCache) compute(src string) (keep, remove []keepSpan, err error) {
 	bin, ok := resolveCutBin()
 	if !ok {
-		return nil, fmt.Errorf("becky-cut not found — build it with build-all-tools.bat (or set BECKY_CUT to its path)")
+		return nil, nil, fmt.Errorf("becky-cut not found — build it with build-all-tools.bat (or set BECKY_CUT to its path)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cutTimeout())
 	defer cancel()
 	out, err := runBeckyCutDryRun(ctx, bin, src)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return parseCutKeepSegments(out)
+	return parseCutDecisions(out)
 }
 
 // cutTimeout bounds one becky-cut --dry-run exec. Detection on a long video
@@ -206,21 +369,23 @@ type cutDecisionReport struct {
 	} `json:"decisions"`
 }
 
-// parseCutKeepSegments parses becky-cut's --dry-run stdout and returns only
-// the "keep" spans, in order. PURE. An unparseable payload is an error; the
-// caller (cutCache) degrades by caching it, never by crashing.
-func parseCutKeepSegments(stdout []byte) ([]keepSpan, error) {
+// parseCutDecisions parses becky-cut's --dry-run stdout into its "keep" and
+// "cut" (removed dead-air) spans, in order. PURE. An unparseable payload is an
+// error; the caller (cutCache) degrades by caching it, never by crashing.
+func parseCutDecisions(stdout []byte) (keep, remove []keepSpan, err error) {
 	var rep cutDecisionReport
 	if err := json.Unmarshal(stdout, &rep); err != nil {
-		return nil, fmt.Errorf("unexpected becky-cut output: %w", err)
+		return nil, nil, fmt.Errorf("unexpected becky-cut output: %w", err)
 	}
-	spans := make([]keepSpan, 0, len(rep.Decisions))
 	for _, d := range rep.Decisions {
+		sp := keepSpan{In: d.Start, Out: d.End}
 		if d.Status == "keep" {
-			spans = append(spans, keepSpan{In: d.Start, Out: d.End})
+			keep = append(keep, sp)
+		} else {
+			remove = append(remove, sp)
 		}
 	}
-	return spans, nil
+	return keep, remove, nil
 }
 
 // renderJumpcutShort renders a short from N kept spans instead of one
@@ -240,7 +405,15 @@ func parseCutKeepSegments(stdout []byte) ([]keepSpan, error) {
 // Captions are ONE subs.Build call across every span (captionSRTJumpcut),
 // which is what makes them land on the CUT timeline instead of the original
 // continuous window — see internal/subs.Segment's doc comment.
-func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, res shortOut, asp float64, outW, outH int,
+//
+// cuts are the existing shot boundaries this plan was built from (nil for
+// the raw-footage/becky-cut-only path). Each span already gets its OWN
+// crop.Run call below with cuts filtered to strictly inside that one span
+// (cutsWithinSpan) — normally empty, since planShotSpans already puts a span
+// boundary at every usable cut, so a span already IS one shot; still passed
+// through rather than assumed, so the smoother never blends across a cut a
+// span happens to still contain (Finding 2, research/jordan-edit-reverse-engineered.md).
+func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float64, res shortOut, asp float64, outW, outH int,
 	sampleFPS, minCov, maxGap float64, forceCenter, withCaptions, verbose bool) (shortOut, error) {
 
 	info, err := mediainfo.Probe(cfg.FFprobe, j.Src)
@@ -287,7 +460,8 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, res shortOut
 	)
 
 	for i, sp := range spans {
-		cr, err := resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, forceCenter)
+		cr, err := resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, forceCenter,
+			cutsWithinSpan(cuts, sp.In, sp.Out))
 		if err != nil {
 			return res, fmt.Errorf("kept span %d/%d [%.2f,%.2f]: %w", i+1, len(spans), sp.In, sp.Out, err)
 		}

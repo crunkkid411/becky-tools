@@ -116,6 +116,57 @@ def smooth_zero_phase(vals, alpha):
     return back
 
 
+def segment_bounds(times, cut_times):
+    """[(lo,hi), ...] index ranges into times (and cxs/cys/widths, which are
+    parallel arrays) that partition the window at each cut.
+
+    cut_times are WINDOW-RELATIVE seconds, already filtered to strictly
+    inside (0, times[-1]) by the caller. No cut_times at all returns one
+    segment covering everything - IDENTICAL to the pre-Finding-2 behaviour,
+    so a caller that doesn't know about shot boundaries sees no change.
+    """
+    if not cut_times:
+        return [(0, len(times))]
+    bounds = [0]
+    for ct in cut_times:
+        i = 0
+        while i < len(times) and times[i] < ct:
+            i += 1
+        if 0 < i < len(times) and i != bounds[-1]:
+            bounds.append(i)
+    bounds.append(len(times))
+    return [(bounds[j], bounds[j + 1]) for j in range(len(bounds) - 1) if bounds[j + 1] > bounds[j]]
+
+
+def smooth_by_segments(vals, seg_bounds, k, alpha, deadband):
+    """despike -> smooth_zero_phase -> hold_and_move, INDEPENDENTLY per
+    segment of seg_bounds.
+
+    This is the fix for Finding 2 (research/jordan-edit-reverse-engineered.md):
+    smooth_zero_phase filters forward AND backward, so run across a whole clip
+    it smears shot A's ending framing into shot B's start (and leans shot B's
+    beginning backward into shot A) across every hard cut in between - the
+    camera visibly drifts into position over the first half second of a cut
+    instead of snapping, because the filter that removes lag ALSO has no
+    concept of "this is a different shot now". Slicing vals at each cut and
+    running the whole despike/smooth/hold pipeline independently per slice
+    keeps every shot's filter blind to every other shot's frames, which is
+    what a real operator's frame does too - a hard cut is not something a
+    camera operator's hand smooths through.
+
+    median_filter is included in the per-segment pipeline, not just
+    smooth_zero_phase: a despike window straddling a cut boundary would leak
+    the same way on a smaller scale.
+    """
+    out = [0.0] * len(vals)
+    for lo, hi in seg_bounds:
+        seg = vals[lo:hi]
+        if not seg:
+            continue
+        out[lo:hi] = hold_and_move(smooth_zero_phase(median_filter(seg, k), alpha), deadband)
+    return out
+
+
 def hold_and_move(vals, deadband):
     """Give the lag-free path an operator's INTENT: hold, then commit to a move.
 
@@ -187,6 +238,15 @@ def main():
     ap.add_argument("--min-visibility", type=float, default=0.5)
     ap.add_argument("--min-crop-frac", type=float, default=0.34,
                     help="crop width may never fall below this fraction of the source width")
+    # Finding 2, research/jordan-edit-reverse-engineered.md: the source can
+    # already carry hard cuts inside [start,end] (an already-edited window,
+    # not one continuous take). becky-short's shot detector (internal/shotcut)
+    # knows them already, so they are PASSED IN here rather than re-detected -
+    # this helper has no scene detector of its own and should not grow one.
+    ap.add_argument("--cut-times", default="",
+                    help="comma-separated ABSOLUTE cut times (source seconds, same domain as "
+                         "--start/--end) inside the window; the zero-phase smoother resets at "
+                         "each one instead of blending shot A's framing into shot B across it")
     args = ap.parse_args()
 
     import cv2
@@ -442,12 +502,28 @@ def main():
     # unusable, and only then is the hold applied - on a signal that is already
     # aligned in time, so a hold never means "stale".
     dead = args.deadband * median(widths)
-    cxs = hold_and_move(smooth_zero_phase(median_filter(cxs, k), args.smooth), dead)
-    cys = hold_and_move(smooth_zero_phase(median_filter(cys, k), args.smooth), dead)
+
+    # Cut times arrive ABSOLUTE (source seconds); times[] is WINDOW-relative
+    # (see the `round(t - args.start, 4)` above), so shift into that domain
+    # and drop anything outside the window - a cut passed in from a wider
+    # detection window than this call's [start,end] must not split it.
+    cut_times = []
+    if args.cut_times.strip():
+        for tok in args.cut_times.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            ct = float(tok) - args.start
+            if 0 < ct < times[-1]:
+                cut_times.append(ct)
+    cut_times.sort()
+    seg_bounds = segment_bounds(times, cut_times)
+
+    cxs = smooth_by_segments(cxs, seg_bounds, k, args.smooth, dead)
+    cys = smooth_by_segments(cys, seg_bounds, k, args.smooth, dead)
     # Width changes read as a zoom, which is far more noticeable than a pan, so it
     # is smoothed harder and held wider.
-    widths = hold_and_move(smooth_zero_phase(median_filter(widths, k), 0.06),
-                           0.12 * median(widths))
+    widths = smooth_by_segments(widths, seg_bounds, k, 0.06, 0.12 * median(widths))
 
     path = []
     for t, cx, cy, cw, fl, fr in zip(times, cxs, cys, widths, faces_l, faces_r):
@@ -509,7 +585,59 @@ def main():
     }))
 
 
+def _selftest():
+    """Offline proof for the Finding-2 fix: no video, no model, no network.
+
+    Asserts VALUES, not truthiness. The first check is a REGRESSION GUARD -
+    it proves the un-segmented smoother actually DOES bleed across a hard
+    cut, so the rest of this test is checking a real bug, not a strawman.
+    """
+    ok = True
+
+    def check(name, cond, detail=""):
+        nonlocal ok
+        print(f"  {'PASS' if cond else 'FAIL'}  {name}" + (f" - {detail}" if detail and not cond else ""))
+        if not cond:
+            ok = False
+
+    # Two shots, hard cut at frame 20: shot A holds 0.0, shot B holds 100.0.
+    # A real camera does not drift toward the next shot's framing before the
+    # cut happens.
+    vals = [0.0] * 20 + [100.0] * 20
+
+    whole = smooth_zero_phase(median_filter(vals, 5), 0.18)
+    check("regression guard: the WHOLE-ARRAY smoother DOES bleed across a hard cut "
+          "(if this ever fails, --cut-times has nothing left to fix)",
+          abs(whole[19]) > 5.0 or abs(whole[20] - 100.0) > 5.0,
+          f"frame19={whole[19]:.2f} frame20={whole[20]:.2f}")
+
+    bounds = segment_bounds(list(range(40)), [20])
+    check("segment_bounds splits exactly at the cut frame", bounds == [(0, 20), (20, 40)], str(bounds))
+
+    fixed = smooth_by_segments(vals, bounds, 5, 0.18, 1.0)
+    check("segmented smoothing holds shot A flat at its own value up to the cut",
+          abs(fixed[19] - 0.0) < 0.01, f"frame19={fixed[19]:.4f}")
+    check("segmented smoothing holds shot B flat at its own value from the cut",
+          abs(fixed[20] - 100.0) < 0.01, f"frame20={fixed[20]:.4f}")
+    check("shot B's value never bleeds backward into shot A",
+          max(fixed[:20]) < 1.0, f"max(shotA)={max(fixed[:20]):.4f}")
+    check("shot A's value never bleeds forward into shot B",
+          min(fixed[20:]) > 99.0, f"min(shotB)={min(fixed[20:]):.4f}")
+
+    check("no cut times = one segment covering everything (unchanged old behaviour)",
+          segment_bounds(list(range(40)), []) == [(0, 40)], "")
+
+    # Three shots: two cuts must produce three independent segments, not two.
+    three = segment_bounds(list(range(30)), [10, 20])
+    check("two cuts split into three segments", three == [(0, 10), (10, 20), (20, 30)], str(three))
+
+    print(f"\n{'ALL PASS' if ok else 'SOME FAILED'}")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     try:
         main()
     except Exception as e:  # noqa: BLE001 - report cleanly to the Go caller

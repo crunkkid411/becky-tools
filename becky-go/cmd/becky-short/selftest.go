@@ -174,6 +174,29 @@ func runSelftest() int {
 		len(cues) == 1 && cues[0].Start > 4.5 && cues[0].Start < 5.5,
 		fmt.Sprintf("%+v", cues))
 
+	// 9c. Shot preservation (Part B, research/jordan-edit-reverse-engineered.md
+	//     Finding 1+2): an already-edited window's existing cuts become span
+	//     boundaries PRESERVED AS-IS, tightened by a small amount at each one —
+	//     never re-cut with a raw-footage silence threshold.
+	shotPlan := planShotSpans([]float64{4, 7}, nil, job{Src: "src.mp4", In: 0, Out: 10}, 0.2)
+	check("existing cuts are preserved as span boundaries, not re-invented",
+		len(shotPlan.Spans) == 3 && abs(shotPlan.Spans[0].Out-3.9) < 1e-9 && abs(shotPlan.Spans[1].In-4.1) < 1e-9,
+		fmt.Sprintf("%+v", shotPlan.Spans))
+	check("Jordan can see the decision: how many cuts were found and preserved",
+		shotPlan.ExistingCuts == 2 && shotPlan.PreservedCuts == 2, fmt.Sprintf("%+v", shotPlan))
+	check("tightening totals 0.1s per side per cut, not a silence-style re-cut",
+		abs(shotPlan.RemovedSeconds-0.4) < 1e-9, fmt.Sprintf("got %.3fs, want 0.4s", shotPlan.RemovedSeconds))
+
+	// 9d. boundaryTighten prefers REAL becky-cut dead air over the flag default
+	//     when it finds any right at the cut — "used to tighten", not a magic
+	//     number applied blindly everywhere.
+	real := boundaryTighten([]keepSpan{{In: 9.9, Out: 10.06}}, 10.0, defaultTighten)
+	check("a real becky-cut REMOVE span near the cut overrides the flag default",
+		abs(real-0.16) < 1e-9, fmt.Sprintf("got %.4f, want 0.16", real))
+	fallback := boundaryTighten([]keepSpan{{In: 100, Out: 101}}, 10.0, defaultTighten)
+	check("no dead air nearby falls back to the flag default exactly",
+		fallback == defaultTighten, fmt.Sprintf("got %.4f, want %.4f", fallback, defaultTighten))
+
 	// 10. Coverage is a MEASURE the caller can refuse on, not a boolean.
 	p := crop.Path{Sampled: 100, Found: 55}
 	check("coverage reports the fraction of samples with a real detection",

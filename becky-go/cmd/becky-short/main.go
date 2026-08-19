@@ -60,7 +60,15 @@ type shortOut struct {
 	// becky-cut found nothing worth cutting) so the note isn't the only signal.
 	KeepSpans      int     `json:"keep_spans"`
 	RemovedSeconds float64 `json:"removed_seconds"`
-	Note           string  `json:"note,omitempty"`
+	// ExistingCuts/PreservedCuts are only set when the SOURCE ITSELF already
+	// carried hard cuts inside this window (planShotSpans) — Jordan
+	// inherited these cuts rather than choosing them, so RemovedSeconds in
+	// that mode means TIGHTENED, not removed dead air. Both are 0 for a
+	// window with no detected existing cuts (raw footage — see Jumpcuts /
+	// KeepSpans above for that path instead).
+	ExistingCuts  int    `json:"existing_cuts,omitempty"`
+	PreservedCuts int    `json:"preserved_cuts,omitempty"`
+	Note          string `json:"note,omitempty"`
 }
 
 type report struct {
@@ -99,6 +107,10 @@ func main() {
 		captions = flag.Bool("captions", true, "burn word-timed captions into the short (--captions=false to skip)")
 		jumpcuts = flag.Bool("jumpcuts", true, "cut dead air the way becky-cut would (jumpcuts), instead of "+
 			"one unbroken continuous take; --jumpcuts=false renders the old continuous window")
+		tighten = flag.Float64("tighten", defaultTighten, "seconds to trim (total) at each EXISTING cut this "+
+			"short preserves, when becky-cut finds no real dead air right at that cut to trim instead — "+
+			"default is Jordan's own measured tightening rate on already-edited footage (150ms/cut, "+
+			"research/jordan-edit-reverse-engineered.md), not a raw-footage silence threshold")
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -147,7 +159,7 @@ func main() {
 	// cut from the same source must run it once, not once per short.
 	cutCache := newCutCache()
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *jumpcuts, cutCache, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *jumpcuts, *tighten, cutCache, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -172,37 +184,50 @@ type job struct {
 }
 
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
-	forceCenter, withCaptions, useJumpcuts bool, cache *cutCache, verbose bool) (shortOut, error) {
+	forceCenter, withCaptions, useJumpcuts bool, tighten float64, cache *cutCache, verbose bool) (shortOut, error) {
 
 	j = absoluteJob(j)
 
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
 
-	// Decide the pacing FIRST: is this a continuous window, or does becky-cut
-	// say part of it is dead air? A short with no jumpcuts is still a usable
-	// short, so any failure here (no becky-cut, it errored, nothing left after
-	// intersecting its decisions with this window) degrades to the old
-	// continuous render below rather than refusing the whole job.
+	// Decide the pacing FIRST: is this a continuous window, does the SOURCE
+	// already carry hard cuts to preserve (planShotSpans), or does becky-cut
+	// say part of it is raw-footage dead air (planJumpcuts)? A short with no
+	// jumpcuts is still a usable short, so any failure here (no becky-cut, it
+	// errored, nothing left after intersecting its decisions with this
+	// window) degrades to the old continuous render below rather than
+	// refusing the whole job.
 	if useJumpcuts {
-		plan, jcErr := planJumpcuts(cache, j)
+		plan, jcErr := planPacing(cfg, cache, j, tighten)
 		switch {
 		case jcErr != nil:
 			note(&res, "jumpcuts unavailable: "+firstLine(jcErr)+"; continuous render")
 		case len(plan.Spans) == 0:
 			note(&res, "becky-cut found no keep segments in this window; continuous render")
-		case plan.RemovedSeconds < jumpcutNoopEps:
+		case plan.ExistingCuts == 0 && plan.RemovedSeconds < jumpcutNoopEps:
 			// becky-cut agrees the window is already tight — nothing to cut.
 			res.KeepSpans = len(plan.Spans)
 		default:
 			res.KeepSpans = len(plan.Spans)
 			res.RemovedSeconds = plan.RemovedSeconds
+			res.ExistingCuts = plan.ExistingCuts
+			res.PreservedCuts = plan.PreservedCuts
 			res.Jumpcuts = true
-			return renderJumpcutShort(cfg, j, plan.Spans, res, asp, outW, outH, sampleFPS, minCov, maxGap,
+			if plan.ExistingCuts > 0 {
+				note(&res, fmt.Sprintf("source already edited: preserved %d/%d existing cuts, tightened %.3fs total "+
+					"(inherited the cuts, did not re-cut with a silence threshold)",
+					plan.PreservedCuts, plan.ExistingCuts, plan.RemovedSeconds))
+			}
+			return renderJumpcutShort(cfg, j, plan.Spans, plan.Cuts, res, asp, outW, outH, sampleFPS, minCov, maxGap,
 				forceCenter, withCaptions, verbose)
 		}
 	}
 
-	cr, err := resolveCrop(cfg, j.Src, j.In, j.Out, fmt.Sprintf("%d:%d", outW, outH), sampleFPS, minCov, maxGap, forceCenter)
+	// nil cut times: reaching here means either --jumpcuts=false (the flag's
+	// documented contract is the UNCHANGED continuous render) or jumpcuts was
+	// on but found no existing shots to preserve — either way there is
+	// nothing known to split this window on.
+	cr, err := resolveCrop(cfg, j.Src, j.In, j.Out, fmt.Sprintf("%d:%d", outW, outH), sampleFPS, minCov, maxGap, forceCenter, nil)
 	if err != nil {
 		return res, err
 	}
@@ -300,8 +325,12 @@ type cropResult struct {
 // its OWN local (0-based) camera path — see renderJumpcutShort's doc comment
 // for why that, not a single whole-window path sliced after the fact, is the
 // safe way to avoid putting the crop on the wrong timeline after a cut.
+// cutTimes are existing shot boundaries (internal/shotcut) already known to
+// fall inside [start,end] — see renderJumpcutShort's doc comment for why
+// this is normally empty (each jumpcut span already IS one shot) and is
+// still threaded through defensively rather than assumed.
 func resolveCrop(cfg config.Config, src string, start, end float64, aspect string,
-	sampleFPS, minCov, maxGap float64, forceCenter bool) (cropResult, error) {
+	sampleFPS, minCov, maxGap float64, forceCenter bool, cutTimes []float64) (cropResult, error) {
 	if forceCenter {
 		return cropResult{Note: "--center: static crop, subject not tracked"}, nil
 	}
@@ -310,6 +339,7 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 	}
 	p, err := crop.Run(cfg, crop.Options{
 		Video: src, Start: start, End: end, Aspect: aspect, FPS: sampleFPS, Model: cfg.PoseModel,
+		CutTimes: cutTimes,
 	})
 	switch {
 	case err != nil:

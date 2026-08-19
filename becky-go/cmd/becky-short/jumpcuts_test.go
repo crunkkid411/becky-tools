@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"becky-go/internal/config"
 	"becky-go/internal/subs"
 )
 
@@ -134,6 +135,113 @@ func TestCaptionCuesJumpcut_DoesNotRescueWordsFromOutsideTheShort(t *testing.T) 
 		if strings.Contains(strings.ToLower(c.Text), "faraway") {
 			t.Fatalf("cue carries a word from outside the short's window: %+v", cues)
 		}
+	}
+}
+
+// boundaryTighten must use a REAL becky-cut REMOVE span found near the
+// boundary, not the flag default, when one exists — this is what "becky-cut
+// is used to tighten" means (research/jordan-edit-reverse-engineered.md,
+// Finding 2), not always applying a flat number.
+func TestBoundaryTighten_UsesRealDeadAirWhenFound(t *testing.T) {
+	remove := []keepSpan{{In: 9.9, Out: 10.06}} // 0.16s of real dead air at the cut
+	got := boundaryTighten(remove, 10.0, defaultTighten)
+	if abs(got-0.16) > 1e-9 {
+		t.Errorf("boundaryTighten = %.4f, want 0.16 (the real dead-air span)", got)
+	}
+}
+
+// No remove span anywhere near the boundary must fall back to the flag
+// default exactly — never zero, never something interpolated.
+func TestBoundaryTighten_FallsBackToFlagDefault(t *testing.T) {
+	remove := []keepSpan{{In: 100, Out: 101}} // nowhere near boundary=10
+	got := boundaryTighten(remove, 10.0, defaultTighten)
+	if got != defaultTighten {
+		t.Errorf("boundaryTighten = %.4f, want the flag default %.4f", got, defaultTighten)
+	}
+}
+
+// A long silence near a cut must not swallow the whole boundary — capped at
+// 4x the flag default, so one real pause can't turn into an aggressive cut
+// exactly where Jordan's own edit only trims 150ms.
+func TestBoundaryTighten_CapsALongNearbySilence(t *testing.T) {
+	remove := []keepSpan{{In: 9.0, Out: 11.0}} // 2s of "silence" spanning the boundary
+	got := boundaryTighten(remove, 10.0, defaultTighten)
+	want := defaultTighten * 4
+	if abs(got-want) > 1e-9 {
+		t.Errorf("boundaryTighten = %.4f, want the cap %.4f", got, want)
+	}
+}
+
+// planShotSpans is the core of Part B: existing shot boundaries become span
+// boundaries PRESERVED AS-IS, tightened by a small, explicit amount at each
+// one — never re-cut with a silence threshold. Two interior cuts, no
+// becky-cut remove spans (falls back to the flag default at both), asserted
+// down to the exact span boundaries.
+func TestPlanShotSpans_PreservesBoundariesAndTightensByTheFlagDefault(t *testing.T) {
+	j := job{Src: "src.mp4", In: 0, Out: 10}
+	cuts := []float64{4, 7} // two existing cuts inside the window
+	plan := planShotSpans(cuts, nil, j, 0.2)
+
+	want := []keepSpan{
+		{In: 0, Out: 3.9},   // 4 - 0.2/2
+		{In: 4.1, Out: 6.9}, // 4+0.1, 7-0.1
+		{In: 7.1, Out: 10},  // 7+0.1
+	}
+	if len(plan.Spans) != len(want) {
+		t.Fatalf("got %d spans, want %d: %+v", len(plan.Spans), len(want), plan.Spans)
+	}
+	for i, w := range want {
+		if abs(plan.Spans[i].In-w.In) > 1e-9 || abs(plan.Spans[i].Out-w.Out) > 1e-9 {
+			t.Errorf("span %d = %+v, want %+v", i, plan.Spans[i], w)
+		}
+	}
+	if plan.ExistingCuts != 2 {
+		t.Errorf("ExistingCuts = %d, want 2", plan.ExistingCuts)
+	}
+	if plan.PreservedCuts != 2 {
+		t.Errorf("PreservedCuts = %d, want 2", plan.PreservedCuts)
+	}
+	// Each boundary tightened by 0.2s total (0.1 off each side) x2 boundaries.
+	if abs(plan.RemovedSeconds-0.4) > 1e-9 {
+		t.Errorf("RemovedSeconds = %.4f, want 0.4", plan.RemovedSeconds)
+	}
+}
+
+// A cut too close to the window's own edge cannot become a usable span
+// boundary (the resulting sliver would be dropped anyway) but must still
+// count toward ExistingCuts — Jordan needs to see it was FOUND even if it
+// wasn't used.
+func TestPlanShotSpans_EdgeCutCountsAsExistingButNotPreserved(t *testing.T) {
+	j := job{Src: "src.mp4", In: 0, Out: 10}
+	cuts := []float64{0.05, 5} // 0.05 is inside jumpcutMinSpan of the window start
+	plan := planShotSpans(cuts, nil, j, 0.1)
+
+	if plan.ExistingCuts != 2 {
+		t.Errorf("ExistingCuts = %d, want 2 (both found)", plan.ExistingCuts)
+	}
+	if plan.PreservedCuts != 1 {
+		t.Errorf("PreservedCuts = %d, want 1 (only the real interior cut)", plan.PreservedCuts)
+	}
+}
+
+// planPacing must degrade to the raw-footage path (planJumpcuts) when shot
+// detection can't run at all (here: a source that doesn't exist), rather
+// than failing the render — raw footage with no existing edit is the other
+// real case and must still work.
+func TestPlanPacing_DegradesToRawFootagePathWhenDetectionFails(t *testing.T) {
+	cache := newCutCache()
+	cache.spans["missing.mp4"] = []keepSpan{{In: 0, Out: 5}}
+	j := job{Src: "missing.mp4", In: 0, Out: 5}
+
+	plan, err := planPacing(config.Config{}, cache, j, defaultTighten)
+	if err != nil {
+		t.Fatalf("planPacing: %v", err)
+	}
+	if plan.ExistingCuts != 0 {
+		t.Errorf("ExistingCuts = %d, want 0 (detection should have failed and degraded)", plan.ExistingCuts)
+	}
+	if len(plan.Spans) != 1 || plan.Spans[0] != (keepSpan{In: 0, Out: 5}) {
+		t.Fatalf("got %+v, want the raw-footage plan from the cache", plan.Spans)
 	}
 }
 

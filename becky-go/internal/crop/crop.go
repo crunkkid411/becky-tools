@@ -59,6 +59,14 @@ type Options struct {
 	Aspect string  // "9:16"
 	FPS    float64 // samples per second
 	Model  string  // pose_landmarker_*.task
+	// CutTimes are hard-cut boundaries ALREADY KNOWN inside [Start,End]
+	// (internal/shotcut, source-absolute seconds) — the source is already
+	// edited, and the camera-path smoother must reset at each one instead of
+	// blending one shot's framing into the next across the cut (Finding 2,
+	// research/jordan-edit-reverse-engineered.md). Empty is the common case:
+	// most callers already scope one Run to exactly one shot, so there is
+	// nothing inside the window to split.
+	CutTimes []float64
 }
 
 // Coverage reports the fraction of sampled instants where a body was actually
@@ -93,6 +101,13 @@ func Run(cfg config.Config, opt Options) (Path, error) {
 		"--end", trimF(opt.End),
 		"--aspect", opt.Aspect,
 		"--fps", trimF(opt.FPS),
+	}
+	if len(opt.CutTimes) > 0 {
+		parts := make([]string, len(opt.CutTimes))
+		for i, c := range opt.CutTimes {
+			parts[i] = trimF(c)
+		}
+		args = append(args, "--cut-times", strings.Join(parts, ","))
 	}
 
 	cmd := exec.Command(pythonFor(cfg), args...)
