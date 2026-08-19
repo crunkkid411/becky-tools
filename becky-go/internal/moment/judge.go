@@ -100,13 +100,27 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 	out := make([]Ranked, 0, len(cands))
 	for i, c := range cands {
 		r := Ranked{Candidate: c}
+		// Fold the audio signal into the structural prior before anything else
+		// looks at it. Structure says the thought is well-formed; audio says
+		// something actually landed. They are independent, and a clip needs both
+		// to be worth posting - but audio measures ENERGY, not quality, so it
+		// moves the ORDER and never on its own promotes a moment to a conclusion.
+		if c.Audio > 0 {
+			c.Score = clamp01(0.72*c.Score + 0.28*c.Audio)
+			r.Candidate = c
+		}
 		j, ok := byIndex[i]
 		if !ok {
 			r.Final = c.Score
 			r.Confidence = CandidateOnly
-			r.Basis = fmt.Sprintf(
-				"structure only (%s); no content verdict — needs a second independent signal before this is a pick",
-				c.Signals.basis())
+			if c.AudioBasis != "" {
+				r.Basis = fmt.Sprintf("structure %.2f (%s) + audio: %s; no content verdict yet",
+					c.Score, c.Signals.basis(), c.AudioBasis)
+			} else {
+				r.Basis = fmt.Sprintf(
+					"structure only (%s); no content verdict — needs a second independent signal before this is a pick",
+					c.Signals.basis())
+			}
 			out = append(out, r)
 			continue
 		}

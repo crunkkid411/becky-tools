@@ -42,6 +42,7 @@ import (
 	"sort"
 	"strings"
 
+	"becky-go/internal/audiosig"
 	"becky-go/internal/config"
 	"becky-go/internal/moment"
 	"becky-go/internal/pathx"
@@ -99,6 +100,7 @@ func main() {
 		judge      = flag.Bool("judge", true, "run the content pass (the second, independent signal)")
 		backend    = flag.String("judge-backend", "local", "content judge: local (offline Gemma-4) or zen (OpenCode Zen, free models, needs BECKY_ZEN_API_KEY)")
 		model      = flag.String("model", defaultZenModel, "zen backend only: judge model id (must be one of OpenCode Zen's free models)")
+		noAudio    = flag.Bool("no-audio", false, "skip the audio signal pass (loudness spikes, pitch rises)")
 		selftest   = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose    = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -159,8 +161,26 @@ func main() {
 		if *verbose {
 			fmt.Fprintf(os.Stderr, "%s: %d cues -> %d candidates\n", pathx.Base(src), len(segs), len(cands))
 		}
+		// THIRD SIGNAL: what the soundtrack does. Read once per file and scored
+		// per candidate window. Independent of the transcript by construction -
+		// on his own footage the loudest moment in five minutes sits inside a
+		// 20-second stretch where the transcript has no text at all.
+		var asig audiosig.Signals
+		haveAudio := false
+		if media := mediaFor(src); media != "" && !*noAudio {
+			if a, err := audiosig.Run(cfg, media); err != nil {
+				rep.Notes = append(rep.Notes, "audio signals unavailable for "+pathx.Base(src)+": "+err.Error())
+			} else {
+				asig, haveAudio = a, true
+			}
+		}
+
 		for _, c := range cands {
 			c.Source = src
+			if haveAudio {
+				w := asig.In(c.Start, c.End)
+				c.Audio, c.AudioBasis = w.Score, w.Basis
+			}
 			allCands = append(allCands, c)
 		}
 	}
@@ -416,4 +436,25 @@ func shortlist(cands []moment.Candidate, n int) []moment.Candidate {
 		return out[i].Start < out[j].Start
 	})
 	return out[:n]
+}
+
+// mediaFor returns the media file a transcript belongs to, or "" when the
+// transcript is an orphan. Audio signals need the media; the transcript alone
+// cannot provide them.
+func mediaFor(transcript string) string {
+	stem := strings.TrimSuffix(transcript, filepath.Ext(transcript))
+	stem = strings.TrimSuffix(stem, ".transcript")
+	stem = strings.TrimSuffix(stem, ".en")
+	stem = strings.TrimSuffix(stem, "_parakeet_transcription")
+	for _, ext := range []string{".mp4", ".mkv", ".mov", ".webm", ".m4v", ".avi", ".mp3", ".wav", ".m4a"} {
+		if p := stem + ext; fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }

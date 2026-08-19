@@ -174,6 +174,14 @@ type Candidate struct {
 	LastCue  int     `json:"last_cue"`
 	Text     string  `json:"text"`
 
+	// Audio is 0..1: how much LANDED here in the soundtrack - punchline-shaped
+	// loudness spikes and pitch rises. Set by the caller (internal/audiosig), not
+	// by Find, because it needs the media and Find only reads a transcript. It is
+	// an INDEPENDENT third signal: his humour is in the delivery, so a deadpan
+	// line that reads flat on the page can land hard out loud.
+	Audio      float64 `json:"audio,omitempty"`
+	AudioBasis string  `json:"audio_basis,omitempty"`
+
 	Signals Signals `json:"signals"`
 	Score   float64 `json:"score"` // structural prior, 0..1
 
