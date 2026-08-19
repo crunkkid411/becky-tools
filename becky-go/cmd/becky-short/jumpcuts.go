@@ -457,13 +457,28 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		totalSampled, totalFound int
 		allFollowed              = true
 		notes                    []string
+		degraded                 int
 	)
 
 	for i, sp := range spans {
 		cr, err := resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, forceCenter,
 			cutsWithinSpan(cuts, sp.In, sp.Out))
 		if err != nil {
-			return res, fmt.Errorf("kept span %d/%d [%.2f,%.2f]: %w", i+1, len(spans), sp.In, sp.Out, err)
+			// A span the tracker cannot follow is not a reason to throw away the
+			// other eighteen. Measured on the BLINDFOLD master (a three-person
+			// table scene): span 3 of 19 found a subject in 46% of samples and
+			// the entire short was refused over it.
+			//
+			// Jordan's own edit of that same footage contains a shot with NO
+			// FACE AT ALL - 1.27 seconds of a pointing finger - so "every span
+			// must hold a trackable subject" is not a rule he works to. Fall
+			// back to a static centre crop for THIS span, say so, carry on.
+			cr, err = resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, true,
+				cutsWithinSpan(cuts, sp.In, sp.Out))
+			if err != nil {
+				return res, fmt.Errorf("kept span %d/%d [%.2f,%.2f]: %w", i+1, len(spans), sp.In, sp.Out, err)
+			}
+			degraded++
 		}
 		totalSampled += cr.Sampled
 		totalFound += cr.Found
@@ -512,6 +527,17 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		res.Coverage = float64(totalFound) / float64(totalSampled)
 	}
 	res.Followed = allFollowed
+	// Refusing a span is honest; refusing the WHOLE short because a minority of
+	// spans could not be tracked is not. More than half degraded means the
+	// window itself is not a talking-head short, and that IS worth refusing.
+	if tooManyDegraded(degraded, len(spans)) {
+		return res, fmt.Errorf("%d of %d kept spans had no trackable subject - this window is not a talking-head short; pass --center to force a static crop",
+			degraded, len(spans))
+	}
+	if degraded > 0 {
+		note(&res, fmt.Sprintf("%d of %d spans fell back to a static crop (no trackable subject there)", degraded, len(spans)))
+	}
+
 	for _, n := range notes {
 		note(&res, n)
 	}
@@ -662,4 +688,16 @@ func captionSRTJumpcut(video string, winIn, winOut, fps float64, spans []keepSpa
 		return "", 0, nil
 	}
 	return writeSRT(cues, dir)
+}
+
+// tooManyDegraded decides when falling back stops being a graceful degrade and
+// starts being the wrong window.
+//
+// A MINORITY of untrackable spans is normal and expected: Jordan's own edit of
+// the same footage holds 1.27 seconds on a pointing finger with no face in
+// frame at all. A MAJORITY means this window is not a talking-head short, and
+// refusing it is the honest answer (FORENSIC-OUTPUT-PHILOSOPHY.md - thirty good
+// shorts and ten honest refusals beats forty where six are quietly wrong).
+func tooManyDegraded(degraded, total int) bool {
+	return total > 0 && degraded*2 > total
 }

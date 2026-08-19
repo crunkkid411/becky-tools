@@ -260,3 +260,28 @@ func TestFramesForSpan_QuantisesFromTheSpanNotTheWindow(t *testing.T) {
 		t.Errorf("got %d frames for a near-zero span, want floor of 1", got)
 	}
 }
+
+// Measured on the BLINDFOLD master (a three-person table scene): span 3 of 19
+// found a subject in 46% of samples and the ENTIRE short was refused over it -
+// 18 good spans thrown away for one. Jordan's own edit of that same footage
+// holds 1.27s on a pointing finger with no face in frame, so "every span must
+// hold a trackable subject" is not a rule he works to.
+func TestTooManyDegraded_AMinorityFallsBackAMajorityRefuses(t *testing.T) {
+	cases := []struct {
+		degraded, total int
+		want            bool
+		why             string
+	}{
+		{1, 19, false, "the real BLINDFOLD case: one bad span must not kill eighteen good ones"},
+		{6, 19, false, "six of nineteen degraded still rendered a usable short"},
+		{9, 19, false, "just under half is still a short"},
+		{10, 19, true, "past half, this window is not a talking-head short"},
+		{19, 19, true, "nothing trackable anywhere"},
+		{0, 0, false, "no spans at all is not a majority of anything"},
+	}
+	for _, c := range cases {
+		if got := tooManyDegraded(c.degraded, c.total); got != c.want {
+			t.Errorf("tooManyDegraded(%d, %d) = %v, want %v - %s", c.degraded, c.total, got, c.want, c.why)
+		}
+	}
+}
