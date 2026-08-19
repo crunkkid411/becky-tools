@@ -265,7 +265,59 @@ func confirmedCut(frames [][]byte, frameIdx int, threshold float64, confirmFrame
 	if lo < 0 || hi >= len(frames) {
 		return true
 	}
-	return meanAbsDiff(frames[lo], frames[hi]) > threshold*confirmFrac
+	if meanAbsDiff(frames[lo], frames[hi]) <= threshold*confirmFrac {
+		return false
+	}
+	// A brightness difference alone cannot tell a CUT from fast motion: on raw
+	// footage this detector reported 56 cuts in a five-minute single-take file,
+	// some 200ms apart, and frames either side of them showed the same shot with
+	// the subject merely moving. A cut changes what is in the picture, so it
+	// changes the brightness DISTRIBUTION; motion within a shot mostly shuffles
+	// the same pixels around.
+	//
+	// MEASURED across one frame boundary, 32-bin greyscale histogram intersection
+	// (1.0 = identical distributions):
+	//   false positives, raw footage : 0.935 0.946 0.960 0.965 0.966 0.969
+	//   real cuts, the edited master : 0.753 0.769 0.817 0.819 0.827 0.830
+	// The gap is wide and empty. Swept against the hand-checked cut list:
+	//   0.88/0.90 -> precision 0.941 recall 0.667
+	//   0.92/0.94 -> precision 0.944 recall 0.708   <- flat optimum
+	//   0.96      -> precision 0.850 recall 0.708   (false positives return)
+	// 0.93 is the middle of that flat region, and raw footage reports ZERO cuts
+	// at every value tested, so the raw/edited decision is not knife-edge.
+	return histIntersection(frames[frameIdx-1], frames[frameIdx]) < maxHistOverlap
+}
+
+// maxHistOverlap is how similar the greyscale histograms either side of a
+// candidate may be before it is rejected as motion rather than a cut.
+const maxHistOverlap = 0.93
+
+// histIntersection is the overlap of two 32-bin greyscale histograms: 1.0 when
+// the two frames share a brightness distribution exactly, 0.0 when they share
+// none of it.
+func histIntersection(a, b []byte) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 1 // cannot tell -> do not reject
+	}
+	const bins = 32
+	var ha, hb [bins]float64
+	for i := range a {
+		ha[int(a[i])*bins/256]++
+		hb[int(b[i])*bins/256]++
+	}
+	n := float64(len(a))
+	var overlap float64
+	for i := 0; i < bins; i++ {
+		overlap += minF(ha[i], hb[i]) / n
+	}
+	return overlap
+}
+
+func minF(x, y float64) float64 {
+	if x < y {
+		return x
+	}
+	return y
 }
 
 func median(vals []float64) float64 {

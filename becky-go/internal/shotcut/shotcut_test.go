@@ -179,8 +179,10 @@ func TestDetect_RealFootage(t *testing.T) {
 	// band as before confirmedCut was added — see this file's header comment.
 	// Gate loosely (0.65) so the test catches a real regression without
 	// chasing every footage-dependent half-frame.
-	if precision < 0.65 {
-		t.Errorf("precision regressed: %.3f < 0.65", precision)
+	// Measured 0.944 with the histogram check in place; 0.85 leaves headroom
+	// for footage variation without letting the old 0.833 back in.
+	if precision < 0.85 {
+		t.Errorf("precision regressed: %.3f < 0.85", precision)
 	}
 	if recall < 0.65 {
 		t.Errorf("recall regressed: %.3f < 0.65", recall)
@@ -205,5 +207,25 @@ func TestDetect_RealFootage_NoFalsePositiveOnFastMotion(t *testing.T) {
 	if len(cuts) != 0 {
 		t.Errorf("Detect found %v in a continuous raw-footage window with fast head/hand motion, want none "+
 			"(this exact case was visually verified as ONE shot, not a cut)", cuts)
+	}
+}
+
+// The WHOLE raw file, not a hand-picked window. A brightness-difference-only
+// detector reported 56 cuts here - some 200ms apart - and frames either side of
+// them showed the same shot with the subject merely moving. That mattered well
+// beyond this package: becky-short reads "this source has cuts" as "already
+// edited", so 56 phantom cuts silently switched a raw clip onto the
+// preserve-and-tighten path and skipped silence removal entirely.
+func TestDetect_RawFootageHasNoCutsAtAll(t *testing.T) {
+	video := `X:/AI-2/becky-tools/test-for-clips.mp4`
+	if _, err := os.Stat(video); err != nil {
+		t.Skipf("real footage not present on this machine: %v", err)
+	}
+	cuts, err := Detect(Options{Video: video})
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(cuts) != 0 {
+		t.Errorf("Detect found %d cuts in a single-take raw file, want 0: %v", len(cuts), cuts)
 	}
 }
