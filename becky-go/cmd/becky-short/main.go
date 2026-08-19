@@ -79,11 +79,13 @@ func main() {
 		outDir    = flag.String("outdir", "", "output folder (--reel mode)")
 		aspect    = flag.String("aspect", "9:16", "target aspect, width:height")
 		sampleFPS = flag.Float64("sample-fps", 0, "how often to look for the subject; 0 = EVERY FRAME (default)")
-		maxGap    = flag.Float64("max-gap", 0.8, "refuse if the subject is undetected for this many seconds in a row")
-		minCov    = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
-		center    = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
-		selftest  = flag.Bool("selftest", false, "run the offline proof and exit")
-		verbose   = flag.Bool("verbose", false, "progress to stderr")
+		maxGap    = flag.Float64("max-gap", 2.0, "refuse if the subject is undetected for this many seconds in a row; "+
+			"a glance away is normal and the last good framing covers it, but a real absence "+
+			"means there is no honest crop of that window")
+		minCov   = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
+		center   = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
+		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
+		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
 	flag.Parse()
 
