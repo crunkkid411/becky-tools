@@ -316,11 +316,21 @@ func RenderArgs(src string, start, dur float64, chain, out string) []string {
 		"-vf", chain,
 		"-c:v", "libx264", "-preset", "medium", "-crf", "18",
 		"-pix_fmt", "yuv420p",
+		// Every platform normalises playback to roughly -14 LUFS. A short that
+		// lands quieter gets turned UP along with its noise floor; one that lands
+		// hotter gets turned down and sounds flat beside everything around it.
+		// Source: clippyme does this on every output (research/repo-clippyme.md).
+		"-af", LoudnormFilter,
 		"-c:a", "aac", "-b:a", "160k",
 		"-movflags", "+faststart",
 		out,
 	}
 }
+
+// LoudnormFilter is the EBU R128 normalisation every rendered short gets.
+// -14 LUFS integrated is what YouTube, TikTok and Instagram normalise to on
+// playback; -1.5 dBTP leaves headroom for the lossy encode.
+const LoudnormFilter = "loudnorm=I=-14:TP=-1.5:LRA=11"
 
 // OutputSize picks the render size for a target aspect: 1080 on the short edge,
 // which is the standard for every vertical social format.

@@ -559,7 +559,10 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 			inter.WriteString(vLabels[i])
 			inter.WriteString(aLabels[i])
 		}
-		concat = fmt.Sprintf("%sconcat=n=%d:v=1:a=1%s[aout]", inter.String(), len(spans), vOut)
+		// Loudness normalisation goes INSIDE the graph here: this path renders
+		// through -filter_complex, and -af cannot be combined with it.
+		concat = fmt.Sprintf("%sconcat=n=%d:v=1:a=1%s[araw];[araw]%s[aout]",
+			inter.String(), len(spans), vOut, crop.LoudnormFilter)
 	} else {
 		concat = fmt.Sprintf("%sconcat=n=%d:v=1:a=0%s", strings.Join(vLabels, ""), len(spans), vOut)
 	}
