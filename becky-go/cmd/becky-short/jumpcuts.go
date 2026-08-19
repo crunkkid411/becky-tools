@@ -193,14 +193,23 @@ func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float6
 // (planJumpcuts) — raw footage with no existing edit is the other real case,
 // and it must render unchanged.
 //
-// Shot detection is scoped to just this window (shotcut.Detect decodes only
-// [j.In,j.Out], unlike becky-cut it is cheap enough to run per job with no
-// cache), so a detection failure (ffmpeg missing, etc.) degrades to the
-// raw-footage path rather than failing the render.
+// Shot detection runs over the WHOLE source once and is cached, then filtered to
+// this window - it is NOT scoped to [j.In,j.Out].
+//
+// That is a correctness requirement, not an optimisation. The cut threshold is
+// derived from the footage's own diff distribution (median + 6*MAD), so a short
+// window of mostly-static footage lowers it and lets motion through that a
+// whole-file scan rejects. Measured on test-for-clips.mp4: the whole file
+// reports ZERO cuts, while the window [102.40,138.72] reported two - 125.967 and
+// 126.100, 133 milliseconds apart - and the frames show one continuous shot with
+// his hand sweeping close to the lens. The same footage must not be classified
+// differently depending on where a moment happened to start.
+//
+// A detection failure (ffmpeg missing, etc.) degrades to the raw-footage path
+// rather than failing the render.
 func planPacing(cfg config.Config, cache *cutCache, j job, tighten float64) (jumpcutPlan, error) {
-	cuts, err := shotcut.Detect(shotcut.Options{
-		Video: j.Src, Start: j.In, End: j.Out, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,
-	})
+	all, err := cache.wholeFileCuts(cfg, j.Src)
+	cuts := cutsWithin(all, j.In, j.Out)
 	if err != nil || len(cuts) == 0 {
 		return planJumpcuts(cache, j)
 	}
@@ -235,10 +244,12 @@ type cutCache struct {
 	spans       map[string][]keepSpan
 	removeSpans map[string][]keepSpan
 	errs        map[string]error
+	shotCuts    map[string][]float64
 }
 
 func newCutCache() *cutCache {
-	return &cutCache{spans: map[string][]keepSpan{}, removeSpans: map[string][]keepSpan{}, errs: map[string]error{}}
+	return &cutCache{spans: map[string][]keepSpan{}, removeSpans: map[string][]keepSpan{},
+		errs: map[string]error{}, shotCuts: map[string][]float64{}}
 }
 
 func (c *cutCache) wholeFileSpans(src string) ([]keepSpan, error) {
@@ -736,4 +747,31 @@ func untrackedSamples(dur, fps float64) int {
 		return 1 // a span short enough to round to zero is still one unframed sample
 	}
 	return n
+}
+
+// wholeFileCuts detects the source's hard cuts ONCE and caches them. See
+// planPacing for why this must not be scoped to a window.
+func (c *cutCache) wholeFileCuts(cfg config.Config, src string) ([]float64, error) {
+	if v, ok := c.shotCuts[src]; ok {
+		return v, nil
+	}
+	cuts, err := shotcut.Detect(shotcut.Options{
+		Video: src, FFmpeg: cfg.FFmpeg, FFprobe: cfg.FFprobe,
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.shotCuts[src] = cuts
+	return cuts, nil
+}
+
+// cutsWithin returns the cuts strictly inside (in,out).
+func cutsWithin(cuts []float64, in, out float64) []float64 {
+	var got []float64
+	for _, t := range cuts {
+		if t > in && t < out {
+			got = append(got, t)
+		}
+	}
+	return got
 }

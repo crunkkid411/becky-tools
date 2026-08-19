@@ -308,3 +308,41 @@ func TestUntrackedSamples_ADegradedSpanCountsAgainstCoverage(t *testing.T) {
 			"accounting reported 1.000 for this exact case", cov)
 	}
 }
+
+// Cuts are detected over the WHOLE source once and filtered to each window,
+// never detected per window. The threshold is derived from the footage's own
+// diff distribution, so a short mostly-static window lowers it and admits motion
+// a whole-file scan rejects: measured on test-for-clips.mp4 the whole file
+// reports ZERO cuts while the window [102.40,138.72] reported two, 133ms apart,
+// on one continuous shot of a hand sweeping past the lens.
+func TestCutsWithin_FiltersWholeFileCutsToTheWindow(t *testing.T) {
+	all := []float64{5.0, 102.4, 110.0, 125.9, 138.72, 200.0}
+
+	got := cutsWithin(all, 102.4, 138.72)
+	want := []float64{110.0, 125.9}
+	if len(got) != len(want) {
+		t.Fatalf("cutsWithin = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("cut %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+	// Strictly inside: a cut exactly ON a boundary is that boundary, not a cut
+	// within the span, and keeping it would make a zero-length first span.
+	if in := cutsWithin(all, 102.4, 138.72); containsF(in, 102.4) || containsF(in, 138.72) {
+		t.Errorf("a cut on the window edge survived: %v", in)
+	}
+	if got := cutsWithin(all, 300, 400); len(got) != 0 {
+		t.Errorf("cutsWithin outside any cut = %v, want empty", got)
+	}
+}
+
+func containsF(xs []float64, v float64) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
