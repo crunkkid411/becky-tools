@@ -92,36 +92,40 @@ func (t Track) Centroid() (x, y float64) {
 // detected in, as a fraction 0..1, plus the number of detections inside it.
 //
 // This is what makes a track answer becky's real question — "was this person on
-// screen during [t0,t1]?" — with a MEASURE rather than a yes/no. A track that
-// clips the edge of a window covers a little of it; one present throughout
-// covers most of it. The caller decides the threshold and states it, instead of
-// a boolean hiding the evidence (FORENSIC-OUTPUT-PHILOSOPHY.md).
+// screen during [t0,t1]?" — with a MEASURE rather than a yes/no. The caller
+// decides the threshold and states it, instead of a boolean hiding the evidence
+// (FORENSIC-OUTPUT-PHILOSOPHY.md).
 //
-// Coverage is computed from detection timestamps, so it reflects where the face
-// was actually SEEN, not merely that the track spans the window.
-func (t Track) CoverageIn(t0, t1 float64) (fraction float64, n int) {
-	if t1 <= t0 || len(t.Detections) == 0 {
+// samplePeriod is how often the detector actually looked (1.0 for a 1 fps scan,
+// 1/29.97 for every frame). It has to be supplied because a track cannot tell
+// "sampled once every 10s and present throughout" apart from "glimpsed three
+// times" — the timestamps are identical. Coverage is then DENSITY: how much of
+// the window the sightings actually account for.
+//
+// It deliberately does NOT return (last-first)/(t1-t0). That measures the SPAN
+// of the sightings, which scores a face glimpsed 3 times across 20 seconds at
+// 1.000 — the same as one seen in every frame. Presence has to be earned by
+// detections, not by two endpoints; a span-based number silently promotes a
+// face that was barely there, which is the failure this whole package exists to
+// avoid.
+func (t Track) CoverageIn(t0, t1, samplePeriod float64) (fraction float64, n int) {
+	if t1 <= t0 || samplePeriod <= 0 || len(t.Detections) == 0 {
 		return 0, 0
 	}
-	var first, last float64
 	for _, d := range t.Detections {
 		if d.Time < t0 || d.Time > t1 {
 			continue
 		}
-		if n == 0 {
-			first = d.Time
-		}
-		last = d.Time
 		n++
 	}
 	if n == 0 {
 		return 0, 0
 	}
-	if n == 1 {
-		// A single sighting proves presence at an instant, not across a span.
-		return 0, 1
+	frac := float64(n) * samplePeriod / (t1 - t0)
+	if frac > 1 {
+		frac = 1
 	}
-	return (last - first) / (t1 - t0), n
+	return frac, n
 }
 
 // Options tune the association. Use DefaultOptions and adjust.

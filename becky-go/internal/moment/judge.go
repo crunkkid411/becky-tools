@@ -56,6 +56,13 @@ const (
 	CandidateOnly Confidence = "candidate"
 	// Disputed: the two signals disagree materially. Held, with the conflict named.
 	Disputed Confidence = "disputed"
+	// Vetoed: the content pass says the arc does not complete — the clip trails
+	// off mid-setup. This is a REFUSAL, not a low score: a vetoed moment ranks
+	// below every complete one no matter how well it scores, and a renderer
+	// should skip it rather than cut it. HANDOFF-SHORTS-PIPELINE.md §2.1 names
+	// "a short with no payoff" as a failure that renders fine and so is never
+	// noticed; this is the one place it can be caught.
+	Vetoed Confidence = "vetoed"
 )
 
 // Ranked is a candidate plus its verdict and the honest confidence in it.
@@ -107,6 +114,18 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 		jn := float64(j.Score) / 99.0
 		r.Judged = &j
 		switch {
+		case !j.Complete:
+			// The model says the arc does not complete. That VETOES the moment:
+			// it is ordered below every complete clip regardless of score (see
+			// the sort below), not merely discounted. A discount is not a veto —
+			// a high-scoring clip that trails off would still float to the top,
+			// which is exactly the "no payoff" short this tool exists to avoid.
+			r.Final = minF(jn, c.Score)
+			r.Confidence = Vetoed
+			r.Basis = fmt.Sprintf(
+				"VETOED — the content pass says the arc does not complete (%s); "+
+					"structure %.2f. Ranked below every complete moment; do not cut it",
+				strings.TrimSpace(j.Reason), c.Score)
 		case absDiff(jn, c.Score) > disputeThreshold:
 			// Hold the lower of the two: a disputed moment must not be promoted
 			// by its optimistic half.
@@ -115,15 +134,6 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 			r.Basis = fmt.Sprintf(
 				"DISPUTED — structure %.2f (%s) vs content %d/99 (%s); held at the lower signal",
 				c.Score, c.Signals.basis(), j.Score, strings.TrimSpace(j.Reason))
-		case !j.Complete:
-			// The model says the arc does not complete. That is a structural
-			// claim about content, and it vetoes: an incomplete clip is the
-			// specific thing this tool exists to avoid emitting.
-			r.Final = minF(jn, c.Score) * 0.6
-			r.Confidence = Disputed
-			r.Basis = fmt.Sprintf(
-				"content verdict says the arc does not complete (%s); structure %.2f — held",
-				strings.TrimSpace(j.Reason), c.Score)
 		default:
 			r.Final = 0.5*c.Score + 0.5*jn
 			r.Confidence = Conclusion
@@ -134,7 +144,13 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 		out = append(out, r)
 	}
 
+	// Complete arcs first, THEN score. This is what makes the veto a veto: no
+	// score a trailing-off clip can reach lets it overtake one that lands.
 	sort.SliceStable(out, func(i, j int) bool {
+		vi, vj := out[i].Confidence == Vetoed, out[j].Confidence == Vetoed
+		if vi != vj {
+			return vj // a non-vetoed moment always sorts first
+		}
 		if out[i].Final != out[j].Final {
 			return out[i].Final > out[j].Final
 		}

@@ -160,6 +160,14 @@ func percentile(sorted []float64, p float64) float64 {
 // Score is the deterministic prior only — a judge's content score lands in
 // Judged (see judge.go) and the two are combined by Rank.
 type Candidate struct {
+	// Source is the file this candidate came from. Find does not set it — the
+	// caller does, when it merges candidates from several transcripts into one
+	// slice. It is carried on the candidate (rather than kept in a parallel
+	// slice) because ranking reorders and truncates, and recovering the owner
+	// afterwards by matching timestamps silently mislabels any two files that
+	// happen to share a window. That bug shipped once; this field is the fix.
+	Source string `json:"source,omitempty"`
+
 	Start    float64 `json:"start"`
 	End      float64 `json:"end"`
 	FirstCue int     `json:"first_cue"`

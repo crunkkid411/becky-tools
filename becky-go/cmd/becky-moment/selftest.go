@@ -157,15 +157,18 @@ func runSelftest() int {
 		h.In == "00:00:05.000" && h.Out == "00:00:28.000",
 		fmt.Sprintf("in=%q out=%q", h.In, h.Out))
 
-	// 10. The spending guards refuse before any request is built.
-	_, errPaid := zenJudge("gpt-5.5", false, 4)
-	_, errClaude := zenJudge("claude-opus-5", true, 4)
-	check("refuses a metered model without --allow-paid",
-		errPaid != nil && strings.Contains(errPaid.Error(), "free tier"),
-		fmt.Sprintf("err=%v", errPaid))
-	check("refuses resold Claude even WITH --allow-paid (already covered by Max)",
-		errClaude != nil && strings.Contains(errClaude.Error(), "Max subscription"),
-		fmt.Sprintf("err=%v", errClaude))
+	// 10. The spending guard: Zen's free models are accepted, everything else is
+	//     refused before a request is ever built. One allowlist, no override.
+	_, errFree := zenJudge(defaultZenModel, 4)
+	_, errPaid := zenJudge("gpt-5.5", 4)
+	_, errClaude := zenJudge("claude-opus-5", 4)
+	_, errLookalike := zenJudge("deepseek-v4-flash", 4) // metered twin of the default
+	check("accepts a free model (stops only at the missing key)",
+		errFree != nil && strings.Contains(errFree.Error(), "BECKY_ZEN_API_KEY"),
+		fmt.Sprintf("err=%v", errFree))
+	check("refuses every model off the free list, Claude included",
+		errPaid != nil && errClaude != nil && errLookalike != nil,
+		fmt.Sprintf("paid=%v claude=%v lookalike=%v", errPaid != nil, errClaude != nil, errLookalike != nil))
 
 	fmt.Printf("\n%d/%d PASS\n", pass, pass+fail)
 	if fail > 0 {

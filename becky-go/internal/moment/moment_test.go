@@ -31,31 +31,49 @@ func story() []Segment {
 }
 
 func TestAutoThoughtGap_DerivesFromTheTranscriptNotAConstant(t *testing.T) {
-	// A transcript whose gaps are mostly 0.2s with a few 2.0s breaks. The p75 of
-	// {0.2,0.2,0.2,0.2,2.0,2.0} is 2.0, which clamps to maxThoughtGap (2.5 -> 2.0
-	// stays). The point of the assertion is that the value TRACKS the data.
+	// Measured on Jordan's own footage (E:\TakingBack2007, 177 real Parakeet
+	// transcripts, 2026-08-18): the p75 inter-cue gap is 0.72-0.80s on every
+	// full-length recording, i.e. the derivation is live and the floor is not
+	// doing the work. Only very short or unusually dense transcripts clamp.
+	// These fixtures cover both regimes and assert the value TRACKS the data.
+
+	// Dense: every gap 0.2s. p75 = 0.2, below the floor, so it clamps. That is
+	// deliberate — deriving 0.2 here would make a quarter of all cue breaks a
+	// "new thought" and shatter the transcript into fragments.
 	tight := []Segment{
 		seg(0, 1, "a"), seg(1.2, 2, "b"), seg(2.2, 3, "c"),
 		seg(3.2, 4, "d"), seg(4.2, 5, "e"), seg(5.2, 6, "f"),
 	}
-	got := AutoThoughtGap(tight)
-	if got != minThoughtGap {
-		t.Errorf("AutoThoughtGap(all-tight) = %v, want the %v floor", got, minThoughtGap)
+	if got := AutoThoughtGap(tight); got != minThoughtGap {
+		t.Errorf("AutoThoughtGap(all 0.2s gaps) = %v, want the %v floor", got, minThoughtGap)
+	}
+
+	// Typical of his real recordings: p75 around 0.72s, comfortably derived.
+	real := []Segment{
+		seg(0, 1, "a"), seg(1.24, 2, "b"), seg(2.24, 3, "c"),
+		seg(3.24, 4, "d"), seg(4.72, 5, "e"), seg(5.72, 6, "f"),
+		seg(6.72, 7, "g"), seg(7.80, 8, "h"),
+	}
+	gotReal := AutoThoughtGap(real)
+	if gotReal <= minThoughtGap || gotReal >= maxThoughtGap {
+		t.Errorf("AutoThoughtGap(realistic parakeet) = %v, want a DERIVED value strictly inside (%v,%v)",
+			gotReal, minThoughtGap, maxThoughtGap)
 	}
 
 	loose := []Segment{
 		seg(0, 1, "a"), seg(2, 3, "b"), seg(4, 5, "c"),
 		seg(6, 7, "d"), seg(8, 9, "e"), seg(10, 11, "f"),
 	}
-	got = AutoThoughtGap(loose)
-	if got != 1.0 {
+	if got := AutoThoughtGap(loose); got != 1.0 {
 		t.Errorf("AutoThoughtGap(all 1.0s gaps) = %v, want 1.0", got)
 	}
 
-	// Regression for the constant-does-not-transfer lesson (STATE-OF-MASTER
-	// 2026-07-19): the two transcripts above must NOT produce the same threshold.
-	if AutoThoughtGap(tight) == AutoThoughtGap(loose) {
-		t.Error("AutoThoughtGap returned the same value for tight and loose transcripts — it is behaving like a constant")
+	// The constant-does-not-transfer lesson (STATE-OF-MASTER 2026-07-19): three
+	// different transcripts must not collapse to one threshold. Asserting all
+	// three are distinct is what makes this a test of derivation rather than a
+	// test that a constant is still the constant.
+	if gotReal == AutoThoughtGap(loose) || gotReal == AutoThoughtGap(tight) {
+		t.Error("AutoThoughtGap returned the same value for different transcripts — it is behaving like a constant")
 	}
 }
 
@@ -299,17 +317,70 @@ func TestRank_DisagreementIsHeldAtTheLowerSignal(t *testing.T) {
 }
 
 func TestRank_IncompleteArcIsVetoed(t *testing.T) {
-	cands := []Candidate{{Start: 0, End: 20, Score: 0.85}}
-	ranked := Rank(cands, []Judgement{{Index: 0, Score: 90, Complete: false, Reason: "ends mid-sentence"}})
-	if ranked[0].Confidence != Disputed {
-		t.Fatalf("confidence = %q, want %q for an incomplete arc", ranked[0].Confidence, Disputed)
+	// The property, not one hand-picked pair: NO clip the content pass calls
+	// incomplete may outrank ANY clip it calls complete — at any combination of
+	// structural and content scores. The previous version of this test asserted
+	// a single favourable pair and passed while the code merely applied a 0.6
+	// discount, which let a high-scoring clip that trails off beat a modest one
+	// that lands. That is the "short with no payoff" failure in §2.1.
+	scores := []float64{0.05, 0.25, 0.50, 0.75, 0.95}
+	content := []int{5, 25, 50, 75, 99}
+
+	var worstComplete = 1.1
+	var bestVetoed = -0.1
+	for _, st := range scores {
+		for _, ct := range content {
+			done := Rank([]Candidate{{Start: 0, End: 20, Score: st}},
+				[]Judgement{{Index: 0, Score: ct, Complete: true, Reason: "lands"}})[0]
+			trails := Rank([]Candidate{{Start: 0, End: 20, Score: st}},
+				[]Judgement{{Index: 0, Score: ct, Complete: false, Reason: "ends mid-sentence"}})[0]
+
+			if trails.Confidence != Vetoed {
+				t.Fatalf("structure %.2f content %d: confidence = %q, want %q",
+					st, ct, trails.Confidence, Vetoed)
+			}
+			if done.Confidence == Vetoed {
+				t.Fatalf("structure %.2f content %d: a completing arc must never be vetoed", st, ct)
+			}
+			worstComplete = minF(worstComplete, done.Final)
+			bestVetoed = maxOf(bestVetoed, trails.Final)
+		}
 	}
-	// A 90/99 clip that does not complete must rank BELOW a modest complete one.
-	complete := Rank([]Candidate{{Start: 0, End: 20, Score: 0.55}},
-		[]Judgement{{Index: 0, Score: 55, Complete: true, Reason: "fine"}})
-	if ranked[0].Final >= complete[0].Final {
-		t.Errorf("incomplete clip (%.3f) must rank below a complete one (%.3f)", ranked[0].Final, complete[0].Final)
+
+	// The ordering guarantee is enforced by Rank's sort, so assert it where a
+	// caller would actually see it: mix every case into one slice and require
+	// every complete moment to come out ahead of every vetoed one.
+	var cands []Candidate
+	var verdicts []Judgement
+	for i, st := range scores {
+		cands = append(cands, Candidate{Start: float64(i * 100), End: float64(i*100 + 20), Score: st})
+		verdicts = append(verdicts, Judgement{Index: len(verdicts), Score: 99, Complete: false, Reason: "trails off"})
+		cands = append(cands, Candidate{Start: float64(i*100 + 30), End: float64(i*100 + 50), Score: st})
+		verdicts = append(verdicts, Judgement{Index: len(verdicts), Score: 5, Complete: true, Reason: "lands"})
 	}
+	ranked := Rank(cands, verdicts)
+	seenVetoed := false
+	for _, r := range ranked {
+		if r.Confidence == Vetoed {
+			seenVetoed = true
+			continue
+		}
+		if seenVetoed {
+			t.Fatalf("a complete moment (final %.3f) ranked BELOW a vetoed one — the veto is only a discount", r.Final)
+		}
+	}
+	if !seenVetoed {
+		t.Fatal("fixture produced no vetoed moments; the test proves nothing")
+	}
+	t.Logf("worst complete final=%.3f, best vetoed final=%.3f (ordering is by veto first, not by score)",
+		worstComplete, bestVetoed)
+}
+
+func maxOf(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func TestRank_PartialVerdictsDegradePerCandidate(t *testing.T) {
@@ -393,5 +464,39 @@ func TestJudgeFunc_ErrorDegradesToStructureOnly(t *testing.T) {
 		if r.Confidence != CandidateOnly {
 			t.Errorf("after a judge error, confidence = %q, want %q", r.Confidence, CandidateOnly)
 		}
+	}
+}
+
+func TestRank_KeepsEachMomentsSourceThroughReorderingAndTruncation(t *testing.T) {
+	// Two transcripts whose candidate windows are IDENTICAL — the ordinary case
+	// when several clips are cut from the same stream, and the one that broke.
+	// becky-moment used to drop the source and recover it afterwards by matching
+	// Start/End floats, first match wins, so every moment here was labelled
+	// alpha.srt and becky-hits cut the wrong footage. It rendered fine.
+	cands := []Candidate{
+		{Source: "alpha.srt", Start: 0, End: 20, Score: 0.40, Text: "alpha one"},
+		{Source: "zulu.srt", Start: 0, End: 20, Score: 0.90, Text: "zulu one"},
+		{Source: "alpha.srt", Start: 30, End: 50, Score: 0.20, Text: "alpha two"},
+		{Source: "zulu.srt", Start: 30, End: 50, Score: 0.70, Text: "zulu two"},
+	}
+	ranked := Rank(cands, nil)
+	if len(ranked) != len(cands) {
+		t.Fatalf("Rank returned %d moments, want %d", len(ranked), len(cands))
+	}
+	// Assert values: the text and the source must still belong to each other.
+	for _, r := range ranked {
+		wantSrc := "alpha.srt"
+		if strings.HasPrefix(r.Text, "zulu") {
+			wantSrc = "zulu.srt"
+		}
+		if r.Source != wantSrc {
+			t.Errorf("moment %q came back sourced to %q, want %q — a clip cut from this points at the wrong video",
+				r.Text, r.Source, wantSrc)
+		}
+	}
+	// And the highest-ranked moment really is zulu's, so truncation to --top N
+	// cannot hand back alpha's window under zulu's score.
+	if ranked[0].Source != "zulu.srt" || ranked[0].Text != "zulu one" {
+		t.Errorf("top moment = %q from %q, want \"zulu one\" from zulu.srt", ranked[0].Text, ranked[0].Source)
 	}
 }

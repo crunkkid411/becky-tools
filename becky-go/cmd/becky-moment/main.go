@@ -42,6 +42,7 @@ import (
 	"sort"
 	"strings"
 
+	"becky-go/internal/config"
 	"becky-go/internal/moment"
 	"becky-go/internal/pathx"
 	"becky-go/internal/sidecar"
@@ -94,13 +95,14 @@ func main() {
 		minDur     = flag.Float64("min", 12, "minimum moment length (seconds)")
 		maxDur     = flag.Float64("max", 60, "maximum moment length (seconds)")
 		extend     = flag.Float64("extend", 8, "seconds past --max the ending may reach to complete a thought")
-		judge      = flag.Bool("judge", true, "run the LLM content pass (needs BECKY_ZEN_API_KEY)")
-		model      = flag.String("model", defaultZenModel, "judge model id (OpenCode Zen)")
-		allowPaid  = flag.Bool("allow-paid", false, "permit a METERED judge model (Zen auto-reloads $20 below $5)")
+		judge      = flag.Bool("judge", true, "run the content pass (the second, independent signal)")
+		backend    = flag.String("judge-backend", "local", "content judge: local (offline Gemma-4) or zen (OpenCode Zen, free models, needs BECKY_ZEN_API_KEY)")
+		model      = flag.String("model", defaultZenModel, "zen backend only: judge model id (must be one of OpenCode Zen's free models)")
 		selftest   = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose    = flag.Bool("verbose", false, "progress to stderr")
 	)
 	flag.Parse()
+	cfg := config.Load()
 
 	if *selftest {
 		os.Exit(runSelftest())
@@ -138,7 +140,6 @@ func main() {
 
 	rep := report{Tool: toolVersion, Transcripts: len(sources)}
 	var allCands []moment.Candidate
-	var owner []string // parallel to allCands: which transcript each came from
 
 	for _, src := range sources {
 		sub, err := sidecar.ParseSubtitle(src)
@@ -155,21 +156,43 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%s: %d cues -> %d candidates\n", pathx.Base(src), len(segs), len(cands))
 		}
 		for _, c := range cands {
+			c.Source = src
 			allCands = append(allCands, c)
-			owner = append(owner, src)
 		}
 	}
 	rep.Candidates = len(allCands)
+
+	// Only the structurally strongest candidates are worth a content verdict: a
+	// folder of real streams yields six figures of them (112,625 across Jordan's
+	// 177 transcripts), and judging every one would take hours to change the top
+	// ten. Shortlist first, judge the shortlist.
+	allCands = shortlist(allCands, judgePool(*top))
 
 	// The content pass. Any failure here is a DEGRADE: we keep every candidate
 	// and say plainly that only one signal is behind the ranking.
 	var verdicts []moment.Judgement
 	if *judge && len(allCands) > 0 {
-		jf, err := zenJudge(*model, *allowPaid, 12)
+		var (
+			jf      moment.JudgeFunc
+			err     error
+			cleanup func()
+			used    string
+		)
+		switch strings.ToLower(*backend) {
+		case "zen":
+			jf, err = zenJudge(*model, 12)
+			used = "zen:" + *model
+		default:
+			jf, cleanup, err = localJudge(cfg, func(f string, a ...any) { logIf(*verbose, f, a...) })
+			used = "local:" + pathx.Base(cfg.GemmaModel)
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
 		if err != nil {
 			rep.Notes = append(rep.Notes, "content pass skipped: "+err.Error())
 		} else {
-			rep.JudgeModel = *model
+			rep.JudgeModel = used
 			verdicts, err = jf(context.Background(), allCands)
 			if err != nil {
 				rep.Notes = append(rep.Notes, "content pass failed: "+err.Error())
@@ -185,15 +208,8 @@ func main() {
 	}
 
 	for _, r := range ranked {
-		src := ""
-		for i := range allCands {
-			if allCands[i].Start == r.Start && allCands[i].End == r.End {
-				src = owner[i]
-				break
-			}
-		}
 		rep.Moments = append(rep.Moments, momentOut{
-			Source:     src,
+			Source:     r.Source,
 			Start:      r.Start,
 			End:        r.End,
 			Duration:   r.Dur(),
@@ -204,7 +220,7 @@ func main() {
 			Text:       r.Text,
 		})
 		rep.Hits = append(rep.Hits, hit{
-			SRT: pathx.Base(src),
+			SRT: pathx.Base(r.Source),
 			In:  formatTC(r.Start),
 			Out: formatTC(r.End),
 			Q:   firstLine(r.Text),
@@ -313,4 +329,47 @@ func emit(rep report, out string) {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", out)
+}
+
+// logIf writes progress to stderr only when --verbose is set.
+func logIf(verbose bool, format string, a ...any) {
+	if verbose {
+		fmt.Fprintln(os.Stderr, fmt.Sprintf(format, a...))
+	}
+}
+
+// judgePool is how many of the structurally best candidates get a content
+// verdict. Four per requested moment gives the judge room to veto and reorder
+// without asking it to read a whole archive; the floor keeps a small --top
+// honest, and the ceiling bounds a local run to a few minutes.
+func judgePool(top int) int {
+	n := 4 * top
+	if n < 40 {
+		n = 40
+	}
+	if n > 400 {
+		n = 400
+	}
+	return n
+}
+
+// shortlist keeps the n highest-scoring candidates, in structural order, and
+// leaves their Source and every other field intact. Ties break on Start so the
+// selection is deterministic across runs (same input -> same output).
+func shortlist(cands []moment.Candidate, n int) []moment.Candidate {
+	if len(cands) <= n {
+		return cands
+	}
+	out := make([]moment.Candidate, len(cands))
+	copy(out, cands)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		return out[i].Start < out[j].Start
+	})
+	return out[:n]
 }

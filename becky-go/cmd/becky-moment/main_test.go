@@ -116,45 +116,52 @@ func TestSeam_TimecodeIsTheFormatBeckyHitsParses(t *testing.T) {
 	}
 }
 
-// --- Spending guards -------------------------------------------------------
+// --- Spending guard --------------------------------------------------------
 //
 // CLAUDE.md's never-spend-money invariant is enforced in code, not judgement.
-// Jordan authorised his OpenCode Zen key for the content pass, so these tests
-// assert the guards that keep that spending DELIBERATE.
+// Jordan's rule for OpenCode Zen is "free models only", so there is exactly one
+// guard: an allowlist. These tests pin the two properties that matter — the real
+// free ids are accepted, and everything else is refused.
 
-func TestZenJudge_RefusesResoldAnthropicEvenWhenPaidIsAllowed(t *testing.T) {
-	for _, model := range []string{"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "anthropic/claude-sonnet-5"} {
-		_, err := zenJudge(model, true, 4)
+func TestIsFreeZenModel_AcceptsEveryFreeIdAndNothingElse(t *testing.T) {
+	// Verified against https://opencode.ai/zen/v1/models on 2026-08-18.
+	for _, id := range zenFreeModels {
+		if !isFreeZenModel(id) {
+			t.Errorf("isFreeZenModel(%q) = false, want true (it is on Zen's free tier)", id)
+		}
+	}
+
+	refuse := []string{
+		// Resold Claude: Jordan already owns these through Max. Paying per token
+		// for them is the 2026-07-19 mistake. No entry on the list => refused.
+		"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "anthropic/claude-sonnet-5",
+		// Ordinary metered models.
+		"gpt-5.5", "gemini-3.7-flash", "deepseek-v4-pro", "minimax-m3",
+		// One character from a free id: Zen really does host both.
+		"deepseek-v4-flash",
+		// A metered model that a "-free suffix" heuristic would have waved
+		// through. This is why the guard is a list and not a pattern.
+		"turbo-free", "hy3:free",
+		// Typos and junk.
+		"", "   ", "typo-model", "freestyle-model",
+	}
+	for _, id := range refuse {
+		if isFreeZenModel(id) {
+			t.Errorf("isFreeZenModel(%q) = true, want false — only the allowlist is free", id)
+		}
+	}
+}
+
+func TestZenJudge_RefusesAnythingOffTheFreeListAndNamesTheAlternatives(t *testing.T) {
+	for _, model := range []string{"claude-opus-5", "gpt-5.5", "deepseek-v4-flash", "turbo-free"} {
+		_, err := zenJudge(model, 4)
 		if err == nil {
-			t.Errorf("zenJudge(%q, allowPaid=true) returned no error — Claude is already paid for via Max", model)
+			t.Errorf("zenJudge(%q) returned no error — becky uses free Zen models only", model)
 			continue
 		}
-		if !strings.Contains(err.Error(), "Max subscription") {
-			t.Errorf("zenJudge(%q) error = %q, want it to name the Max subscription", model, err)
-		}
-	}
-}
-
-func TestZenJudge_RefusesMeteredModelWithoutOptIn(t *testing.T) {
-	for _, model := range []string{"gpt-5.5", "gemini-3.7-flash", "qwen3.7-max", "typo-model"} {
-		if _, err := zenJudge(model, false, 4); err == nil {
-			t.Errorf("zenJudge(%q, allowPaid=false) returned no error — a metered call must be opt-in", model)
-		}
-	}
-}
-
-func TestIsFreeZenModel_UnknownIdsAreTreatedAsPaid(t *testing.T) {
-	free := []string{"deepseek-v4-flash-free", "mimo-v2.5-free", "big-pickle", "hy3:free"}
-	paid := []string{"gpt-5.5", "claude-opus-5", "deepseek-v4-pro", "", "freestyle-model"}
-
-	for _, id := range free {
-		if !isFreeZenModel(id) {
-			t.Errorf("isFreeZenModel(%q) = false, want true", id)
-		}
-	}
-	for _, id := range paid {
-		if isFreeZenModel(id) {
-			t.Errorf("isFreeZenModel(%q) = true, want false (unknown ids must default to PAID)", id)
+		// The refusal has to tell Jordan what he CAN use, or it is a dead end.
+		if !strings.Contains(err.Error(), defaultZenModel) {
+			t.Errorf("zenJudge(%q) error = %q, want it to list the free models", model, err)
 		}
 	}
 }
@@ -163,7 +170,7 @@ func TestZenJudge_FreeModelStillNeedsAKeyAndSaysSo(t *testing.T) {
 	t.Setenv("BECKY_ZEN_API_KEY", "")
 	t.Setenv("OPENCODE_API_KEY", "")
 	t.Setenv("OPENCODE_ZEN_API_KEY", "")
-	_, err := zenJudge(defaultZenModel, false, 4)
+	_, err := zenJudge(defaultZenModel, 4)
 	if err == nil {
 		t.Fatal("expected an error when no API key is set")
 	}

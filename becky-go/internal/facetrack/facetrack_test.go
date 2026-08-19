@@ -241,35 +241,71 @@ func TestBuild_EmptyInput(t *testing.T) {
 }
 
 func TestCoverageIn_MeasuresNotAsserts(t *testing.T) {
-	// 30 detections spanning 0.0 .. 0.9667s.
+	const fps30 = 1.0 / 30.0
+
+	// 30 detections at 30fps, spanning 0.0 .. 0.9667s.
 	tr := Track{ID: 1, Detections: walker(30, 100, 1, nil)}
 
-	// A window the track fully spans.
-	frac, n := tr.CoverageIn(0, 1)
+	// A window the track is densely present in.
+	frac, n := tr.CoverageIn(0, 1, fps30)
 	if n != 30 {
 		t.Errorf("n = %d, want 30", n)
 	}
 	if frac < 0.9 {
-		t.Errorf("coverage = %.3f over a window it spans, want >= 0.9", frac)
+		t.Errorf("coverage = %.3f over a window it is present throughout, want >= 0.9", frac)
+	}
+
+	// THE CASE THAT MATTERS. Three glimpses spread across a 20s window used to
+	// score 1.000 — identical to a face in every frame — because coverage was
+	// (last-first)/(t1-t0), i.e. the SPAN between the outermost sightings. It
+	// must now score near zero, because three frames is what was actually seen.
+	sparse := Track{ID: 3, Detections: []Detection{
+		{Frame: 0, Time: 0.0, BBox: box(0, 0, 10, 10)},
+		{Frame: 300, Time: 10.0, BBox: box(0, 0, 10, 10)},
+		{Frame: 600, Time: 20.0, BBox: box(0, 0, 10, 10)},
+	}}
+	frac, n = sparse.CoverageIn(0, 20, fps30)
+	if n != 3 {
+		t.Fatalf("sparse n = %d, want 3", n)
+	}
+	if frac > 0.02 {
+		t.Errorf("three glimpses across 20s = %.4f coverage, want <= 0.02 — "+
+			"a span-based measure scores this 1.000 and promotes a face that was barely there", frac)
+	}
+	// And it must be strictly beaten by the dense track, which is the whole point.
+	dense, _ := tr.CoverageIn(0, 1, fps30)
+	if !(dense > frac) {
+		t.Errorf("dense coverage %.4f must exceed sparse coverage %.4f", dense, frac)
 	}
 
 	// A window the track is entirely outside.
-	frac, n = tr.CoverageIn(10, 20)
+	frac, n = tr.CoverageIn(10, 20, fps30)
 	if n != 0 || frac != 0 {
 		t.Errorf("coverage outside the track = %.3f (n=%d), want 0 (0)", frac, n)
 	}
 
-	// A single sighting proves an instant, not a span — it must NOT report
-	// coverage of the window.
+	// A single sighting proves an instant, not a span.
 	single := Track{ID: 2, Detections: []Detection{{Frame: 0, Time: 5, BBox: box(0, 0, 10, 10)}}}
-	frac, n = single.CoverageIn(0, 10)
-	if n != 1 || frac != 0 {
-		t.Errorf("single sighting coverage = %.3f (n=%d), want 0 (1)", frac, n)
+	frac, n = single.CoverageIn(0, 10, fps30)
+	if n != 1 || frac > 0.01 {
+		t.Errorf("single sighting coverage = %.4f (n=%d), want ~0 (1)", frac, n)
+	}
+
+	// Coverage is a fraction: it never exceeds 1 even if the caller passes a
+	// sample period longer than the detector really used.
+	if frac, _ := tr.CoverageIn(0, 1, 1.0); frac != 1 {
+		t.Errorf("coverage = %.3f, want it capped at 1", frac)
 	}
 
 	// A zero-width or inverted window is not an error.
-	if frac, n := tr.CoverageIn(5, 5); frac != 0 || n != 0 {
+	if frac, n := tr.CoverageIn(5, 5, fps30); frac != 0 || n != 0 {
 		t.Errorf("zero-width window = %.3f (n=%d), want 0 (0)", frac, n)
+	}
+
+	// An unknown sample period cannot be guessed, so it is refused rather than
+	// answered with a number that looks real.
+	if frac, n := tr.CoverageIn(0, 1, 0); frac != 0 || n != 0 {
+		t.Errorf("samplePeriod=0 = %.3f (n=%d), want 0 (0)", frac, n)
 	}
 }
 
