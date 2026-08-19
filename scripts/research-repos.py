@@ -233,8 +233,26 @@ def usable(text):
     i = text.find("## What it is")
     if i > 0:
         text = text[i:]
-    if sum(1 for ln in text.split(chr(10)) if ln.startswith("## ")) < REQUIRED_HEADINGS:
+    heads = [ln.strip() for ln in text.split(chr(10)) if ln.startswith("## ")]
+    if len(heads) < REQUIRED_HEADINGS:
         return None
+
+    # A heading count alone is not enough, and repo-cliperai.md proved it: that
+    # note passed the old check with 13 headings while containing three copies of
+    # "## The pipeline, in order" and the model's own running commentary -
+    # "Let me now think about the pipeline in order", "I should report what's
+    # actually visible". 4,774 words of thinking dressed as research.
+    if len(heads) != len(set(heads)):
+        return None                      # repeated sections = it restarted mid-answer
+    if len(heads) > REQUIRED_HEADINGS + 4:
+        return None                      # far more sections than asked for
+
+    thinking = ("let me ", "i need to ", "i should ", "now i ", "wait,",
+                "okay, so", "this requires thinking", "first, i")
+    for ln in text.split(chr(10)):
+        low = ln.strip().lower()
+        if any(low.startswith(t) for t in thinking):
+            return None                  # chain-of-thought leaked into the answer
     return text.strip()
 
 
