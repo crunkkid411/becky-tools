@@ -50,7 +50,17 @@ type shortOut struct {
 	Coverage float64 `json:"coverage"`
 	Followed bool    `json:"followed"`
 	Captions int     `json:"captions"`
-	Note     string  `json:"note,omitempty"`
+	// Jumpcuts is true when this short was actually cut the way becky-cut would
+	// have cut it (dead air removed, kept spans butted together) rather than
+	// rendered as one continuous take — see planJumpcuts/renderJumpcutShort.
+	Jumpcuts bool `json:"jumpcuts"`
+	// KeepSpans/RemovedSeconds are the pacing decision itself, not just its
+	// result: how many spans becky-cut kept inside this window, and how many
+	// seconds of dead air came out. Reported even when Jumpcuts is false (e.g.
+	// becky-cut found nothing worth cutting) so the note isn't the only signal.
+	KeepSpans      int     `json:"keep_spans"`
+	RemovedSeconds float64 `json:"removed_seconds"`
+	Note           string  `json:"note,omitempty"`
 }
 
 type report struct {
@@ -87,6 +97,8 @@ func main() {
 		minCov   = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
 		center   = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
 		captions = flag.Bool("captions", true, "burn word-timed captions into the short (--captions=false to skip)")
+		jumpcuts = flag.Bool("jumpcuts", true, "cut dead air the way becky-cut would (jumpcuts), instead of "+
+			"one unbroken continuous take; --jumpcuts=false renders the old continuous window")
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -130,8 +142,12 @@ func main() {
 				"run scripts/get-mediapipe-models.ps1 to enable subject framing")
 	}
 
+	// One cache for the whole run: becky-cut analyses the WHOLE source file
+	// regardless of any one short's window, so a --reel job with several shorts
+	// cut from the same source must run it once, not once per short.
+	cutCache := newCutCache()
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *jumpcuts, cutCache, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -156,37 +172,42 @@ type job struct {
 }
 
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
-	forceCenter, withCaptions, verbose bool) (shortOut, error) {
+	forceCenter, withCaptions, useJumpcuts bool, cache *cutCache, verbose bool) (shortOut, error) {
 
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
 
-	var rects []crop.Rect
-	if !forceCenter && cfg.PoseModel != "" {
-		p, err := crop.Run(cfg, crop.Options{
-			Video: j.Src, Start: j.In, End: j.Out,
-			Aspect: fmt.Sprintf("%d:%d", outW, outH), FPS: sampleFPS, Model: cfg.PoseModel,
-		})
+	// Decide the pacing FIRST: is this a continuous window, or does becky-cut
+	// say part of it is dead air? A short with no jumpcuts is still a usable
+	// short, so any failure here (no becky-cut, it errored, nothing left after
+	// intersecting its decisions with this window) degrades to the old
+	// continuous render below rather than refusing the whole job.
+	if useJumpcuts {
+		plan, jcErr := planJumpcuts(cache, j)
 		switch {
-		case err != nil:
-			res.Note = "subject framing unavailable (" + err.Error() + "); STATIC CENTRE crop"
-		case p.LongestGap > maxGap:
-			// Refuse on a CLUSTERED absence even when the average looks fine.
-			return res, fmt.Errorf("the subject is off screen for %.1fs in a row (limit %.1fs) — "+
-				"not rendering a short that would hold a stale crop through it; "+
-				"pass --max-gap to allow it or --center for a static crop",
-				p.LongestGap, maxGap)
-		case p.Coverage() < minCov:
-			// Refuse rather than ship a followed-looking file that mostly guessed.
-			return res, fmt.Errorf("subject found in only %.0f%% of samples (need %.0f%%) — "+
-				"not rendering a short that would frame the wrong thing; pass --center to force a static crop",
-				p.Coverage()*100, minCov*100)
+		case jcErr != nil:
+			note(&res, "jumpcuts unavailable: "+firstLine(jcErr)+"; continuous render")
+		case len(plan.Spans) == 0:
+			note(&res, "becky-cut found no keep segments in this window; continuous render")
+		case plan.RemovedSeconds < jumpcutNoopEps:
+			// becky-cut agrees the window is already tight — nothing to cut.
+			res.KeepSpans = len(plan.Spans)
 		default:
-			rects = p.Rects
-			res.Sampled, res.Found, res.Coverage = p.Sampled, p.Found, p.Coverage()
-			res.Followed = true
+			res.KeepSpans = len(plan.Spans)
+			res.RemovedSeconds = plan.RemovedSeconds
+			res.Jumpcuts = true
+			return renderJumpcutShort(cfg, j, plan.Spans, res, asp, outW, outH, sampleFPS, minCov, maxGap,
+				forceCenter, withCaptions, verbose)
 		}
-	} else if forceCenter {
-		res.Note = "--center: static crop, subject not tracked"
+	}
+
+	cr, err := resolveCrop(cfg, j.Src, j.In, j.Out, fmt.Sprintf("%d:%d", outW, outH), sampleFPS, minCov, maxGap, forceCenter)
+	if err != nil {
+		return res, err
+	}
+	rects := cr.Rects
+	res.Sampled, res.Found, res.Coverage, res.Followed = cr.Sampled, cr.Found, cr.Coverage, cr.Followed
+	if cr.Note != "" {
+		note(&res, cr.Note)
 	}
 
 	// The per-frame crop path is handed to ffmpeg as a sendcmd script. It has to
@@ -257,6 +278,64 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		return res, fmt.Errorf("ffmpeg reported success but wrote no file")
 	}
 	return res, nil
+}
+
+// cropResult is one window's subject-framing decision: either a followed
+// per-frame path (Rects non-empty) or an honest static fallback (Rects nil,
+// Note explains why). Shared by the continuous render path and by each
+// jumpcut span in renderJumpcutShort, so both apply the SAME framing gates.
+type cropResult struct {
+	Rects    []crop.Rect
+	Sampled  int
+	Found    int
+	Coverage float64
+	Followed bool
+	Note     string
+}
+
+// resolveCrop decides the crop for ONE [start,end] window of src. Pulled out
+// of render() so a jumpcut short can call it once per kept span, each getting
+// its OWN local (0-based) camera path — see renderJumpcutShort's doc comment
+// for why that, not a single whole-window path sliced after the fact, is the
+// safe way to avoid putting the crop on the wrong timeline after a cut.
+func resolveCrop(cfg config.Config, src string, start, end float64, aspect string,
+	sampleFPS, minCov, maxGap float64, forceCenter bool) (cropResult, error) {
+	if forceCenter {
+		return cropResult{Note: "--center: static crop, subject not tracked"}, nil
+	}
+	if cfg.PoseModel == "" {
+		return cropResult{}, nil
+	}
+	p, err := crop.Run(cfg, crop.Options{
+		Video: src, Start: start, End: end, Aspect: aspect, FPS: sampleFPS, Model: cfg.PoseModel,
+	})
+	switch {
+	case err != nil:
+		return cropResult{Note: "subject framing unavailable (" + err.Error() + "); STATIC CENTRE crop"}, nil
+	case p.LongestGap > maxGap:
+		// Refuse on a CLUSTERED absence even when the average looks fine.
+		return cropResult{}, fmt.Errorf("the subject is off screen for %.1fs in a row (limit %.1fs) — "+
+			"not rendering a short that would hold a stale crop through it; "+
+			"pass --max-gap to allow it or --center for a static crop",
+			p.LongestGap, maxGap)
+	case p.Coverage() < minCov:
+		// Refuse rather than ship a followed-looking file that mostly guessed.
+		return cropResult{}, fmt.Errorf("subject found in only %.0f%% of samples (need %.0f%%) — "+
+			"not rendering a short that would frame the wrong thing; pass --center to force a static crop",
+			p.Coverage()*100, minCov*100)
+	default:
+		return cropResult{Rects: p.Rects, Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage(), Followed: true}, nil
+	}
+}
+
+// firstLine trims an error down to its first line, for a report note that
+// should not carry a whole stderr dump.
+func firstLine(err error) string {
+	s := err.Error()
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 func jobsFromReel(path, outDir string, outW, outH int) ([]job, error) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"becky-go/internal/crop"
+	"becky-go/internal/subs"
 )
 
 func runSelftest() int {
@@ -150,7 +151,30 @@ func runSelftest() int {
 	check("reduction keeps the move (start and end values both survive)",
 		strings.Contains(le, "100") && strings.Contains(le, "140"), le)
 
-	// 9. Coverage is a MEASURE the caller can refuse on, not a boolean.
+	// 9. Jumpcuts: becky-cut's whole-file keep decisions get intersected with
+	//    the short's own window, and the removed time is real (a pacing
+	//    decision Jordan can see, not just a shorter file).
+	jcCache := newCutCache()
+	jcCache.spans["src.mp4"] = []keepSpan{{In: 0, Out: 5}, {In: 8, Out: 20}, {In: 25, Out: 30}}
+	plan, jcErr := planJumpcuts(jcCache, job{Src: "src.mp4", In: 4, Out: 27})
+	check("jumpcuts intersects becky-cut's decisions with the short's window",
+		jcErr == nil && len(plan.Spans) == 3, fmt.Sprintf("plan=%+v err=%v", plan, jcErr))
+	check("jumpcuts reports the removed seconds (the pacing decision itself)",
+		abs(plan.RemovedSeconds-8.0) < 1e-9, fmt.Sprintf("got %.3fs, want 8s", plan.RemovedSeconds))
+
+	// 9b. REGRESSION: captions must land on the CUT (concatenated) timeline,
+	//     not the original continuous window — the exact silent-and-plausible
+	//     failure this repo keeps shipping. Two kept spans, 10s of dead air
+	//     removed between them: span 2's words must open at output ~5s (right
+	//     after span 1's 5s duration), never at ~15s (its position in the
+	//     uncut window).
+	cues := captionCuesJumpcut([]subs.Word{{Word: "two", Start: 26.0, End: 26.4}}, 10, 28,
+		[]keepSpan{{In: 10, Out: 15}, {In: 25, Out: 28}}, 30)
+	check("jumpcut captions land on the CUT timeline, not the original window",
+		len(cues) == 1 && cues[0].Start > 4.5 && cues[0].Start < 5.5,
+		fmt.Sprintf("%+v", cues))
+
+	// 10. Coverage is a MEASURE the caller can refuse on, not a boolean.
 	p := crop.Path{Sampled: 100, Found: 55}
 	check("coverage reports the fraction of samples with a real detection",
 		abs(p.Coverage()-0.55) < 1e-9, fmt.Sprintf("%v", p.Coverage()))
