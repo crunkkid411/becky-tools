@@ -153,8 +153,22 @@ def main():
     # Framing craft. Defaults chosen to look like a shoulders-up interview frame.
     ap.add_argument("--shoulder-frac", type=float, default=0.46,
                     help="fraction of crop WIDTH the shoulders should span")
-    ap.add_argument("--eye-line", type=float, default=0.38,
-                    help="where the eyes sit down the crop HEIGHT (0.38 ~ upper third)")
+    # 0.27, not 0.38, MEASURED off Jordan's own vertical edit with InsightFace
+    # over all 915 frames of it (research/jordan-edit-reverse-engineered.md):
+    # his face centre sits at 29.9% of frame height (p25 26.9, p75 35.5) and 90%
+    # of his frames keep it in the upper 40%. The bottom half of his frame is
+    # reserved for the caption block, the hands, and what is on the table.
+    #
+    # CAVEAT, and it is why --shoulder-frac was left alone: this only bites when
+    # the crop is SMALLER than the source height. A 9:16 crop of 1920x1080 is at
+    # most 608x1080 - the full height - so on footage where the subject is close
+    # to camera there is no spare source above or below and NO vertical freedom
+    # at all. On test-for-clips.mp4 his face is already 37.8% of the source
+    # height, so it can never be smaller than that in the output and cannot be
+    # moved up or down. becky's framing there is constrained, not wrong.
+    ap.add_argument("--eye-line", type=float, default=0.27,
+                    help="where the eyes sit down the crop HEIGHT (0.27 measured "
+                         "off his own edit; 0.38 sat the subject too low)")
     ap.add_argument("--deadband", type=float, default=0.045,
                     help="subject drift, as a fraction of crop width, before the camera moves")
     ap.add_argument("--smooth", type=float, default=0.18,

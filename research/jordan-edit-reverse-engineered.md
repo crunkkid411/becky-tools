@@ -103,14 +103,42 @@ of what the master was doing.
 - Faces per frame: mean 1.21. **656 frames show exactly one face**; single-subject framing is the
   default, two-shots are the exception, and only the final shot holds all three.
 
+### A hard limit I hit while trying to apply these — read before "fixing" the framing
+
+I measured becky's own render of `test-for-clips.mp4` with the identical tool and metric and got
+face height **39.7%** against his 24.3%, face centre Y **39.3%** against his 29.9%. That looks like
+becky framing far too tight and too low. **It is not, and the difference is the footage.**
+
+A 9:16 crop of a 1920x1080 frame is at most **608x1080 — the full source height**. On
+`test-for-clips.mp4` his face is already **37.8% of the SOURCE height**, so:
+
+- it can never be smaller than that in the output, whatever the crop does, and
+- a full-height crop has **no spare source above or below**, so it cannot be moved up or down at all.
+
+Changing `--shoulder-frac` from 0.46 to 0.30 and re-rendering moved face height 39.7% -> 40.7% and
+centre Y 39.3% -> 38.2%. Essentially nothing, because the crop was already maximal. **becky's
+framing on that clip is constrained, not wrong**, and I reverted `--shoulder-frac` rather than keep
+a change with no evidence behind it.
+
+His reference edit gets its framing freedom from the shot itself: it is a wide table scene with
+three people at a distance, so most of his crops are *narrower* than full height and he has room to
+place a face at 30%. `--eye-line` is still worth correcting — it is the right number whenever there
+IS vertical freedom — but head size is a property of where the camera was, not of our cropper.
+
+**The open question for Jordan**, and it is a taste call only he can make: on close-up 16:9 footage
+where the subject already fills the frame, do you want (a) the full-height crop we do now, subject
+filling the frame, or (b) a padded/blurred background with the subject placed at your 30% line? His
+own edit is full-bleed, but it never had to solve this case.
+
 ### What this says about becky's current defaults
 
 `crop_path.py` ships `--eye-line 0.38` — eyes 38% down the frame. Derived from the measurements
 above, Jordan's eyes sit at roughly **27%**.
 
-> **becky frames the subject about a tenth of a frame too low.** The bottom half of his frame is
-> reserved for the caption block, the hands and the food. Recommend `--eye-line ≈ 0.27`, and treat
-> head height ≈ **24%** of frame height as the target (band 21–29%).
+> **becky frames the subject about a tenth of a frame too low WHENEVER it has the room.** The bottom
+> half of his frame is reserved for the caption block, the hands and the food. `--eye-line` changed
+> 0.38 -> **0.27**. Head height ≈ 24% is a useful target to aim at but cannot be forced — see the
+> hard limit above.
 
 ### He frames himself wider than he frames everyone else
 
@@ -256,8 +284,9 @@ switched on by default.
    found, `becky-cut` should tighten by ~150ms at those boundaries rather than re-cutting.
 2. **Stop applying a raw-footage silence threshold to edited footage.** Measured: he removes 10%,
    `becky-cut` removes 51%. Detect which kind of source this is before choosing.
-3. **Raise the frame.** `--eye-line 0.38` → **~0.27**; target head height **24%** of frame height.
-   This one is a two-character change and it affects every short we render.
+3. **Raise the frame — DONE.** `--eye-line` 0.38 -> **0.27**, measured. It only takes effect when
+   the crop is narrower than the source height; on close-up 16:9 footage there is no vertical
+   freedom at all (see the hard limit above). Head height cannot be forced the same way.
 4. **Lock the frame by default; make a move an event.** 34% of his frames are dead still and 16 of
    22 shots barely change scale. Whatever the tracker does, the output should read as locked unless
    there is a reason.
