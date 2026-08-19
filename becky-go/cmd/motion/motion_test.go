@@ -345,3 +345,61 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// A CUT is the largest frame difference there is, so on an edited source it
+// dominates the burst list - and becky-motion exists to hand becky-validate the
+// exact window to LOOK at. MEASURED on the BLINDFOLD master 20-55s: six of its
+// eight bursts peaked within 31ms of a known cut, carrying the top scores
+// (0.79-0.98). After suppression: 29% instead of 75%.
+func TestSuppressCuts_RemovesTheCutButNotTheMotionAroundIt(t *testing.T) {
+	// Two 4-pixel "frames": a shot, a cut to a very different shot, then motion.
+	dark := []byte{10, 12, 11, 13}
+	dark2 := []byte{14, 11, 15, 12} // same shot, subject moved
+	bright := []byte{240, 244, 238, 241}
+	frames := [][]byte{dark, dark2, dark, bright, bright, bright}
+	sig := []float64{0.2, 0.2, 9.9, 0.3, 0.3} // the cut is the huge one at index 2
+
+	cut := suppressCuts(frames, sig)
+
+	if len(cut) == 0 {
+		t.Fatal("no cut detected between a dark shot and a bright one")
+	}
+	if sig[2] >= 9.9 {
+		t.Errorf("the cut frame still reads %.2f — it was not suppressed", sig[2])
+	}
+	// Replaced with neighbours, not punched to zero: a cut is not a moment of
+	// stillness, and a hole in the signal is something the burst detector can
+	// latch onto just as wrongly.
+	for i, v := range sig {
+		if v < 0 {
+			t.Errorf("sig[%d] = %v, negative", i, v)
+		}
+	}
+	if sig[2] > 1.0 {
+		t.Errorf("sig[2] = %.2f after suppression, still far above its neighbours (~0.2-0.3)", sig[2])
+	}
+}
+
+// Motion inside one shot must survive: suppressing it would blind the tool to
+// the very thing it exists to find.
+func TestSuppressCuts_LeavesRealMotionAlone(t *testing.T) {
+	// The SAME multiset of pixel values, rearranged - which is what motion is:
+	// the subject moves, the pixels swap places, the brightness distribution is
+	// untouched. (An earlier version of this fixture used {100,100,100,100} vs
+	// {100,100,140,60} and called them "the same distribution"; they are not,
+	// and on four pixels one changed value moves half the histogram. On a real
+	// 96x54 frame a moving subject shifts a small fraction of it.)
+	a := []byte{60, 100, 100, 140}
+	b := []byte{140, 100, 60, 100}
+	frames := [][]byte{a, b, a, b}
+	sig := []float64{5.0, 5.0, 5.0}
+
+	if cut := suppressCuts(frames, sig); len(cut) != 0 {
+		t.Errorf("suppressed %v as cuts, but the brightness distribution never changed — that is motion", cut)
+	}
+	for i, v := range sig {
+		if v != 5.0 {
+			t.Errorf("sig[%d] = %v, want the motion left untouched at 5.0", i, v)
+		}
+	}
+}

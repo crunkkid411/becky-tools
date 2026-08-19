@@ -285,17 +285,22 @@ func confirmedCut(frames [][]byte, frameIdx int, threshold float64, confirmFrame
 	//   0.96      -> precision 0.850 recall 0.708   (false positives return)
 	// 0.93 is the middle of that flat region, and raw footage reports ZERO cuts
 	// at every value tested, so the raw/edited decision is not knife-edge.
-	return histIntersection(frames[frameIdx-1], frames[frameIdx]) < maxHistOverlap
+	return HistIntersection(frames[frameIdx-1], frames[frameIdx]) < MaxHistOverlap
 }
 
-// maxHistOverlap is how similar the greyscale histograms either side of a
+// MaxHistOverlap is how similar the greyscale histograms either side of a
 // candidate may be before it is rejected as motion rather than a cut.
-const maxHistOverlap = 0.93
+// MaxHistOverlap is exported because becky-motion needs the same test: it too
+// scores frames by mean absolute difference, and a CUT is the largest "motion"
+// there is. Measured on the BLINDFOLD master, 6 of its 8 reported motion bursts
+// were cuts, carrying the highest scores of all.
+const MaxHistOverlap = 0.93
 
 // histIntersection is the overlap of two 32-bin greyscale histograms: 1.0 when
 // the two frames share a brightness distribution exactly, 0.0 when they share
 // none of it.
-func histIntersection(a, b []byte) float64 {
+// HistIntersection is exported for becky-motion; see MaxHistOverlap.
+func HistIntersection(a, b []byte) float64 {
 	if len(a) == 0 || len(a) != len(b) {
 		return 1 // cannot tell -> do not reject
 	}
