@@ -36,6 +36,20 @@ type Face struct {
 	Vector   []float64 // L2-normalized 512-d ArcFace embedding of the best face
 	DetScore float64   // detection score of the best face
 	BBox     []float64 // [x1,y1,x2,y2] of the best face
+	// All holds EVERY face detected in the image, most-prominent-first — only
+	// populated when EmbedAll (not Embed) was used. A tracker needs every face
+	// per frame, not just the best one; nil/empty here for a plain Embed call,
+	// which keeps every existing caller (becky-identify, becky-enroll,
+	// becky-cluster, becky-events) byte-identical.
+	All []FaceRec
+}
+
+// FaceRec is one face from face_embed.py's "all" array (--all-faces only): its
+// embedding, box, and detection score, with no notion of "the best one".
+type FaceRec struct {
+	Vector   []float64 `json:"vector"`
+	BBox     []float64 `json:"bbox"`
+	DetScore float64   `json:"det_score"`
 }
 
 // helperRec mirrors one entry in face_embed.py's "faces" array.
@@ -46,6 +60,7 @@ type helperRec struct {
 	Vector   []float64 `json:"vector"`
 	DetScore float64   `json:"det_score"`
 	BBox     []float64 `json:"bbox"`
+	All      []FaceRec `json:"all,omitempty"`
 }
 
 // helperResult mirrors face_embed.py's stdout JSON contract.
@@ -66,6 +81,19 @@ type helperResult struct {
 // surfaced as an error so the caller can degrade gracefully with a clear note.
 // Returns (nil, nil) for an empty image list.
 func Embed(cfg config.Config, images []string, device string, verbose bool) ([]Face, error) {
+	return embed(cfg, images, device, verbose, false)
+}
+
+// EmbedAll is Embed, but also populates every returned Face's All field with
+// EVERY face detected in that image (face_embed.py --all-faces), not just the
+// most prominent one. This is what a tracker needs — Embed alone can never see
+// the second person in a two-shot, because face_embed.py filters to the single
+// best face before it ever reaches Go.
+func EmbedAll(cfg config.Config, images []string, device string, verbose bool) ([]Face, error) {
+	return embed(cfg, images, device, verbose, true)
+}
+
+func embed(cfg config.Config, images []string, device string, verbose bool, allFaces bool) ([]Face, error) {
 	if len(images) == 0 {
 		return nil, nil
 	}
@@ -82,6 +110,9 @@ func Embed(cfg config.Config, images []string, device string, verbose bool) ([]F
 		"--model-root", cfg.FaceModelRoot,
 		"--model-name", modelName(cfg),
 		"--device", device)
+	if allFaces {
+		args = append(args, "--all-faces")
+	}
 
 	cmd := exec.Command(python(cfg), args...)
 	cmd.Env = childEnv(cfg)
@@ -113,6 +144,7 @@ func Embed(cfg config.Config, images []string, device string, verbose bool) ([]F
 			Vector:   r.Vector,
 			DetScore: r.DetScore,
 			BBox:     r.BBox,
+			All:      r.All,
 		})
 	}
 	beckyio.Logf(verbose, "faceembed: embedded %d image(s), dim=%d", len(out), res.Dim)
