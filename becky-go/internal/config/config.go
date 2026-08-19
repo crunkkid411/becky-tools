@@ -71,6 +71,7 @@ type Config struct {
 	FacePyLib        string `json:"face_pylib"`         // extra site-packages dir put on PYTHONPATH for face deps
 	FaceModelRoot    string `json:"face_model_root"`    // insightface root (holds models/<name>/)
 	FaceModelName    string `json:"face_model_name"`    // insightface model pack, e.g. buffalo_l
+	PoseModel        string `json:"pose_model"`         // MediaPipe pose_landmarker_*.task (body-aware 9:16 framing)
 	Codec            string `json:"codec"`              // h264_nvenc (never libx264)
 	Device           string `json:"device"`             // cpu or cuda
 }
@@ -327,8 +328,15 @@ func defaults() Config {
 		FacePyLib:     firstExisting(`X:\PythonUserBase\Lib\site-packages`),
 		FaceModelRoot: `X:\AI-2\becky-tools\models\face`,
 		FaceModelName: "buffalo_l",
-		Codec:         "h264_nvenc",
-		Device:        "cpu",
+		// MediaPipe Pose for body-aware crop framing. "heavy" is the accuracy
+		// pick and is fast enough because the crop path samples a few frames a
+		// second, not every frame; "full" is the fallback if only it is present.
+		PoseModel: firstExisting(
+			`X:\AI-2\becky-tools\models\mediapipe\pose_landmarker_heavy.task`,
+			`X:\AI-2\becky-tools\models\mediapipe\pose_landmarker_full.task`,
+		),
+		Codec:  "h264_nvenc",
+		Device: "cpu",
 	}
 }
 
@@ -509,6 +517,9 @@ func merge(base, over Config) Config {
 	}
 	if over.FaceModelRoot != "" {
 		base.FaceModelRoot = over.FaceModelRoot
+	}
+	if over.PoseModel != "" {
+		base.PoseModel = over.PoseModel
 	}
 	if over.FaceModelName != "" {
 		base.FaceModelName = over.FaceModelName

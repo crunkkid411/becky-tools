@@ -8,6 +8,13 @@ the crop. Reads one or more image paths (video frames OR enrollment face JPGs) a
 emits, per image, the L2-normalized 512-d embedding of the most prominent face
 (largest bbox area x detection score) plus the count of faces found.
 
+With --all-faces it ALSO emits every face under "all" (same fields per face,
+ordered most-prominent-first and deterministically tie-broken). This is additive:
+without the flag the output is byte-identical to before, so becky-identify,
+becky-enroll and becky-cluster are unaffected. A tracker needs every face --
+keeping only the most prominent one is why becky could never follow the second
+person in a two-shot.
+
 Output (stdout JSON, one line):
   {"dim": 512, "faces": [
      {"path": "...", "found": true, "n_faces": 1,
@@ -36,6 +43,9 @@ def main():
     ap.add_argument("--device", default="cpu")  # cpu | cuda
     ap.add_argument("--det-size", type=int, default=640)
     ap.add_argument("--min-det-score", type=float, default=0.5)
+    ap.add_argument("--all-faces", action="store_true",
+                    help="also emit EVERY face per image under 'all' (a tracker needs them; "
+                         "identify/enroll/cluster do not and are unaffected without this flag)")
     args = ap.parse_args()
 
     import numpy as np
@@ -98,6 +108,23 @@ def main():
                 rec.update(found=True, vector=emb,
                            bbox=[float(v) for v in best.bbox],
                            det_score=float(best.det_score))
+                if args.all_faces:
+                    # Deterministic order: most prominent first, ties broken on
+                    # geometry so the same frame always yields the same sequence
+                    # (becky's same-input-same-output rule). A tracker associates
+                    # on its own; it just needs every face, not a chosen one.
+                    ordered = sorted(
+                        faces,
+                        key=lambda f: (-prominence(f), float(f.bbox[0]), float(f.bbox[1])),
+                    )
+                    rec["all"] = [
+                        {"vector": [float(x) for x in f.normed_embedding],
+                         "bbox": [float(v) for v in f.bbox],
+                         "det_score": float(f.det_score)}
+                        for f in ordered
+                    ]
+            elif args.all_faces:
+                rec["all"] = []
             out.append(rec)
     finally:
         sys.stdout = real_stdout

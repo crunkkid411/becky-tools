@@ -37,6 +37,9 @@ var Clipfetch []byte
 //go:embed face_embed.py
 var FaceEmbed []byte
 
+//go:embed crop_path.py
+var CropPath []byte
+
 // Materialize writes an embedded script to a stable temp path and returns it.
 func Materialize(name string, content []byte) (string, error) {
 	dir := filepath.Join(os.TempDir(), "becky-pyhelpers")
