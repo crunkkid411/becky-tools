@@ -11,8 +11,10 @@
 //  2. location_change — sample keyframes at ~1 fps, aHash each, and flag a jump
 //     when the Hamming distance to the previous frame exceeds --location-threshold.
 //     Each hit exports a full-res frame + provenance sidecar into --osint-dir.
-//  3. multi_face — OPTIONAL. No face detector ships in this environment, so it is
-//     skipped gracefully and noted under "notes".
+//  3. multi_face — default-on. Frames are sampled coarsely and faces detected via
+//     the InsightFace helper; a missing model, a missing dependency or an
+//     audio-only input is recorded as a skip under "notes" rather than failing
+//     the run. Disable with --no-multi-face.
 //
 // JSON to stdout (or --output); diagnostics to stderr; exit 0 on success.
 package main
