@@ -174,6 +174,8 @@ type job struct {
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
 	forceCenter, withCaptions, useJumpcuts bool, cache *cutCache, verbose bool) (shortOut, error) {
 
+	j = absoluteJob(j)
+
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
 
 	// Decide the pacing FIRST: is this a continuous window, or does becky-cut
@@ -438,4 +440,23 @@ func note(res *shortOut, msg string) {
 
 func logIfShort(verbose bool, format string, a ...any) {
 	beckyio.Logf(verbose, format, a...)
+}
+
+// absoluteJob resolves a job's source and destination to absolute paths.
+//
+// ffmpeg runs with its working directory set to the temp folder holding the
+// sendcmd script - sendcmd's parser treats a Windows drive colon as its own
+// separator, so the script has to be a bare filename and ffmpeg has to run from
+// its directory. That makes every RELATIVE path resolve against the TEMP folder
+// instead of the user's: `--out clip.mp4` wrote the short into the temp dir,
+// which was then deleted, and the run reported "ffmpeg reported success but
+// wrote no file". The render succeeded; the file was thrown away.
+func absoluteJob(j job) job {
+	if abs, err := filepath.Abs(j.Src); err == nil {
+		j.Src = abs
+	}
+	if abs, err := filepath.Abs(j.Dst); err == nil {
+		j.Dst = abs
+	}
+	return j
 }

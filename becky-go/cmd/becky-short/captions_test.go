@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,5 +90,32 @@ func TestCaptionFilter_UsesTheShippedStyle(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("caption style lost %q: %s", want, got)
 		}
+	}
+}
+
+// ffmpeg runs from a temp directory (sendcmd needs a bare filename), so a
+// relative --out used to write the short into that temp dir, which was then
+// deleted. The render succeeded and the file was thrown away, and the run
+// reported "ffmpeg reported success but wrote no file".
+func TestAbsoluteJob_ResolvesRelativePathsBeforeFFmpegSeesThem(t *testing.T) {
+	got := absoluteJob(job{Src: "in.mp4", Dst: "out/clip.mp4", In: 1, Out: 2})
+
+	if !filepath.IsAbs(got.Dst) {
+		t.Errorf("Dst = %q, want an absolute path: ffmpeg runs from a temp dir and would write it there", got.Dst)
+	}
+	if !filepath.IsAbs(got.Src) {
+		t.Errorf("Src = %q, want an absolute path", got.Src)
+	}
+	if got.In != 1 || got.Out != 2 {
+		t.Errorf("times changed: %v-%v, want 1-2", got.In, got.Out)
+	}
+}
+
+func TestAbsoluteJob_LeavesAnAbsolutePathAlone(t *testing.T) {
+	// os.TempDir is absolute on every platform; a bare leading separator is NOT
+	// absolute on Windows, which has no drive letter.
+	want := filepath.Join(os.TempDir(), "clip.mp4")
+	if got := absoluteJob(job{Src: want, Dst: want}); got.Dst != want {
+		t.Errorf("Dst = %q, want it untouched at %q", got.Dst, want)
 	}
 }
