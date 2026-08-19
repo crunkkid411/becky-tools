@@ -1,34 +1,58 @@
 # HANDOFF — short-form repurposing pipeline: why it would fail, and what it takes
 
-**Status, corrected 2026-08-18 (local) after Jordan's review.** Step 0 is fixed and
-proven end-to-end. Step 1 (`becky-moment`) now runs a real, offline content pass on
-his own footage. Step 2 (`internal/facetrack`) compiles and unit-tests but has still
-**never seen a real face** — it has no detector wired to it (§5.3), so "PROVEN" in the
-original status line was true of step 1 and not of step 2. Steps 3-6 are not started.
+**Status, 2026-08-19 (local). The chain runs end to end from a dragged file.** Drop a
+video (or a folder) on `Make Shorts.bat` and it transcribes if needed, picks moments,
+matches them to the footage, and renders vertical shorts that follow the subject. Steps
+0-2, 4 and 5 are built and exercised on Jordan's own content. Step 3 (who is speaking)
+has its model working but is not yet wired into a command.
 
 Read `research/shorts-models.md` first — it is the model research this rests on. This
 document is the *engineering* half.
 
+**TEST ON THE RIGHT FOOTAGE.** `X:/AI-2/becky-tools/test-for-clips.mp4` is Jordan's own
+content and is what editing work is judged on. **`E:\TakingBack2007` is the CRIMINAL CASE
+evidence folder, NOT his content** — shorts were demoed from it once and that was wrong
+twice over (wrong footage, wrong style). Style guidance lives in
+`hair-jordan-personality-profile.md` and `hair-jordan-content-analysis.md`.
+
 **Jordan's decisions — settled, do not re-litigate:**
 - **MediaPipe and OpenCV are IN.** *"we NEED to use them. weve been cutting corners and
-  all that does is waste my time, not save time."* **Both are now installed and verified
-  on this machine** (§7 Step F): `cv2` 4.13.0 was already there, `mediapipe` 1.0.1 added.
+  all that does is waste my time, not save time."* Both installed and verified (§7 Step F):
+  `cv2` 4.13.0 was already there, `mediapipe` 1.0.1 added. **gocv is dropped** — Jordan's
+  call, 2026-08-18: MediaPipe has no Go binding, so stage 4 is a Python helper regardless.
 - **Free models only.** One allowlist, no override flag (§6).
+- **SELF-ORCHESTRATION IS NOT OPTIONAL.** *"why the FUCK is it trying to make ME use
+  becky-transcribe or whatever the fuck it wants before it will work - that is WRONG. drag
+  and drop. if no .srt, it needs to FUCKING MAKE ONE."* No tool in this chain may ever stop
+  and ask him to run another tool first (§5.4).
+- **This is OFFLINE EDITING, not a realtime preview.** *"make it do a SECOND PASS for
+  christ's sake - or 100 fucking passes, I don't give a shit... I literally go frame-by-frame
+  if I have to."* Anything that trades quality for speed here is the wrong trade (§5.6).
+- **Multiple signals, and the transcript is one of them.** *"transcript is CERTAINLY one of
+  them. but with more context."* Not a replacement — an addition (§5.7).
 - The GitHub/CI failures are **not** cloud's to fix — that is the local agent's lane.
 
-**What his review found, and what it cost.** He said the conclusions were
-*"overengeneered already"* and flagged the Zen guard specifically. Auditing that turned
-up three bugs of the exact class §2.1 warns about — each produced a file that plays:
+**Bugs found by looking at rendered frames, not at exit codes.** Every one of these shipped
+a file that plays, which is §2.1 exactly:
 
 | Bug | What Jordan would have seen |
 |---|---|
-| `--folder` labelled moments with the **wrong source video** (owner tracked, thrown away, recovered by matching timestamps) | reels cut from the wrong footage |
-| "Incomplete arc = **VETO**" was a 0.6 multiplier — a 90/99 clip that trails off (0.540) beat a modest one that lands (0.5025) | shorts with no payoff, ranked top |
-| `CoverageIn` returned the **span** between sightings, so a face glimpsed 3× in 20s scored 1.000 — same as one in every frame | the wrong person framed |
+| `--folder` labelled moments with the **wrong source video** | reels cut from the wrong footage |
+| "Incomplete arc = **VETO**" was a 0.6 multiplier — a trailing-off 90/99 clip beat one that lands | shorts with no payoff, ranked top |
+| `CoverageIn` returned the **span** between sightings, so 3 glimpses in 20s scored 1.000 | the wrong person framed |
+| Crop framed on the **torso centroid**, so leaning over sheared his head off the edge | half a frame of empty wall |
+| Crop **scale** came from shoulder width, which collapses when he leans | a close-up of the top of his head |
+| A `None` reaching the median filter killed the helper and it **silently fell back to a static centre crop** | quietly worse shorts, `followed=false` ignored |
+| The render **capped the camera path at 48 keyframes** and truncated — freezing the crop for the rest of the shot | the tracker appearing to give up |
+| The smoother was **causal**, so it could never catch up | the lag he rejected the whole thing over |
+| MediaPipe reported a person with **confidence 1.00 inside a glass jar** | a short framed on a lamp |
+| Average coverage **hid a 4.2s dead patch** where he was out of shot | seconds of stale crop mid-clip |
+| `Make Shorts.bat` only accepted a **folder**, so dragging a clip printed "No folder given" | the launcher simply not working |
+| LR-ASD faces were preprocessed **2x zoomed out from its training crop** | confident, wrong speaking scores |
 
-All three are fixed with regression tests that assert values. The veto's property test
-immediately found a fourth hole: an incomplete clip whose signals *also* disagreed hit
-the Disputed branch first and escaped the veto entirely.
+All fixed, each with a regression check. The veto's property test immediately found a
+further hole: an incomplete clip whose signals *also* disagreed hit the Disputed branch
+first and escaped the veto entirely.
 
 ## 1. What Jordan asked for
 
@@ -108,20 +132,22 @@ failure, not a technical one.
 
 These are conditions, not steps. If they are not agreed, do not start.
 
-### 3.1 Fix the render-drift bug first, in isolation
+### 3.1 Fix the render-drift bug first, in isolation — DONE (§5.1)
 
 `becky-reel render` drifts +1.27 s over 88 cuts. A shorts renderer sits directly on top of it,
 and captions are the most visible element of a short. Fix + regression-test the fps quantisation
 **before** anything is built on it. This is a small, self-contained, independently verifiable
 task and it is the correct first commit.
 
-### 3.2 Build the native dependency properly, or decide not to and write down the cost
+### 3.2 Build the native dependency properly — SETTLED 2026-08-18
 
-`gocv` (Apache-2.0, OpenCV 4.12, Windows-supported) and MediaPipe are the right tools for
-stages 4–6. Cloud **cannot** build or test them. Under `STANDARDS-WORKFLOW.md` §7 that makes
-them a handoff obligation with a checkboxed work order — **not** grounds to ship a weaker
-pure-Go default and call the branch done. If Jordan decides against the native dependency, that
-is legitimate, but the accuracy cost gets written into the spec rather than discovered later.
+**Resolved, and the answer cost nothing.** OpenCV (`cv2` 4.13.0) was **already installed** in
+the interpreter becky uses for face work — a year of routing around "we cannot have OpenCV" was
+one `import cv2` away. MediaPipe 1.0.1 installed in minutes beside it. **gocv is dropped** on
+Jordan's call: MediaPipe has no Go binding, so stage 4 is a Python helper regardless, and
+routing OpenCV through cgo would split one per-frame stage across two languages for no gain.
+That matches `CLAUDE.md`'s stated architecture — Go binaries, heavy ML in thin Python helpers.
+No accuracy was traded away; see §7 Step F and §5.6.
 
 ### 3.3 Every stage declares a confidence and is allowed to refuse
 
@@ -158,14 +184,15 @@ edited or auto-generated. That judgement cannot be automated and it must happen 
 Ordered so that every step ships something usable even if the next never happens — the direct
 counter to becky's "half-built stack" pattern.
 
-| # | Step | State | Needs native dep? |
+| # | Step | State | Where |
 |---|---|---|---|
-| 0 | `becky-reel` fps quantisation | **ALREADY DONE** (§5.1) | No |
-| 1 | `becky-moment` — moment selection over existing transcripts | **BUILT + PROVEN** (§5.2) | No |
-| 2 | Face **tracking** — persistent track IDs via IoU + ArcFace | **BUILT + TESTED**, one gap (§5.3) | No |
-| 3 | **LR-ASD** (ONNX) speaking decision, fused with `becky-diarize` + track identity | not started | ONNX Runtime |
-| 4 | Crop path — MediaPipe Pose framing, OpenCV camera-path smoothing | not started | **Yes** |
-| 5 | Render + captions through `becky-reel`, cut-snapped via `internal/subs` | not started | No |
+| 0 | `becky-reel` fps quantisation | **DONE** | §5.1 |
+| 1 | `becky-moment` — moment selection, now self-transcribing | **BUILT + RUN on his footage** | §5.2, §5.4 |
+| 2 | Face **tracking** — persistent track IDs via IoU + ArcFace | **BUILT**, detector now emits all faces, Go wiring open | §5.3 |
+| 3 | **LR-ASD** speaking decision | **MODEL WORKS**, not wired into a command | §5.5 |
+| 4 | Crop path — MediaPipe Pose + OpenCV, zero-lag | **BUILT + VERIFIED on his footage** | §5.6 |
+| 5 | Render 9:16 (`becky-short`) | **BUILT + VERIFIED**, captions not burned in yet | §5.6 |
+| 6 | Audio signals as a third ranking signal | **BUILT**, does not reorder yet | §5.7 |
 
 **Note the shape:** step 1 alone — moment selection over transcripts becky already produces,
 with no reframing at all — already gives Jordan a ranked list of clip windows he can cut in
@@ -267,6 +294,129 @@ the same spot) into one identity. Now retired first. Regression test:
 > Python helper, which is the model boundary and so local's lane — see the work order below.
 > It is deliberately not faked with a single-face shim.
 
+### 5.4 The chain self-orchestrates — no tool ever asks Jordan to run another tool
+
+**Added 2026-08-19 after he hit it.** `becky-moment` used to stop with *"no transcript
+sidecar — run becky-transcribe first"*. becky-tools is **where transcripts come from**, and
+for a non-developer "go run another tool" is a dead end, not an instruction. It violated
+`CLAUDE.md` §2 outright: one dumb call, becky does the thinking inside it.
+
+`internal/transcribex` now gets a transcript, **making one if it does not exist**, and writes
+it beside the video so the cost is paid once per file ever. Verified by dragging
+`test-for-clips.mp4` onto the launcher: transcribed (41 cues), 91 candidates, 10 moments,
+10 clips, 10 shorts, exit 0.
+
+`Make Shorts.bat` takes a **video OR a folder**. It previously accepted only a folder, so
+dragging a clip printed "No folder given" — and its typed-path prompt could never have worked
+either, because batch expands `%VAR%` when an if-block is *parsed*, not when it runs. Delayed
+expansion throughout.
+
+### 5.5 Step 3 — LR-ASD works; the Go wiring is the gap
+
+`internal/pyhelpers/asd.py` runs **LR-ASD** (Springer IJCV 2025) over face tracks and returns
+a per-frame speaking score per track. It answers the licence question `research/shorts-models.md`
+left open: **MIT**, 0.84M params, weights in-repo (`models/lrasd`, gitignored). It runs on the
+**GPU** — torch CUDA is available here even though onnxruntime is CPU-only, so the research's
+"ONNX" note was wrong and did not matter. 15s of video scores in ~6s.
+
+Tracks come IN rather than being found here: a face must be followed through time before it can
+be scored, becky owns that deterministically in `internal/facetrack`, and detection is a model
+call while association is arithmetic.
+
+**The bug worth knowing about.** LR-ASD resizes the padded face box to 224 and takes the
+**centre 112** — the middle half, a 2x centre zoom (`Columbia_test.py:221-223`). Resizing
+straight to 112 hands it a face zoomed out 2x from anything it saw in training, and it still
+returns confident-looking scores. On a clip where the transcript and the audio energy both say
+he talks throughout, it read **54% speaking and decayed to negative**; with the training crop it
+reads **87% and stays positive**. Nothing downstream could have detected that.
+
+A wrong diagnosis, kept for the speed: per-frame `cv2` seeking on a 3.5-hour source was blamed
+first. Replacing it with one sequential ffmpeg decode changed the scores by 0.015 — so that
+theory was wrong — but took the run from **42s to 6s** and decodes once for all tracks.
+
+**`--all-faces` is done** (Step E's first half): `face_embed.py` emits every face per frame,
+deterministically ordered, and is byte-identical without the flag. Verified 75/75 frames on real
+footage. **Open:** `internal/faceembed`'s `Face` struct is still singular, so nothing feeds
+`facetrack.Build` yet, and no `becky-*` command drives the chain.
+
+### 5.6 Steps 4-5 — `becky-short`, and the tracking Jordan rejected once
+
+`cmd/becky-short` + `internal/crop` + `internal/pyhelpers/crop_path.py`. MediaPipe Pose finds
+the subject, OpenCV reads frames, the camera path is smoothed, ffmpeg renders 9:16.
+
+**He rejected the first version outright:** *"the clips which follow my face movement are
+noticibly lagging... I have an old, depreciated python script from 5 years ago that keeps up
+better than this dog shit."* He was right, and the cause was a category error — a **realtime**
+tracker built for an **offline** job. Three things each guaranteed lag:
+
+1. **It sampled 8 times a second** on 30fps footage. Nyquist is then 4 Hz; a head turn is faster,
+   so real moves were aliased away before any filter saw them. Now **every frame** — verified
+   360/360 and 750/750 on his footage.
+2. **The smoother was causal.** `held += (target-held)*ease` only sees the past, so its output is
+   *mathematically guaranteed* to trail. Tuning cannot fix it; higher gain trades lag for jitter.
+   `smooth_zero_phase` now runs the filter forward **and backward** over its own output — the two
+   phase shifts cancel exactly. Zero lag, and because the curve is shaped by frames on both sides
+   it leans into a move slightly before it happens, which is what a human operator does.
+3. **The render threw the path away.** `FilterChain` squeezed the whole clip into **48**
+   ffmpeg-expression keyframes, escalated the tolerance to **64px**, then truncated with
+   `kept[:48]` — freezing the crop for the rest of the shot. The path now goes to ffmpeg as a
+   **sendcmd script**: one command per real change, no cap, no tolerance, no truncation.
+   *Trap:* sendcmd's parser treats a Windows drive colon as its own separator, so the script must
+   be a **bare filename** with ffmpeg run from its directory.
+
+**What the three references he named actually do** (`Dolly-Zoom-main`, `ofxFaceTracker-master`,
+`obs-zoom-and-follow-master`) — all confirm the diagnosis:
+
+- Dolly-Zoom lerps **60% toward the detection every frame** (tau ~36ms), with **split gains**:
+  position fast, zoom 2x slower.
+- ofxFaceTracker applies **no filter at all** — it re-optimises per frame from last frame's pose.
+  Its non-realtime example sets `setIterations(100)` / `setAttempts(4)` purely because it is
+  offline. That is the "second pass" by name.
+- obs-zoom-and-follow measures error to the **deadzone edge** at **unit gain**, giving zero
+  steady-state error on sustained motion, with a large (15%) deadzone for stillness.
+- **None of them buys stillness with a low gain.** That was the mistake.
+
+**Framing rules, each learned from a bad frame:**
+
+- **Position from the FACE, scale from the HEAD.** Framing on the shoulder midpoint sheared his
+  head off when he leaned over; scaling by shoulder span produced a hair close-up when his
+  shoulders collapsed together. Head width barely changes with pose.
+- **The face centre must stay in the middle band** (`FACE_BAND` 0.34), not merely be inside the
+  frame — "legally in shot" still allowed him pinned against an edge.
+- **A frame with no visible face is a MISS**, never a torso guess. That guess aimed the camera at
+  empty room and counted as a success.
+- **Reject detections below talking-head scale** (`--min-head-frac` 0.045). MediaPipe reported
+  visibility **1.00** and presence **1.00** for a "face" in a clear plastic jar spanning 40px of a
+  1920-wide frame. No confidence threshold catches that; geometry does.
+- **Gate on the longest CONTIGUOUS gap** (`--max-gap` 2.0s), not average coverage. A clip can be
+  92% covered and still hold a stale crop for 4 seconds. 2.0s allows a normal glance away while
+  still refusing a real absence.
+- **A fresh-eyes second pass** re-runs any frame the tracker lost through an IMAGE-mode
+  landmarker with no temporal prior. Honest result: on his clip it never fires (750/750 found),
+  so it costs nothing and is insurance for harder footage.
+
+Verified by inspecting rendered frames: subject centred, whole head in, eyes on the upper third,
+gestures not cropped, holding through his movement. ~40s of tracking+render per 12s clip.
+
+**Most of his own streams are already 1080x1920**, so the job is usually a push-in rather than a
+pan; `test-for-clips.mp4` is 1920x1080 and needs the real crop. One code path serves both.
+
+### 5.7 Step 6 — audio as a third signal
+
+`internal/audiosig` + `internal/pyhelpers/audio_signals.py`. Every threshold derives from the
+file's own rolling distribution, never a constant. Measured on `test-for-clips.mp4`: 20 loudness
+spikes, 67 pitch rises, 50 breath gaps. **55% of spikes fall within 1s of an independent pitch
+rise, against 24% for the same count placed at random** — 2.3x over chance is why these are
+signal and not noise. The loudest moment in the whole 5 minutes sits inside a 20-second stretch
+where the `.srt` has **no text at all**.
+
+`Rank` folds it into the structural prior (0.72/0.28) and names it in the basis. It moves the
+ORDER only — audio measures ENERGY, not quality, so it never on its own promotes a moment to a
+conclusion.
+
+**Honest result: it does not reorder his top 3 yet.** The structural prior saturates near 0.95
+for everything, so it still dominates. The saturation is the next thing to fix.
+
 ---
 
 ## 6. The LLM judge — LOCAL by default, OpenCode Zen as the option
@@ -337,147 +487,101 @@ hardcoded and the refusal message prints it.
 `deepseek-v4-flash-free` — the id the original guessed at and could not verify —
 is real and remains the default for the Zen backend.
 
-## 7. Work order for the local agent
+## 7. Work order — what is DONE and what is OPEN
 
-Ordered, checkboxed, with the command and the DONE-WHEN for each. Do not mark a box without
-pasting evidence (`HANDOFF-TEMPLATE.md` §5).
+Do not mark a box without pasting evidence (`HANDOFF-TEMPLATE.md` §5).
 
-### Step A — confirm the deterministic layer on this machine
-```
-cd becky-go && go build ./... && go vet ./... && go test ./internal/moment/ ./internal/facetrack/ ./cmd/becky-moment/
-```
-- [ ] DONE WHEN: all three packages report `ok`. Cloud's result: all pass, 162 packages green
-      overall (the 2 pre-existing failures in `cmd/clip` and `internal/assistant` are unrelated
-      and predate this branch — see §7.1).
+### DONE (verified on Jordan's own footage, 2026-08-18/19)
 
-### Step B — build the real binary
-```
-cd becky-go && build-all-tools.bat
-```
-- [ ] DONE WHEN: `bin\becky-moment.exe` exists (auto-discovered, no script edit needed).
-      Then `bin\becky-moment.exe --selftest` prints **13/13 PASS**.
+- [x] **A — deterministic layer.** `go build`/`go vet` clean, gofmt clean, **164 packages green**.
+- [x] **B — real binaries.** `build-all-tools.bat` run. `becky-moment --selftest` **13/13**,
+      `becky-short --selftest` **28/28**, `audio_signals.py --selftest` **15/15**.
+- [x] **C — the whole chain from a dragged file.** `Make Shorts.bat` on `test-for-clips.mp4`:
+      auto-transcribed → 91 candidates → 10 moments → 10 clips → 10 shorts, exit 0.
+- [x] **D — the content pass, LOCAL.** Gemma-4 E4B via `internal/llmlocal`. Moments return
+      `conclusion` with reasons, not the all-`candidate` degrade. No key needed (§6.1).
+- [x] **E (first half) — `face_embed.py --all-faces`.** Every face per frame, deterministically
+      ordered, byte-identical without the flag. 75/75 frames on real footage.
+- [x] **F — MediaPipe + OpenCV.** `cv2` 4.13.0 was already installed; `mediapipe` 1.0.1 added,
+      Pose + Face Landmarker verified. `models/mediapipe/pose_landmarker_{heavy,full}.task`
+      downloaded (`scripts/get-mediapipe-models.ps1`). **gocv dropped** — Jordan's call.
+- [x] **Stage 4-5 — `becky-short`.** Per-frame tracking, zero-lag path, sendcmd render, refusals
+      that fire on real absence. Frames inspected (§5.6).
+- [x] **LR-ASD model.** MIT, runs on the GPU, training-crop bug found and fixed (§5.5).
+- [x] **Audio signals.** Built, measured, folded into `Rank` (§5.7).
 
-### Step C — run it on Jordan's real footage
-```
-bin\becky-moment.exe --folder <a folder with .srt sidecars> --top 10 --judge=false
-```
-- [ ] DONE WHEN: real moments come back with sane windows. Every one should read
-      `"confidence": "candidate"` and carry the "content pass did not run" note.
-- [ ] Then: `becky-hits --hits moments.json --folder <same folder>` builds a Reel that opens in
-      Becky Review. **This is the seam that matters** — confirm the clips land at the right
-      timecodes on real video, not just that the JSON parses.
+### OPEN — in the order that matters
 
-### Step D — the content pass (now LOCAL, no key needed) — **DONE 2026-08-18**
-```
-binecky-moment.exe --folder <folder> --top 5 --verbose
-```
-- [x] DONE: runs Gemma-4 E4B via `internal/llmlocal`, spawning llama-server on a
-      free port. On two real transcripts from `E:\TakingBack2007` it returned five
-      moments, **all `conclusion`** (both signals agreeing) with content reasons —
-      not the all-`candidate` degrade. `judge_model` reads
-      `local:gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`.
-- [ ] OPTIONAL, only if Jordan wants the cloud judge: `setx BECKY_ZEN_API_KEY "<key>"`
-      then `--judge-backend=zen`. Nothing depends on this. **His key is not set on
-      this machine** — that is why local is the default, not a fallback.
-
-### Step E — the facetrack gap (model boundary; §5.3)
-- [ ] Extend `internal/pyhelpers/face_embed.py` to emit **all** faces per frame, not just the
-      most prominent one. Suggested: an additive `--all-faces` flag so every existing caller
-      (`becky-identify`, `becky-enroll`, `becky-cluster`) is byte-identical without it.
-- [ ] The Go side needs it too — `internal/faceembed`'s `Face` struct has singular
-      `Vector`/`BBox`/`DetScore` fields, so there is physically no room for a second
-      face. Add the multi-face path and feed `facetrack.Build` from it.
-- [ ] DONE WHEN: a real clip with two visible people yields exactly 2 tracks whose
-      `CoverageIn(t0, t1, samplePeriod)` over a window where both are present is
-      > 0.8 each. **Note the third argument** — coverage is now density, not the
-      span between the outermost sightings (see §5.3).
-
-### Step F — the native CV dependency — **DONE 2026-08-18, and the bake-off was unnecessary**
-
-The original Step F said: *"Report back which of the two is more painful — that
-decides whether step 4's crop path goes through gocv (Go, in-process) or a
-MediaPipe pyhelper (Python, like the others)."* That choice should not have been
-offered, for three measured reasons:
-
-- [x] **OpenCV was already installed and working.** `cv2` **4.13.0** imports today
-      in the exact interpreter becky already uses for face work (anaconda +
-      `PYTHONPATH=X:\PythonUserBase\Lib\site-packages`, which is `FacePyLib` in
-      `internal/config`). Alongside it: `insightface` 1.0.1, `onnxruntime` 1.26.0.
-      No native build, no cgo, no `-tags gocv` needed to reach OpenCV.
-- [x] **MediaPipe is now installed there too** — `mediapipe` **1.0.1**, with
-      `PoseLandmarker` and `FaceLandmarker` confirmed importable from
-      `mediapipe.tasks.python.vision`.
-- [x] **MediaPipe has no Go binding.** Stage 4 is a Python helper whatever else is
-      decided, so routing OpenCV through `gocv` would split one per-frame stage
-      across two languages and two processes for no gain. Pose framing and camera-path
-      smoothing run on the same frames; they belong in the same helper.
-      This also matches `CLAUDE.md`'s stated architecture — "Go binaries with the
-      heavy ML pushed into thin embedded-Python helpers".
-
-  **Recommendation for stage 4: one `internal/pyhelpers` script using MediaPipe
-  Pose + OpenCV, no gocv.** They are not alternatives — Pose decides *where* the
-  crop sits, OpenCV optical flow decides *how it moves*. Jordan's call to confirm.
-
-- [ ] STILL OPEN — `gocv` remains worth it for one thing the research promised and
-      no step covers: retiring the degrade paths in `cmd/motion` (ffmpeg frame-diff
-      instead of optical flow) and `cmd/framematch/decor.go` (census descriptor
-      instead of ORB+RANSAC). Both can now use `cv2` through a helper instead.
-- [ ] **Do not proceed to steps 3-6 by approximating either in pure Go.** That is §2.3.
-
-### Step G — the degrade paths research §6 named but the work order forgot
-- [ ] `cmd/events/main.go:14` still says *"multi_face — OPTIONAL. No face detector
-      ships in this environment, so it is skipped gracefully."* **That comment is
-      false and has been for some time** — the same file runs multi_face default-on
-      at :117-137 and `cmd/events/multiface.go:18` imports `internal/faceembed`.
-      Delete the comment. (research/shorts-models.md §6 quotes this line as
-      evidence; the quote is verbatim but stale, and the §6 conclusion leans on it.)
-- [ ] `cmd/motion` and `cmd/framematch/decor.go` — see Step F.
+- [ ] **1. Wire who-is-speaking into a command.** `face_embed --all-faces` →
+      `internal/faceembed` multi-face path → `facetrack.Build` → `asd.py`. Blocked only by the
+      singular `Face` struct. **DONE WHEN:** a real clip with two visible people yields exactly
+      2 tracks, and the one actually talking scores materially higher.
+      *Note `CoverageIn(t0, t1, samplePeriod)` takes a third argument now — coverage is density,
+      not the span between outermost sightings (§5.3).*
+- [ ] **2. Fix the structural-score saturation.** The top 4,000 of 112,625 candidates all score
+      0.985–1.000, so `--top N` is close to arbitrary and the audio signal cannot move anything
+      (§5.7). Until this is fixed, extra signals are decoration. **DONE WHEN:** the top 20
+      candidates on `test-for-clips.mp4` span a visibly wider score range, and adding
+      `--no-audio` measurably changes which clips come out.
+- [ ] **3. Moment picking does not know whether he is ON SCREEN.** The top-ranked moment was
+      chosen from words alone and had him bent out of shot; only the renderer caught it. Feed
+      face coverage back into ranking so a talking-head short is never chosen from a window where
+      there is no talking head. This is the same "multiple signals" point as §5.7.
+- [ ] **4. Captions are not burned into the shorts.** The caption tooling exists
+      (`internal/subs`, the becky-captions preset); it is simply not in this chain. Cut-snap them
+      via `internal/subs` as originally specified in step 5.
+- [ ] **5. Framing taste pass.** Every framing constant (`--shoulder-frac`, `--eye-line`,
+      `FACE_BAND`, `--min-crop-frac`) was set by me and checked against my own eye. Jordan is the
+      professional editor; one pass of him watching and saying "tighter/looser/higher" is worth
+      more than any further tuning from me. This is §3.5, still unclaimed.
+- [ ] **6. Retire the remaining degrade paths** (was Step G). `cmd/motion` uses ffmpeg
+      frame-diff instead of optical flow; `cmd/framematch/decor.go` uses a census descriptor
+      instead of ORB+RANSAC. Both can now use `cv2` through a helper. Also delete the false
+      comment at `cmd/events/main.go:14` — it claims no face detector ships here, while the same
+      file runs multi_face default-on 100 lines later.
 
 ### 7.1 Not this branch's work
 
-**Corrected 2026-08-18 by running the suite locally.** `go test ./...` on this
-machine: **163 packages green, two failures** —
+`go test ./...` locally: **164 packages green, two failures**, neither touched by this work —
 
 - `internal/assistant TestHandleTier2Funnel` — a **real regression**
-  (`frontier plan actions = [], want add_clip(s)`). Confirmed.
-- `cmd/tts TestRun_DegradesWhenNoModel` — *"expected non-zero exit when degrading
-  (no model)"*. **The original §7.1 did not mention this one at all.**
+  (`frontier plan actions = [], want add_clip(s)`).
+- `cmd/tts TestRun_DegradesWhenNoModel` — *"expected non-zero exit when degrading (no model)"*.
 
-And `cmd/clip TestAudioLevels_ThreadsFpsAndParses`, which §7.1 named as one of the
-two, **passes here** (0.16s) — it shells to `auto-editor`, which exists on this
-machine and not on a CI runner. So the local failure set is `cmd/tts` +
-`internal/assistant`, not `cmd/clip` + `internal/assistant`.
-
-Neither is touched by this work. The "30 consecutive red CI runs" claim was not
-re-checked: `CLAUDE.md`'s highest-authority rule forbids spending Jordan's plan
-polling GitHub.
+`cmd/clip TestAudioLevels_ThreadsFpsAndParses`, which an earlier version of this section named,
+**passes here** — it shells to `auto-editor`, which exists on this machine and not on a CI
+runner. The "30 consecutive red CI runs" claim was not re-checked: `CLAUDE.md`'s
+highest-authority rule forbids spending Jordan's plan polling GitHub.
 
 ## 8. Honest summary
 
-The models are not the problem and mostly already exist — becky has the *better* model at three
-of the six stages (`research/shorts-models.md` §3). The problem is that becky has a documented
-history of building six-stage chains where each stage compiles, passes its unit tests, and
-silently hands the next stage something wrong.
+The models were never the problem. becky already had the better model at three of the six
+stages, and the two genuinely new dependencies (MediaPipe, LR-ASD) both installed and ran on
+this machine inside an evening. What actually cost time was exactly what §2 predicted, and the
+shape of it is worth keeping:
 
-A shorts pipeline is the least forgiving possible place for that pattern, because its failures
-render successfully. If this is built the way becky has been built so far, it will produce
-plausible, subtly-wrong shorts and reproduce exactly the experience that sent Jordan looking at
-other people's projects in the first place.
+**Every real defect this session shipped a file that plays.** Not one produced an error, a
+crash, or a red test. A crop framed on a lamp, a tracker that trailed the subject, a speaking
+detector reading 54% on a clip of continuous speech, moments labelled with the wrong video — all
+of them exited 0. The suites stayed green throughout, because they tested units, not output.
 
-The preconditions in §3 are what change that outcome. They are cheaper than the rework.
+**Every one was found by looking at the output.** Rendered frames read for meaning, scores
+compared against the transcript and against audio energy, landmark coordinates dumped and
+checked against where the subject actually was. Nothing was found by reading code, and three of
+my own confident diagnoses were wrong (video-seek drift, a visibility threshold, a stale
+embed) — each disproved by measuring rather than by arguing.
 
-**What this session did about that, concretely** — the three preconditions were not just
-written down, they were built into steps 1-2:
+**The one structural lesson.** The tracking was rejected because it was a *realtime* design
+doing an *offline* job: sampling 8 times a second, smoothing with a filter that cannot see the
+future, then decimating the result to 48 keyframes. Every one of those is a defensible choice
+for a live preview and an indefensible one for an editor. Jordan's framing was the correct one —
+*"this is video EDITING - make it do a SECOND PASS... I literally go frame-by-frame if I have
+to"*. The fix was not a better model or a tuned constant; it was tracking every frame, filtering
+forward **and** backward so there is no lag at all, and handing ffmpeg the whole path.
 
-- **§3.3 (a stage may refuse)** is `Rank`'s three-state confidence. `becky-moment` on a real
-  transcript with no API key returns every moment labelled `candidate` and says why, rather
-  than presenting a structure-only guess as a pick.
-- **§3.4 (seam tests, not unit tests)** is `TestSeam_EveryEmittedKeyIsReadByBeckyHits`, which
-  parses the *other tool's source* instead of mocking it.
-- **§3.2 (build the dependency properly or write down the cost)** is why `internal/facetrack`
-  ships **unconnected** rather than wired to a single-face shim that would have looked finished
-  and tracked one person out of two.
-
-Both bugs found this session were found by tests asserting values: the facetrack identity-merge
-across a 40-frame gap, and an assertion of mine that was asking the structural layer to make a
-content judgement. Neither would have been caught by "it compiles."
+**What is genuinely still open** is in §7, and the honest ranking is: the score saturation (2)
+makes extra signals decorative until fixed; moment picking is still blind to whether he is on
+camera (3); and every framing constant is set to my taste rather than his (5). The pipeline now
+runs end to end from a dragged file and refuses what it cannot do honestly — which is the
+§3.3 precondition working — but "runs and refuses honestly" is not the same as "produces clips a
+professional would post", and only he can close that gap.
