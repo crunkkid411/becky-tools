@@ -77,6 +77,19 @@ type Cue struct {
 	Text  string
 }
 
+// CueWords is a Cue plus the words that compose it, each Word's Start/End
+// carried onto the same OUTPUT timeline as the Cue. It exists for a caller
+// that needs to know WHERE INSIDE a cue a specific word falls — the ASS
+// writer's per-word emphasis colour (ass.go) is the only user today — not
+// just the merged text Cue.Text carries. A word's Start/End here is its own
+// natural span (clamped to its segment), not run through the cue-level
+// gap-fill/quantize rules below: precise enough to say "an audio event
+// landed near this word", not frame-accurate.
+type CueWords struct {
+	Cue
+	Words []Word
+}
+
 // Options are the pacing and timing knobs. Zero values are not useful; use
 // DefaultOptions and adjust.
 type Options struct {
@@ -527,24 +540,51 @@ func ChunkWords(words []Word, maxChars int, gapSeconds float64) [][]Word {
 // cue — silence stays silent, and the following segment still lands at the right
 // offset.
 func Build(segments []Segment, opt Options) []Cue {
+	return stripWords(BuildWithWords(segments, opt))
+}
+
+// BuildWithWords is Build, but keeps each cue's constituent words (their own
+// Start/End, lifted onto the output timeline) attached — see CueWords.
+func BuildWithWords(segments []Segment, opt Options) []CueWords {
 	perSeg := WordsPerSegment(segments)
 	chunks := make([][][]Word, len(segments))
 	for i := range segments {
 		words := PrepareWords(perSeg[i], opt.FPS)
 		chunks[i] = Pass1Chunks(words, opt.MaxChars, opt.GapSeconds)
 	}
-	return BuildFromChunks(segments, chunks, opt)
+	return BuildFromChunksWithWords(segments, chunks, opt)
 }
 
 // BuildFromChunks is Build with the word grouping already decided — used when
 // the LLM review pass (see llm.go) has regrouped the pass-1 chunks. The timing
 // rules are identical; only where the lines break differs.
 func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) []Cue {
+	return stripWords(BuildFromChunksWithWords(segments, chunksPerSeg, opt))
+}
+
+// BuildFromChunksWithWords is BuildFromChunks, but returns CueWords instead of
+// Cue — same pipeline, same timing rules, only the return type carries each
+// cue's words along with it. The two are ONE implementation (buildFromChunks
+// below); BuildFromChunks just strips the extra field, so the default
+// (cli-cut) caption path is byte-identical to before this existed.
+func BuildFromChunksWithWords(segments []Segment, chunksPerSeg [][][]Word, opt Options) []CueWords {
+	return buildFromChunks(segments, chunksPerSeg, opt)
+}
+
+func stripWords(cws []CueWords) []Cue {
+	out := make([]Cue, len(cws))
+	for i, cw := range cws {
+		out[i] = cw.Cue
+	}
+	return out
+}
+
+func buildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) []CueWords {
 	// Phase 1: per segment, chunk its words into caption-local times.
 	type built struct {
 		offset float64
 		dur    float64
-		cues   []Cue // times are LOCAL to the segment (0..dur)
+		cues   []CueWords // Cue times are LOCAL to the segment (0..dur); Words are already output-absolute
 	}
 	prepared := make([]built, 0, len(segments))
 
@@ -576,14 +616,19 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 				localEnd = localStart
 			}
 			words := make([]string, 0, len(chunk))
+			outWords := make([]Word, 0, len(chunk))
 			for _, w := range chunk {
 				words = append(words, strings.TrimSpace(w.Word))
+				ow := w
+				ow.Start = b.offset + clampToSpan(w.Start, seg.Start, seg.End) - seg.Start
+				ow.End = b.offset + clampToSpan(w.End, seg.Start, seg.End) - seg.Start
+				outWords = append(outWords, ow)
 			}
 			text := normalize(strings.Join(words, " "), opt.Lowercase)
 			if text == "" {
 				continue
 			}
-			b.cues = append(b.cues, Cue{Start: localStart, End: localEnd, Text: text})
+			b.cues = append(b.cues, CueWords{Cue: Cue{Start: localStart, End: localEnd, Text: text}, Words: outWords})
 		}
 
 		// Snap the segment's outer edges: the first caption starts with the cut,
@@ -598,14 +643,14 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 	}
 
 	// Phase 2: lift to output-timeline times and close every gap.
-	var out []Cue
+	var out []CueWords
 	for i, b := range prepared {
 		if len(b.cues) == 0 {
 			continue
 		}
-		cues := make([]Cue, len(b.cues))
+		cues := make([]CueWords, len(b.cues))
 		for j, c := range b.cues {
-			cues[j] = Cue{Start: b.offset + c.Start, End: b.offset + c.End, Text: c.Text}
+			cues[j] = CueWords{Cue: Cue{Start: b.offset + c.Start, End: b.offset + c.End, Text: c.Text}, Words: c.Words}
 		}
 
 		// Hard-snap to the cut boundaries (guards against float drift above).
@@ -643,8 +688,17 @@ func BuildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 		out = append(out, cues...)
 	}
 	// Clamp AFTER quantising: rounding two boundaries to frames can itself put a
-	// caption a frame past the next one's start.
-	return ensureVisible(clampOverlaps(QuantizeToFrames(out, opt.FPS)), opt.FPS)
+	// caption a frame past the next one's start. Words are not re-timed by this —
+	// see CueWords — so run these on the Cue half only, then re-attach.
+	timed := make([]Cue, len(out))
+	for i, cw := range out {
+		timed[i] = cw.Cue
+	}
+	timed = ensureVisible(clampOverlaps(QuantizeToFrames(timed, opt.FPS)), opt.FPS)
+	for i := range out {
+		out[i].Cue = timed[i]
+	}
+	return out
 }
 
 // joinCollidingChunks merges a chunk into the previous one when the two begin at

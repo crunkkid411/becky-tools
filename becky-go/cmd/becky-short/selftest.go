@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"becky-go/internal/audiosig"
 	"becky-go/internal/crop"
 	"becky-go/internal/facesig"
 	"becky-go/internal/facetrack"
@@ -267,6 +268,75 @@ func runSelftest() int {
 	check("PayoffScore floors a punctuation-less last cue below a real completion",
 		moment.PayoffScore(unfinished, 0, 0.6) < 0.85,
 		fmt.Sprintf("%.2f", moment.PayoffScore(unfinished, 0, 0.6)))
+
+	// 12. --caption-style=jordan (research/jordan-edit-reverse-engineered.md,
+	//     CAPTIONS section): audio-driven emphasis, and proof the DEFAULT
+	//     (cli-cut) path is byte-identical to before it existed.
+
+	// 12a. REGRESSION: the subs.BuildWithWords refactor that made the jordan
+	//     style possible must not have changed cli-cut's own output at all —
+	//     exact values, the same two-cue split this input always produced.
+	ccWords := []subs.Word{{Word: "hello", Start: 0.0, End: 0.3}, {Word: "there", Start: 0.32, End: 0.6},
+		{Word: "world", Start: 2.0, End: 2.3}}
+	ccCues := captionCues(ccWords, 0, 3, 30)
+	check("--caption-style=cli-cut output is unchanged: exact cue text and timing",
+		len(ccCues) == 2 &&
+			ccCues[0].Start == 0 && abs(ccCues[0].End-2.0) < 1e-9 && ccCues[0].Text == "hello there" &&
+			abs(ccCues[1].Start-2.0) < 1e-9 && ccCues[1].End == 3 && ccCues[1].Text == "world",
+		fmt.Sprintf("%+v", ccCues))
+
+	// 12b. captionFilterASS needs no force_style — an .ass file already carries
+	//      its own style and inline colour overrides, unlike captionFilter's
+	//      plain .srt (which has nowhere else to put a style).
+	assFilter := captionFilterASS("clip.ass")
+	check("the jordan style's filter burns the .ass with no force_style",
+		strings.HasPrefix(assFilter, "subtitles=") && !strings.Contains(assFilter, "force_style"), assFilter)
+
+	// 12c. jordanEmphasis colours the word nearest the strongest audio event
+	//      inside its block, converting a SOURCE-time event onto the cue's
+	//      OUTPUT-timeline words via segmentAt.
+	jSegs := []subs.Segment{{Source: "clip", Start: 10, End: 13}}
+	jCues := []subs.CueWords{{
+		Cue: subs.Cue{Start: 0, End: 3},
+		Words: []subs.Word{{Word: "oh", Start: 0.0, End: 0.3}, {Word: "you", Start: 0.4, End: 0.7},
+			{Word: "guys", Start: 0.8, End: 1.2}},
+	}}
+	// Spike at source time 10.9s -> output time 0.9s, inside "guys" [0.8,1.2].
+	asig := audiosig.Signals{OK: true, Spikes: []audiosig.Event{{T: 10.9, RiseDB: 8}}}
+	emph := jordanEmphasis(jCues, jSegs, asig)
+	check("jordanEmphasis colours the word the audio spike actually lands on",
+		len(emph) == 1 && emph[0] == 2, fmt.Sprintf("%+v", emph))
+
+	// 12d. No audio event inside the block -> no coloured word. Part B is
+	//      explicit that this is a correct outcome, not a gap to paper over.
+	quiet := audiosig.Signals{OK: true, Spikes: []audiosig.Event{{T: 999, RiseDB: 8}}}
+	emphNone := jordanEmphasis(jCues, jSegs, quiet)
+	check("no audio event in the block leaves it uncoloured (-1)",
+		len(emphNone) == 1 && emphNone[0] == -1, fmt.Sprintf("%+v", emphNone))
+
+	// 12e. A loudness spike outranks a pitch rise in the same block — the
+	//      documented tie-break (two different units, no common scale).
+	both := audiosig.Signals{OK: true,
+		Spikes:     []audiosig.Event{{T: 10.9, RiseDB: 8}},  // -> "guys"
+		PitchRises: []audiosig.Event{{T: 10.1, Ratio: 1.4}}, // -> "you", would win alone
+	}
+	emphBoth := jordanEmphasis(jCues, jSegs, both)
+	check("a loudness spike outranks a pitch rise in the same block",
+		len(emphBoth) == 1 && emphBoth[0] == 2, fmt.Sprintf("%+v", emphBoth))
+
+	// 12f. Degrade honestly when the audio signal itself is unavailable — no
+	//      guessed emphasis, never a crash.
+	unavailable := audiosig.Signals{OK: false}
+	emphDegraded := jordanEmphasis(jCues, jSegs, unavailable)
+	check("an unavailable audio signal degrades to no emphasis anywhere",
+		len(emphDegraded) == 1 && emphDegraded[0] == -1, fmt.Sprintf("%+v", emphDegraded))
+
+	// 12g. segmentAt maps an output-timeline moment back to the right SOURCE
+	//      span across a multi-span jumpcut short, not just a single window.
+	jcSegs := []subs.Segment{{Source: "clip", Start: 0, End: 5}, {Source: "clip", Start: 20, End: 22}}
+	seg2, off2, ok2 := segmentAt(jcSegs, 6.0) // 1s into the SECOND span's output range [5,7)
+	check("segmentAt finds the second span and its own output offset",
+		ok2 && seg2.Start == 20 && off2 == 5, fmt.Sprintf("seg=%+v off=%v ok=%v", seg2, off2, ok2))
 
 	fmt.Printf("\n%d/%d PASS\n", pass, pass+fail)
 	if fail > 0 {

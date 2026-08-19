@@ -425,7 +425,7 @@ func parseCutDecisions(stdout []byte) (keep, remove []keepSpan, err error) {
 // through rather than assumed, so the smoother never blends across a cut a
 // span happens to still contain (Finding 2, research/jordan-edit-reverse-engineered.md).
 func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float64, res shortOut, asp float64, outW, outH int,
-	sampleFPS, minCov, maxGap float64, forceCenter, withCaptions, verbose bool) (shortOut, error) {
+	sampleFPS, minCov, maxGap float64, forceCenter, withCaptions bool, capStyle string, asig *audioSigCache, verbose bool) (shortOut, error) {
 
 	info, err := mediainfo.Probe(cfg.FFprobe, j.Src)
 	if err != nil || info.FPS <= 0 {
@@ -585,8 +585,25 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 	capCount := 0
 	var srtToSave string
 	if withCaptions {
-		srt, n, cerr := captionSRTJumpcut(j.Src, j.In, j.Out, fps, spans, workDir,
-			func(f string, a ...any) { logIfShort(verbose, f, a...) })
+		logf := func(f string, a ...any) { logIfShort(verbose, f, a...) }
+
+		var burnFilter, sidecar string
+		var n int
+		var cerr error
+		if capStyle == "jordan" {
+			var ass string
+			ass, sidecar, n, cerr = captionASSJumpcut(cfg, j.Src, j.In, j.Out, fps, spans, outW, outH, workDir, asig, logf)
+			if cerr == nil && n > 0 {
+				burnFilter = captionFilterASS(ass)
+			}
+		} else {
+			var srt string
+			srt, n, cerr = captionSRTJumpcut(j.Src, j.In, j.Out, fps, spans, workDir, logf)
+			sidecar = srt
+			if cerr == nil && n > 0 {
+				burnFilter = captionFilter(srt, j.Src)
+			}
+		}
 		switch {
 		case cerr != nil:
 			note(&res, "no captions: "+cerr.Error())
@@ -594,10 +611,10 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 			note(&res, "no captions: nothing is said in the kept spans")
 		default:
 			vSub := "[vsub]"
-			graph += ";" + vOut + captionFilter(srt, j.Src) + vSub
+			graph += ";" + vOut + burnFilter + vSub
 			vOut = vSub
 			capCount = n
-			srtToSave = srt
+			srtToSave = sidecar
 		}
 	}
 	res.Captions = capCount

@@ -105,6 +105,9 @@ func main() {
 		minCov   = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
 		center   = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
 		captions = flag.Bool("captions", true, "burn word-timed captions into the short (--captions=false to skip)")
+		capStyle = flag.String("caption-style", "cli-cut", "caption look: \"cli-cut\" (default, shipped look, "+
+			"unchanged) or \"jordan\" (stacked lines + one audio-driven coloured word, research/"+
+			"jordan-edit-reverse-engineered.md — his own look, NOT approved, render it and look before trusting it)")
 		jumpcuts = flag.Bool("jumpcuts", true, "cut dead air the way becky-cut would (jumpcuts), instead of "+
 			"one unbroken continuous take; --jumpcuts=false renders the old continuous window")
 		tighten = flag.Float64("tighten", defaultTighten, "seconds to trim (total) at each EXISTING cut this "+
@@ -119,6 +122,10 @@ func main() {
 
 	if *selftest {
 		os.Exit(runSelftest())
+	}
+
+	if *capStyle != "cli-cut" && *capStyle != "jordan" {
+		fail(fmt.Errorf(`--caption-style must be "cli-cut" or "jordan", got %q`, *capStyle))
 	}
 
 	cfg := config.Load()
@@ -165,10 +172,12 @@ func main() {
 
 	// One cache for the whole run: becky-cut analyses the WHOLE source file
 	// regardless of any one short's window, so a --reel job with several shorts
-	// cut from the same source must run it once, not once per short.
+	// cut from the same source must run it once, not once per short. Same
+	// reasoning for the jordan style's audiosig pass (audioSigCache).
 	cutCache := newCutCache()
+	asigCache := newAudioSigCache()
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *jumpcuts, *tighten, cutCache, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *capStyle, *jumpcuts, *tighten, cutCache, asigCache, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -193,7 +202,8 @@ type job struct {
 }
 
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
-	forceCenter, withCaptions, useJumpcuts bool, tighten float64, cache *cutCache, verbose bool) (shortOut, error) {
+	forceCenter, withCaptions bool, capStyle string, useJumpcuts bool, tighten float64,
+	cache *cutCache, asig *audioSigCache, verbose bool) (shortOut, error) {
 
 	j = absoluteJob(j)
 
@@ -228,7 +238,7 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 					plan.PreservedCuts, plan.ExistingCuts, plan.RemovedSeconds))
 			}
 			return renderJumpcutShort(cfg, j, plan.Spans, plan.Cuts, res, asp, outW, outH, sampleFPS, minCov, maxGap,
-				forceCenter, withCaptions, verbose)
+				forceCenter, withCaptions, capStyle, asig, verbose)
 		}
 	}
 
@@ -281,8 +291,25 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		if ferr != nil {
 			note(&res, "caption timing not frame-aligned: "+ferr.Error())
 		}
-		srt, n, cerr := captionSRT(j.Src, j.In, j.Out, fps, workDir,
-			func(f string, a ...any) { logIfShort(verbose, f, a...) })
+		logf := func(f string, a ...any) { logIfShort(verbose, f, a...) }
+
+		var burnFilter, sidecar string
+		var n int
+		var cerr error
+		if capStyle == "jordan" {
+			var ass string
+			ass, sidecar, n, cerr = captionASS(cfg, j.Src, j.In, j.Out, fps, outW, outH, workDir, asig, logf)
+			if cerr == nil && n > 0 {
+				burnFilter = captionFilterASS(ass)
+			}
+		} else {
+			var srt string
+			srt, n, cerr = captionSRT(j.Src, j.In, j.Out, fps, workDir, logf)
+			sidecar = srt
+			if cerr == nil && n > 0 {
+				burnFilter = captionFilter(srt, j.Src)
+			}
+		}
 		switch {
 		case cerr != nil:
 			// A short without captions is still a usable short, so this degrades
@@ -291,9 +318,9 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		case n == 0:
 			note(&res, "no captions: nothing is said in this window")
 		default:
-			chain += "," + captionFilter(srt, j.Src)
+			chain += "," + burnFilter
 			res.Captions = n
-			srtToSave = srt
+			srtToSave = sidecar
 		}
 	}
 
