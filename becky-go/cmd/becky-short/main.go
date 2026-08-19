@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
 	"becky-go/internal/crop"
 	"becky-go/internal/pathx"
@@ -48,6 +49,7 @@ type shortOut struct {
 	Found    int     `json:"found"`
 	Coverage float64 `json:"coverage"`
 	Followed bool    `json:"followed"`
+	Captions int     `json:"captions"`
 	Note     string  `json:"note,omitempty"`
 }
 
@@ -84,6 +86,7 @@ func main() {
 			"means there is no honest crop of that window")
 		minCov   = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
 		center   = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
+		captions = flag.Bool("captions", true, "burn word-timed captions into the short (--captions=false to skip)")
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -128,7 +131,7 @@ func main() {
 	}
 
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -153,7 +156,7 @@ type job struct {
 }
 
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
-	forceCenter, verbose bool) (shortOut, error) {
+	forceCenter, withCaptions, verbose bool) (shortOut, error) {
 
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
 
@@ -189,17 +192,17 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 	// The per-frame crop path is handed to ffmpeg as a sendcmd script. It has to
 	// live in a directory ffmpeg runs FROM, because sendcmd's parser treats the
 	// colon in a Windows absolute path as its own separator.
-	var chain, workDir string
+	workDir, err := os.MkdirTemp("", "becky-short-")
+	if err != nil {
+		return res, err
+	}
+	defer os.RemoveAll(workDir)
+
+	var chain string
 	if len(rects) > 0 {
-		dir, err := os.MkdirTemp("", "becky-short-")
-		if err != nil {
+		if err := os.WriteFile(filepath.Join(workDir, cmdsName), []byte(crop.SendcmdFile(rects)), 0o644); err != nil {
 			return res, err
 		}
-		defer os.RemoveAll(dir)
-		if err := os.WriteFile(filepath.Join(dir, cmdsName), []byte(crop.SendcmdFile(rects)), 0o644); err != nil {
-			return res, err
-		}
-		workDir = dir
 		chain = crop.FilterChain(rects, outW, outH, cmdsName)
 	} else {
 		w, h, err := probeSize(j.Src)
@@ -208,6 +211,28 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		}
 		r := crop.StaticCenter(w, h, asp)
 		chain = fmt.Sprintf("crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos", r.W, r.H, r.X, r.Y, outW, outH)
+	}
+
+	// Captions come AFTER the crop and scale, so they are laid on the finished
+	// 9:16 frame at a fixed size rather than being scaled with the source.
+	if withCaptions {
+		fps, ferr := sourceFPS(cfg.FFprobe, j.Src)
+		if ferr != nil {
+			note(&res, "caption timing not frame-aligned: "+ferr.Error())
+		}
+		srt, n, cerr := captionSRT(j.Src, j.In, j.Out, fps, workDir,
+			func(f string, a ...any) { logIfShort(verbose, f, a...) })
+		switch {
+		case cerr != nil:
+			// A short without captions is still a usable short, so this degrades
+			// with a note rather than refusing the render.
+			note(&res, "no captions: "+cerr.Error())
+		case n == 0:
+			note(&res, "no captions: nothing is said in this window")
+		default:
+			chain += "," + captionFilter(srt, j.Src)
+			res.Captions = n
+		}
 	}
 
 	if d := filepath.Dir(j.Dst); d != "" && d != "." {
@@ -319,4 +344,19 @@ func tail(s string) string {
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "becky-short:", err)
 	os.Exit(2)
+}
+
+// note appends to the result's note without losing an earlier one - a short can
+// degrade in more than one way at once, and hiding the first failure behind the
+// second is how a quietly-worse render passes for a good one.
+func note(res *shortOut, msg string) {
+	if res.Note == "" {
+		res.Note = msg
+		return
+	}
+	res.Note += "; " + msg
+}
+
+func logIfShort(verbose bool, format string, a ...any) {
+	beckyio.Logf(verbose, format, a...)
 }

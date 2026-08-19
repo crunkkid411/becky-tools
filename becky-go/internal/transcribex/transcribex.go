@@ -14,6 +14,7 @@
 package transcribex
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 	"strings"
 
 	"becky-go/internal/sidecar"
+	"becky-go/internal/subs"
 )
 
 // Logf is an optional progress sink (nil is fine). Transcription of a long stream
@@ -130,4 +132,94 @@ func tail(s string) string {
 		return "…" + s[len(s)-600:]
 	}
 	return s
+}
+
+// wordFile mirrors becky-transcribe's --format json sidecar. Only the word
+// timings matter here.
+type wordFile struct {
+	Words []subs.Word `json:"words"`
+}
+
+// FindWords returns the word-level transcript sidecar for a source, or "".
+// Same search order cmd/subtitle uses (which still carries its own copy and can
+// move onto this one whenever it is next touched, exactly as Bin() notes for
+// cmd/clip).
+func FindWords(source string) string {
+	dir := filepath.Dir(source)
+	stem := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
+	for _, cand := range []string{
+		filepath.Join(dir, stem+".transcript.json"),
+		source + ".transcript.json",
+		filepath.Join(dir, "transcripts", stem+".json"),
+	} {
+		if fileExists(cand) {
+			return cand
+		}
+	}
+	return ""
+}
+
+// EnsureWords returns WORD-LEVEL timings for video, transcribing if there are
+// none.
+//
+// Captions need word times and a .srt carries only cue times, so EnsureSRT is
+// not enough to burn captions into a clip. The contract is otherwise identical:
+// it MAKES what is missing rather than telling the caller to go and run another
+// tool first, because for Jordan that is a dead end and not an instruction.
+//
+// Returns (words, madeIt, error).
+func EnsureWords(video string, logf Logf) ([]subs.Word, bool, error) {
+	if p := FindWords(video); p != "" {
+		if w, err := loadWords(p); err == nil {
+			return w, false, nil
+		} else if logf != nil {
+			// A sidecar without word timings is not a reason to refuse - it is a
+			// reason to make one that has them.
+			logf("%s: %v — re-transcribing for word timings", filepath.Base(p), err)
+		}
+	}
+	if !IsMedia(video) {
+		return nil, false, fmt.Errorf("%s is not a media file and has no word-level transcript beside it",
+			filepath.Base(video))
+	}
+	bin, err := Bin()
+	if err != nil {
+		return nil, false, err
+	}
+
+	out := strings.TrimSuffix(video, filepath.Ext(video)) + ".transcript.json"
+	if logf != nil {
+		logf("no word-level transcript beside %s — transcribing it now (once, then it is cached)",
+			filepath.Base(video))
+	}
+	cmd := exec.Command(bin, "--format", "json", "--output", out, video)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, false, fmt.Errorf("could not transcribe %s: %v\n%s",
+			filepath.Base(video), err, tail(stderr.String()))
+	}
+	w, err := loadWords(out)
+	if err != nil {
+		return nil, false, err
+	}
+	if logf != nil {
+		logf("word-level transcript written: %s (%d words)", filepath.Base(out), len(w))
+	}
+	return w, true, nil
+}
+
+func loadWords(path string) ([]subs.Word, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read transcript %s: %w", path, err)
+	}
+	var t wordFile
+	if err := json.Unmarshal(b, &t); err != nil {
+		return nil, fmt.Errorf("parse transcript %s: %w", filepath.Base(path), err)
+	}
+	if len(t.Words) == 0 {
+		return nil, fmt.Errorf("no word-level timings in %s", filepath.Base(path))
+	}
+	return t.Words, nil
 }
