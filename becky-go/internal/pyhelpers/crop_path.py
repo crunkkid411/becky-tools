@@ -161,6 +161,12 @@ def main():
                     help="0..1 zero-phase smoothing strength; LOWER is smoother. Applied "
                          "forward AND backward, so it adds no lag at any setting")
     ap.add_argument("--ffmpeg", default="ffmpeg")
+    ap.add_argument("--no-second-pass", action="store_true",
+                    help="skip the fresh-eyes retry on frames the tracker lost")
+    ap.add_argument("--retry-confidence", type=float, default=0.3,
+                    help="detection confidence for the retry pass; lower than the "
+                         "tracked pass because a frame it already failed is worth "
+                         "a harder look")
     ap.add_argument("--min-visibility", type=float, default=0.5)
     ap.add_argument("--min-crop-frac", type=float, default=0.34,
                     help="crop width may never fall below this fraction of the source width")
@@ -196,6 +202,24 @@ def main():
         min_pose_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     )
+    # SECOND PASS, per frame. The VIDEO-mode tracker warm-starts from the previous
+    # frame, which is fast and stable but loses the subject after a hard turn or a
+    # brief occlusion - and once lost it stays lost, because it keeps warm-starting
+    # from a wrong pose. This IMAGE-mode landmarker has no temporal prior: it looks
+    # at the frame cold. It runs ONLY on frames the tracked pass failed, so it costs
+    # nothing on a clean shot and rescues the exact frames that would otherwise be
+    # filled in by carrying a stale box forward.
+    #
+    # This is the offline licence the reference implementations take too - the
+    # non-realtime example in ofxFaceTracker raises iterations 10x and attempts 4x
+    # purely because it is not running live. We are not running live either.
+    retry_opts = mp_vision.PoseLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=args.model),
+        running_mode=mp_vision.RunningMode.IMAGE,
+        num_poses=1,
+        min_pose_detection_confidence=args.retry_confidence,
+    )
+    rescued = 0
 
     times, cxs, cys, widths = [], [], [], []
     faces_l, faces_r = [], []
@@ -219,7 +243,7 @@ def main():
          "-vf", f"fps={sample_fps}", "-pix_fmt", "bgr24", "-f", "rawvideo", "-"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    with mp_vision.PoseLandmarker.create_from_options(opts) as landmarker:
+    with mp_vision.PoseLandmarker.create_from_options(opts) as landmarker,             mp_vision.PoseLandmarker.create_from_options(retry_opts) as rescuer:
         t = args.start
         frame_i = 0
         while frame_i < n_expected:
@@ -232,6 +256,11 @@ def main():
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             res = landmarker.detect_for_video(mp_img, int(t * 1000))
+            if not res.pose_landmarks and not args.no_second_pass:
+                # Tracked pass lost him: look again with fresh eyes.
+                res = rescuer.detect(mp_img)
+                if res.pose_landmarks:
+                    rescued += 1
 
             cx = cy = None
             crop_w = None
@@ -424,7 +453,7 @@ def main():
         "ok": True,
         "src_w": src_w, "src_h": src_h, "fps": round(src_fps, 4),
         "aspect": round(aspect, 6),
-        "sampled": len(path), "found": found,
+        "sampled": len(path), "found": found, "rescued": rescued,
         "path": path,
     }))
 
