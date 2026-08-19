@@ -88,6 +88,29 @@ func runSelftest() int {
 	}
 	check("every window respects --min/--max(+extend)", inBounds, "a window fell outside the bounds")
 
+	// 4b. --top returns DISTINCT moments, not re-cuts of the same one.
+	//     Measured on test-for-clips.mp4: the structural top ten was ten windows
+	//     over a single 68-second stretch of a five-minute video. Every one was a
+	//     well-formed thought, so no score could reject them - they were
+	//     individually right and collectively ten renders of one story.
+	distinct := moment.Distinct(cands, moment.DefaultMaxOverlap)
+	overlapping := 0
+	for i := range distinct {
+		for j := i + 1; j < len(distinct); j++ {
+			if distinct[i].Source == distinct[j].Source &&
+				distinct[i].Start < distinct[j].End && distinct[j].Start < distinct[i].End {
+				shared := minf(distinct[i].End, distinct[j].End) - maxf(distinct[i].Start, distinct[j].Start)
+				shorter := minf(distinct[i].Dur(), distinct[j].Dur())
+				if shorter > 0 && shared/shorter > moment.DefaultMaxOverlap {
+					overlapping++
+				}
+			}
+		}
+	}
+	check("no surviving moment is a re-cut of a better one",
+		overlapping == 0 && len(distinct) > 0 && len(distinct) <= len(cands),
+		fmt.Sprintf("%d of %d kept windows still repeat another", overlapping, len(distinct)))
+
 	// 5. The self-containment signal DISCRIMINATES: a window opening on the
 	//    dangling "So he said..." must score below one opening on the clean
 	//    declarative hook.
@@ -213,3 +236,17 @@ So he said the whole thing was a write-off anyway
 00:00:36,200 --> 00:00:44,000
 and nobody ever went back to check whether that was true.
 `
+
+func minf(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxf(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}

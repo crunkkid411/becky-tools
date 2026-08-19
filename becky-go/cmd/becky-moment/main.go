@@ -101,6 +101,7 @@ func main() {
 		backend    = flag.String("judge-backend", "local", "content judge: local (offline Gemma-4) or zen (OpenCode Zen, free models, needs BECKY_ZEN_API_KEY)")
 		model      = flag.String("model", defaultZenModel, "zen backend only: judge model id (must be one of OpenCode Zen's free models)")
 		noAudio    = flag.Bool("no-audio", false, "skip the audio signal pass (loudness spikes, pitch rises)")
+		maxOverlap = flag.Float64("max-overlap", moment.DefaultMaxOverlap, "how much of a shorter moment may repeat a better one before it is dropped as the same moment (0 disables)")
 		selftest   = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose    = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -190,6 +191,15 @@ func main() {
 	// folder of real streams yields six figures of them (112,625 across Jordan's
 	// 177 transcripts), and judging every one would take hours to change the top
 	// ten. Shortlist first, judge the shortlist.
+	// Drop windows that are re-cuts of a better one BEFORE spending the judge
+	// budget. Without this the shortlist fills with shifted copies of the same
+	// few stories and the content pass never sees the rest of the video.
+	before := len(allCands)
+	allCands = moment.Distinct(allCands, *maxOverlap)
+	if d := before - len(allCands); d > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("dropped %d candidate(s) that repeated a better-scoring moment", d))
+	}
+
 	allCands = shortlist(allCands, judgePool(*top))
 
 	// The content pass. Any failure here is a DEGRADE: we keep every candidate
@@ -227,6 +237,10 @@ func main() {
 	}
 
 	ranked := moment.Rank(allCands, verdicts)
+	// Again after ranking: the content verdict and the audio signal can reorder
+	// windows, so the best version of a moment is not always the one structure
+	// preferred. Suppress against the FINAL order or --top still returns repeats.
+	ranked = moment.DistinctRanked(ranked, *maxOverlap)
 	if *top > 0 && len(ranked) > *top {
 		ranked = ranked[:*top]
 	}
