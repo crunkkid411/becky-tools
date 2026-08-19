@@ -186,6 +186,29 @@ building a saliency stack of our own.
 
 ---
 
+## CONSIDERED, DEFERRED — semantic segmentation for where a moment BEGINS
+
+**Who does it:** `CliperAi` — via ClipsAI, *"uses BERT embeddings to find thematic shifts rather
+than just silence or fixed time intervals"*.
+
+**What becky does:** `AutoThoughtGap` derives a thought boundary from the transcript's own pause
+distribution (p75 of inter-cue gaps). That is a **prosodic** boundary — where the speaker breathed.
+A topical boundary is a different thing: a story can change subject without a pause, and pause
+without changing subject.
+
+**Why it is not being built yet, stated so it is a decision and not an oversight:** becky already
+has a resident embedding server (Qwen3-Embedding-4B, `EmbedServerURL`), so the cost is low, and this
+would improve *candidate generation* rather than adding a fifth ranking signal — which is the more
+valuable half. But `research/jordan-edit-reverse-engineered.md` changed the priority: on his real
+material the shot boundaries arrive **with the footage** (11 of 14 of his cuts already existed in
+the master), and clip edges snap to silence. Topic segmentation only earns its place on a long,
+unedited, single-take stream — which is a real case, just not the one in front of us.
+
+**Revisit when:** someone hands becky an hour of raw uncut talking-head footage and the moment
+windows come back starting mid-thought.
+
+---
+
 ## The one thing NO project on the list does
 
 Not one of the 21 **re-watches its own output**. Every pipeline is strictly feed-forward:
