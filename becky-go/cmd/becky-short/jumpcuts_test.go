@@ -285,3 +285,26 @@ func TestTooManyDegraded_AMinorityFallsBackAMajorityRefuses(t *testing.T) {
 		}
 	}
 }
+
+// A degraded span was never tracked, so it must count against coverage. Leaving
+// it out of BOTH the numerator and the denominator made the reported number
+// describe only the spans that worked - becky-short claimed 0.952 on the
+// BLINDFOLD render while an independent face pass over the rendered file
+// measured 0.18. Honest accounting gives 0.579.
+func TestUntrackedSamples_ADegradedSpanCountsAgainstCoverage(t *testing.T) {
+	if got := untrackedSamples(3.79, 29.97); got != 113 {
+		t.Errorf("untrackedSamples(3.79s @ 29.97fps) = %d, want 113 - the real span 3 of the "+
+			"BLINDFOLD render, which used to contribute 0", got)
+	}
+	if got := untrackedSamples(0.01, 29.97); got != 1 {
+		t.Errorf("untrackedSamples(0.01s) = %d, want 1: a span too short to round up is still "+
+			"one unframed sample, never zero", got)
+	}
+	// The bug in one assertion: coverage over a 2-span render where one degraded.
+	tracked, trackedFound := untrackedSamples(10, 30), 300
+	degraded := untrackedSamples(10, 30)
+	if cov := float64(trackedFound) / float64(tracked+degraded); cov != 0.5 {
+		t.Errorf("coverage = %.3f, want 0.500 - half the output holds the subject; the old "+
+			"accounting reported 1.000 for this exact case", cov)
+	}
+}

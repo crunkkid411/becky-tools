@@ -479,6 +479,15 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 				return res, fmt.Errorf("kept span %d/%d [%.2f,%.2f]: %w", i+1, len(spans), sp.In, sp.Out, err)
 			}
 			degraded++
+			// A degraded span was NOT tracked, so it must still count against
+			// coverage. Leaving it out of both the numerator and the denominator
+			// made the reported number describe only the spans that worked:
+			// becky-short claimed 0.952 on the BLINDFOLD render while an
+			// independent face pass over the RENDERED FILE measured 0.18. That
+			// 77-point gap is exactly what `--review` exists to catch, and it
+			// caught it on its first real run.
+			cr.Sampled, cr.Found = untrackedSamples(sp.Out-sp.In, fps), 0
+			cr.Coverage, cr.Followed = 0, false
 		}
 		totalSampled += cr.Sampled
 		totalFound += cr.Found
@@ -707,4 +716,21 @@ func captionSRTJumpcut(video string, winIn, winOut, fps float64, spans []keepSpa
 // shorts and ten honest refusals beats forty where six are quietly wrong).
 func tooManyDegraded(degraded, total int) bool {
 	return total > 0 && degraded*2 > total
+}
+
+// untrackedSamples is how many samples a DEGRADED span contributes to the
+// coverage denominator. It was never tracked, so every one of them counts as
+// "sampled, subject not found".
+//
+// Returning zero here is what made the reported coverage a lie: with degraded
+// spans absent from both the numerator and the denominator, the number described
+// only the spans that worked. becky-short claimed 0.952 on the BLINDFOLD render
+// while an independent face pass over the RENDERED FILE measured 0.18. Counting
+// them honestly gives 0.579.
+func untrackedSamples(dur, fps float64) int {
+	n := int(dur * fps)
+	if n < 1 {
+		return 1 // a span short enough to round to zero is still one unframed sample
+	}
+	return n
 }
