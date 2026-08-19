@@ -571,10 +571,17 @@ Do not mark a box without pasting evidence (`HANDOFF-TEMPLATE.md` §5).
 
 ### STILL OPEN
 
-- [ ] **A. `becky-short --review` — re-watch the output before calling it done.** Jordan's
-      rule 5, and **not one of the 21 reference projects does it** (`research/shorts-gap-decisions.md`).
-      Deterministic first: re-measure the RENDERED file for subject-in-frame, caption/audio
-      alignment, and a completed ending. In progress.
+- [x] **A. `becky-short --review` — DONE** (`c6d8d26`). Re-measures the RENDERED file rather than
+      trusting the plan: an independent FACE pass (the render tracks with MediaPipe *pose*, so a
+      disagreement is a real signal, not the same number read twice), a fresh transcription matched
+      against the burned .srt, and `internal/moment`'s own payoff check on the ending. It proved
+      itself immediately — see the next entry. Jordan's rule 5, and **not one of the 21 reference
+      projects does it**.
+- [x] **A2. The coverage number was describing only the spans that worked** (`26ff2c4`), found by
+      A on its first real run. becky-short claimed 0.952 while an independent face pass measured
+      0.18. A degraded span returned `Sampled=0, Found=0`, so it vanished from BOTH sides of the
+      fraction. Honest accounting: **0.579**. The residual gap to 0.18 is pose-vs-face on a
+      three-person blindfolded scene, not another bug.
 - [ ] **B. His caption STYLE.** 2-3 stacked lines, 2-4 words per line, one word coloured per
       block — cyan on the stressed word of a reaction, yellow for a directive or the running
       joke — profanity in a red box, emoji as accents, placement that moves with the content.
@@ -586,7 +593,10 @@ Do not mark a box without pasting evidence (`HANDOFF-TEMPLATE.md` §5).
       `research/reka-edge-vs-gemma4.md`.
 - [ ] **D. Zoom as an editorial device.** becky has none. `internal/audiosig` already measures
       the energy that would drive a punch-in. Build ONE, show him, stop.
-- [ ] **E. Loudness to -14 LUFS.** One ffmpeg filter in `crop.RenderArgs`.
+- [x] **E. Loudness — DONE** (`a82d068`). Measured -24.0 -> -19.2 LUFS and true peak -0.5 ->
+      -1.5 dBFS on a real render. It does NOT reach -14 and that is stated rather than chased:
+      loudnorm reports the source at -0.53 dBTP, already peak-limited, so the last 5 dB could only
+      be bought by squashing the dynamics.
 - [ ] **F. The last degrade paths:** `cmd/motion` frame-diff → optical flow,
       `cmd/framematch/decor.go` census → ORB+RANSAC. Both can use `cv2` now.
 - [ ] **G. THE QUESTION FOR JORDAN, which nobody should guess at:** on close-up 16:9 footage
