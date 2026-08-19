@@ -67,7 +67,8 @@ echo [2/3] Matching them to the footage...
 if errorlevel 1 goto :failed
 
 echo.
-echo [3/3] Rendering vertical shorts ^(framed on you, not centre-cropped^)...
+echo [3/3] Rendering vertical shorts ^(framed on you, captions burned in, and
+echo       your own cuts kept where the footage already has them^)...
 "!BECKY!\becky-short.exe" --reel "%TEMP%\becky_moments.reel.json" --outdir "!FOLDER!\shorts"
 if errorlevel 1 goto :failed
 
@@ -96,8 +97,13 @@ echo.
 echo   That step did not finish - the message above says which one and why.
 echo   Nothing was overwritten.
 echo.
-echo   The usual cause is a clip with no transcript beside it. becky needs a
-echo   .srt next to the video to know what was said.
+echo   becky transcribes anything that has no transcript yet, so a missing .srt
+echo   is NOT the problem - you never have to make one first.
+echo.
+echo   What usually goes wrong instead:
+echo     - the clip has no talking head in it, so it refused rather than
+echo       render something framed on the wrong thing
+echo     - the file is still being written, or is on a drive that went away
 
 :end
 echo.
