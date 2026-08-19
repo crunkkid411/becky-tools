@@ -1,10 +1,21 @@
 # HANDOFF — short-form repurposing pipeline: why it would fail, and what it takes
 
-**Status, 2026-08-19 (local). The chain runs end to end from a dragged file.** Drop a
-video (or a folder) on `Make Shorts.bat` and it transcribes if needed, picks moments,
-matches them to the footage, and renders vertical shorts that follow the subject. Steps
-0-2, 4 and 5 are built and exercised on Jordan's own content. Step 3 (who is speaking)
-has its model working but is not yet wired into a command.
+**Status, 2026-08-19 (late). All six stages are built and every §7 item below is closed
+or explicitly deferred.** Drop a video or a folder on `Make Shorts.bat`: it transcribes if
+needed, picks moments (structure + content + audio + face coverage), decides who is
+speaking, preserves the source's own cuts where it has them, reframes to 9:16 and burns
+captions.
+
+**The standard this is now measured against is `research/jordan-edit-reverse-engineered.md`
+— read it before changing framing or cut timing.** Jordan supplied his own 30-second
+vertical short and the long-form it was cut from; because the vertical is a crop of the
+master, his decisions were recovered as numbers. Three of them overturned assumptions this
+document was built on:
+
+- **He inherits the cuts, he does not choose them.** 11 of 14 aligned cuts land within
+  100ms of a cut that ALREADY existed in the long-form; 8 are frame-exact.
+- **He removes 10.3% of the time — 150ms per cut.** `becky-cut` alone removed 51%.
+- **His cuts land on WORDS** (median 57ms from a word boundary), not on silence.
 
 Read `research/shorts-models.md` first — it is the model research this rests on. This
 document is the *engineering* half.
@@ -510,35 +521,78 @@ Do not mark a box without pasting evidence (`HANDOFF-TEMPLATE.md` §5).
 - [x] **LR-ASD model.** MIT, runs on the GPU, training-crop bug found and fixed (§5.5).
 - [x] **Audio signals.** Built, measured, folded into `Rank` (§5.7).
 
-### OPEN — in the order that matters
+### CLOSED since this list was written — with the commit
 
-- [ ] **1. Wire who-is-speaking into a command.** `face_embed --all-faces` →
-      `internal/faceembed` multi-face path → `facetrack.Build` → `asd.py`. Blocked only by the
-      singular `Face` struct. **DONE WHEN:** a real clip with two visible people yields exactly
-      2 tracks, and the one actually talking scores materially higher.
-      *Note `CoverageIn(t0, t1, samplePeriod)` takes a third argument now — coverage is density,
-      not the span between outermost sightings (§5.3).*
-- [ ] **2. Fix the structural-score saturation.** The top 4,000 of 112,625 candidates all score
-      0.985–1.000, so `--top N` is close to arbitrary and the audio signal cannot move anything
-      (§5.7). Until this is fixed, extra signals are decoration. **DONE WHEN:** the top 20
-      candidates on `test-for-clips.mp4` span a visibly wider score range, and adding
-      `--no-audio` measurably changes which clips come out.
-- [ ] **3. Moment picking does not know whether he is ON SCREEN.** The top-ranked moment was
-      chosen from words alone and had him bent out of shot; only the renderer caught it. Feed
-      face coverage back into ranking so a talking-head short is never chosen from a window where
-      there is no talking head. This is the same "multiple signals" point as §5.7.
-- [ ] **4. Captions are not burned into the shorts.** The caption tooling exists
-      (`internal/subs`, the becky-captions preset); it is simply not in this chain. Cut-snap them
-      via `internal/subs` as originally specified in step 5.
-- [ ] **5. Framing taste pass.** Every framing constant (`--shoulder-frac`, `--eye-line`,
-      `FACE_BAND`, `--min-crop-frac`) was set by me and checked against my own eye. Jordan is the
-      professional editor; one pass of him watching and saying "tighter/looser/higher" is worth
-      more than any further tuning from me. This is §3.5, still unclaimed.
-- [ ] **6. Retire the remaining degrade paths** (was Step G). `cmd/motion` uses ffmpeg
-      frame-diff instead of optical flow; `cmd/framematch/decor.go` uses a census descriptor
-      instead of ORB+RANSAC. Both can now use `cv2` through a helper. Also delete the false
-      comment at `cmd/events/main.go:14` — it claims no face detector ships here, while the same
-      file runs multi_face default-on 100 lines later.
+- [x] **1. Who-is-speaking wired into a command.** `becky-speaking` (`7374be2`): frames →
+      `face_embed.py --all-faces` → `facetrack.Build` → `asd.py`. Selftest 12/12. On a real
+      two-person clip it yields exactly 2 tracks. **Honest gap:** the "one talker scores
+      materially higher" bar did NOT clear on the only two-person clip on this machine —
+      a decoy control showed the pipeline discriminates cleanly when the audio carries a
+      real lip-synced signal, so it is that clip, not the wiring. Not papered over.
+- [x] **2. The "score saturation" — diagnosed differently and fixed** (`4f62d0d`). Measured
+      on `test-for-clips.mp4` the prior is NOT saturated (min 0.640, max 0.982, none at the
+      ceiling). The real defect was that `--top 10` returned **ten re-cuts of ONE 68-second
+      stretch** of a five-minute video. Overlap suppression (proportional to the shorter
+      window, 0.5) takes the same top ten across four distinct regions spanning 9.1s-300.1s.
+      Widening the score range would have made duplicates look meaningfully ranked.
+- [x] **3. Moment picking now knows whether he is on screen** (`6a79d0b`). `internal/facesig`
+      + `Candidate.Face`. A window where he is turned away drops from rank #4 to #10, and the
+      frames confirm it: hard profile turn, then the back of his head.
+- [x] **4. Captions burned in** (`a5985d5`). And a real bug caught doing it: `WordsPerSegment`
+      rescues an unclaimed word onto the nearest cut — right for a reel that tiles the source,
+      badly wrong for a single excerpt. **110 captions became 18** once the words were sliced
+      to the window.
+- [x] **5. Framing taste pass — the constants are now MEASURED, not my eye** (`7f3590d`).
+      `--eye-line` 0.38 → **0.27** from InsightFace over all 915 frames of his own edit (face
+      centre Y median 29.9%, 90% of frames in the upper 40%). **One retraction:** I also read
+      becky as framing far too tight (39.7% vs his 24.3%) and was wrong — a 9:16 crop of
+      1920x1080 is already full-height and his face is 37.8% of the SOURCE, so there is no
+      crop that shrinks it and no spare source to shift into. `--shoulder-frac` was reverted.
+- [x] **6. The false comment at `cmd/events/main.go:14` is gone** (`1f88ede`) — it claimed no
+      face detector ships here while the same file runs multi_face default-on.
+
+### Built after this list, from the reference edit
+
+- [x] **Cut preservation** (`0facffe`). `internal/shotcut` detects the source's own cuts
+      (precision 0.833 / recall 0.833 against a hand-checked list on real footage). When the
+      source is already edited, becky-short **preserves those cuts and tightens near them**
+      instead of re-cutting with a silence threshold. Measured on the BLINDFOLD master
+      21.7-52.0s: **18 of 19 existing cuts preserved, 9.0% removed** against Jordan's own
+      10.3% and becky-cut-alone's 51%. The crop path also resets per shot, so framing snaps
+      at a cut instead of drifting in.
+- [x] **Jumpcuts for RAW footage** (`078c6bb`) — still the right behaviour when no cuts exist.
+- [x] **Clip edges snap to real silence** (`387df0f`), 21/91 candidates moved on his footage.
+- [x] **The judge names the opening line** (`17a0699`); a verbatim quote from mid-clip holds
+      the clip as DISPUTED. Fired for real on his footage.
+- [x] **A relative `--out` was rendering into a temp dir and deleting it** (`bd8c200`).
+- [x] **One untrackable span was throwing away eighteen good ones** (`5e67f7b`). His own edit
+      holds 1.27s on a pointing finger with no face in frame, so a per-span refusal was the
+      wrong granularity.
+
+### STILL OPEN
+
+- [ ] **A. `becky-short --review` — re-watch the output before calling it done.** Jordan's
+      rule 5, and **not one of the 21 reference projects does it** (`research/shorts-gap-decisions.md`).
+      Deterministic first: re-measure the RENDERED file for subject-in-frame, caption/audio
+      alignment, and a completed ending. In progress.
+- [ ] **B. His caption STYLE.** 2-3 stacked lines, 2-4 words per line, one word coloured per
+      block — cyan on the stressed word of a reaction, yellow for a directive or the running
+      joke — profanity in a red box, emoji as accents, placement that moves with the content.
+      becky ships one flat white style at a fixed margin. **This is his look: offer it, never
+      switch it on by default.**
+- [ ] **C. Frame the GESTURE, not just the face.** His shot 19 is 1.27s on a pointing finger;
+      becky found the same beat and framed the whole machine wide. Reka Edge is verified
+      running here (6496 MiB, `Detect:` in 2.3s) and returns grounded boxes —
+      `research/reka-edge-vs-gemma4.md`.
+- [ ] **D. Zoom as an editorial device.** becky has none. `internal/audiosig` already measures
+      the energy that would drive a punch-in. Build ONE, show him, stop.
+- [ ] **E. Loudness to -14 LUFS.** One ffmpeg filter in `crop.RenderArgs`.
+- [ ] **F. The last degrade paths:** `cmd/motion` frame-diff → optical flow,
+      `cmd/framematch/decor.go` census → ORB+RANSAC. Both can use `cv2` now.
+- [ ] **G. THE QUESTION FOR JORDAN, which nobody should guess at:** on close-up 16:9 footage
+      where the subject already fills the frame, does he want the full-height crop we do now,
+      or a padded/blurred background with the subject on his 30% line? His own edit is
+      full-bleed but never had to solve that case.
 
 ### 7.1 Not this branch's work
 
