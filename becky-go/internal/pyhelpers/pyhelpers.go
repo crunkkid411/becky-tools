@@ -43,6 +43,9 @@ var CropPath []byte
 //go:embed asd.py
 var ASD []byte
 
+//go:embed audio_signals.py
+var AudioSignals []byte
+
 // Materialize writes an embedded script to a stable temp path and returns it.
 func Materialize(name string, content []byte) (string, error) {
 	dir := filepath.Join(os.TempDir(), "becky-pyhelpers")
