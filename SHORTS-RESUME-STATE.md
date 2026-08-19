@@ -124,3 +124,24 @@ full-bleed but never had to solve that case. **Ask; do not guess.**
 - Test footage is `test-for-clips.mp4` (raw) and the BLINDFOLD long-form (already edited) — the two
   cases behave very differently and both must keep working. `E:\TakingBack2007` is the CRIMINAL
   CASE — never for editing work.
+
+## VERIFIED GAPS in `shorts-user-feedback.md` — still open, found 2026-08-19 15:20
+
+Its research half is done (22 repo notes, the iPhone sweep, the Reka evaluation). Two of its
+RULES are not:
+
+1. **RULE 4 — "EDIT ACCORDING TO CONTEXT" is NOT implemented.** His worked example is the
+   rubber-snake prank: the snake is the focal point on a POV shot with no faces, and *"the framing
+   must be on Robby's face 1 - 3 frames BEFORE he realizes what is happening"*. Nothing in the
+   chain can do that. The pieces now exist — `ground.py` (grounded boxes, but measured UNSTABLE
+   per-frame on small targets), `shotcut`, `audiosig`, the Reka dense-burst finding (six frames =
+   450 tokens) — but nothing joins them into "understand the moment, then override the geometric
+   rule". **This is the single largest remaining gap and it is the hardest one.**
+
+2. **The 12B vision model is on disk but is NOT the default.** He wrote *"we have
+   gemma-4-12B-it-qat-UD-Q4_K_XL.gguf and absolutely should utilize it"*.
+   `models/gemma4/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` + `mmproj-12B-BF16.gguf` are both present,
+   and `config.GemmaAVLM()` selects them only when `BECKY_AVLM_VARIANT=12b` is set. Everything in
+   the shorts chain therefore runs on **E4B**. Check the 8GB VRAM budget before switching the
+   default — 12B + BF16 mmproj is much larger than E4B, and Reka already measured at 6496 MiB, so
+   these cannot be co-resident.
