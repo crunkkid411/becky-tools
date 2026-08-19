@@ -78,7 +78,7 @@ func main() {
 		out       = flag.String("out", "", "output file (single clip)")
 		outDir    = flag.String("outdir", "", "output folder (--reel mode)")
 		aspect    = flag.String("aspect", "9:16", "target aspect, width:height")
-		sampleFPS = flag.Float64("sample-fps", 8, "how often to look for the subject")
+		sampleFPS = flag.Float64("sample-fps", 0, "how often to look for the subject; 0 = EVERY FRAME (default)")
 		minCov    = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
 		center    = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
 		selftest  = flag.Bool("selftest", false, "run the offline proof and exit")
@@ -141,6 +141,9 @@ func main() {
 	}
 }
 
+// cmdsName is the sendcmd script's filename. Bare, never a path - see FilterChain.
+const cmdsName = "crop.cmds"
+
 type job struct {
 	Src, Dst string
 	In, Out  float64
@@ -174,9 +177,21 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		res.Note = "--center: static crop, subject not tracked"
 	}
 
-	var chain string
+	// The per-frame crop path is handed to ffmpeg as a sendcmd script. It has to
+	// live in a directory ffmpeg runs FROM, because sendcmd's parser treats the
+	// colon in a Windows absolute path as its own separator.
+	var chain, workDir string
 	if len(rects) > 0 {
-		chain = crop.FilterChain(rects, outW, outH)
+		dir, err := os.MkdirTemp("", "becky-short-")
+		if err != nil {
+			return res, err
+		}
+		defer os.RemoveAll(dir)
+		if err := os.WriteFile(filepath.Join(dir, cmdsName), []byte(crop.SendcmdFile(rects)), 0o644); err != nil {
+			return res, err
+		}
+		workDir = dir
+		chain = crop.FilterChain(rects, outW, outH, cmdsName)
 	} else {
 		w, h, err := probeSize(j.Src)
 		if err != nil {
@@ -193,6 +208,7 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 	}
 	args := crop.RenderArgs(j.Src, j.In, j.Out-j.In, chain, j.Dst)
 	cmd := exec.Command(ffmpegBin(cfg), args...)
+	cmd.Dir = workDir
 	var stderr strings.Builder
 	if verbose {
 		cmd.Stderr = os.Stderr

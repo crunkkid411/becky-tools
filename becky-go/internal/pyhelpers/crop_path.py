@@ -32,6 +32,7 @@ Requires: mediapipe + opencv (cv2) + numpy. The Go caller sets PYTHONPATH.
 import argparse
 import json
 import os
+import subprocess
 import sys
 
 # MediaPipe Pose landmark indices we use (BlazePose 33-point topology).
@@ -78,25 +79,62 @@ def median_filter(xs, k):
     return out
 
 
-def smooth_path(vals, deadband, ease):
-    """Hold still, then glide. This is the whole difference between a crop that
-    reads as a camera operator and one that reads as a script.
+def ema(vals, alpha):
+    """One-pole exponential filter, forward in time. LAGS by construction."""
+    out = []
+    y = vals[0]
+    for v in vals:
+        y += (v - y) * alpha
+        out.append(y)
+    return out
 
-    A plain moving average tracks every wobble, so the frame floats constantly and
-    the eye reads it as machine-made. Instead the camera HOLDS its position until
-    the subject has drifted past `deadband`, then eases toward the new target
-    (critically-damped-ish, no overshoot). The result is long still holds broken by
-    deliberate moves, which is what an operator actually does.
+
+def smooth_zero_phase(vals, alpha):
+    """Smooth WITHOUT lag, by filtering forward and then backward.
+
+    This is the whole reason the first version felt broken. A one-pole filter
+    (held += (target - held) * ease) is CAUSAL: it only ever sees the past, so its
+    output is mathematically guaranteed to trail the subject. No amount of tuning
+    removes that - raising the gain just trades lag for jitter. It is the right
+    tool for OBS, which is realtime and genuinely cannot see the future.
+
+    We are not realtime. We have the entire file on disk, so we can run the filter
+    forward and then run it BACKWARD over its own output. The backward pass applies
+    exactly the opposite phase shift to the forward pass, and the two cancel: the
+    result is zero-phase. The camera arrives WITH the subject, and because the
+    curve is shaped by frames on both sides, it even leans into a move slightly
+    before it happens - which is what a human operator does, because a human
+    operator knows what is about to happen too.
+
+    (Same trick as scipy's filtfilt; written out so this helper keeps no new
+    dependency.)
+    """
+    if len(vals) < 3:
+        return list(vals)
+    fwd = ema(vals, alpha)
+    back = ema(fwd[::-1], alpha)[::-1]
+    return back
+
+
+def hold_and_move(vals, deadband):
+    """Give the lag-free path an operator's INTENT: hold, then commit to a move.
+
+    Zero-phase smoothing alone tracks every real wobble, so the frame drifts
+    constantly and reads as machine-made. This walks the already-smoothed, already
+    lag-free path and holds position until the subject has genuinely left the
+    deadband, then re-centres on them. Because it runs on a signal that has no lag,
+    holding costs nothing: when it does move, it moves to where the subject IS, not
+    to where they were.
     """
     if not vals:
         return []
-    held = vals[0]
-    target = vals[0]
     out = []
+    held = vals[0]
     for v in vals:
-        if abs(v - target) > deadband:
-            target = v
-        held += (target - held) * ease
+        if abs(v - held) > deadband:
+            # Re-centre, leaving the subject just inside the deadband so the next
+            # frame does not immediately trip it again (no chatter).
+            held = v - deadband if v > held else v + deadband
         out.append(held)
     return out
 
@@ -108,7 +146,10 @@ def main():
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--end", type=float, default=0.0, help="0 = to end of file")
     ap.add_argument("--aspect", default="9:16", help="target width:height")
-    ap.add_argument("--fps", type=float, default=8.0, help="samples per second")
+    ap.add_argument("--fps", type=float, default=0.0,
+                    help="samples per second; 0 = EVERY FRAME (the default - this is an "
+                         "offline editor, not a realtime preview, so there is no reason "
+                         "to look at the subject less often than the footage shows him)")
     # Framing craft. Defaults chosen to look like a shoulders-up interview frame.
     ap.add_argument("--shoulder-frac", type=float, default=0.46,
                     help="fraction of crop WIDTH the shoulders should span")
@@ -116,7 +157,10 @@ def main():
                     help="where the eyes sit down the crop HEIGHT (0.38 ~ upper third)")
     ap.add_argument("--deadband", type=float, default=0.045,
                     help="subject drift, as a fraction of crop width, before the camera moves")
-    ap.add_argument("--ease", type=float, default=0.14, help="0..1 glide rate once moving")
+    ap.add_argument("--smooth", type=float, default=0.18,
+                    help="0..1 zero-phase smoothing strength; LOWER is smoother. Applied "
+                         "forward AND backward, so it adds no lag at any setting")
+    ap.add_argument("--ffmpeg", default="ffmpeg")
     ap.add_argument("--min-visibility", type=float, default=0.5)
     ap.add_argument("--min-crop-frac", type=float, default=0.34,
                     help="crop width may never fall below this fraction of the source width")
@@ -156,15 +200,35 @@ def main():
     times, cxs, cys, widths = [], [], [], []
     faces_l, faces_r = [], []
     found = 0
-    step = 1.0 / max(args.fps, 0.5)
+    # fps 0 means "every frame": track at exactly the rate the footage was shot.
+    sample_fps = args.fps if args.fps > 0 else src_fps
+    step = 1.0 / max(sample_fps, 0.5)
+
+    # ONE sequential decode of the window, at the sample rate.
+    #
+    # The first version seeked per sample with cv2.CAP_PROP_POS_MSEC. On a long
+    # source that is slow AND does not reliably return the frame you asked for,
+    # which is fatal once you are tracking every frame: mis-seeks read as the
+    # subject teleporting. ffmpeg decoding the window once, in order, is both
+    # exact and far faster.
+    n_expected = int(round((end - args.start) * sample_fps))
+    frame_bytes = src_w * src_h * 3
+    dec = subprocess.Popen(
+        [args.ffmpeg, "-v", "error", "-ss", f"{args.start:.6f}",
+         "-t", f"{end - args.start:.6f}", "-i", args.video,
+         "-vf", f"fps={sample_fps}", "-pix_fmt", "bgr24", "-f", "rawvideo", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     with mp_vision.PoseLandmarker.create_from_options(opts) as landmarker:
         t = args.start
-        while t < end:
-            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
-            ok, frame = cap.read()
-            if not ok or frame is None:
+        frame_i = 0
+        while frame_i < n_expected:
+            buf = dec.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
                 break
+            frame = np.frombuffer(buf, dtype=np.uint8).reshape(src_h, src_w, 3)
+            t = args.start + frame_i / sample_fps
+            frame_i += 1
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             res = landmarker.detect_for_video(mp_img, int(t * 1000))
@@ -276,8 +340,12 @@ def main():
             widths.append(crop_w)
             faces_l.append(face_l if face_l is not None else cx)
             faces_r.append(face_r if face_r is not None else cx)
-            t += step
 
+    try:
+        dec.stdout.close()
+    except OSError:
+        pass
+    dec.wait(timeout=30)
     cap.release()
 
     if not times:
@@ -287,10 +355,25 @@ def main():
     # Smooth: median filter kills jitter, then hold-and-glide gives it intent.
     # Width is smoothed hardest - a breathing zoom is far more noticeable than a
     # slow pan, so the crop size should change rarely.
-    k = 5 if len(times) >= 5 else 1
-    cxs = smooth_path(median_filter(cxs, k), deadband=args.deadband * median(widths), ease=args.ease)
-    cys = smooth_path(median_filter(cys, k), deadband=args.deadband * median(widths), ease=args.ease)
-    widths = smooth_path(median_filter(widths, k), deadband=0.10 * median(widths), ease=0.06)
+    # At 30 fps a 5-frame window is only 1/6 s; scale the despike window with the
+    # sample rate so it removes the same amount of TIME regardless of fps.
+    k = int(max(3, round(sample_fps / 6.0)))
+    if k % 2 == 0:
+        k += 1
+    if len(times) < k:
+        k = 1
+    # Despike -> LAG-FREE smooth -> operator intent. Order matters: the median
+    # filter removes single-frame landmark noise, the zero-phase pass removes the
+    # jitter without introducing the trailing that made the first version
+    # unusable, and only then is the hold applied - on a signal that is already
+    # aligned in time, so a hold never means "stale".
+    dead = args.deadband * median(widths)
+    cxs = hold_and_move(smooth_zero_phase(median_filter(cxs, k), args.smooth), dead)
+    cys = hold_and_move(smooth_zero_phase(median_filter(cys, k), args.smooth), dead)
+    # Width changes read as a zoom, which is far more noticeable than a pan, so it
+    # is smoothed harder and held wider.
+    widths = hold_and_move(smooth_zero_phase(median_filter(widths, k), 0.06),
+                           0.12 * median(widths))
 
     path = []
     for t, cx, cy, cw, fl, fr in zip(times, cxs, cys, widths, faces_l, faces_r):

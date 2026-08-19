@@ -77,18 +77,47 @@ func runSelftest() int {
 	one := crop.FilterExpr([]crop.Rect{{T: 0, X: 42}}, func(r crop.Rect) int { return r.X })
 	check("a single sample yields its own value", one == "42", one)
 
-	// 7. The filter chain crops THEN scales, and uses the smallest rect so the
-	//    crop size stays constant while x/y animate.
-	chain := crop.FilterChain([]crop.Rect{
+	// 7. The filter chain reads a per-frame command file, crops, THEN scales, and
+	//    uses the smallest rect so the crop size is constant while x/y animate.
+	path := []crop.Rect{
 		{T: 0, X: 0, Y: 0, W: 800, H: 1422},
 		{T: 1, X: 10, Y: 0, W: 766, H: 1362},
-	}, 1080, 1920)
+	}
+	chain := crop.FilterChain(path, 1080, 1920, "crop.cmds")
+	check("chain reads the per-frame command file before cropping",
+		strings.Index(chain, "sendcmd=") < strings.Index(chain, "crop="), chain)
 	check("chain crops before it scales",
 		strings.Index(chain, "crop=") < strings.Index(chain, "scale="), chain)
 	check("chain uses the smallest rect so the crop size is constant",
-		strings.HasPrefix(chain, "crop=766:1362:"), chain)
+		strings.Contains(chain, "crop=766:1362:"), chain)
 	check("chain scales to the requested output size",
 		strings.Contains(chain, "scale=1080:1920"), chain)
+	check("the command file is a BARE name (a Windows path breaks sendcmd's parser)",
+		strings.Contains(chain, "sendcmd=f=crop.cmds") && !strings.Contains(chain, ":\\"), chain)
+
+	// 7b. REGRESSION: the crop path must NOT be decimated. The previous version
+	//     squeezed the whole clip into 48 ffmpeg-expression keyframes, let the
+	//     error grow to 64px, and then TRUNCATED - freezing the crop for the rest
+	//     of the shot, which looks exactly like the tracker giving up.
+	var longMove []crop.Rect
+	for i := 0; i < 900; i++ { // 30 seconds at 30 fps
+		longMove = append(longMove, crop.Rect{T: float64(i) / 30.0, X: 100 + i, Y: 0, W: 606, H: 1080})
+	}
+	script := crop.SendcmdFile(longMove)
+	check("every distinct position survives to the render (no keyframe cap)",
+		strings.Count(script, "crop x ") == 900,
+		fmt.Sprintf("%d commands for 900 distinct positions", strings.Count(script, "crop x ")))
+	check("the last tracked position is still in the script (no truncation)",
+		strings.Contains(script, "crop x 999"), "final position missing")
+
+	// 7c. A held path costs one command, not one per frame.
+	var stillCam []crop.Rect
+	for i := 0; i < 300; i++ {
+		stillCam = append(stillCam, crop.Rect{T: float64(i) / 30.0, X: 500, Y: 0, W: 606, H: 1080})
+	}
+	check("a still camera emits a single command, not 300",
+		strings.Count(crop.SendcmdFile(stillCam), "crop x ") == 1,
+		fmt.Sprintf("%d commands", strings.Count(crop.SendcmdFile(stillCam), "crop x ")))
 
 	// 8. Render args: seek BEFORE -i (fast seek), duration as -t, even pixel fmt.
 	args := crop.RenderArgs("in.mp4", 12906, 31.2, chain, "out.mp4")

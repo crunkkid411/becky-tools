@@ -77,9 +77,10 @@ func Run(cfg config.Config, opt Options) (Path, error) {
 	if opt.Aspect == "" {
 		opt.Aspect = "9:16"
 	}
-	if opt.FPS <= 0 {
-		opt.FPS = 8
-	}
+	// FPS 0 is passed straight through: the helper reads it as "every frame",
+	// which is the right default for an offline edit. Clamping it to 8 here is
+	// what made the crop trail the subject - it only knew where he was 8 times a
+	// second on 30 fps footage.
 	args := []string{script,
 		"--video", opt.Video,
 		"--model", opt.Model,
@@ -229,11 +230,37 @@ func FilterExpr(rects []Rect, pick func(Rect) int) string {
 	return e
 }
 
-// FilterChain returns the full -vf value: follow the subject, then scale to the
-// output size. Width and height are taken from the SMALLEST rect in the path so
-// the crop size is constant (ffmpeg's crop filter cannot animate w/h without
-// resampling artefacts) while x/y animate.
-func FilterChain(rects []Rect, outW, outH int) string {
+// SendcmdFile builds an ffmpeg `sendcmd` script that moves the crop EVERY frame.
+//
+// This replaces an expression-based crop that was capped at 48 keyframes for a
+// whole clip, with the tolerance escalating to 64px and a hard truncation after
+// that - so on a busy shot the crop silently FROZE at the last kept keyframe and
+// stayed there. That is not a tuning knob, it is the tracker visibly giving up,
+// and it is indistinguishable from lag.
+//
+// A command file has no length limit, so the rendered crop follows the tracked
+// path exactly: no decimation, no tolerance, no cap. A line is emitted only when
+// the rect actually changes, which keeps the file small over the long holds the
+// smoother produces without losing a single real move.
+func SendcmdFile(rects []Rect) string {
+	var b strings.Builder
+	lastX, lastY := -1, -1
+	for _, r := range rects {
+		if r.X == lastX && r.Y == lastY {
+			continue
+		}
+		fmt.Fprintf(&b, "%s crop x %d, crop y %d;\n", trimF(r.T), r.X, r.Y)
+		lastX, lastY = r.X, r.Y
+	}
+	if b.Len() == 0 && len(rects) > 0 {
+		fmt.Fprintf(&b, "0 crop x %d, crop y %d;\n", rects[0].X, rects[0].Y)
+	}
+	return b.String()
+}
+
+// CropSize returns the constant crop dimensions for a path: the smallest rect, so
+// the window never asks for pixels outside the frame while x/y animate.
+func CropSize(rects []Rect) (int, int) {
 	w, h := rects[0].W, rects[0].H
 	for _, r := range rects {
 		if r.W < w {
@@ -243,9 +270,18 @@ func FilterChain(rects []Rect, outW, outH int) string {
 			h = r.H
 		}
 	}
-	x := FilterExpr(rects, func(r Rect) int { return r.X })
-	y := FilterExpr(rects, func(r Rect) int { return r.Y })
-	return fmt.Sprintf("crop=%d:%d:x='%s':y='%s',scale=%d:%d:flags=lanczos", w, h, x, y, outW, outH)
+	return w, h
+}
+
+// FilterChain returns the -vf value: read the per-frame crop positions from
+// cmdsName, crop, then scale to the output size. cmdsName must be a BARE
+// filename and ffmpeg must run with its directory as the working directory -
+// sendcmd's parser treats a Windows drive colon as its own separator, so an
+// absolute path fails with "No such file or directory".
+func FilterChain(rects []Rect, outW, outH int, cmdsName string) string {
+	w, h := CropSize(rects)
+	return fmt.Sprintf("sendcmd=f=%s,crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos",
+		cmdsName, w, h, rects[0].X, rects[0].Y, outW, outH)
 }
 
 // RenderArgs builds the ffmpeg argument list for one short. Seeking happens
