@@ -346,3 +346,45 @@ func containsF(xs []float64, v float64) bool {
 	}
 	return false
 }
+
+// Every word becky-cut DELIBERATELY REMOVED overlaps no kept span, and
+// WordsPerSegment's rescue would retime all of it onto the spans that survived.
+// Measured on a real render (26.16s window, 18.86s removed, 7.3s out): 16 cues
+// crammed into the first 3.3 seconds, one with a ZERO duration, against audio
+// running the full 7.2s. This is the same rescue bug already fixed once for the
+// single-window path (110 captions -> 18), returning through the jumpcut path.
+func TestWordsInSpans_DropsWhatTheJumpcutRemoved(t *testing.T) {
+	words := []subs.Word{
+		{Word: "kept-a", Start: 1.0, End: 1.4},
+		{Word: "removed", Start: 5.0, End: 5.4}, // sits in the dead air that was cut
+		{Word: "kept-b", Start: 9.0, End: 9.4},
+		{Word: "far", Start: 40.0, End: 40.4},
+	}
+	spans := []keepSpan{{In: 0.5, Out: 2.0}, {In: 8.5, Out: 10.0}}
+
+	got := wordsInSpans(words, spans)
+
+	if len(got) != 2 {
+		t.Fatalf("kept %d words, want 2 (only the ones inside a surviving span): %v", len(got), texts(got))
+	}
+	if got[0].Word != "kept-a" || got[1].Word != "kept-b" {
+		t.Errorf("kept %v, want [kept-a kept-b]", texts(got))
+	}
+	// A word straddling a span edge survives - Parakeet's clock drifts against
+	// the cut points by ~80ms and the cut is ground truth, not the transcript.
+	edge := []subs.Word{{Word: "straddle", Start: 1.9, End: 2.1}}
+	if len(wordsInSpans(edge, spans)) != 1 {
+		t.Error("a word straddling the span edge was dropped; it is audible in the kept side")
+	}
+	if len(wordsInSpans(words, nil)) != 0 {
+		t.Error("no spans should keep no words")
+	}
+}
+
+func texts(ws []subs.Word) []string {
+	out := make([]string, len(ws))
+	for i, w := range ws {
+		out[i] = w.Word
+	}
+	return out
+}

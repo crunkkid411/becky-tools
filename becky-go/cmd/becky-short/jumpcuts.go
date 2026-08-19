@@ -692,7 +692,22 @@ func containsNote(notes []string, s string) bool {
 // the CONCATENATED (cut) output timeline rather than the original continuous
 // window.
 func captionCuesJumpcut(words []subs.Word, winIn, winOut float64, spans []keepSpan, fps float64) []subs.Cue {
-	words = subs.WordsInRange(words, winIn-capWordPad, winOut+capWordPad)
+	// Slice to the KEPT spans, not to the whole window.
+	//
+	// WordsPerSegment rescues a word that overlaps no segment by retiming it onto
+	// the nearest cut - right when a reel's clips tile the source, and wrong here
+	// twice over: every word becky-cut DELIBERATELY REMOVED overlaps no kept span,
+	// so all of it was rescued back in and crammed onto the spans that survived.
+	//
+	// Measured on a real render (26.16s window, 18.86s of dead air removed, 7.3s
+	// out): 16 cues compressed into the first 3.3 seconds, one of them with a
+	// ZERO duration (00:00:02,300 --> 00:00:02,300), against audio that runs the
+	// full 7.2s. --review caught it - "11/16 burned cues match no words in the
+	// rendered audio at all".
+	//
+	// This is the same rescue bug already fixed for the single-window path
+	// (110 captions -> 18); it came back through the jumpcut path.
+	words = wordsInSpans(words, spans)
 	if len(words) == 0 {
 		return nil
 	}
@@ -774,4 +789,20 @@ func cutsWithin(cuts []float64, in, out float64) []float64 {
 		}
 	}
 	return got
+}
+
+// wordsInSpans keeps only the words that actually survive the cut - the ones
+// overlapping a kept span, with the same small pad captionSRT uses for
+// Parakeet's clock drift against the cut points.
+func wordsInSpans(words []subs.Word, spans []keepSpan) []subs.Word {
+	var out []subs.Word
+	for _, w := range words {
+		for _, sp := range spans {
+			if w.End > sp.In-capWordPad && w.Start < sp.Out+capWordPad {
+				out = append(out, w)
+				break
+			}
+		}
+	}
+	return out
 }
