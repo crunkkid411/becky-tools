@@ -176,13 +176,26 @@ func main() {
 			}
 		}
 
+		snapped := 0
 		for _, c := range cands {
 			c.Source = src
 			if haveAudio {
+				// Move the in/out points onto real silence before anything else
+				// uses them. A cue boundary is where the ASR decided a line
+				// ended, not where the sound stops, so an unsnapped edge lands
+				// part-way through a consonant and the cut is audible.
+				if ns, ne, moved := asig.SnapEdges(c.Start, c.End); moved {
+					c.Start, c.End = ns, ne
+					c.Snapped = true
+					snapped++
+				}
 				w := asig.In(c.Start, c.End)
 				c.Audio, c.AudioBasis = w.Score, w.Basis
 			}
 			allCands = append(allCands, c)
+		}
+		if snapped > 0 {
+			logIf(*verbose, "%s: snapped %d/%d edges onto silence", pathx.Base(src), snapped, len(cands))
 		}
 	}
 	rep.Candidates = len(allCands)

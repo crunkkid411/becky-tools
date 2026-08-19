@@ -188,6 +188,11 @@ type Candidate struct {
 	// Extended records that the ending-completion pass moved End past the
 	// window's natural last cue to land on a completing beat.
 	Extended bool `json:"extended"`
+
+	// Snapped records that the in/out points were moved onto real silence rather
+	// than left on the transcript's cue boundaries. Set by the caller, which is
+	// the only place the audio is available.
+	Snapped bool `json:"snapped,omitempty"`
 }
 
 // Dur is the candidate's length in seconds.

@@ -92,16 +92,20 @@ doctrine, applied where it currently is not.
 
 ---
 
-## BUILD — 5. Cap the output under the platform limit
+## CORRECTED, NOT A BUG — 5. The 68-second ceiling
 
-**Who does it:** `AI-short-creator` — a hard 58-second cap applied **after** cropping.
+**Who does it:** `AI-short-creator` applies a hard 58-second cap after cropping.
 
-**What becky does:** `MaxDuration` 60 + `ExtendBudget` 8 = **68 seconds**. Shorts and Reels cut off
-at 60. A 68-second short is silently truncated by the platform, taking the payoff with it — the
-exact failure the completion pass exists to prevent.
+**What becky does:** `MaxDuration` 60 + `ExtendBudget` 8 = up to **68 seconds**.
 
-**Where:** `internal/moment` — clamp the extended end so `MaxDuration + ExtendBudget <= 58`, or
-refuse and say why. One-line fix, and it is currently shipping broken.
+**I first wrote this up as a shipping bug and it is not one.** YouTube Shorts has accepted up to
+3 minutes since late 2024, Reels 90 seconds, TikTok far longer. 58 is that project's constant from
+an older limit, and copying it would be adopting someone else's number with no evidence — the exact
+mistake `CLAUDE.md` records from the TTS pick.
+
+**What is left of the finding:** length still costs retention regardless of what the platform
+allows, and 68s is a long short. That is a taste call on his content, not a correctness fix, so it
+stays a knob and stays where it is until he says otherwise. Recorded so nobody "fixes" it later.
 
 ---
 

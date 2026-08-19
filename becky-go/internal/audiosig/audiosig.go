@@ -37,6 +37,14 @@ type Event struct {
 	T      float64 `json:"t"`
 	RiseDB float64 `json:"rise_db"`
 	Ratio  float64 `json:"ratio"`
+
+	// T0/T1 bound the event. For a breath gap they are the silence itself -
+	// where the sound actually stops and starts again - which is what an edit
+	// point should land on. The helper has always emitted them; this struct used
+	// to drop them on the floor, so the one signal that could place a cut
+	// correctly never crossed the Go boundary.
+	T0 float64 `json:"t0"`
+	T1 float64 `json:"t1"`
 }
 
 // Signals is the analysed file.
@@ -158,4 +166,64 @@ func lastJSONLine(s string) string {
 		}
 	}
 	return strings.TrimSpace(s)
+}
+
+// SnapBudget is how far an edit point may move to reach a silence trough.
+//
+// Small on purpose. The window was chosen for editorial reasons and this pass
+// only cleans up its edges; a large budget would let the audio quietly overrule
+// where the moment starts, which is not its job.
+const SnapBudget = 0.35
+
+// SnapEdges nudges a clip's in and out points onto the nearest silence, and
+// only ever TOWARD quiet.
+//
+// Why this exists: becky picks windows on transcript CUE boundaries, and a cue
+// boundary is where the ASR decided a line ended - not where the sound stops.
+// Parakeet quantises to 0.08s and 49% of its words carry end == start, so a cue
+// edge routinely lands part-way through a consonant. Clipping a word's attack or
+// release is audible immediately and is the difference between an edit and a
+// chop. Jordan's rule 3: becky-cut gets 80% of cuts right, and "the remaining
+// 20% need deeper analysis; this is when silence and pauses are used."
+//
+// The rule, which clippyme states plainly and is the load-bearing detail:
+// nudging an edge INTO speech makes it worse, so a start only ever lands on the
+// LAST moment of silence before speech resumes, and an end on the FIRST moment
+// of silence after speech stops. Neither adds dead air and neither can clip a
+// word.
+//
+// An edge with no silence within SnapBudget is left exactly where it was.
+// Returns the new bounds and whether either moved.
+func (s Signals) SnapEdges(start, end float64) (float64, float64, bool) {
+	if !s.OK || len(s.BreathGaps) == 0 || end <= start {
+		return start, end, false
+	}
+	ns, ne := start, end
+	bestS, bestE := SnapBudget, SnapBudget
+	for _, g := range s.BreathGaps {
+		if g.T1 <= g.T0 {
+			continue
+		}
+		// Start -> the END of a gap: speech begins here, nothing before it is cut.
+		if d := abs(g.T1 - start); d < bestS {
+			bestS, ns = d, g.T1
+		}
+		// End -> the START of a gap: speech has finished, nothing after is cut.
+		if d := abs(g.T0 - end); d < bestE {
+			bestE, ne = d, g.T0
+		}
+	}
+	if ne-ns < 1 {
+		// Snapping must never collapse a moment. Refuse rather than emit a clip
+		// that is technically snapped and editorially useless.
+		return start, end, false
+	}
+	return ns, ne, ns != start || ne != end
+}
+
+func abs(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
