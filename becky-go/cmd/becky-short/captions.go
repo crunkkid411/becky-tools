@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/subs"
@@ -78,6 +79,27 @@ func captionCues(words []subs.Word, in, out, fps float64) []subs.Cue {
 	return subs.Build([]subs.Segment{{
 		Source: "clip", Start: in, End: out, Words: words,
 	}}, opt)
+}
+
+// captionSidecarPath is where a rendered short's burned captions are saved
+// beside the OUTPUT file — same "sidecar beside the video" convention
+// transcribex uses for a source's own transcript. This is what lets
+// `becky-short --review clip.mp4` find the captions that were actually burned
+// with no flag needed; --review-srt still overrides it for a file that was
+// not rendered by this tool (or was deliberately doctored for a test).
+func captionSidecarPath(dst string) string {
+	return strings.TrimSuffix(dst, filepath.Ext(dst)) + ".srt"
+}
+
+// saveCaptionSidecar copies the .srt actually burned into dst's ffmpeg run to
+// captionSidecarPath(dst), AFTER the render succeeded — so a failed render
+// never leaves a sidecar with no matching video.
+func saveCaptionSidecar(dst, srtPath string) error {
+	data, err := os.ReadFile(srtPath)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(captionSidecarPath(dst), data, 0o644)
 }
 
 // writeSRT puts the cues beside the sendcmd script so ffmpeg can find both.

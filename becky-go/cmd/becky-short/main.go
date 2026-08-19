@@ -114,6 +114,7 @@ func main() {
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
+	review, reviewSRT, reviewClaimed := reviewFlags()
 	flag.Parse()
 
 	if *selftest {
@@ -121,6 +122,14 @@ func main() {
 	}
 
 	cfg := config.Load()
+
+	// --review is its own mode: measure an ALREADY-RENDERED file instead of
+	// making one. Same early-exit shape as --selftest, checked before the
+	// --video/--reel dispatch below because it needs neither.
+	if *review != "" {
+		os.Exit(runReview(cfg, *review, *reviewSRT, *reviewClaimed, *minCov, *maxGap, *verbose))
+	}
+
 	asp, err := crop.ParseAspect(*aspect)
 	if err != nil {
 		fail(err)
@@ -263,6 +272,10 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 
 	// Captions come AFTER the crop and scale, so they are laid on the finished
 	// 9:16 frame at a fixed size rather than being scaled with the source.
+	//
+	// srtToSave is captured OUTSIDE the switch so it survives to the sidecar
+	// save below, once ffmpeg has actually produced the file it belongs to.
+	var srtToSave string
 	if withCaptions {
 		fps, ferr := sourceFPS(cfg.FFprobe, j.Src)
 		if ferr != nil {
@@ -280,6 +293,7 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		default:
 			chain += "," + captionFilter(srt, j.Src)
 			res.Captions = n
+			srtToSave = srt
 		}
 	}
 
@@ -303,6 +317,11 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 	st, err := os.Stat(j.Dst)
 	if err != nil || st.Size() == 0 {
 		return res, fmt.Errorf("ffmpeg reported success but wrote no file")
+	}
+	if srtToSave != "" {
+		if err := saveCaptionSidecar(j.Dst, srtToSave); err != nil {
+			note(&res, "could not save caption sidecar: "+err.Error())
+		}
 	}
 	return res, nil
 }

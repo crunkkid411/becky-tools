@@ -12,6 +12,9 @@ import (
 	"strings"
 
 	"becky-go/internal/crop"
+	"becky-go/internal/facesig"
+	"becky-go/internal/facetrack"
+	"becky-go/internal/moment"
 	"becky-go/internal/subs"
 )
 
@@ -203,6 +206,67 @@ func runSelftest() int {
 		abs(p.Coverage()-0.55) < 1e-9, fmt.Sprintf("%v", p.Coverage()))
 	check("an unsampled window reports zero coverage, not a divide by zero",
 		crop.Path{}.Coverage() == 0, "")
+
+	// 11. --review's pure logic — the self-review pass (CLAUDE.md rule 3): every
+	//     one of these is exercised offline, with no video/model, because the
+	//     matching/gap/median math is exactly the part a re-watch of the actual
+	//     RENDERED file depends on being right.
+
+	// 11a. matchCue relocates a burned cue's words in a fresh transcript even
+	//     when its own claimed Start has drifted several seconds away — the
+	//     exact shape of "captions timed to the source, not the clip".
+	fresh := tokenizeWords([]subs.Word{
+		{Word: "so", Start: 10.0}, {Word: "here's", Start: 10.2}, {Word: "the", Start: 10.4},
+		{Word: "thing", Start: 10.6}, {Word: "nobody", Start: 10.9},
+	})
+	shiftedStart, score, found := matchCue(tokenizeText("so here's the thing"), fresh, 4.0)
+	check("matchCue relocates a shifted cue by its words, not its claimed time",
+		found && score == 4 && abs(shiftedStart-10.0) < 1e-9,
+		fmt.Sprintf("start=%v score=%d found=%v", shiftedStart, score, found))
+	check("matchCue reports the real offset between claimed and actual time",
+		abs((shiftedStart-4.0)-6.0) < 1e-9, fmt.Sprintf("offset=%v, want 6.0", shiftedStart-4.0))
+
+	// 11b. A cue whose words appear NOWHERE in the fresh transcript — the
+	//     "captions from elsewhere in the video" failure — is honestly
+	//     unmatched, not silently paired with the nearest unrelated word.
+	_, _, wrongFound := matchCue(tokenizeText("completely unrelated words"), fresh, 10.0)
+	check("matchCue does not force a match when the cue's words are not there",
+		!wrongFound, "")
+
+	// 11c. median: both parities, and offsets keep their sign so a report can
+	//     say WHICH WAY the captions are wrong.
+	check("median of an odd count is the middle value",
+		median([]float64{0.1, -0.4, 0.3}) == 0.1, fmt.Sprintf("%v", median([]float64{0.1, -0.4, 0.3})))
+	check("median of an even count averages the middle two",
+		abs(median([]float64{1.0, 3.0})-2.0) < 1e-9, fmt.Sprintf("%v", median([]float64{1.0, 3.0})))
+
+	// 11d. longestFaceGap: the largest UNCOVERED stretch of the rendered
+	//     file, including a gap that runs to the very end — the shape a
+	//     tracker "confidently" claims to have followed while the subject
+	//     actually left frame for the last several seconds.
+	sig := facesig.Signals{OK: true, SamplePeriod: 0.5, Tracks: []facetrack.Track{
+		{ID: 1, Detections: []facetrack.Detection{{Time: 0.0}, {Time: 0.5}, {Time: 1.0}}},
+		{ID: 2, Detections: []facetrack.Detection{{Time: 5.0}, {Time: 5.5}}},
+	}}
+	gap, gapStart, gapEnd := longestFaceGap(sig, 10.0)
+	check("longestFaceGap finds the largest uncovered stretch, tail included",
+		abs(gap-4.5) < 1e-9 && abs(gapStart-5.5) < 1e-9 && abs(gapEnd-10.0) < 1e-9,
+		fmt.Sprintf("gap=%.2f [%.2f,%.2f]", gap, gapStart, gapEnd))
+	check("an empty face signal reports the WHOLE duration as the gap, not zero",
+		func() bool { g, s, e := longestFaceGap(facesig.Signals{}, 8.0); return g == 8 && s == 0 && e == 8 }(),
+		"")
+
+	// 11e. internal/moment's ending checks, reused (not re-implemented) via
+	//     their exported wrappers — a clip that stops mid-clause must not
+	//     read as a clean ending just because it is the last cue on file.
+	check("EndsSentence recognises real terminal punctuation",
+		moment.EndsSentence("and that was the whole point."), "")
+	check("EndsSentence refuses a trail-off",
+		!moment.EndsSentence("and then he just kind of..."), "")
+	unfinished := []moment.Segment{{Start: 0, End: 3, Text: "so we were driving down the road and"}}
+	check("PayoffScore floors a punctuation-less last cue below a real completion",
+		moment.PayoffScore(unfinished, 0, 0.6) < 0.85,
+		fmt.Sprintf("%.2f", moment.PayoffScore(unfinished, 0, 0.6)))
 
 	fmt.Printf("\n%d/%d PASS\n", pass, pass+fail)
 	if fail > 0 {

@@ -85,6 +85,15 @@ func hookScore(segs []Segment, s int, gap float64) float64 {
 	return clamp01(score)
 }
 
+// PayoffScore is the exported form of payoffScore, for a caller that needs to
+// score a completed-thought ending outside this package — e.g. becky-short
+// --review, checking whether the RENDERED file's own last cue lands cleanly
+// rather than re-implementing this scoring a second time.
+func PayoffScore(segs []Segment, e int, gap float64) float64 { return payoffScore(segs, e, gap) }
+
+// EndsSentence is the exported form of endsSentence, for the same reason.
+func EndsSentence(text string) bool { return endsSentence(text) }
+
 // payoffScore rewards a window that CLOSES on a completed thought.
 func payoffScore(segs []Segment, e int, gap float64) float64 {
 	score := 0.35

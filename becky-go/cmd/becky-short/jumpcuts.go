@@ -560,6 +560,7 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 	// spans laid end to end (each IS an internal/subs.Segment), so the .srt is
 	// already timed to what the concat above actually outputs.
 	capCount := 0
+	var srtToSave string
 	if withCaptions {
 		srt, n, cerr := captionSRTJumpcut(j.Src, j.In, j.Out, fps, spans, workDir,
 			func(f string, a ...any) { logIfShort(verbose, f, a...) })
@@ -573,6 +574,7 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 			graph += ";" + vOut + captionFilter(srt, j.Src) + vSub
 			vOut = vSub
 			capCount = n
+			srtToSave = srt
 		}
 	}
 	res.Captions = capCount
@@ -608,6 +610,11 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 	st, err := os.Stat(j.Dst)
 	if err != nil || st.Size() == 0 {
 		return res, fmt.Errorf("ffmpeg reported success but wrote no file")
+	}
+	if srtToSave != "" {
+		if err := saveCaptionSidecar(j.Dst, srtToSave); err != nil {
+			note(&res, "could not save caption sidecar: "+err.Error())
+		}
 	}
 	return res, nil
 }
