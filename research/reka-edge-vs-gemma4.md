@@ -132,6 +132,17 @@ the mmproj is Reka-specific (`clip.projector_type = "yasa2"`).
 | Six 640px frames in ONE request | **450 prompt tokens, 3.7s** (~75/frame) |
 | Model load to serving | ~10s |
 
+**Per-frame grounding of a SMALL target is NOT trustworthy — measured 2026-08-19.** Pointed at the
+pointing-hand shot in the BLINDFOLD master (47.9-49.3s, 3fps, `Detect: pointing hand, finger`) it
+returned a box in **2 of 4 frames**: one landed roughly on the back of the hand (missing the extended
+finger), the other landed on **empty counter at the opposite corner** — a median centre-to-centre
+jump of **0.47 of the frame** between consecutive sightings. Drawn back onto the frames, the second
+box is simply wrong.
+
+So it is a HINT about which region matters, not a camera path. `internal/pyhelpers/ground.py`
+reports `found_frac`, `median_jump` and `stable` for exactly this reason and refuses to call that run
+stable. Corroborate it before letting it aim anything.
+
 **Grounding on his footage — good on the subject, approximate on small objects.** For a frame at
 t=160s it returned `person 18,05,72,100` and `microphone 49,69,54,76` (percentages of frame). Drawn
 back onto the image, the person box is **tight and correct**. The microphone box lands on his
@@ -167,6 +178,6 @@ checked — a 1/30s difference in mouth opening is not something I could adjudic
 - [ ] Head-to-head against Gemma-4 on the SAME dense burst. Reka's side is measured; Gemma-4's is
       not, so "meaningfully better here" is still an assumption.
 - [ ] Re-run everything with `--reasoning off` and confirm free-form answers stop being meta.
-- [ ] Point it at a genuinely face-less shot (the rubber-snake prank) — the whole case for adding it
-      rests on that shot, and it has not been tried.
+- [x] Pointed at a genuinely face-less shot (the pointing hand). Result above: usable as a region
+      hint, not as a per-frame path. The case for adding it survives, but weaker than hoped.
 - [x] Build 9551's `mtmd.dll` already contains the yasa2 tensors. No rebuild.
