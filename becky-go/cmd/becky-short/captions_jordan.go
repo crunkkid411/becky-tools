@@ -23,6 +23,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"becky-go/internal/audiosig"
 	"becky-go/internal/config"
@@ -245,8 +246,41 @@ func jordanEmphasis(cues []subs.CueWords, segments []subs.Segment, sig audiosig.
 
 // nearestWord returns the index of the word in words (output-timeline)
 // whose span is closest to t (0 if t falls inside a word).
+// unstressable are words a viewer never reads as the emphasis of a line.
+//
+// The audio says WHERE the stress landed; it cannot say which word carries the
+// meaning, and English routinely puts a loudness peak on the syllable of a
+// function word next to the real one. First render on his footage coloured
+// "ON THE ON >>THE<< BEAUTY MIRROR" and "I JUST..." - each technically the word
+// nearest the spike, each looking like a bug.
+//
+// Every coloured word in Jordan's own edit is a content word: GUYS, SORRY,
+// REALLY, OKAY, CHANGING, NO, YES, ANYWAYS, FRENCH FRY FIRST, spit it out,
+// BURGER DOWN, switch (research/jordan-edit-reverse-engineered.md). So the
+// nearest word to the spike is taken UNLESS it is one of these, in which case
+// the nearest one that is not is used instead. Pronouns like YOU are kept - he
+// colours "thank YOU".
+var unstressable = map[string]bool{
+	"a": true, "an": true, "the": true, "and": true, "but": true, "or": true,
+	"of": true, "to": true, "in": true, "on": true, "at": true, "for": true,
+	"with": true, "from": true, "by": true, "as": true, "is": true, "are": true,
+	"was": true, "were": true, "be": true, "been": true, "am": true,
+	"that": true, "this": true, "there": true, "here": true, "just": true,
+	"so": true, "if": true, "then": true, "than": true, "into": true,
+}
+
+func stressable(w subs.Word) bool {
+	t := strings.ToLower(strings.Trim(strings.TrimSpace(w.Word), ".,!?;:\"'()"))
+	return t != "" && !unstressable[t]
+}
+
+// nearestWord returns the index of the word closest to output time t, skipping
+// words no viewer would read as the emphasis (see unstressable). If EVERY word
+// in the block is unstressable, the nearest one is returned anyway - colouring
+// something is better than a block that silently loses its emphasis.
 func nearestWord(words []subs.Word, t float64) int {
-	best, bestDist := 0, math.Inf(1)
+	best, bestDist := -1, math.Inf(1)
+	fallback, fallbackDist := 0, math.Inf(1)
 	for wi, w := range words {
 		d := 0.0
 		switch {
@@ -255,9 +289,15 @@ func nearestWord(words []subs.Word, t float64) int {
 		case t > w.End:
 			d = t - w.End
 		}
-		if d < bestDist {
+		if d < fallbackDist {
+			fallback, fallbackDist = wi, d
+		}
+		if stressable(w) && d < bestDist {
 			best, bestDist = wi, d
 		}
+	}
+	if best < 0 {
+		return fallback
 	}
 	return best
 }
