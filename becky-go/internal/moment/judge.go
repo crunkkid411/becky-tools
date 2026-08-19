@@ -37,6 +37,11 @@ type Judgement struct {
 	// Reason is the model's one-line justification, surfaced in the report so a
 	// human can audit the call instead of trusting a bare number.
 	Reason string `json:"reason"`
+	// Hook is the sentence the model says the clip should OPEN on, quoted from
+	// the transcript. It is asked for explicitly rather than inferred afterwards,
+	// so the in-point gets a second independent opinion: until now the opening
+	// was decided by the structural pass alone, with nothing to corroborate it.
+	Hook string `json:"hook"`
 }
 
 // JudgeFunc scores a batch of candidates. Batching is the interface (not
@@ -140,6 +145,22 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 				"VETOED — the content pass says the arc does not complete (%s); "+
 					"structure %.2f. Ranked below every complete moment; do not cut it",
 				strings.TrimSpace(j.Reason), c.Score)
+		case hookIsLate(c.Text, j.Hook):
+			// The model quoted an opening line from part-way INTO the clip, so
+			// the two signals disagree about where the moment starts. Structure
+			// chose this in-point with nothing to corroborate it; a verbatim
+			// quote from later in the text is that missing second opinion, and
+			// it says the clip opens too early.
+			//
+			// Held, not vetoed and not re-cut: one signal does not get to move an
+			// edit point on its own, and a clip that opens slightly early is
+			// worth showing with the objection attached.
+			r.Final = minF(jn, c.Score)
+			r.Confidence = Disputed
+			r.Basis = fmt.Sprintf(
+				"DISPUTED on the OPENING - the content pass would start on %q, which is not where "+
+					"this clip begins; structure %.2f, content %d/99 (%s)",
+				trimQuote(j.Hook), c.Score, j.Score, strings.TrimSpace(j.Reason))
 		case absDiff(jn, c.Score) > disputeThreshold:
 			// Hold the lower of the two: a disputed moment must not be promoted
 			// by its optimistic half.
@@ -191,7 +212,7 @@ func Prompt(cands []Candidate) string {
 	b.WriteString(`You are selecting short-form video clips from a transcript.
 
 For EACH numbered candidate below, return one JSON object per line:
-{"index": <n>, "score": <0-99>, "complete": <true|false>, "reason": "<one short line>"}
+{"index": <n>, "score": <0-99>, "complete": <true|false>, "hook": "<quote>", "reason": "<one short line>"}
 
 score  — how likely this is to hold a scrolling viewer's attention, using the
          virality dimensions from Berger & Milkman (JMR 2012): high-arousal
@@ -202,6 +223,9 @@ complete — true ONLY if the clip contains a self-contained hook -> build ->
          payoff. Set false if it starts mid-setup, or ends before the point
          lands. This is a veto, so be strict: a fascinating clip that trails off
          mid-sentence is false.
+hook   — the sentence this clip should OPEN on, QUOTED WORD FOR WORD from the
+         candidate's text. Do not paraphrase, do not invent, do not summarise.
+         If the clip already opens on the right line, quote its first sentence.
 reason — one short line naming the specific thing that decided it.
 
 Output ONLY those JSON lines, one per candidate, no other text.
@@ -269,4 +293,57 @@ func minF(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+// hookLateFrac is how far into a clip a quoted opening line may appear before it
+// counts as "this starts too early". A tenth in is still the opening beat; a
+// third in is a different moment.
+const hookLateFrac = 0.15
+
+// hookIsLate reports whether the model's quoted opening line sits materially
+// past the start of the clip.
+//
+// Deliberately conservative: it acts ONLY on a verbatim match. Models paraphrase
+// constantly, and a fuzzy match would downgrade good clips on the strength of a
+// rewording. A hook that cannot be found in the text at all is treated as no
+// signal rather than as disagreement - silence from a model is not evidence.
+func hookIsLate(text, hook string) bool {
+	h := normalizeQuote(hook)
+	t := normalizeQuote(text)
+	if len(h) < 12 || len(t) == 0 {
+		return false // too short to be a distinctive quote
+	}
+	i := strings.Index(t, h)
+	if i <= 0 {
+		return false // absent (no signal), or already at the start (agreement)
+	}
+	return float64(i)/float64(len(t)) > hookLateFrac
+}
+
+// normalizeQuote lowercases and strips punctuation and repeated spaces so a
+// quote survives the model reformatting it, without becoming a fuzzy match.
+func normalizeQuote(s string) string {
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastSpace = false
+		default:
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func trimQuote(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 70 {
+		return s[:70] + "..."
+	}
+	return s
 }
