@@ -582,7 +582,22 @@ Do not mark a box without pasting evidence (`HANDOFF-TEMPLATE.md` §5).
       0.18. A degraded span returned `Sampled=0, Found=0`, so it vanished from BOTH sides of the
       fraction. Honest accounting: **0.579**. The residual gap to 0.18 is pose-vs-face on a
       three-person blindfolded scene, not another bug.
-- [ ] **B. His caption STYLE.** 2-3 stacked lines, 2-4 words per line, one word coloured per
+- [~] **B. His caption STYLE — BUILT, OFF BY DEFAULT, AWAITING HIS EYE** (`5adf19c`, `7109752`,
+      `5f4b714`). `--caption-style=jordan` writes .ass, because per-word colour is impossible with
+      `force_style` on a .srt: stacked ALL-CAPS lines with ONE word coloured cyan. The emphasis word
+      is chosen by the AUDIO — the word nearest a real loudness spike from `internal/audiosig` — not
+      by guessing his cyan/yellow semantics, and a block with no audio event stays plain white.
+      Default `cli-cut` output is byte-identical, pinned by a test.
+      **Two defects found by rendering and LOOKING, not by tests passing:** it coloured "THE" and a
+      bare "I" (function words, now skipped — every coloured word in his own edit is a content
+      word), and the block sat at 84–93% of frame height, hard against the bottom edge (now 26%
+      MarginV, in the lower-middle where his sits).
+      **Still not his, and left to him rather than guessed:** the heavier font with the soft glow,
+      shorter 2–3 word lines, smaller text. Side-by-side render saved locally at
+      `caption-style-comparison.png`.
+      **Deliberately not attempted:** the cyan/yellow reaction-vs-directive split (a hypothesis from
+      ~15 samples), profanity red-boxing, emoji, content-aware placement.
+- [ ] **B2. The remaining caption work, for reference:** 2-3 stacked lines, 2-4 words per line, one word coloured per
       block — cyan on the stressed word of a reaction, yellow for a directive or the running
       joke — profanity in a red box, emoji as accents, placement that moves with the content.
       becky ships one flat white style at a fixed margin. **This is his look: offer it, never
