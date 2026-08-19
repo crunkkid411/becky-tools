@@ -182,6 +182,21 @@ type Candidate struct {
 	Audio      float64 `json:"audio,omitempty"`
 	AudioBasis string  `json:"audio_basis,omitempty"`
 
+	// Face is 0..1: the DENSITY of a talking head across this window, not the
+	// span between outermost sightings (internal/facetrack.Track.CoverageIn).
+	// Set by the caller (internal/facesig, a coarse whole-video pass), not by
+	// Find, for the same reason Audio is caller-set — Find only reads a
+	// transcript. It is the third independent signal: the top-ranked moment
+	// can read perfectly on the page and sound great on the soundtrack and
+	// still have the subject bent out of shot; only a frame shows that.
+	//
+	// FaceBasis is set whenever the signal was actually computed, even when
+	// Face is exactly 0 — unlike Audio, a zero here ("nobody on screen") is
+	// the exact case this signal exists to catch, so it cannot double as "no
+	// signal available" the way near-silent audio safely can.
+	Face      float64 `json:"face,omitempty"`
+	FaceBasis string  `json:"face_basis,omitempty"`
+
 	Signals Signals `json:"signals"`
 	Score   float64 `json:"score"` // structural prior, 0..1
 

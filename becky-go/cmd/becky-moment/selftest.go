@@ -193,6 +193,20 @@ func runSelftest() int {
 		errPaid != nil && errClaude != nil && errLookalike != nil,
 		fmt.Sprintf("paid=%v claude=%v lookalike=%v", errPaid != nil, errClaude != nil, errLookalike != nil))
 
+	// 11. Face coverage (HANDOFF-SHORTS-PIPELINE.md §7 item 3): two candidates
+	//     with IDENTICAL structural score must reorder on coverage alone — the
+	//     off-screen one sinks below the on-screen one, with the exact numbers
+	//     pinned so this cannot regress silently.
+	faceRanked := moment.Rank([]moment.Candidate{
+		{Start: 0, End: 20, Score: 0.95, Face: 0.0, FaceBasis: "face coverage 0.00 (0 sampled sighting(s))"},
+		{Start: 30, End: 50, Score: 0.95, Face: 1.0, FaceBasis: "face coverage 1.00 (10 sampled sighting(s))"},
+	}, nil)
+	wantSecond := 0.95 * 0.35
+	check("an off-screen window sinks below an identically-scored on-screen one",
+		faceRanked[0].Start == 30 && closeEnough(faceRanked[0].Final, 0.95) && closeEnough(faceRanked[1].Final, wantSecond),
+		fmt.Sprintf("top starts=%.0f final=%.4f; second final=%.4f (want top=30 @0.95, second @%.4f)",
+			faceRanked[0].Start, faceRanked[0].Final, faceRanked[1].Final, wantSecond))
+
 	fmt.Printf("\n%d/%d PASS\n", pass, pass+fail)
 	if fail > 0 {
 		return 1
@@ -236,6 +250,18 @@ So he said the whole thing was a write-off anyway
 00:00:36,200 --> 00:00:44,000
 and nobody ever went back to check whether that was true.
 `
+
+// closeEnough compares floats within float64 rounding error — Go's constant
+// arithmetic (used to compute an expected value in a test) and its runtime
+// arithmetic (used inside the real code path) round at different points, so
+// an exact == on two independently-derived float64s is the wrong tool.
+func closeEnough(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d < 1e-9
+}
 
 func minf(a, b float64) float64 {
 	if a < b {

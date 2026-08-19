@@ -114,18 +114,24 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 			c.Score = clamp01(0.72*c.Score + 0.28*c.Audio)
 			r.Candidate = c
 		}
+		// Fold face coverage in next, and NOT the same way. Structure and audio
+		// each get a weighted average because either can push the score up or
+		// down. Face coverage does not get a vote when it is high - being on
+		// screen does not make a moment good - it only gets to SINK a window
+		// where the subject is barely visible, which a weighted average cannot
+		// do (a 0.95 structural score and 0 coverage averaged at even 28% still
+		// beats a well-covered but merely-good moment). A multiplier is what
+		// makes an empty window actually rank below a covered one instead of
+		// only nudging it - see facePenalty.
+		if c.FaceBasis != "" {
+			c.Score = clamp01(c.Score * facePenalty(c.Face))
+			r.Candidate = c
+		}
 		j, ok := byIndex[i]
 		if !ok {
 			r.Final = c.Score
 			r.Confidence = CandidateOnly
-			if c.AudioBasis != "" {
-				r.Basis = fmt.Sprintf("structure %.2f (%s) + audio: %s; no content verdict yet",
-					c.Score, c.Signals.basis(), c.AudioBasis)
-			} else {
-				r.Basis = fmt.Sprintf(
-					"structure only (%s); no content verdict — needs a second independent signal before this is a pick",
-					c.Signals.basis())
-			}
+			r.Basis = candidateOnlyBasis(c)
 			out = append(out, r)
 			continue
 		}
@@ -198,6 +204,60 @@ func Rank(cands []Candidate, judgements []Judgement) []Ranked {
 func (s Signals) basis() string {
 	return fmt.Sprintf("hook %.2f, payoff %.2f, self-contained %.2f, %.1f w/s",
 		s.Hook, s.Payoff, s.SelfContained, s.WordsPerSec)
+}
+
+// candidateOnlyBasis renders the evidence line for a moment with no content
+// verdict, naming whichever of the third-signal passes actually ran. c.Score
+// has already had Audio and Face folded into it by the time this is called.
+func candidateOnlyBasis(c Candidate) string {
+	var extra []string
+	if c.AudioBasis != "" {
+		extra = append(extra, "audio: "+c.AudioBasis)
+	}
+	if c.FaceBasis != "" {
+		extra = append(extra, "face: "+c.FaceBasis)
+	}
+	if len(extra) == 0 {
+		return fmt.Sprintf(
+			"structure only (%s); no content verdict — needs a second independent signal before this is a pick",
+			c.Signals.basis())
+	}
+	return fmt.Sprintf("structure %.2f (%s) + %s; no content verdict yet",
+		c.Score, c.Signals.basis(), strings.Join(extra, " + "))
+}
+
+// faceMinCoverage is the density (internal/facesig.Window.Coverage) at and
+// above which face coverage stops mattering to ranking at all. Below it the
+// score is penalised; the ramp is gentle enough that a normal cutaway or
+// glance away does not sink a moment, only a window where the subject is
+// genuinely mostly absent.
+const faceMinCoverage = 0.5
+
+// faceFloorMultiplier is the score multiplier at ZERO face coverage. Not
+// zero: a candidate with no visible face at all is still a real candidate —
+// maybe the transcript is right and the video simply is not a talking-head
+// shot for that stretch — and this signal alone must never veto a moment
+// outright the way an incomplete arc does. It only has to sink a
+// talking-head clip below one where the subject is actually present, and
+// 0.35 does that: a 0.95-structure, zero-coverage window (0.33) ranks below
+// a 0.70-structure, fully-covered one (0.70), which is the whole point.
+const faceFloorMultiplier = 0.35
+
+// facePenalty maps face coverage density to a score multiplier. This is
+// intentionally NOT symmetric with audio's weighted average: coverage at or
+// above faceMinCoverage leaves the score untouched (being on screen is not
+// evidence a moment is good), while coverage below it ramps LINEARLY down to
+// faceFloorMultiplier at zero (being off screen for most of a talking-head
+// window is evidence the moment is wrong).
+func facePenalty(coverage float64) float64 {
+	if coverage >= faceMinCoverage {
+		return 1.0
+	}
+	if coverage < 0 {
+		coverage = 0
+	}
+	frac := coverage / faceMinCoverage
+	return faceFloorMultiplier + (1-faceFloorMultiplier)*frac
 }
 
 // Prompt builds the judge request for a batch of candidates. It is exported so

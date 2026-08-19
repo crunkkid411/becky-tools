@@ -44,6 +44,7 @@ import (
 
 	"becky-go/internal/audiosig"
 	"becky-go/internal/config"
+	"becky-go/internal/facesig"
 	"becky-go/internal/moment"
 	"becky-go/internal/pathx"
 	"becky-go/internal/sidecar"
@@ -101,6 +102,8 @@ func main() {
 		backend    = flag.String("judge-backend", "local", "content judge: local (offline Gemma-4) or zen (OpenCode Zen, free models, needs BECKY_ZEN_API_KEY)")
 		model      = flag.String("model", defaultZenModel, "zen backend only: judge model id (must be one of OpenCode Zen's free models)")
 		noAudio    = flag.Bool("no-audio", false, "skip the audio signal pass (loudness spikes, pitch rises)")
+		noFace     = flag.Bool("no-face", false, "skip the face coverage pass (is a talking head actually on screen)")
+		facePeriod = flag.Float64("face-sample-period", facesig.DefaultSamplePeriod, "seconds between sampled frames for the face coverage pass (lower = slower, finer)")
 		maxOverlap = flag.Float64("max-overlap", moment.DefaultMaxOverlap, "how much of a shorter moment may repeat a better one before it is dropped as the same moment (0 disables)")
 		selftest   = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose    = flag.Bool("verbose", false, "progress to stderr")
@@ -176,6 +179,23 @@ func main() {
 			}
 		}
 
+		// FOURTH SIGNAL, and the last of the three "more context" ones Jordan
+		// asked for: is a talking head actually ON SCREEN. A coarse whole-video
+		// pass (internal/facesig), read once per file and scored per candidate
+		// window exactly like audio. Fixes the bug HANDOFF-SHORTS-PIPELINE.md §7
+		// names: the top-ranked moment was chosen from words alone and had him
+		// bent out of shot — only the renderer caught it, after the pick was
+		// already made.
+		var fsig facesig.Signals
+		haveFace := false
+		if media := mediaFor(src); media != "" && !*noFace {
+			if f, err := facesig.Run(cfg, media, *facePeriod, ""); err != nil {
+				rep.Notes = append(rep.Notes, "face coverage unavailable for "+pathx.Base(src)+": "+err.Error())
+			} else {
+				fsig, haveFace = f, true
+			}
+		}
+
 		snapped := 0
 		for _, c := range cands {
 			c.Source = src
@@ -191,6 +211,10 @@ func main() {
 				}
 				w := asig.In(c.Start, c.End)
 				c.Audio, c.AudioBasis = w.Score, w.Basis
+			}
+			if haveFace {
+				w := fsig.In(c.Start, c.End)
+				c.Face, c.FaceBasis = w.Coverage, w.Basis
 			}
 			allCands = append(allCands, c)
 		}

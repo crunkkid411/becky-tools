@@ -289,6 +289,89 @@ func TestRank_NoJudgeIsACandidateNotAConclusion(t *testing.T) {
 	}
 }
 
+// The scenario HANDOFF-SHORTS-PIPELINE.md §7 names by name: the top-ranked
+// moment was chosen from words alone and had him bent out of shot. Two
+// candidates, IDENTICAL structural score, differing only in face coverage —
+// the covered one must outrank the uncovered one, with real numbers, not
+// merely "reordered somehow".
+func TestRank_LowFaceCoverageSinksAHighStructuralScore(t *testing.T) {
+	offScreen := Candidate{Start: 0, End: 20, Score: 0.95, Face: 0.0, FaceBasis: "face coverage 0.00 (0 sampled sighting(s))"}
+	onScreen := Candidate{Start: 30, End: 50, Score: 0.95, Face: 1.0, FaceBasis: "face coverage 1.00 (10 sampled sighting(s))"}
+
+	ranked := Rank([]Candidate{offScreen, onScreen}, nil)
+
+	// Best-first: the on-screen moment must sort ahead of the identically-
+	// scored off-screen one.
+	if ranked[0].Start != 30 {
+		t.Fatalf("top moment starts at %.0f, want the ON-SCREEN one (starts at 30) ranked first", ranked[0].Start)
+	}
+	var offFinal, onFinal float64
+	for _, r := range ranked {
+		if r.Start == 0 {
+			offFinal = r.Final
+		} else {
+			onFinal = r.Final
+		}
+	}
+	// Same structural score (0.95) for both. On-screen coverage clears
+	// faceMinCoverage so its score is untouched: 0.95. Off-screen coverage is
+	// 0, the floor multiplier, so its score is 0.95*0.35 = 0.3325.
+	if want := 0.95; math.Abs(onFinal-want) > 1e-9 {
+		t.Errorf("on-screen Final = %.4f, want %.4f (full coverage leaves the structural score untouched)", onFinal, want)
+	}
+	if want := 0.95 * 0.35; math.Abs(offFinal-want) > 1e-9 {
+		t.Errorf("off-screen Final = %.4f, want %.4f (0.95 structure * 0.35 floor multiplier)", offFinal, want)
+	}
+	if !(onFinal > offFinal) {
+		t.Fatalf("on-screen (%.4f) must outrank off-screen (%.4f) despite equal structure", onFinal, offFinal)
+	}
+}
+
+// Being on screen does not make a moment GOOD — coverage at or above the
+// threshold must leave the structural score exactly where it was, never
+// boost it. This is what makes facePenalty asymmetric with the audio fold.
+func TestFacePenalty_HighCoverageLeavesScoreUntouched(t *testing.T) {
+	for _, cov := range []float64{0.5, 0.75, 1.0} {
+		if got := facePenalty(cov); got != 1.0 {
+			t.Errorf("facePenalty(%.2f) = %.4f, want 1.0 (coverage at/above the threshold must not change the score)", cov, got)
+		}
+	}
+}
+
+// Values, not truthiness: pin the exact multiplier at zero and at the
+// midpoint of the ramp.
+func TestFacePenalty_ValuesBelowThreshold(t *testing.T) {
+	if got, want := facePenalty(0.0), 0.35; math.Abs(got-want) > 1e-9 {
+		t.Errorf("facePenalty(0) = %.4f, want %.4f (the floor multiplier)", got, want)
+	}
+	// coverage 0.25 is halfway to faceMinCoverage (0.5): multiplier should sit
+	// halfway between the floor (0.35) and 1.0, i.e. 0.675.
+	if got, want := facePenalty(0.25), 0.675; math.Abs(got-want) > 1e-9 {
+		t.Errorf("facePenalty(0.25) = %.4f, want %.4f (linear ramp, halfway to threshold)", got, want)
+	}
+}
+
+// With no face signal computed at all (FaceBasis empty — e.g. no media file,
+// or the detector failed), ranking must fall back to structure/audio alone.
+// A candidate must never be silently penalised for a signal that never ran.
+func TestRank_NoFaceSignalLeavesScoreUnchanged(t *testing.T) {
+	cands := []Candidate{{Start: 0, End: 20, Score: 0.80}} // Face/FaceBasis left zero-value
+	ranked := Rank(cands, nil)
+	if ranked[0].Final != 0.80 {
+		t.Errorf("Final = %.4f, want the untouched structural score 0.80 — no FaceBasis means no signal ran", ranked[0].Final)
+	}
+}
+
+// The candidate-only basis line names the face signal when it ran, same as
+// it already does for audio.
+func TestRank_CandidateOnlyBasisNamesTheFaceSignal(t *testing.T) {
+	cands := []Candidate{{Start: 0, End: 20, Score: 0.80, Face: 0.9, FaceBasis: "face coverage 0.90 (9 sampled sighting(s))"}}
+	ranked := Rank(cands, nil)
+	if !strings.Contains(ranked[0].Basis, "face: face coverage 0.90") {
+		t.Errorf("basis = %q, want it to name the face evidence", ranked[0].Basis)
+	}
+}
+
 func TestRank_AgreementConcludes(t *testing.T) {
 	cands := []Candidate{{Start: 0, End: 20, Score: 0.80}}
 	ranked := Rank(cands, []Judgement{{Index: 0, Score: 85, Complete: true, Reason: "strong hook"}})
