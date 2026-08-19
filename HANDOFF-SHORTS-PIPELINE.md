@@ -1,20 +1,34 @@
 # HANDOFF — short-form repurposing pipeline: why it would fail, and what it takes
 
-**Status: STEPS 0-2 BUILT + PROVEN (2026-08-15, cloud). Steps 3-6 need the native CV
-dependency Jordan approved.** Read `research/shorts-models.md` first — it is the model
-research this rests on. This document is the *engineering* half: an honest prediction of how
-this build fails if started the usual way, the conditions that have to hold for it not to,
-and (§5) the current build state with the exact work order for what remains.
+**Status, corrected 2026-08-18 (local) after Jordan's review.** Step 0 is fixed and
+proven end-to-end. Step 1 (`becky-moment`) now runs a real, offline content pass on
+his own footage. Step 2 (`internal/facetrack`) compiles and unit-tests but has still
+**never seen a real face** — it has no detector wired to it (§5.3), so "PROVEN" in the
+original status line was true of step 1 and not of step 2. Steps 3-6 are not started.
 
-**Jordan's decisions, 2026-08-15 — these are settled, do not re-litigate:**
-- **MediaPipe and OpenCV are IN.** *"we NEED to use them. weve been cutting corners and all
-  that does is waste my time, not save time."* The §2.3 pattern — shipping the pure-Go
-  degrade path because cloud couldn't compile the real thing — is explicitly over.
-- **OpenCode Zen is the LLM judge**, using Jordan's API key. See §6 for the spending guards
-  that ship with it (they are not optional, and one of them is load-bearing).
+Read `research/shorts-models.md` first — it is the model research this rests on. This
+document is the *engineering* half.
+
+**Jordan's decisions — settled, do not re-litigate:**
+- **MediaPipe and OpenCV are IN.** *"we NEED to use them. weve been cutting corners and
+  all that does is waste my time, not save time."* **Both are now installed and verified
+  on this machine** (§7 Step F): `cv2` 4.13.0 was already there, `mediapipe` 1.0.1 added.
+- **Free models only.** One allowlist, no override flag (§6).
 - The GitHub/CI failures are **not** cloud's to fix — that is the local agent's lane.
 
----
+**What his review found, and what it cost.** He said the conclusions were
+*"overengeneered already"* and flagged the Zen guard specifically. Auditing that turned
+up three bugs of the exact class §2.1 warns about — each produced a file that plays:
+
+| Bug | What Jordan would have seen |
+|---|---|
+| `--folder` labelled moments with the **wrong source video** (owner tracked, thrown away, recovered by matching timestamps) | reels cut from the wrong footage |
+| "Incomplete arc = **VETO**" was a 0.6 multiplier — a 90/99 clip that trails off (0.540) beat a modest one that lands (0.5025) | shorts with no payoff, ranked top |
+| `CoverageIn` returned the **span** between sightings, so a face glimpsed 3× in 20s scored 1.000 — same as one in every frame | the wrong person framed |
+
+All three are fixed with regression tests that assert values. The veto's property test
+immediately found a fourth hole: an incomplete clip whose signals *also* disagreed hit
+the Disputed branch first and escaped the veto entirely.
 
 ## 1. What Jordan asked for
 
@@ -206,7 +220,10 @@ including that a dangling "So he said…" opening scores below a clean declarati
 disagreeing verdict is held rather than averaged, and that both spending guards refuse before a
 request is built.
 
-**Real CLI run cloud RAN** on a synthetic interview `.srt`: 8 cues → 17 candidates → top pick
+**Real CLI run** — note the original was on a **synthetic** `.srt` written in the same
+session, not on Jordan's footage. It has since been run for real: 177 transcripts from
+`E:\TakingBack2007` -> 112,625 candidates -> ranked moments with a local content pass
+(§6.1). The synthetic run, for the record: 8 cues → 17 candidates → top pick
 `00:00:06.500 → 00:00:27.000` (hook "The thing nobody tells you about running a studio is the
 cashflow", build, payoff "I nearly went under twice before I figured that out"), correctly
 labelled `candidate` with the note *"the content pass did not run"* because no API key was set.
@@ -218,7 +235,19 @@ there and this fails here. This is the §3.4 precondition made real, and it is t
 of bug that produced `becky-validate --variant` — a flag that did not exist, passed by a tool
 whose unit tests were all green.
 
-### 5.3 Step 2 — `internal/facetrack` BUILT, with one honest gap
+### 5.3 Step 2 — `internal/facetrack` BUILT, unproven on footage, with one honest gap
+
+**It has never seen a real face.** Zero importers in the repo; every test runs against a
+synthetic detection generator. Treat it as compiled-and-unit-tested, not proven.
+
+**Bug found and fixed 2026-08-18:** `CoverageIn` returned `(last-first)/(t1-t0)` — the
+SPAN between the outermost sightings — while its own doc comment claimed it "reflects
+where the face was actually SEEN, not merely that the track spans the window." A face
+glimpsed three times across 20 seconds scored **1.000**, identical to one detected in
+every frame, and Step E's acceptance gate (`> 0.8`) was built on it, so the gate could
+not fail. It now measures density and takes the detector's `samplePeriod` as a third
+argument, because a track genuinely cannot tell "sampled once every 10s and present
+throughout" from "glimpsed three times" — the timestamps are identical.
 
 Persistent track IDs from per-frame detections: IoU association, **rescued by the ArcFace
 embeddings becky already computes** when geometry fails (a fast head turn or brief occlusion),
@@ -240,31 +269,73 @@ the same spot) into one identity. Now retired first. Regression test:
 
 ---
 
-## 6. The LLM judge — OpenCode Zen, and the guards that ship with it
+## 6. The LLM judge — LOCAL by default, OpenCode Zen as the option
 
-Jordan authorised his OpenCode Zen key for the content pass. `cmd/becky-moment/zen.go`
-implements it against Zen's OpenAI-compatible endpoint (`https://opencode.ai/zen/v1`), at
-`temperature: 0` so the same transcript yields the same verdicts.
+**Corrected 2026-08-18 (local), after Jordan's review.** He read the original of
+this section and said: *"using 3 gates for the opencode zen api seems like massive
+overkill; I've already instructed you to use only their free models, typically
+they offer about 4 main free models. It should not be so complicated to simply
+make sure we only use those 4 models."* He was right, and checking it turned up
+more than an over-guarded client.
 
-Two properties of this provider make an unguarded client genuinely dangerous, so three guards
-ship with it — all tested, all refusing **before** a request is built:
+### 6.1 The judge is a LOCAL model now; Zen is `--judge-backend=zen`
 
-1. **Zen resells `claude-opus-5` / `claude-sonnet-5` / `claude-haiku-4-5` per token.** Jordan
-   pays for Claude Max — those are already bought. Routing them through a metered gateway is
-   paying twice, which is the exact 2026-07-19 mistake `CLAUDE.md` records. **Hard-blocked, and
-   `--allow-paid` does not unblock them.**
-2. **Zen auto-reloads $20 when the balance drops below $5.** This is materially worse than
-   OpenRouter, where a runaway loop *stopped itself* when the balance hit zero and every call
-   402'd. Here it would keep charging indefinitely. So any metered model needs an explicit
-   per-run `--allow-paid`.
-3. **An unrecognised model id is treated as PAID**, so a typo costs a refusal, not money.
+Three reasons, in order of weight:
 
-**Unverified, and it needs one local run:** Zen has no OpenAI-style `/v1/models` discovery
-endpoint, so the exact free-tier ids could not be confirmed from code. `defaultZenModel` is set
-to `deepseek-v4-flash-free` from the docs page. If that id is wrong the tool degrades with the
-endpoint's own error message — it does **not** silently fall back to something metered.
+1. **`CLAUDE.md`'s standing invariant is "offline + deterministic — no network at
+   runtime."** Making a cloud API the primary judge breaks becky's own core rule
+   for the single decision that most determines whether a short is worth posting.
+2. **The key was never set.** `BECKY_ZEN_API_KEY`, `OPENCODE_API_KEY` and
+   `OPENCODE_ZEN_API_KEY` are all unset on Jordan's machine, and nothing is in the
+   user environment registry. A judge that cannot run is not a second signal.
+3. **Without a second signal the tool is not useful.** Measured on his own footage
+   (`E:\TakingBack2007`, 177 real transcripts): 112,625 candidates, of which the
+   top 4,000 all score between **0.985 and 1.000** on the structural prior. The
+   structure score is compressed into the top 1.5% of its range, so `--top 8`
+   returns an arbitrary eight of several thousand ties. Structure cannot rank
+   *interestingness* — that is exactly the content pass's job.
 
----
+`cmd/becky-moment/local.go` runs Gemma-4 E4B through `internal/llmlocal` (the
+existing shared llama-server transport — `cmd/ask` and `internal/assistant`
+already use it), warm-server so the weights load once. Verified on the same
+footage: five moments come back as `conclusion` with reasons, scores spread
+0.878–0.817 instead of tied at 1.000.
+
+Only the structurally strongest candidates are judged — 4 per requested moment,
+floored at 40 and capped at 400. The original passed **every** candidate to the
+judge before `--top` truncated, which on a folder like Jordan's is 112,625 windows
+to choose ten.
+
+### 6.2 The Zen guard is one allowlist
+
+Zen's free tier, read from its pricing page and **cross-checked against the live
+`https://opencode.ai/zen/v1/models` on 2026-08-18** — an endpoint the old code
+comment claimed did not exist:
+
+    big-pickle              deepseek-v4-flash-free   mimo-v2.5-free
+    hy3-free                laguna-s-2.1-free        nemotron-3-ultra-free
+    nemotron-3.5-lightning-free
+
+Seven, not four, and the roster rotates (ids in older write-ups — `north-mini-code`,
+`mimo-v2-pro-free`, `minimax-m2.5-free` — are no longer listed). `/v1/models`
+carries no pricing field, so free-ness cannot be derived at runtime; the list is
+hardcoded and the refusal message prints it.
+
+**One check replaces three, and is stricter than what it replaces:**
+
+- The old `isFreeZenModel` was a `-free`/`:free` **suffix test**. A metered model
+  called `turbo-free` sailed through it — and it already needed a hardcoded
+  exception for `big-pickle`, i.e. an allowlist of one bolted onto a heuristic
+  that did not work. Zen genuinely hosts both `deepseek-v4-flash` (metered) and
+  `deepseek-v4-flash-free`, one character apart.
+- The separate resold-Anthropic blocklist is **gone and not needed**: `claude-*`
+  is refused because it is not on the list.
+- Its "belt and braces" duplicate inside `zenOnce` is gone.
+- **`--allow-paid` is deleted.** "Free only" is an absolute rule; a flag whose
+  only purpose is to break it should not exist.
+
+`deepseek-v4-flash-free` — the id the original guessed at and could not verify —
+is real and remains the default for the Zen backend.
 
 ## 7. Work order for the local agent
 
@@ -296,42 +367,90 @@ bin\becky-moment.exe --folder <a folder with .srt sidecars> --top 10 --judge=fal
       Becky Review. **This is the seam that matters** — confirm the clips land at the right
       timecodes on real video, not just that the JSON parses.
 
-### Step D — turn on the content pass (verifies the Zen model id)
+### Step D — the content pass (now LOCAL, no key needed) — **DONE 2026-08-18**
 ```
-setx BECKY_ZEN_API_KEY "<Jordan's key>"
-bin\becky-moment.exe --folder <folder> --top 10
+binecky-moment.exe --folder <folder> --top 5 --verbose
 ```
-- [ ] DONE WHEN: moments come back as `conclusion` / `disputed` rather than all `candidate`.
-- [ ] **If it errors on the model id**, list the current free ids at
-      https://opencode.ai/docs/zen/ and update `defaultZenModel` in `cmd/becky-moment/zen.go`.
-      Do **not** work around it by passing `--allow-paid`.
+- [x] DONE: runs Gemma-4 E4B via `internal/llmlocal`, spawning llama-server on a
+      free port. On two real transcripts from `E:\TakingBack2007` it returned five
+      moments, **all `conclusion`** (both signals agreeing) with content reasons —
+      not the all-`candidate` degrade. `judge_model` reads
+      `local:gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`.
+- [ ] OPTIONAL, only if Jordan wants the cloud judge: `setx BECKY_ZEN_API_KEY "<key>"`
+      then `--judge-backend=zen`. Nothing depends on this. **His key is not set on
+      this machine** — that is why local is the default, not a fallback.
 
 ### Step E — the facetrack gap (model boundary; §5.3)
 - [ ] Extend `internal/pyhelpers/face_embed.py` to emit **all** faces per frame, not just the
       most prominent one. Suggested: an additive `--all-faces` flag so every existing caller
       (`becky-identify`, `becky-enroll`, `becky-cluster`) is byte-identical without it.
-- [ ] Add the matching multi-face path in `internal/faceembed` and feed
-      `facetrack.Build` from it.
+- [ ] The Go side needs it too — `internal/faceembed`'s `Face` struct has singular
+      `Vector`/`BBox`/`DetScore` fields, so there is physically no room for a second
+      face. Add the multi-face path and feed `facetrack.Build` from it.
 - [ ] DONE WHEN: a real clip with two visible people yields exactly 2 tracks whose
-      `CoverageIn` over a window where both are present is > 0.8 each.
+      `CoverageIn(t0, t1, samplePeriod)` over a window where both are present is
+      > 0.8 each. **Note the third argument** — coverage is now density, not the
+      span between the outermost sightings (see §5.3).
 
-### Step F — the native CV dependency (Jordan approved this; §3.2)
-- [ ] Install `gocv` + OpenCV 4.12 on the Windows box and confirm `go build -tags gocv ./...`.
-- [ ] Install MediaPipe Tasks (Python) and confirm Pose Landmarker runs on one frame.
-- [ ] Report back which of the two is more painful — that decides whether step 4's crop path
-      goes through gocv (Go, in-process) or a MediaPipe pyhelper (Python, like the others).
+### Step F — the native CV dependency — **DONE 2026-08-18, and the bake-off was unnecessary**
+
+The original Step F said: *"Report back which of the two is more painful — that
+decides whether step 4's crop path goes through gocv (Go, in-process) or a
+MediaPipe pyhelper (Python, like the others)."* That choice should not have been
+offered, for three measured reasons:
+
+- [x] **OpenCV was already installed and working.** `cv2` **4.13.0** imports today
+      in the exact interpreter becky already uses for face work (anaconda +
+      `PYTHONPATH=X:\PythonUserBase\Lib\site-packages`, which is `FacePyLib` in
+      `internal/config`). Alongside it: `insightface` 1.0.1, `onnxruntime` 1.26.0.
+      No native build, no cgo, no `-tags gocv` needed to reach OpenCV.
+- [x] **MediaPipe is now installed there too** — `mediapipe` **1.0.1**, with
+      `PoseLandmarker` and `FaceLandmarker` confirmed importable from
+      `mediapipe.tasks.python.vision`.
+- [x] **MediaPipe has no Go binding.** Stage 4 is a Python helper whatever else is
+      decided, so routing OpenCV through `gocv` would split one per-frame stage
+      across two languages and two processes for no gain. Pose framing and camera-path
+      smoothing run on the same frames; they belong in the same helper.
+      This also matches `CLAUDE.md`'s stated architecture — "Go binaries with the
+      heavy ML pushed into thin embedded-Python helpers".
+
+  **Recommendation for stage 4: one `internal/pyhelpers` script using MediaPipe
+  Pose + OpenCV, no gocv.** They are not alternatives — Pose decides *where* the
+  crop sits, OpenCV optical flow decides *how it moves*. Jordan's call to confirm.
+
+- [ ] STILL OPEN — `gocv` remains worth it for one thing the research promised and
+      no step covers: retiring the degrade paths in `cmd/motion` (ffmpeg frame-diff
+      instead of optical flow) and `cmd/framematch/decor.go` (census descriptor
+      instead of ORB+RANSAC). Both can now use `cv2` through a helper instead.
 - [ ] **Do not proceed to steps 3-6 by approximating either in pure Go.** That is §2.3.
+
+### Step G — the degrade paths research §6 named but the work order forgot
+- [ ] `cmd/events/main.go:14` still says *"multi_face — OPTIONAL. No face detector
+      ships in this environment, so it is skipped gracefully."* **That comment is
+      false and has been for some time** — the same file runs multi_face default-on
+      at :117-137 and `cmd/events/multiface.go:18` imports `internal/faceembed`.
+      Delete the comment. (research/shorts-models.md §6 quotes this line as
+      evidence; the quote is verbatim but stale, and the §6 conclusion leans on it.)
+- [ ] `cmd/motion` and `cmd/framematch/decor.go` — see Step F.
 
 ### 7.1 Not this branch's work
 
-CI is red on `master` and has been since 2026-07-24 (30 consecutive runs; `go vet` is
-`skipped` on every one because it runs after `go test` in the same job). Two failures:
-`cmd/clip TestAudioLevels_ThreadsFpsAndParses` (environmental — shells to `auto-editor`, absent
-on runners, no skip guard) and `internal/assistant TestHandleTier2Funnel` (**a real regression**
-— `frontier plan actions = [], want add_clip(s)`). Per Jordan, this is local's lane, not
-cloud's. Flagged here so it is not mistaken for something this branch introduced.
+**Corrected 2026-08-18 by running the suite locally.** `go test ./...` on this
+machine: **163 packages green, two failures** —
 
----
+- `internal/assistant TestHandleTier2Funnel` — a **real regression**
+  (`frontier plan actions = [], want add_clip(s)`). Confirmed.
+- `cmd/tts TestRun_DegradesWhenNoModel` — *"expected non-zero exit when degrading
+  (no model)"*. **The original §7.1 did not mention this one at all.**
+
+And `cmd/clip TestAudioLevels_ThreadsFpsAndParses`, which §7.1 named as one of the
+two, **passes here** (0.16s) — it shells to `auto-editor`, which exists on this
+machine and not on a CI runner. So the local failure set is `cmd/tts` +
+`internal/assistant`, not `cmd/clip` + `internal/assistant`.
+
+Neither is touched by this work. The "30 consecutive red CI runs" claim was not
+re-checked: `CLAUDE.md`'s highest-authority rule forbids spending Jordan's plan
+polling GitHub.
 
 ## 8. Honest summary
 

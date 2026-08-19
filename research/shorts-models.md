@@ -213,9 +213,13 @@ signals into one decision, which is the ≥2-signal rule applied to speaker sele
 While checking whether becky had counterparts, a pattern appeared in becky's own source
 comments that matters more than any model on this page:
 
-- `cmd/events/main.go:14` — *"multi_face — OPTIONAL. **No face detector ships in this
-  environment**, so it is skipped gracefully"* — while `internal/faceembed` (SCRFD + ArcFace)
-  exists and is used by `becky-identify`.
+- ~~`cmd/events/main.go:14` — *"multi_face — OPTIONAL. **No face detector ships in this
+  environment**, so it is skipped gracefully"*~~ — **RETRACTED 2026-08-18.** The quote is
+  verbatim but the comment is STALE and the same file contradicts it: `main.go:117-137`
+  runs multi_face **default-on** and `cmd/events/multiface.go:18` imports
+  `internal/faceembed`. The feature shipped; only the comment was left behind. This was
+  the headline citation of this section and it does not support the claim. Delete the
+  comment (HANDOFF §7 Step G). The two source quotes below still stand.
 - `cmd/framematch/decor.go:35` — *"It is **weaker than ORB+RANSAC** but offline, deterministic"*.
 - `cmd/motion/motion.go:16` — *"No OpenCV/optical-flow dependency is required … **this IS that
   path**"* — i.e. the documented *degrade* branch is the only branch built.
@@ -225,6 +229,15 @@ comments that matters more than any model on this page:
 **becky's vision layer is largely the degrade path of a stack that was never fully built.** And
 the reason is visible in `SPEC-FRAMEMATCH-HARDENING.md`: the heavy CV option was rejected because
 *"cgo + native OpenCV cannot be built or tested [by the cloud agent]"*.
+
+**The sting in the tail, found 2026-08-18:** OpenCV was **already installed on Jordan's machine
+the whole time**. `cv2` 4.13.0 imports today in the very interpreter becky uses for face work
+(`FacePython` + `FacePyLib` in `internal/config`), next to `insightface` and `onnxruntime`. A
+year of "we cannot have OpenCV" was a year of not checking — the dependency the architecture was
+bent around was one `import cv2` away. Note also that the elided halves of the two remaining
+quotes ("...but offline, deterministic, and cloud-testable", "...chosen as the robust default")
+show the authors documenting a trade-off, not confessing a weakness; the pattern this section
+describes is real, but it is kinder than the quotes alone suggest.
 
 That is an architecture shaped by **what the cloud agent could compile**, not by what the job
 needed. Every time the choice arose, the cloud-buildable pure-Go option won and the stronger
@@ -244,8 +257,14 @@ order**, not to ship the weaker version as the default and mark the branch done.
 1. **LR-ASD** (ONNX) — the speaking decision. Only genuinely new model needed.
 2. **MediaPipe Pose Landmarker** — body-aware framing. becky has no body signal today.
 3. **MediaPipe Face Landmarker blendshapes** — as a *feature* into the ASD fusion, never alone.
-4. **gocv / OpenCV** (Apache-2.0) — optical flow + camera-path smoothing for the crop path, and
-   it retroactively upgrades `framematch` and `motion` off their degrade branches.
+4. ~~**gocv / OpenCV** (Apache-2.0)~~ → **OpenCV via `cv2` in a pyhelper. SUPERSEDED 2026-08-18.**
+   The capability was right, the binding was wrong. `cv2` 4.13.0 already works in becky's
+   existing face-stack interpreter — no native build, no cgo, no `-tags gocv`. And MediaPipe
+   (item 2) has **no Go binding at all**, so stage 4 is a Python helper regardless; routing
+   OpenCV through gocv would split one per-frame stage across two languages and two processes
+   for nothing. Pose framing and camera-path smoothing run on the same frames and belong in the
+   same helper. Still true: it retroactively upgrades `framematch` and `motion` off their
+   degrade branches — that is now HANDOFF §7 Step G.
 
 **Keep becky's (they are better):** SCRFD-10GF + ArcFace (faces), Parakeet-TDT-v3 (ASR),
 pyannote-3.0 + CAM++ (diarization), Falcon-Perception (open-vocab, but off the hot path),
@@ -279,6 +298,13 @@ GateFusion as the escalation.
 
 **Untested** — the reframing half (§7 items 1-4) has not been built or run. This is model
 research, not a proven pipeline.
+
+**Update, 2026-08-18 (local):** MediaPipe **1.0.1** installed and verified (PoseLandmarker +
+FaceLandmarker importable); OpenCV **4.13.0** was already present. Both live in the interpreter
+becky already uses, so §7 items 2-4 are unblocked with no native toolchain work. §7 item 1
+(LR-ASD) is still the one genuinely new model, and `onnxruntime` on this machine reports
+**CPU-only** (`['AzureExecutionProvider','CPUExecutionProvider']`, no CUDA provider) — fine for
+a 1.0M-param model billed as CPU-real-time, but worth knowing before assuming GPU.
 
 **Update, 2026-08-15 (same day):** Jordan ratified §7 — *"as for mediapipe and opencv, yes.
 absolutely we NEED to use them. weve been cutting corners and all that does is waste my time,
