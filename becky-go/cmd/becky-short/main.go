@@ -79,6 +79,7 @@ func main() {
 		outDir    = flag.String("outdir", "", "output folder (--reel mode)")
 		aspect    = flag.String("aspect", "9:16", "target aspect, width:height")
 		sampleFPS = flag.Float64("sample-fps", 0, "how often to look for the subject; 0 = EVERY FRAME (default)")
+		maxGap    = flag.Float64("max-gap", 0.8, "refuse if the subject is undetected for this many seconds in a row")
 		minCov    = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
 		center    = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
 		selftest  = flag.Bool("selftest", false, "run the offline proof and exit")
@@ -125,7 +126,7 @@ func main() {
 	}
 
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *center, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -149,7 +150,7 @@ type job struct {
 	In, Out  float64
 }
 
-func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov float64,
+func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
 	forceCenter, verbose bool) (shortOut, error) {
 
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
@@ -163,6 +164,12 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 		switch {
 		case err != nil:
 			res.Note = "subject framing unavailable (" + err.Error() + "); STATIC CENTRE crop"
+		case p.LongestGap > maxGap:
+			// Refuse on a CLUSTERED absence even when the average looks fine.
+			return res, fmt.Errorf("the subject is off screen for %.1fs in a row (limit %.1fs) — "+
+				"not rendering a short that would hold a stale crop through it; "+
+				"pass --max-gap to allow it or --center for a static crop",
+				p.LongestGap, maxGap)
 		case p.Coverage() < minCov:
 			// Refuse rather than ship a followed-looking file that mostly guessed.
 			return res, fmt.Errorf("subject found in only %.0f%% of samples (need %.0f%%) — "+

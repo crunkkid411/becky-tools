@@ -43,7 +43,12 @@ type Path struct {
 	Aspect  float64 `json:"aspect"`
 	Sampled int     `json:"sampled"`
 	Found   int     `json:"found"`
-	Rects   []Rect  `json:"path"`
+	// LongestGap is the longest unbroken stretch, in seconds, where the subject
+	// was not detected at all. Gate on this rather than on average coverage:
+	// misses cluster, and a clip that is 92% covered can still contain a dead
+	// patch that renders a stale crop for seconds at a time.
+	LongestGap float64 `json:"longest_gap_s"`
+	Rects      []Rect  `json:"path"`
 }
 
 // Options configure one crop-path run.

@@ -161,6 +161,9 @@ def main():
                     help="0..1 zero-phase smoothing strength; LOWER is smoother. Applied "
                          "forward AND backward, so it adds no lag at any setting")
     ap.add_argument("--ffmpeg", default="ffmpeg")
+    ap.add_argument("--min-head-frac", type=float, default=0.045,
+                    help="reject a 'person' whose head is smaller than this fraction of "
+                         "the frame width - at talking-head scale that is a false positive")
     ap.add_argument("--no-second-pass", action="store_true",
                     help="skip the fresh-eyes retry on frames the tracker lost")
     ap.add_argument("--retry-confidence", type=float, default=0.3,
@@ -222,6 +225,7 @@ def main():
     rescued = 0
 
     times, cxs, cys, widths = [], [], [], []
+    miss_run, longest_miss = 0, 0
     faces_l, faces_r = [], []
     found = 0
     # fps 0 means "every frame": track at exactly the rate the footage was shot.
@@ -293,8 +297,16 @@ def main():
                 head_pts = [q for q in (nose, le, re, lear, rear) if q]
                 if head_pts:
                     cx = sum(q[0] for q in head_pts) / len(head_pts)
-                elif ls and rs:
-                    cx = 0.5 * (ls[0] + rs[0])
+                # NO fallback to the shoulder midpoint. If not one facial landmark
+                # is visible, the subject is not presentable in a talking-head
+                # frame - he is bent over, turned away, or out of shot - and a
+                # position guessed from the torso is worse than no position at all.
+                # On real footage that guess put the crop on a lamp while he was
+                # leaning down out of view, and because it counted as a successful
+                # detection nothing downstream could tell. A frame with no face is
+                # now a MISS: it carries the last good framing forward and counts
+                # toward the gap gate, so a sustained stretch of them is refused
+                # rather than rendered.
 
                 # SCALE comes from the HEAD, not the shoulders.
                 #
@@ -311,6 +323,21 @@ def main():
                     head_w = abs(le[0] - re[0]) * 2.2  # eyes span ~45% of head width
                 elif head_pts and len(head_pts) > 1:
                     head_w = max(q[0] for q in head_pts) - min(q[0] for q in head_pts)
+
+                # SANITY: is this detection even at talking-head scale?
+                #
+                # MediaPipe will report a full skeleton with visibility 1.00 and
+                # presence 1.00 for something that is not a person at all - on this
+                # footage it confidently found a face inside a clear plastic object
+                # while Jordan was bent out of shot, and pointed the crop at a lamp.
+                # No confidence threshold catches that, because the confidence is
+                # maximal. The geometry does: that phantom spanned 40 pixels of a
+                # 1920-wide frame, where a real subject in this kind of shot spans
+                # hundreds. A head smaller than min-head-frac of the frame is not
+                # the person this crop is meant to follow.
+                if head_w and head_w < args.min_head_frac * src_w:
+                    head_w = None
+                    cx = None
 
                 if head_w and head_w > 1:
                     # A head-and-shoulders frame is roughly 3.4 head widths across.
@@ -346,12 +373,16 @@ def main():
                         eye_y = src_h * 0.4
                     cy = eye_y + (0.5 - args.eye_line) * crop_h
                     found += 1
+                    miss_run = 0
 
             # cx can be known (from the face) while the SCALE is not (shoulders
             # out of frame, which happens constantly when someone leans over).
             # Guard on every value the path needs, not just cx: a None reaching
             # the median filter sorts against floats and kills the whole run.
             if cx is None or cy is None or crop_w is None:
+                miss_run += 1
+                if miss_run > longest_miss:
+                    longest_miss = miss_run
                 # Carry the last good framing rather than snapping to centre: a
                 # missed detection is usually a blink of occlusion, not the subject
                 # teleporting. Only fall back to a centre crop if nothing was ever
@@ -454,6 +485,12 @@ def main():
         "src_w": src_w, "src_h": src_h, "fps": round(src_fps, 4),
         "aspect": round(aspect, 6),
         "sampled": len(path), "found": found, "rescued": rescued,
+        # The LONGEST unbroken stretch with no detection, in seconds. Average
+        # coverage hides clustered misses: a clip can be 92% covered and still have
+        # a dead patch where the subject simply is not on screen, and every frame in
+        # that patch renders a stale box - which is how a "short" ends up framing a
+        # lamp. The caller gates on this, not on the average.
+        "longest_gap_s": round(longest_miss / max(sample_fps, 1.0), 3),
         "path": path,
     }))
 
