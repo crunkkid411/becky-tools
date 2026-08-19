@@ -13,9 +13,8 @@ Reka Edge is a 7B VLM that returns **grounded bounding boxes on demand**, which 
 at all. That is the exact capability the shorts pipeline is missing, and it is missing in the
 place Jordan complained about hardest.
 
-**Not yet verified locally.** Nothing below has been run on this machine. The claim that it is
-worth adding rests on published numbers and the GGUF file listing; the claim that it FITS rests on
-arithmetic against the 8GB budget. See "What still has to be proven".
+**VERIFIED LOCALLY 2026-08-19.** It downloaded, loaded, served, and answered on Jordan's own
+footage. Numbers in "What was actually measured" below. Two integration traps found.
 
 ## The numbers (Reka's own card, so read them as a vendor's claims)
 
@@ -119,16 +118,55 @@ still too much.
 Not Apache. `reka-edge-2603-license`: commercial use permitted **under $1M/year revenue**. Fine for
 Jordan, and worth writing down before anyone builds a product on it.
 
-## What still has to be proven — do not mark this done without it
+## What was actually measured, on this machine, on his footage
 
-- [ ] Download `Q4_K_M` + `mmproj-Q8_0`, run `llama-server … --reasoning off`, confirm it loads
-      inside the VRAM budget and report the actual figure.
-- [ ] Feed it one frame of `test-for-clips.mp4` with `Detect: person, microphone` and check the
-      boxes against where those things actually are. Grounding accuracy on a benchmark is not
-      grounding accuracy on his footage.
-- [ ] Measure real tokens-per-image locally against the 512 `n_ubatch` ceiling. 331 is their
-      number, at their resolution.
-- [ ] Time a dense burst — say 16 consecutive frames — and compare against Gemma-4 on the same
-      frames. If it is not meaningfully faster or better here, it is not worth a second model.
-- [ ] Confirm this machine's llama.cpp build actually contains the Reka vision op. The GGUF
-      existing does not prove the local binary can run it.
+**It runs, and llama.cpp needed no rebuild.** `mtmd.dll` in the existing build 9551 already carries
+`yasa2_emb`, `yasa2_patch_conv_out`, `yasa2_patch_ln_out`. Checked by reading the GGUF headers over
+an HTTP range request BEFORE downloading 5.5GB — the text side exports as plain `llama`, and only
+the mmproj is Reka-specific (`clip.projector_type = "yasa2"`).
+
+| Measured | Result |
+|---|---|
+| VRAM, `Q4_K_M` + `mmproj-Q8_0`, `-ngl 99 -c 4096` | **6496 MiB of 8192** |
+| `Detect: person, microphone` on a 1920x1080 frame | **2.3s** |
+| Six 640px frames in ONE request | **450 prompt tokens, 3.7s** (~75/frame) |
+| Model load to serving | ~10s |
+
+**Grounding on his footage — good on the subject, approximate on small objects.** For a frame at
+t=160s it returned `person 18,05,72,100` and `microphone 49,69,54,76` (percentages of frame). Drawn
+back onto the image, the person box is **tight and correct**. The microphone box lands on his
+necklace/upper chest — near the RODE clip-on, but not on it. So: trust it to find the subject,
+corroborate it before trusting it to find a prop.
+
+**The dense-burst finding is the important one.** `research/iphone-ai-video-sweep.md` argues from
+F-16 that a payoff frame is a 1-3 frame window and uniform 1-2 FPS sampling misses it. Six
+consecutive frames cost **450 tokens total** here — inside the 512 `n_ubatch` ceiling for the whole
+burst, with the model returning a specific frame index. **A dense burst is affordable on this
+machine today.** (The mechanism is proven; whether its chosen frame was the RIGHT one was not
+checked — a 1/30s difference in mouth opening is not something I could adjudicate from the frames.)
+
+## Two traps for whoever wires this up
+
+1. **`--reasoning off` is not optional.** The chat template ships `thinking = 1`, and the server log
+   shows it generating `<think>`. A plain "describe this image" came back as
+   *"This sentence captures the striking visual elements and personality of the individual in the
+   image."* — a meta-answer, because the real content went into the thinking block. `Detect:` still
+   worked, which makes this exactly the kind of half-broken that ships.
+2. **The detection output has mismatched tags.** Verbatim:
+   `<answer><ref>person</ref><bbox>18,05,72,100</answer><ref>microphone</ref><bbox>49,69,54,76</bbox>`
+   — the first `<bbox>` is closed by `</answer>`. Parse it tolerantly with a regex over
+   `<ref>(.*?)</ref>.*?<bbox>([\d,]+)`, not with an XML parser. Coordinates are **percentages of
+   the frame**, not pixels.
+
+## What still has to be proven
+ — do not mark this done without it
+
+- [x] Downloaded, loads, serves. **6496 MiB** — fits alone, does not fit beside Whoretana's brain.
+- [x] Done. Person box tight and correct; microphone box near but imprecise.
+- [x] ~75 tokens per 640px frame; six frames = 450 total, inside the ceiling.
+- [ ] Head-to-head against Gemma-4 on the SAME dense burst. Reka's side is measured; Gemma-4's is
+      not, so "meaningfully better here" is still an assumption.
+- [ ] Re-run everything with `--reasoning off` and confirm free-form answers stop being meta.
+- [ ] Point it at a genuinely face-less shot (the rubber-snake prank) — the whole case for adding it
+      rests on that shot, and it has not been tried.
+- [x] Build 9551's `mtmd.dll` already contains the yasa2 tensors. No rebuild.
