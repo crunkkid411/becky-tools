@@ -42,11 +42,30 @@ Measured end state on the already-edited case (BLINDFOLD master, 21.7–52.0s):
 **19 spans, 18 of 19 existing cuts preserved, 2.734s tightened = 9.0%** against Jordan's own 10.3%
 and becky-cut-alone's 51%. 45 captions, coverage 0.952, 6 spans honestly degraded to a static crop.
 
+## Round 2 — the review pass, and the four bugs it found
+
+`becky-short --review` (`c6d8d26`) re-measures the RENDERED file instead of trusting the plan:
+an independent FACE pass (the render tracks with MediaPipe *pose*, so a disagreement is real
+signal), a fresh transcription matched against the burned .srt, and `internal/moment`'s own payoff
+check on the ending. **It earned its place immediately.**
+
+| Commit | What it caught / did |
+|---|---|
+| `26ff2c4` | **The coverage number described only the spans that worked.** Claimed 0.952; an independent face pass said 0.18. A degraded span returned `Sampled=0, Found=0` so it vanished from both sides of the fraction. Honest: **0.579**. |
+| `e39f51b` | **56 phantom cuts in a single-take file**, some 200ms apart. Brightness difference cannot tell a cut from fast motion. Added a greyscale-histogram check (false positives 0.935-0.969 vs real cuts 0.753-0.830). precision 0.833 -> **0.944**, raw footage 56 -> **0** cuts. |
+| `4859d47` | **The same footage was classified differently depending on the window.** Whole file: 0 cuts. Window [102.4,138.72]: 2 cuts 133ms apart on one continuous shot. The threshold is data-derived, so a short static window lowers it. Cuts are now detected once per source and cached. |
+| `795605e` | **Jumpcut captions showed words the jumpcut had removed.** 18.86s of cut dialogue was rescued back in and stacked onto the surviving spans - 16 cues in the first 3.3s of a 7.3s clip, one with ZERO duration. Caption checks: 0 of 4 passing -> **3 of 4**. |
+| `a82d068` | Loudness -24.0 -> -19.2 LUFS, true peak -0.5 -> -1.5 dBFS. Does not reach -14 because the source is already peak-limited at -0.53 dBTP; stated rather than chased. |
+| `571b3c3` | `ground.py` - ask WHERE a thing is when there is no face. **Honest result: per-frame grounding of a small target is NOT trustworthy** (2 of 4 frames, one on empty counter, 0.47 median jump), so it reports `stable:false` and calls itself a region hint. |
+| `6ffa324` | The launcher told Jordan to make a transcript becky already makes. |
+| `99ec909` | One of the 22 research notes was 4,774 words of a model's chain-of-thought. Validator now rejects repeated headings and first-person reasoning. |
+
+**Every one of these rendered a file that played and exited 0.** That is the whole argument for the
+review pass, and for reading output instead of code.
+
 ## In flight
 
-- **Agent — `becky-short --review`**: the self-review pass (Jordan's rule 5). Deterministic first:
-  re-measure the RENDERED file for subject-in-frame, caption/audio alignment, completed ending.
-  None of the 21 reference projects does this.
+Nothing. All agents have landed.
 
 ## A retraction worth not repeating
 
