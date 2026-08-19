@@ -597,8 +597,20 @@ Do not mark a box without pasting evidence (`HANDOFF-TEMPLATE.md` §5).
       -1.5 dBFS on a real render. It does NOT reach -14 and that is stated rather than chased:
       loudnorm reports the source at -0.53 dBTP, already peak-limited, so the last 5 dB could only
       be bought by squashing the dynamics.
-- [ ] **F. The last degrade paths:** `cmd/motion` frame-diff → optical flow,
-      `cmd/framematch/decor.go` census → ORB+RANSAC. Both can use `cv2` now.
+- [x] **F1. `cmd/motion` — the real defect was CUT BLINDNESS, not the lack of optical flow**
+      (`df227f0`). Measured on the BLINDFOLD master 20-55s: **6 of its 8 motion bursts peaked
+      within 31ms of a known cut and carried the top scores (0.79-0.98)**. becky-motion exists to
+      hand becky-validate the exact window to look at, and on edited footage it was handing over
+      the edit. Fixed with `shotcut`'s histogram discriminator on frames it had already decoded:
+      **75% → 29%**. **Deliberately NOT converted to optical flow:** the dense frame-difference is
+      the point ("zero-VRAM Phase-1 motion localizer"), and flow would trade that away to answer a
+      question — direction and magnitude — that nothing downstream asks.
+- [ ] **F2. `cmd/framematch/decor.go` census → ORB+RANSAC — DEFERRED, and this is a decision.**
+      Its own comment already says the census descriptor is "weaker than ORB+RANSAC but offline,
+      deterministic", i.e. a considered trade rather than a degrade. It is a FORENSIC tool and sits
+      nowhere in the shorts chain, so converting it would add a Python/model boundary to a working
+      pure-Go tool for no gain against the goal in front of us. **Revisit when a real forensic match
+      is measurably missed** — not because `cv2` happens to be installed now.
 - [ ] **G. THE QUESTION FOR JORDAN, which nobody should guess at:** on close-up 16:9 footage
       where the subject already fills the frame, does he want the full-height crop we do now,
       or a padded/blurred background with the subject on his 30% line? His own edit is
