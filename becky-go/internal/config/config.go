@@ -72,6 +72,7 @@ type Config struct {
 	FaceModelRoot    string `json:"face_model_root"`    // insightface root (holds models/<name>/)
 	FaceModelName    string `json:"face_model_name"`    // insightface model pack, e.g. buffalo_l
 	PoseModel        string `json:"pose_model"`         // MediaPipe pose_landmarker_*.task (body-aware 9:16 framing)
+	LRASDRepo        string `json:"lrasd_repo"`         // LR-ASD checkout (model/ + loss.py + weight/): who is speaking
 	Codec            string `json:"codec"`              // h264_nvenc (never libx264)
 	Device           string `json:"device"`             // cpu or cuda
 }
@@ -331,6 +332,9 @@ func defaults() Config {
 		// MediaPipe Pose for body-aware crop framing. "heavy" is the accuracy
 		// pick and is fast enough because the crop path samples a few frames a
 		// second, not every frame; "full" is the fallback if only it is present.
+		// LR-ASD (Springer IJCV 2025, MIT, 0.84M params): decides WHICH tracked
+		// face is actually talking, by correlating lip motion with the soundtrack.
+		LRASDRepo: firstExisting(`X:\AI-2\becky-tools\models\lrasd`),
 		PoseModel: firstExisting(
 			`X:\AI-2\becky-tools\models\mediapipe\pose_landmarker_heavy.task`,
 			`X:\AI-2\becky-tools\models\mediapipe\pose_landmarker_full.task`,
@@ -517,6 +521,9 @@ func merge(base, over Config) Config {
 	}
 	if over.FaceModelRoot != "" {
 		base.FaceModelRoot = over.FaceModelRoot
+	}
+	if over.LRASDRepo != "" {
+		base.LRASDRepo = over.LRASDRepo
 	}
 	if over.PoseModel != "" {
 		base.PoseModel = over.PoseModel
