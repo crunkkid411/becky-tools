@@ -22,6 +22,7 @@
 package main
 
 import (
+	"becky-go/internal/pathx"
 	"context"
 	"fmt"
 
@@ -87,4 +88,71 @@ func localJudge(cfg config.Config, logf func(string, ...any)) (moment.JudgeFunc,
 		return all, nil
 	}
 	return judge, c.Close, nil
+}
+
+// escalateDisputed re-judges ONLY the moments where the structural prior and the
+// E4B verdict disagreed, using the larger 12B model, and returns the verdicts to
+// merge over the originals.
+//
+// This is becky's own escalation ladder, which CLAUDE.md states plainly —
+// "validate with Gemma-4 E4B when confidence is low; still unclear → escalate to
+// Gemma-4 12B" — and which this chain was not doing. becky-presence and
+// becky-resolve escalate via BECKY_AVLM_VARIANT; becky-moment decided every
+// moment on E4B alone however close the call was.
+//
+// Cost is bounded by construction: only disputed candidates are re-judged, and
+// when nothing is disputed (the common case) this returns immediately without
+// touching the GPU. That matters because 12B MEASURED at 7885 MiB of 8192 on
+// this card — 96% — so the E4B server must be shut down before it starts. They
+// cannot be co-resident, and neither can 12B and Reka Edge (6496 MiB).
+func escalateDisputed(cfg config.Config, cands []moment.Candidate, first []moment.Judgement,
+	closeFirst func(), logf func(string, ...any)) ([]moment.Judgement, int) {
+
+	byIndex := make(map[int]moment.Judgement, len(first))
+	for _, j := range first {
+		byIndex[j.Index] = j
+	}
+	var idx []int
+	for i, c := range cands {
+		if j, ok := byIndex[i]; ok && moment.Disagrees(c, j) {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) == 0 {
+		return nil, 0
+	}
+	if cfg.GemmaModel12B == "" || !fileExists(cfg.GemmaModel12B) {
+		logf("%d moment(s) disputed, but the 12B model is not on disk — leaving them disputed", len(idx))
+		return nil, 0
+	}
+
+	// 12B does not fit beside E4B. Free the smaller one first.
+	if closeFirst != nil {
+		closeFirst()
+	}
+	logf("%d moment(s) disputed — escalating those to %s", len(idx), pathx.Base(cfg.GemmaModel12B))
+
+	c := llmlocal.NewWarmClient(cfg.GemmaModel12B, cfg.LlamaServer, logf)
+	defer c.Close()
+
+	subset := make([]moment.Candidate, 0, len(idx))
+	for _, i := range idx {
+		subset = append(subset, cands[i])
+	}
+	raw, err := c.Chat(context.Background(), "", moment.Prompt(subset), llmlocal.Options{
+		MaxTokens: 120 * len(subset),
+	})
+	if err != nil {
+		logf("escalation failed (%v) — keeping the E4B verdicts", err)
+		return nil, 0
+	}
+	var out []moment.Judgement
+	for _, j := range moment.ParseJudgements(raw) {
+		if j.Index < 0 || j.Index >= len(idx) {
+			continue
+		}
+		j.Index = idx[j.Index] // re-base onto the full candidate slice
+		out = append(out, j)
+	}
+	return out, len(idx)
 }

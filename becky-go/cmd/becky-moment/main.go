@@ -101,6 +101,7 @@ func main() {
 		judge      = flag.Bool("judge", true, "run the content pass (the second, independent signal)")
 		backend    = flag.String("judge-backend", "local", "content judge: local (offline Gemma-4) or zen (OpenCode Zen, free models, needs BECKY_ZEN_API_KEY)")
 		model      = flag.String("model", defaultZenModel, "zen backend only: judge model id (must be one of OpenCode Zen's free models)")
+		escalate   = flag.Bool("escalate", true, "when structure and the content pass disagree, ask the larger 12B model (only the disputed moments; costs nothing when none are)")
 		noAudio    = flag.Bool("no-audio", false, "skip the audio signal pass (loudness spikes, pitch rises)")
 		noFace     = flag.Bool("no-face", false, "skip the face coverage pass (is a talking head actually on screen)")
 		facePeriod = flag.Float64("face-sample-period", facesig.DefaultSamplePeriod, "seconds between sampled frames for the face coverage pass (lower = slower, finer)")
@@ -267,6 +268,30 @@ func main() {
 			verdicts, err = jf(context.Background(), allCands)
 			if err != nil {
 				rep.Notes = append(rep.Notes, "content pass failed: "+err.Error())
+			}
+			// THE ESCALATION LADDER, which CLAUDE.md states plainly and which
+			// this chain was not doing: where structure and the E4B verdict
+			// disagree, ask the larger 12B. Only the disputed moments are
+			// re-judged, so when nothing is disputed this costs nothing.
+			if err == nil && *escalate && strings.ToLower(*backend) != "zen" {
+				if up, n := escalateDisputed(cfg, allCands, verdicts, cleanup,
+					func(f string, a ...any) { logIf(*verbose, f, a...) }); n > 0 {
+					cleanup = nil // escalateDisputed closed the E4B server itself
+					byIdx := map[int]moment.Judgement{}
+					for _, j := range verdicts {
+						byIdx[j.Index] = j
+					}
+					for _, j := range up {
+						byIdx[j.Index] = j
+					}
+					verdicts = verdicts[:0]
+					for _, j := range byIdx {
+						verdicts = append(verdicts, j)
+					}
+					rep.Notes = append(rep.Notes, fmt.Sprintf(
+						"%d disputed moment(s) escalated to the 12B model", n))
+					rep.JudgeModel += " -> 12b(" + fmt.Sprint(n) + ")"
+				}
 			}
 		}
 	} else if !*judge {

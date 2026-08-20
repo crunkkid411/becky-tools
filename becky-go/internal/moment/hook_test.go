@@ -117,3 +117,32 @@ func TestRank_IncompleteArcStillOutranksTheOpeningObjection(t *testing.T) {
 			got[0].Confidence, Vetoed)
 	}
 }
+
+// The escalation ladder CLAUDE.md describes - "validate with E4B when
+// confidence is low; still unclear -> escalate to 12B" - needs a definition of
+// "still unclear". becky-presence and becky-resolve escalate; becky-moment
+// decided every moment on E4B alone however close the call was.
+func TestDisagrees_MarksTheCallsWorthASecondOpinion(t *testing.T) {
+	text := "So anyway that's the setup. The thing nobody tells you about running a studio is the cashflow."
+
+	// Structure loves it, content does not: a genuine disagreement.
+	if !Disagrees(Candidate{Text: text, Score: 0.95}, Judgement{Score: 20, Complete: true}) {
+		t.Error("structure 0.95 vs content 20/99 should be disputed")
+	}
+	// Both agree it is good.
+	if Disagrees(Candidate{Text: text, Score: 0.90}, Judgement{Score: 89, Complete: true}) {
+		t.Error("structure 0.90 and content 89/99 agree; nothing to escalate")
+	}
+	// They agree on the score but not on where it STARTS.
+	if !Disagrees(Candidate{Text: text, Score: 0.90}, Judgement{
+		Score: 89, Complete: true,
+		Hook: "The thing nobody tells you about running a studio is the cashflow",
+	}) {
+		t.Error("a verbatim hook quoted from mid-clip is a disagreement about the in-point")
+	}
+	// A VETO is a refusal, not a close call - escalating it would be asking a
+	// bigger model to overturn "this clip has no payoff".
+	if Disagrees(Candidate{Text: text, Score: 0.95}, Judgement{Score: 20, Complete: false}) {
+		t.Error("a vetoed moment must not be escalated; the model already refused it")
+	}
+}

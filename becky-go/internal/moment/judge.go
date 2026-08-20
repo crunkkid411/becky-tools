@@ -407,3 +407,23 @@ func trimQuote(s string) string {
 	}
 	return s
 }
+
+// Disagrees reports whether the structural prior and a content verdict are far
+// enough apart that a second, larger opinion is warranted — either they disagree
+// about how good the moment is, or they disagree about where it starts.
+//
+// Exported so the caller can drive becky's ESCALATION LADDER, which CLAUDE.md
+// states plainly ("validate with Gemma-4 E4B when confidence is low; still
+// unclear -> escalate to Gemma-4 12B") and which nothing in the shorts chain was
+// actually doing. becky-presence and becky-resolve escalate; becky-moment did
+// not, so every moment was decided by E4B alone no matter how close the call.
+//
+// A VETOED moment is deliberately NOT disputed: the model already said the arc
+// does not complete, and that is a refusal, not a close call.
+func Disagrees(c Candidate, j Judgement) bool {
+	if !j.Complete {
+		return false
+	}
+	jn := float64(j.Score) / 99.0
+	return absDiff(jn, c.Score) > disputeThreshold || hookIsLate(c.Text, j.Hook)
+}
