@@ -158,6 +158,53 @@ func (s Signals) In(t0, t1 float64) Window {
 	return w
 }
 
+// AnyIn scores the window on whether ANY face is in frame at each sampled
+// instant, taking the UNION of all tracks rather than the best single one.
+//
+// In() asks a different question and asks it correctly for ranking a candidate
+// window of a SOURCE: is one person consistently present, i.e. is this a
+// talking-head moment. Point that at a RENDERED short and it is the wrong
+// question by construction — a short built from twenty jumpcuts between two
+// people has no single track spanning it, so the best track covers a fraction
+// of the running time no matter how well every shot is framed.
+//
+// MEASURED, on a 29.1s render of Jordan's reference window: In() reported
+// coverage 0.13 from 15 sightings and the review pass called that a 54-point
+// gap against the render's own claim, blaming the render. An independent
+// InsightFace pass over the same file found a face in 83% of frames. In() was
+// right about what it measures and wrong about what was being asked.
+func (s Signals) AnyIn(t0, t1 float64) Window {
+	if !s.OK || len(s.Tracks) == 0 {
+		return Window{Basis: "no face track data for this window"}
+	}
+	if t1 <= t0 || s.SamplePeriod <= 0 {
+		return Window{Basis: "empty window"}
+	}
+	// Sampled instants are shared across tracks, so count each instant once.
+	seen := map[int64]struct{}{}
+	for _, tr := range s.Tracks {
+		for _, d := range tr.Detections {
+			if d.Time < t0 || d.Time > t1 {
+				continue
+			}
+			seen[int64(d.Time/s.SamplePeriod+0.5)] = struct{}{}
+		}
+	}
+	var w Window
+	w.Samples = len(seen)
+	if w.Samples == 0 {
+		w.Basis = "no face detected anywhere in this window"
+		return w
+	}
+	w.Coverage = float64(w.Samples) * s.SamplePeriod / (t1 - t0)
+	if w.Coverage > 1 {
+		w.Coverage = 1
+	}
+	w.Basis = fmt.Sprintf("a face was in frame at %.0f%% of sampled instants (%d), any identity",
+		w.Coverage*100, w.Samples)
+	return w
+}
+
 // extractFrames decodes the whole file at exactly fps into individually
 // numbered JPEGs in ONE ffmpeg call — the same approach cmd/becky-speaking
 // uses for the same reason: per-frame seeks on a real file are slow and not

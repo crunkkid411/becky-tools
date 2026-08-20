@@ -176,7 +176,10 @@ func reviewFace(cfg config.Config, clip string, duration, claimedCoverage, minCo
 	if err != nil {
 		return reviewFaceCheck{OK: true, ClaimedCoverage: claimed, Note: "face detection unavailable: " + err.Error()}
 	}
-	win := sig.In(0, duration)
+	// AnyIn, not In: this is a RENDERED short that cuts between people on
+	// purpose, so "is one identity continuously present" is the wrong question
+	// and fails by construction. See facesig.AnyIn.
+	win := sig.AnyIn(0, duration)
 	gap, gapStart, gapEnd := longestFaceGap(sig, duration)
 
 	c := reviewFaceCheck{

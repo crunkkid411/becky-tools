@@ -101,3 +101,55 @@ func abs(v float64) float64 {
 	}
 	return v
 }
+
+// AnyIn vs In on the shape that actually broke: a rendered short that cuts
+// between two people, so NO single track spans it. In() is right about what it
+// measures (is one identity consistently present) and wrong for this question.
+func TestAnyInCountsTheUnionWhereInCountsTheBestTrack(t *testing.T) {
+	// 10 seconds sampled every 0.25s. Two people, alternating 5s each, so each
+	// track covers exactly half the clip and neither covers more.
+	const period = 0.25
+	var a, b []facetrack.Detection
+	for i := 0; i < 40; i++ {
+		tt := float64(i) * period
+		d := facetrack.Detection{Time: tt}
+		if tt < 5 {
+			a = append(a, d)
+		} else {
+			b = append(b, d)
+		}
+	}
+	sig := Signals{OK: true, SamplePeriod: period, Tracks: []facetrack.Track{
+		{ID: 1, Detections: a}, {ID: 2, Detections: b},
+	}}
+
+	best := sig.In(0, 10)
+	if best.Coverage > 0.6 {
+		t.Fatalf("regression guard: In() should see only the best track (~0.5), got %.2f", best.Coverage)
+	}
+
+	any := sig.AnyIn(0, 10)
+	if any.Coverage < 0.95 {
+		t.Errorf("AnyIn coverage = %.2f, want ~1.0 — a face IS in frame the whole time", any.Coverage)
+	}
+	if any.Samples != 40 {
+		t.Errorf("AnyIn samples = %d, want 40", any.Samples)
+	}
+
+	// Two tracks visible at the SAME instants must not double-count.
+	both := Signals{OK: true, SamplePeriod: period, Tracks: []facetrack.Track{
+		{ID: 1, Detections: a}, {ID: 2, Detections: a},
+	}}
+	if w := both.AnyIn(0, 5); w.Samples != 20 || w.Coverage > 1.0 {
+		t.Errorf("two people in the same frames gave samples=%d coverage=%.2f, want 20 and <=1.0",
+			w.Samples, w.Coverage)
+	}
+
+	// An empty window is not a failure to detect faces.
+	if w := sig.AnyIn(0, 0); w.Samples != 0 || w.Coverage != 0 {
+		t.Errorf("empty window gave %+v", w)
+	}
+	if w := (Signals{}).AnyIn(0, 10); w.Basis == "" {
+		t.Error("a signal with no data must say so")
+	}
+}
