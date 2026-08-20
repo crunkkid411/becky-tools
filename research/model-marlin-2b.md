@@ -41,3 +41,23 @@ not stated in the source
    - License is Apache-2.0 (per hub metadata), so legally permissive if technical fit is proven later.
 
 **Action**: Fetch the README (or the arxiv papers: 2501.00513, 2407.00634, 2512.14698) and benchmark a 4-bit Marlin-2B on a representative 9:16 clip before any pipeline integration decision.
+
+---
+
+## ORCHESTRATOR NOTE (2026-08-19) - the repo is GATED, not broken
+
+The free model could not read the card because the repo returns 401. Re-checked with
+Jordan's own authenticated Hugging Face session and it is not a transient error:
+
+    Access to model NemoStation/Marlin-2B is restricted and you are not in the
+    authorized list. Visit https://huggingface.co/NemoStation/Marlin-2B to ask
+    for access.
+
+So there is nothing to evaluate and no way to evaluate it. Nobody can read the card,
+the config, or the weights until someone with Jordan's account clicks "request access"
+on that page and the author approves.
+
+**This is the one item in this research batch that needs Jordan, and it is one click.**
+Everything technical about it stays unknown until then - including whether a 2B video
+model with native temporal grounding would be a better fit for the 8GB budget than
+Gemma-4 12B, which is the actual reason it is interesting.

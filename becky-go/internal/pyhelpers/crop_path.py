@@ -116,6 +116,35 @@ def smooth_zero_phase(vals, alpha):
     return back
 
 
+def crop_width_for(head_w, shoulder_span, head_frac, shoulder_frac, src_w, min_crop_frac):
+    """Crop WIDTH from the best available scale reference, or None.
+
+    Pure on purpose: this is the one number that decides how tight the shot is,
+    and the selftest asserts it without needing a video, a model or a GPU.
+
+    The HEAD is the primary reference (see the long comment at the detection
+    site: shoulders collapse in x the moment the subject leans or turns). The
+    shoulder span is the fallback for a frame with no facial landmark at all.
+
+    The head path does NOT consult shoulder_frac, and it never did - the old
+    expression was `head_w * 3.4 * shoulder_frac / 0.46`, and since crop width
+    was `shoulder_span / shoulder_frac`, the shoulder_frac cancelled clean out:
+    0.30, 0.46, 0.58 and 0.70 all returned exactly 7.39 * head_w. A head is
+    nearly always found, so --shoulder-frac did nothing on real footage. An
+    earlier attempt to loosen framing with it moved the result one percentage
+    point and was written off as "it is the footage".
+    """
+    if head_w and head_w > 1:
+        w = head_w / max(head_frac, 0.02)
+    elif shoulder_span and shoulder_span > 1:
+        w = shoulder_span / max(shoulder_frac, 0.05)
+    else:
+        return None
+    # Never tighter than min_crop_frac of the frame: past that it stops being a
+    # shot of a person and becomes a texture close-up.
+    return max(w, src_w * min_crop_frac)
+
+
 def segment_bounds(times, cut_times):
     """[(lo,hi), ...] index ranges into times (and cxs/cys/widths, which are
     parallel arrays) that partition the window at each cut.
@@ -203,7 +232,26 @@ def main():
                          "to look at the subject less often than the footage shows him)")
     # Framing craft. Defaults chosen to look like a shoulders-up interview frame.
     ap.add_argument("--shoulder-frac", type=float, default=0.46,
-                    help="fraction of crop WIDTH the shoulders should span")
+                    help="fraction of crop WIDTH the shoulders should span. FALLBACK ONLY: "
+                         "used when no facial landmark is visible, so on talking-head "
+                         "footage it almost never applies (see --head-frac)")
+    # 0.212, MEASURED. The primary scale control, because the head is what the
+    # crop actually tracks (a leaning subject's shoulders collapse in x; the head
+    # does not).
+    #
+    # The number is Jordan's own, read off his vertical short with the SAME
+    # head_w definition this file uses (ear-to-ear, else eye-to-eye * 2.2):
+    # median 0.212 of frame width, p25 0.145, p75 0.290 over 55 frames.
+    #
+    # What it replaced asked for 0.135 (crop_w = head_w * 3.4 / 0.46 = 7.39 *
+    # head_w) - a 36% wider shot than he frames. On 1920x1080 that request always
+    # exceeded the 607px full-height width and got clamped there, so every crop
+    # came back 606x1080 at y=0: a pure horizontal pan, no zoom, and - because
+    # crop height was pinned to the source height - no vertical freedom for
+    # --eye-line either. All 128 rects over a 32-second window, identical.
+    ap.add_argument("--head-frac", type=float, default=0.212,
+                    help="fraction of crop WIDTH the head should span (0.212 measured off "
+                         "Jordan's own edit); LOWER is a wider shot")
     # 0.27, not 0.38, MEASURED off Jordan's own vertical edit with InsightFace
     # over all 915 frames of it (research/jordan-edit-reverse-engineered.md):
     # his face centre sits at 29.9% of frame height (p25 26.9, p75 35.5) and 90%
@@ -236,8 +284,34 @@ def main():
                          "tracked pass because a frame it already failed is worth "
                          "a harder look")
     ap.add_argument("--min-visibility", type=float, default=0.5)
-    ap.add_argument("--min-crop-frac", type=float, default=0.34,
-                    help="crop width may never fall below this fraction of the source width")
+    # 0.23, not 0.34, and this one number was silently disabling ZOOM ENTIRELY on
+    # every 16:9 source. The arithmetic, on 1920x1080:
+    #
+    #   a full-height 9:16 crop is  1080 * 9/16 = 607.5 px wide
+    #   the 0.34 floor raises any narrower crop to 1920 * 0.34 = 652.8 px
+    #   652.8 px at 9:16 is 1160.5 px tall, taller than the 1080 source,
+    #   so the next clamp puts it straight back to 607.5 x 1080.
+    #
+    # The floor sat ABOVE the full-height width, so every punch-in the shoulder
+    # rule asked for was rounded up and then clamped back out of existence.
+    # Measured over a whole window of the BLINDFOLD master: all 128 crop rects
+    # came back w=606 h=1080 y=0 - a pure horizontal pan, never a zoom, and with
+    # h pinned to the source height there was no vertical freedom either, so
+    # --eye-line could not do anything at all.
+    #
+    # Jordan does punch in. Recovered from his own vertical by SIFT+RANSAC
+    # against the master and confirmed by rendering the recovered rect back out:
+    # at his t=3.0s the visible master region is 446x792 - 0.232 of the source
+    # width - and it matches his frame. becky's full-height crop of the same
+    # instant is visibly wider, with the subject smaller and lower.
+    #
+    # So the floor is set just under his tightest measured shot. It still stops a
+    # true texture close-up, and the composition guard below (the face centre must
+    # stay in the middle band) is untouched and does the real work.
+    ap.add_argument("--min-crop-frac", type=float, default=0.23,
+                    help="crop width may never fall below this fraction of the source width "
+                         "(0.23 = Jordan's tightest measured punch-in; above 0.316 no zoom "
+                         "is possible at all on 16:9 source)")
     # Finding 2, research/jordan-edit-reverse-engineered.md: the source can
     # already carry hard cuts inside [start,end] (an already-edited window,
     # not one continuous take). becky-short's shot detector (internal/shotcut)
@@ -413,10 +487,7 @@ def main():
                     head_w = None
                     cx = None
 
-                if head_w and head_w > 1:
-                    # A head-and-shoulders frame is roughly 3.4 head widths across.
-                    shoulder_span = head_w * 3.4 * args.shoulder_frac / 0.46
-                elif ls and rs and abs(ls[0] - rs[0]) > 1:
+                if ls and rs and abs(ls[0] - rs[0]) > 1:
                     shoulder_span = abs(ls[0] - rs[0])
                 else:
                     shoulder_span = None
@@ -429,11 +500,9 @@ def main():
                 else:
                     face_l = face_r = face_t = None
 
-                if cx is not None and shoulder_span and shoulder_span > 1:
-                    crop_w = shoulder_span / max(args.shoulder_frac, 0.05)
-                    # Never tighter than a third of the frame: past that it stops
-                    # being a shot of a person and becomes a texture close-up.
-                    crop_w = max(crop_w, src_w * args.min_crop_frac)
+                crop_w = crop_width_for(head_w, shoulder_span, args.head_frac,
+                                        args.shoulder_frac, src_w, args.min_crop_frac)
+                if cx is not None and crop_w:
                     crop_h = crop_w / aspect
                     # Vertical: put the eyes on the eye-line. Without eyes, use the
                     # nose, and without that sit the shoulders low in frame.
@@ -630,6 +699,39 @@ def _selftest():
     # Three shots: two cuts must produce three independent segments, not two.
     three = segment_bounds(list(range(30)), [10, 20])
     check("two cuts split into three segments", three == [(0, 10), (10, 20), (20, 30)], str(three))
+
+    # ---- framing scale: the two bugs that between them disabled ZOOM entirely ----
+    SRC_W, SRC_H, ASPECT = 1920, 1080, 9 / 16
+    FULL_H_W = SRC_H * ASPECT          # 607.5 - the widest 9:16 crop a 16:9 source allows
+
+    # Bug 1: --head-frac was not connected. It has to move the shot.
+    tight = crop_width_for(180, None, 0.29, 0.46, SRC_W, 0.23)
+    wide = crop_width_for(180, None, 0.145, 0.46, SRC_W, 0.23)
+    check("a tighter --head-frac gives a narrower crop",
+          tight < wide - 100, f"head_frac 0.29 -> {tight:.0f}px, 0.145 -> {wide:.0f}px")
+    check("the head path ignores --shoulder-frac (it is the fallback reference, by design)",
+          crop_width_for(180, None, 0.212, 0.30, SRC_W, 0.23)
+          == crop_width_for(180, None, 0.212, 0.70, SRC_W, 0.23), "")
+    check("the shoulder fallback still responds to --shoulder-frac",
+          crop_width_for(None, 400, 0.212, 0.70, SRC_W, 0.23)
+          < crop_width_for(None, 400, 0.212, 0.30, SRC_W, 0.23), "")
+
+    # Bug 2, and it is pure arithmetic: a --min-crop-frac floor ABOVE the
+    # full-height width makes a punch-in impossible on ANY 16:9 source. The floor
+    # raises the crop past what fits, the aspect clamp puts it straight back to
+    # full height, and the result is a pure horizontal pan forever - which also
+    # pins crop height to the source height, leaving --eye-line nothing to move.
+    check("REGRESSION GUARD: the old 0.34 floor really did make a punch-in impossible",
+          crop_width_for(180, None, 0.212, 0.46, SRC_W, 0.34) > FULL_H_W,
+          f"floor 0.34 -> {crop_width_for(180, None, 0.212, 0.46, SRC_W, 0.34):.0f}px "
+          f"vs full-height {FULL_H_W:.0f}px")
+    check("the shipped --min-crop-frac leaves room to punch in on 16:9 source",
+          SRC_W * 0.23 < FULL_H_W, f"{SRC_W * 0.23:.0f}px vs {FULL_H_W:.0f}px")
+    check("at the shipped defaults a close subject DOES produce a punch-in",
+          crop_width_for(120, None, 0.212, 0.46, SRC_W, 0.23) < FULL_H_W,
+          f"head_w=120 -> {crop_width_for(120, None, 0.212, 0.46, SRC_W, 0.23):.0f}px")
+    check("no scale reference at all returns None rather than guessing",
+          crop_width_for(None, None, 0.212, 0.46, SRC_W, 0.23) is None, "")
 
     print(f"\n{'ALL PASS' if ok else 'SOME FAILED'}")
     return 0 if ok else 1

@@ -229,3 +229,46 @@ simply never been pointed at becky's own output.
 ask the VL three questions it can answer from frames alone (is the subject framed, does the caption
 match what is being said, does the clip end on a completed thought) → fail the clip and say which
 question failed. That is a `becky-short --review` pass, not a new tool.
+
+---
+
+# Round 2 — the four NEW sources (`shorts-user-feedback.md` UPDATE section)
+
+Read 2026-08-19 by free models over the real text (`scripts/research-papers.py`), one note each.
+Verdicts below are the orchestrator's, not the reading model's.
+
+| Source | Verdict | Why |
+|---|---|---|
+| **EditDuet** (arXiv 2509.10761) | **SKIP the system, STEAL one idea** | 8×H100 inference, GPT-4o as judge, Llama-70B for summarisation, and **CC BY-NC-ND 4.0** — non-commercial, no derivatives. It cannot be used, let alone forked. |
+| **TimeLens** (arXiv 2512.14698) | **SKIP the task, ADOPT one encoding** | It is a *training* paper for 7B/8B video-grounding models on 8×H20. becky does no fine-tuning and has 8GB. |
+| **Aero Realtime 4B** | **NO** | Realtime *streaming* AV assistant: 80ms audio slots, learned silence token, WebSocket, vLLM-Omni. 4B in bf16 is ~8GB of weights alone, before a 32-layer audio encoder and a 24-layer ViT. Wrong problem, wrong deployment, does not fit the card. It is a Whoretana-shaped model, not a becky-shaped one. |
+| **Marlin-2B** | **BLOCKED — needs Jordan, one click** | The repo is GATED. Verified against Jordan's own authenticated HF session, not just the free model's 401: *"Access to model NemoStation/Marlin-2B is restricted and you are not in the authorized list."* Card, config and weights are all unreadable until access is granted. |
+
+## The one thing worth building out of all four
+
+**Prefix every frame with its raw timestamp when talking to the VL.** TimeLens tested four ways of
+telling a video model *when* a frame is (`§3.3`, Table 2): rotary position embeddings (MRoPE),
+burning the time into the pixels as an overlay, one timestamp list up front, and **an interleaved
+raw-text prefix** — literally the string `10.2s` tokenised immediately before that frame's visual
+tokens. The interleaved raw-text prefix won.
+
+That matters here because becky already sends Gemma-4 **bursts of consecutive frames** and asks
+questions whose answers are temporal — *when does the snake start moving*, *which frame is 1–3
+frames before he realises*. Today those frames arrive as an undifferentiated stack with the timing
+only implied by order. Prefixing each one costs a handful of tokens, needs no retraining, and is the
+difference between "the snake moves" and "the snake moves at 47.3s".
+
+**Cost:** a string per frame. **Risk:** none — it is additive text.
+
+## What is deliberately NOT taken from EditDuet
+
+Its Editor↔Critic loop is genuinely the same instinct as becky's `--review` pass, and it is the only
+one of the 25 projects read so far that iterates at all. But becky's version is already **stronger
+for this job**: EditDuet's Critic reads *the timeline* — a plan, a list of clips — while
+`becky-short --review` re-measures the **rendered file**. Every bug the review pass has caught
+(coverage that was a lie, 56 phantom cuts, captions showing removed words, motion pointing at the
+edit) was invisible in the plan and only visible in the output. Reading your own plan back to
+yourself agrees with you. Reading pixels does not.
+
+So: no Editor/Critic agents, no in-context demo mining, no TW-FINCH re-segmentation. The loop
+already exists and it looks at the right thing.
