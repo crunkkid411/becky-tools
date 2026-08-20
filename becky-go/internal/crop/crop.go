@@ -146,6 +146,34 @@ func StaticCenter(srcW, srcH int, aspect float64) Rect {
 	return Rect{X: ((srcW - iw) / 2) &^ 1, Y: ((srcH - ih) / 2) &^ 1, W: iw, H: ih}
 }
 
+// StaticAt is StaticCenter aimed somewhere else: the same largest rect of the
+// target aspect, but horizontally centred on xFrac (0..1 across the source
+// width) instead of on the middle, clamped so it stays inside the frame.
+//
+// It exists for the shot with nobody in it. Dead centre on a 16:9 source is the
+// "split the difference" framing Jordan's own edit avoids, and when the subject
+// of the shot is an object rather than a person — his rubber snake — centre is
+// simply the wrong place to point. internal/focal supplies xFrac, and only when
+// it can defend it.
+func StaticAt(srcW, srcH int, aspect, xFrac float64) Rect {
+	r := StaticCenter(srcW, srcH, aspect)
+	if xFrac < 0 {
+		xFrac = 0
+	}
+	if xFrac > 1 {
+		xFrac = 1
+	}
+	x := int(xFrac*float64(srcW)) - r.W/2
+	if x < 0 {
+		x = 0
+	}
+	if x+r.W > srcW {
+		x = srcW - r.W
+	}
+	r.X = x &^ 1
+	return r
+}
+
 // ParseAspect turns "9:16" into 0.5625 (width/height).
 func ParseAspect(s string) (float64, error) {
 	if s == "" {

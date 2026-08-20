@@ -425,7 +425,7 @@ func parseCutDecisions(stdout []byte) (keep, remove []keepSpan, err error) {
 // through rather than assumed, so the smoother never blends across a cut a
 // span happens to still contain (Finding 2, research/jordan-edit-reverse-engineered.md).
 func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float64, res shortOut, asp float64, outW, outH int,
-	sampleFPS, minCov, maxGap float64, forceCenter, withCaptions bool, capStyle string, asig *audioSigCache, verbose bool) (shortOut, error) {
+	sampleFPS, minCov, maxGap float64, forceCenter, focalPoint, withCaptions bool, capStyle string, asig *audioSigCache, verbose bool) (shortOut, error) {
 
 	info, err := mediainfo.Probe(cfg.FFprobe, j.Src)
 	if err != nil || info.FPS <= 0 {
@@ -499,6 +499,30 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 			// caught it on its first real run.
 			cr.Sampled, cr.Found = untrackedSamples(sp.Out-sp.In, fps), 0
 			cr.Coverage, cr.Followed = 0, false
+
+			// RULE 4: a shot with nobody in it is not an empty shot. Before
+			// settling for dead centre — the "split the difference" framing his
+			// own edit avoids — ask where the motion actually is. internal/focal
+			// refuses unless the moving thing is a REGION rather than the whole
+			// frame and it STAYS somewhere, so it either does better than centre
+			// or says nothing.
+			//
+			// OFF unless --focal-point. Measured on this exact footage it was two
+			// spans better and two worse — see focalaim.go for the four cases and
+			// why a coin toss with a confident note attached is not an improvement.
+			//
+			// Coverage is deliberately left at 0 above and not touched here: an
+			// object is not a tracked subject, and inflating the number is the
+			// exact lie `--review` caught last time.
+			if focalPoint && !forceCenter {
+				if w, h, perr := probeSize(j.Src); perr == nil {
+					if rects, note := aimStaticCrop(cfg, j.Src, sp.In, sp.Out, asp, w, h, fps); rects != nil {
+						cr.Rects, cr.Note = rects, note
+					} else if note != "" {
+						cr.Note = note
+					}
+				}
+			}
 		}
 		totalSampled += cr.Sampled
 		totalFound += cr.Found

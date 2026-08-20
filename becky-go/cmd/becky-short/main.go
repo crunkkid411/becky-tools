@@ -102,8 +102,14 @@ func main() {
 		maxGap    = flag.Float64("max-gap", 2.0, "refuse if the subject is undetected for this many seconds in a row; "+
 			"a glance away is normal and the last good framing covers it, but a real absence "+
 			"means there is no honest crop of that window")
-		minCov   = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
-		center   = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
+		minCov = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
+		center = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
+		// OFF by default and the reason is measured, not cautious - see
+		// focalaim.go: on Jordan's own footage it improved two spans and made two
+		// worse, which is a coin toss with a confident note attached.
+		focalPoint = flag.Bool("focal-point", false, "on a span with no trackable subject, aim the "+
+			"static crop at where the motion is instead of dead centre (EXPERIMENTAL: measured two "+
+			"spans better and two worse on real footage; motion alone is one signal, not two)")
 		captions = flag.Bool("captions", true, "burn word-timed captions into the short (--captions=false to skip)")
 		capStyle = flag.String("caption-style", "cli-cut", "caption look: \"cli-cut\" (default, shipped look, "+
 			"unchanged) or \"jordan\" (stacked lines + one audio-driven coloured word, research/"+
@@ -177,7 +183,7 @@ func main() {
 	cutCache := newCutCache()
 	asigCache := newAudioSigCache()
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *captions, *capStyle, *jumpcuts, *tighten, cutCache, asigCache, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *focalPoint, *captions, *capStyle, *jumpcuts, *tighten, cutCache, asigCache, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -202,7 +208,7 @@ type job struct {
 }
 
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
-	forceCenter, withCaptions bool, capStyle string, useJumpcuts bool, tighten float64,
+	forceCenter, focalPoint, withCaptions bool, capStyle string, useJumpcuts bool, tighten float64,
 	cache *cutCache, asig *audioSigCache, verbose bool) (shortOut, error) {
 
 	j = absoluteJob(j)
@@ -238,7 +244,7 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 					plan.PreservedCuts, plan.ExistingCuts, plan.RemovedSeconds))
 			}
 			return renderJumpcutShort(cfg, j, plan.Spans, plan.Cuts, res, asp, outW, outH, sampleFPS, minCov, maxGap,
-				forceCenter, withCaptions, capStyle, asig, verbose)
+				forceCenter, focalPoint, withCaptions, capStyle, asig, verbose)
 		}
 	}
 
@@ -392,15 +398,23 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 		return cropResult{Note: "subject framing unavailable (" + err.Error() + "); STATIC CENTRE crop"}, nil
 	case p.LongestGap > maxGap:
 		// Refuse on a CLUSTERED absence even when the average looks fine.
-		return cropResult{}, fmt.Errorf("the subject is off screen for %.1fs in a row (limit %.1fs) — "+
-			"not rendering a short that would hold a stale crop through it; "+
-			"pass --max-gap to allow it or --center for a static crop",
-			p.LongestGap, maxGap)
+		//
+		// The MEASUREMENT rides along with the refusal (Sampled/Found/Coverage)
+		// even though Followed stays false. The caller needs it: "no subject at
+		// all" and "a subject found in 40% of frames" both land here, and they
+		// deserve different fallbacks. See the focal-aim gate in jumpcuts.go.
+		return cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()},
+			fmt.Errorf("the subject is off screen for %.1fs in a row (limit %.1fs) — "+
+				"not rendering a short that would hold a stale crop through it; "+
+				"pass --max-gap to allow it or --center for a static crop",
+				p.LongestGap, maxGap)
 	case p.Coverage() < minCov:
 		// Refuse rather than ship a followed-looking file that mostly guessed.
-		return cropResult{}, fmt.Errorf("subject found in only %.0f%% of samples (need %.0f%%) — "+
-			"not rendering a short that would frame the wrong thing; pass --center to force a static crop",
-			p.Coverage()*100, minCov*100)
+		// The measurement rides along — see the case above.
+		return cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()},
+			fmt.Errorf("subject found in only %.0f%% of samples (need %.0f%%) — "+
+				"not rendering a short that would frame the wrong thing; pass --center to force a static crop",
+				p.Coverage()*100, minCov*100)
 	default:
 		return cropResult{Rects: p.Rects, Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage(), Followed: true}, nil
 	}

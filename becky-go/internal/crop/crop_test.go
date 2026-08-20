@@ -55,3 +55,41 @@ func TestRenderArgs_KeepsTheVideoChainAlongsideTheAudioFilter(t *testing.T) {
 		t.Errorf("-vf = %q, want the crop chain %q", gotVF, chain)
 	}
 }
+
+// StaticAt is what points a face-less shot at its subject instead of at the
+// middle of nothing. The values matter: an aim of 0.75 on a 1920x1080 source
+// must actually put the crop in the right-hand side of the frame.
+func TestStaticAtAimsTheCropAndStaysInFrame(t *testing.T) {
+	const w, h = 1920, 1080
+	asp := 9.0 / 16.0
+	centre := StaticCenter(w, h, asp)
+
+	right := StaticAt(w, h, asp, 0.75)
+	if right.W != centre.W || right.H != centre.H {
+		t.Errorf("StaticAt changed the crop SIZE: %+v vs centre %+v", right, centre)
+	}
+	if right.X <= centre.X {
+		t.Errorf("an aim of 0.75 did not move the crop right: X=%d, centre X=%d", right.X, centre.X)
+	}
+	// 0.75 * 1920 = 1440 is the wanted centre; the rect is 606 wide.
+	if got := right.X + right.W/2; got < 1400 || got > 1480 {
+		t.Errorf("crop centre landed at %d, want ~1440", got)
+	}
+
+	// An aim at the very edge must clamp INSIDE the frame, not hang off it.
+	for _, xf := range []float64{-1, 0, 0.02, 0.98, 1, 2} {
+		r := StaticAt(w, h, asp, xf)
+		if r.X < 0 || r.X+r.W > w {
+			t.Errorf("aim %.2f produced an out-of-frame rect %+v (source width %d)", xf, r, w)
+		}
+		if r.X%2 != 0 {
+			t.Errorf("aim %.2f produced an odd X (%d); encoders want even", xf, r.X)
+		}
+	}
+
+	// Dead centre must reproduce StaticCenter exactly, so the fallback path is
+	// unchanged when focal has nothing better to say.
+	if mid := StaticAt(w, h, asp, 0.5); mid != centre {
+		t.Errorf("StaticAt(0.5) = %+v, want the same rect as StaticCenter %+v", mid, centre)
+	}
+}
