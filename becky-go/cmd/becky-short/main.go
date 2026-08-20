@@ -115,9 +115,16 @@ func main() {
 			"static crop at where the motion is instead of dead centre (EXPERIMENTAL: measured two "+
 			"spans better and two worse on real footage; motion alone is one signal, not two)")
 		captions = flag.Bool("captions", true, "burn word-timed captions into the short (--captions=false to skip)")
-		capStyle = flag.String("caption-style", "cli-cut", "caption look: \"cli-cut\" (default, shipped look, "+
-			"unchanged) or \"jordan\" (stacked lines + one audio-driven coloured word, research/"+
-			"jordan-edit-reverse-engineered.md — his own look, NOT approved, render it and look before trusting it)")
+		// DEFAULT "jordan" since 2026-08-20, because it is no longer a guess at
+		// his look - it is MEASURED off his own rendered short and it matches:
+		// cap height 58px against his 57, text bottom 510px up against his 513,
+		// Montserrat ExtraBold chosen by scoring glyph overlap against his actual
+		// pixels (0.803, where the ProximaNova-Semibold this used to ship scored
+		// 0.609). becky-short makes SHORTS; his shorts look like this.
+		// "cli-cut" is still here and unchanged for the caption tool's own look.
+		capStyle = flag.String("caption-style", "jordan", "caption look: \"jordan\" (default) is his own, "+
+			"measured off his rendered short - heavy caps, thick outline, one cyan word per block "+
+			"(research/jordan-edit-reverse-engineered.md). \"cli-cut\" is the plain shipped look.")
 		jumpcuts = flag.Bool("jumpcuts", true, "cut dead air the way becky-cut would (jumpcuts), instead of "+
 			"one unbroken continuous take; --jumpcuts=false renders the old continuous window")
 		tighten = flag.Float64("tighten", defaultTighten, "seconds to trim (total) at each EXISTING cut this "+

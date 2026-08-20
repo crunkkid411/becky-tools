@@ -67,8 +67,8 @@ echo [2/3] Matching them to the footage...
 if errorlevel 1 goto :failed
 
 echo.
-echo [3/3] Rendering vertical shorts ^(framed on you, captions burned in, and
-echo       your own cuts kept where the footage already has them^)...
+echo [3/3] Rendering vertical shorts ^(framed on you, YOUR caption look burned
+echo       in, and your own cuts kept where the footage already has them^)...
 "!BECKY!\becky-short.exe" --reel "%TEMP%\becky_moments.reel.json" --outdir "!FOLDER!\shorts"
 if errorlevel 1 goto :failed
 
