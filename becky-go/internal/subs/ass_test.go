@@ -32,13 +32,43 @@ func TestBuildWithWordsMatchesBuild(t *testing.T) {
 	}
 }
 
-func TestJordanLinesStacksAndColoursOneWord(t *testing.T) {
+func TestJordanLinesColoursOneWordAndLeavesWrappingToLibass(t *testing.T) {
 	words := []Word{w("oh", 0, 0.1), w("you", 0.1, 0.3), w("guys", 0.3, 0.6), w("really", 0.7, 1.0)}
 	got := jordanLines(words, 2, "&HFFFF00&") // colour "guys" (index 2)
 
-	want := `OH YOU {\c&HFFFF00&}GUYS{\c&HFFFFFF&}\NREALLY`
+	// No hard break any more: wrapping is libass's job (WrapStyle 3, inside the
+	// style's MarginL/MarginR column) because libass has the font metrics this
+	// package does not. The old 3-words-per-line rule put THREE lines on screen.
+	want := `OH YOU {\c&HFFFF00&}GUYS{\c&HFFFFFF&} REALLY`
 	if got != want {
 		t.Errorf("jordanLines =\n%q\nwant\n%q", got, want)
+	}
+	if strings.Contains(got, `\N`) {
+		t.Errorf("jordanLines still hard-wraps, libass should be doing it: %q", got)
+	}
+}
+
+// The measured numbers off Jordan's own render. A regression here is a
+// caption that no longer looks like his, which is invisible in a unit test
+// unless the numbers themselves are asserted.
+func TestDefaultJordanStyleMatchesTheMeasuredReference(t *testing.T) {
+	st := DefaultJordanStyle(1920, 1080)
+	if st.FontName != "Montserrat ExtraBold" {
+		t.Errorf("FontName = %q, want the font that scored 0.803 glyph IoU against his render", st.FontName)
+	}
+	// 114, not 80: libass sizes by ascent+descent, and for this face
+	// cap = Fontsize/2 (measured). 80 rendered a 40px cap against his 57.
+	if st.FontSize != 114 {
+		t.Errorf("FontSize = %d, want 114 (renders the measured 57px cap at 1920)", st.FontSize)
+	}
+	if st.Outline != 10 {
+		t.Errorf("Outline = %d, want 10 (measured ~11px of solid black around his glyphs)", st.Outline)
+	}
+	if st.MarginV != 487 {
+		t.Errorf("MarginV = %d, want 487 (puts the text bottom 512px up, his number)", st.MarginV)
+	}
+	if st.MarginH != 183 {
+		t.Errorf("MarginH = %d, want 183 so the text column is 66%% of 1080", st.MarginH)
 	}
 }
 
@@ -63,7 +93,7 @@ func TestWriteASSHasStyleAndDialogue(t *testing.T) {
 		Words: []Word{w("hi", 0.0, 0.3), w("there", 0.4, 0.8)}}}, DefaultOptions())
 
 	var buf strings.Builder
-	if err := WriteASS(&buf, cues, []int{1}, DefaultJordanStyle(1920), 1080, 1920); err != nil {
+	if err := WriteASS(&buf, cues, []int{1}, DefaultJordanStyle(1920, 1080), 1080, 1920); err != nil {
 		t.Fatalf("WriteASS error: %v", err)
 	}
 	out := buf.String()

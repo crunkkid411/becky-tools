@@ -32,13 +32,17 @@ import (
 )
 
 // jordanMaxChars is Options.MaxChars for the jordan style. cli-cut's 22
-// caps a BLOCK at roughly one line's worth of text; a jordan block is 2-3
-// STACKED lines, so it needs a bigger character budget to hold enough words
-// to stack — the SAME chunker (subs.ChunkWords, called via
-// subs.BuildWithWords) just reconfigured, not a second one. Picked as
-// roughly jordanWordsPerLine(3) * 3 lines * ~5 chars/word; a taste constant,
-// adjustable like the rest of this style.
-const jordanMaxChars = 46
+// caps a BLOCK at roughly one line's worth of text; a jordan block is 1-2
+// STACKED lines, so it needs a bigger budget — the SAME chunker
+// (subs.ChunkWords, called via subs.BuildWithWords) just reconfigured, not a
+// second one.
+//
+// 30, not the 46 this shipped with, and it is MEASURED off his own render: his
+// longest line is "ME FINISH THAT" at 715px = 66% of the frame width, about 15
+// characters, and he never stacks more than two lines. A 46-character budget is
+// three lines of his — which is exactly the three-line block that turned up on
+// his own footage.
+const jordanMaxChars = 30
 
 // audioSigCache memoises audiosig.Run per source path. audiosig always
 // analyses the WHOLE file (same shape as cutCache's becky-cut memoisation in
@@ -144,7 +148,7 @@ func captionASSJumpcut(cfg config.Config, video string, winIn, winOut, fps float
 // writeJordanFiles is the file-writing tail shared by captionASS and
 // captionASSJumpcut: the .ass to burn plus the plain .srt sidecar for review.
 func writeJordanFiles(cues []subs.CueWords, emphasis []int, outW, outH int, dir string) (assPath, srtPath string, n int, err error) {
-	st := subs.DefaultJordanStyle(outH)
+	st := subs.DefaultJordanStyle(outH, outW)
 
 	assPath = filepath.Join(dir, "captions.ass")
 	af, err := os.Create(assPath)
