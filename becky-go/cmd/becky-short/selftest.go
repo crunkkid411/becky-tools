@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"strings"
 
-	"becky-go/internal/audiosig"
 	"becky-go/internal/crop"
 	"becky-go/internal/facesig"
 	"becky-go/internal/facetrack"
@@ -182,7 +181,7 @@ func runSelftest() int {
 	//     Finding 1+2): an already-edited window's existing cuts become span
 	//     boundaries PRESERVED AS-IS, tightened by a small amount at each one —
 	//     never re-cut with a raw-footage silence threshold.
-	shotPlan := planShotSpans([]float64{4, 7}, nil, job{Src: "src.mp4", In: 0, Out: 10}, 0.2)
+	shotPlan := planShotSpans([]float64{4, 7}, nil, job{Src: "src.mp4", In: 0, Out: 10}, 0.2, nil)
 	check("existing cuts are preserved as span boundaries, not re-invented",
 		len(shotPlan.Spans) == 3 && abs(shotPlan.Spans[0].Out-3.9) < 1e-9 && abs(shotPlan.Spans[1].In-4.1) < 1e-9,
 		fmt.Sprintf("%+v", shotPlan.Spans))
@@ -292,44 +291,41 @@ func runSelftest() int {
 	check("the jordan style's filter burns the .ass with no force_style",
 		strings.HasPrefix(assFilter, "subtitles=") && !strings.Contains(assFilter, "force_style"), assFilter)
 
-	// 12c. jordanEmphasis colours the word nearest the strongest audio event
-	//      inside its block, converting a SOURCE-time event onto the cue's
-	//      OUTPUT-timeline words via segmentAt.
-	jSegs := []subs.Segment{{Source: "clip", Start: 10, End: 13}}
+	// 12c. THE HIGHLIGHT IS PER WORD, not one audio-chosen word per block.
+	//      Jordan, 2026-08-20: "it highlights or animates each word as it is
+	//      spoken ... what you provided animates nothing, but chooses random
+	//      words to highlight". So a three-word block must produce THREE
+	//      Dialogue events, each lighting the word being said at that moment.
 	jCues := []subs.CueWords{{
-		Cue: subs.Cue{Start: 0, End: 3},
+		Cue: subs.Cue{Start: 0, End: 1.5},
 		Words: []subs.Word{{Word: "oh", Start: 0.0, End: 0.3}, {Word: "you", Start: 0.4, End: 0.7},
 			{Word: "guys", Start: 0.8, End: 1.2}},
 	}}
-	// Spike at source time 10.9s -> output time 0.9s, inside "guys" [0.8,1.2].
-	asig := audiosig.Signals{OK: true, Spikes: []audiosig.Event{{T: 10.9, RiseDB: 8}}}
-	emph := jordanEmphasis(jCues, jSegs, asig)
-	check("jordanEmphasis colours the word the audio spike actually lands on",
-		len(emph) == 1 && emph[0] == 2, fmt.Sprintf("%+v", emph))
-
-	// 12d. No audio event inside the block -> no coloured word. Part B is
-	//      explicit that this is a correct outcome, not a gap to paper over.
-	quiet := audiosig.Signals{OK: true, Spikes: []audiosig.Event{{T: 999, RiseDB: 8}}}
-	emphNone := jordanEmphasis(jCues, jSegs, quiet)
-	check("no audio event in the block leaves it uncoloured (-1)",
-		len(emphNone) == 1 && emphNone[0] == -1, fmt.Sprintf("%+v", emphNone))
-
-	// 12e. A loudness spike outranks a pitch rise in the same block — the
-	//      documented tie-break (two different units, no common scale).
-	both := audiosig.Signals{OK: true,
-		Spikes:     []audiosig.Event{{T: 10.9, RiseDB: 8}},  // -> "guys"
-		PitchRises: []audiosig.Event{{T: 10.1, Ratio: 1.4}}, // -> "you", would win alone
+	var assBuf strings.Builder
+	assErr := subs.WriteASS(&assBuf, jCues, subs.DefaultJordanStyle(1920, 1080), 1080, 1920)
+	assLines := 0
+	for _, ln := range strings.Split(assBuf.String(), "\n") {
+		if strings.HasPrefix(ln, "Dialogue:") {
+			assLines++
+		}
 	}
-	emphBoth := jordanEmphasis(jCues, jSegs, both)
-	check("a loudness spike outranks a pitch rise in the same block",
-		len(emphBoth) == 1 && emphBoth[0] == 2, fmt.Sprintf("%+v", emphBoth))
+	check("a 3-word block emits one highlight event per word",
+		assErr == nil && assLines == 3, fmt.Sprintf("err=%v events=%d", assErr, assLines))
 
-	// 12f. Degrade honestly when the audio signal itself is unavailable — no
-	//      guessed emphasis, never a crash.
-	unavailable := audiosig.Signals{OK: false}
-	emphDegraded := jordanEmphasis(jCues, jSegs, unavailable)
-	check("an unavailable audio signal degrades to no emphasis anywhere",
-		len(emphDegraded) == 1 && emphDegraded[0] == -1, fmt.Sprintf("%+v", emphDegraded))
+	// 12d. The highlight follows the VOICE: word 2 lights at its own start.
+	check("the second word lights at its own start time (0:00:00.40)",
+		strings.Contains(assBuf.String(), "Dialogue: 0,0:00:00.40,"), assBuf.String())
+
+	// 12e. NEVER THREE LINES. Measured off his own render, the longest line is
+	//      14 characters; libass's balanced wrapping put three lines on screen
+	//      ("THIS MAKES / ME WANT / TO THROW"), so the break is placed here and
+	//      WrapStyle 2 forbids libass from re-breaking it.
+	wideBlock := []subs.Word{{Word: "This"}, {Word: "makes"}, {Word: "me"}, {Word: "want"}, {Word: "to"}, {Word: "throw"}}
+	line := subs.JordanLinesForTest(wideBlock)
+	check("a long block breaks into at most TWO lines, never three",
+		strings.Count(line, `\N`) == 1, line)
+	check("the file forbids libass from re-wrapping (WrapStyle 2)",
+		strings.Contains(assBuf.String(), "WrapStyle: 2"), "")
 
 	// 12g. segmentAt maps an output-timeline moment back to the right SOURCE
 	//      span across a multi-span jumpcut short, not just a single window.

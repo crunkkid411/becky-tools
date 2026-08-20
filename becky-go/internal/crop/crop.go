@@ -48,7 +48,14 @@ type Path struct {
 	// misses cluster, and a clip that is 92% covered can still contain a dead
 	// patch that renders a stale crop for seconds at a time.
 	LongestGap float64 `json:"longest_gap_s"`
-	Rects      []Rect  `json:"path"`
+	// TrailingGap is the stretch at the VERY END of the window, in seconds, with
+	// no detection. Separate from LongestGap because it is the only one that
+	// decides how a short ENDS: a span that opens on the subject and closes on a
+	// blocked lens passes both the coverage and longest-gap gates and still
+	// leaves the viewer looking at nothing. cmd/becky-short/deadtail.go trims the
+	// final span by exactly this.
+	TrailingGap float64 `json:"trailing_gap_s"`
+	Rects       []Rect  `json:"path"`
 }
 
 // Options configure one crop-path run.

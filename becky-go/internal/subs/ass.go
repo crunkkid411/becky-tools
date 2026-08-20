@@ -130,27 +130,40 @@ func PlainStackedText(words []Word) string {
 }
 
 // WriteASS writes cues in the jordan look as an .ass file: stacked lines,
-// one coloured emphasis word per block, and st's outline/shadow/margin.
+// thick outline, and THE CURRENT WORD HIGHLIGHTED AS IT IS SPOKEN.
 //
-// emphasis[i] is the index into cues[i].Words to colour, or any value
-// outside [0,len(Words)) to colour nothing — Part B of the jordan style:
-// "if no event falls inside the block, colour nothing" is a correct outcome,
-// not a failure this writer papers over. Picking WHICH word (the
-// audio-driven emphasis rule) is the caller's job; this file only knows how
-// to draw the result, matching this package's existing split (style.go
-// draws, callers decide what to burn).
+// WHY PER-WORD, AND WHY NOT THE OLD RULE. This used to take an emphasis[]
+// choosing ONE word per block, picked from audio loudness/pitch. Jordan,
+// 2026-08-20: "the text is animated - it highlights or animates each word as it
+// is spoken ... what you provided animates nothing, but chooses random words to
+// highlight (or you picked some arbitrary energy metric or some bullshit i
+// don't know). it's nothing like the actual example I provided."
+//
+// He is describing karaoke highlighting, and becky already holds the thing it
+// needs for it: word-level timings. So the emphasis word is no longer CHOSEN at
+// all — every word is highlighted, in turn, at the moment it is said. That
+// removes a guess rather than adding a feature, and it is what his reference
+// actually does.
+//
+// Mechanically each cue becomes one Dialogue event PER WORD, all showing the
+// same text, differing only in which word carries the colour. libass renders
+// them as one continuous block because the text and layout are identical.
 //
 // width/height set PlayResX/PlayResY so MarginV and FontSize are relative to
 // the ACTUAL rendered frame — captions are burned after crop+scale (see
 // captions.go), so this must be the short's own output size, not the source's.
-func WriteASS(w io.Writer, cues []CueWords, emphasis []int, st ASSStyle, width, height int) error {
+func WriteASS(w io.Writer, cues []CueWords, st ASSStyle, width, height int) error {
 	bw := bufio.NewWriter(w)
-	// WrapStyle 3 is "smart wrapping, BOTTOM line wider", which is exactly how
-	// his own blocks break: AREN'T / SUPPOSED, WELL LET / ME FINISH THAT. Letting
-	// libass wrap — it has the real font metrics — instead of counting words here
-	// is also why the old 3-words-per-line rule is gone: it produced a three-line
-	// block on his footage where he never uses more than two.
-	fmt.Fprintf(bw, "[Script Info]\r\nScriptType: v4.00+\r\nPlayResX: %d\r\nPlayResY: %d\r\nScaledBorderAndShadow: yes\r\nWrapStyle: 3\r\n\r\n",
+	// WrapStyle 2 is NO automatic wrapping: line breaks come only from \N, which
+	// jordanLines now places itself.
+	//
+	// It used to be WrapStyle 3 ("smart, bottom line wider") on the reasoning
+	// that libass has the real font metrics and should be trusted to break. It
+	// does have them, and it still put THREE lines on screen — "THIS MAKES / ME
+	// WANT / TO THROW" on his own footage — because balanced wrapping optimises
+	// evenness, not line COUNT. Jordan never uses three. The only way to promise
+	// at most two is to break the text here and forbid libass from re-breaking.
+	fmt.Fprintf(bw, "[Script Info]\r\nScriptType: v4.00+\r\nPlayResX: %d\r\nPlayResY: %d\r\nScaledBorderAndShadow: yes\r\nWrapStyle: 2\r\n\r\n",
 		width, height)
 	fmt.Fprintf(bw, "[V4+ Styles]\r\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "+
 		"BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "+
@@ -171,41 +184,147 @@ func WriteASS(w io.Writer, cues []CueWords, emphasis []int, st ASSStyle, width, 
 	if st.Blur > 0 {
 		blur = fmt.Sprintf(`{\blur%d}`, st.Blur)
 	}
-	for i, cw := range cues {
-		idx := -1
-		if i < len(emphasis) {
-			idx = emphasis[i]
+	for _, cw := range cues {
+		for _, seg := range karaokeSegments(cw, st.EmphasisColor) {
+			fmt.Fprintf(bw, "Dialogue: 0,%s,%s,Jordan,,0,0,0,,%s%s\r\n",
+				ASSTime(seg.start), ASSTime(seg.end), blur, seg.text)
 		}
-		text := jordanLines(cw.Words, idx, st.EmphasisColor)
-		if text == "" {
-			continue
-		}
-		fmt.Fprintf(bw, "Dialogue: 0,%s,%s,Jordan,,0,0,0,,%s%s\r\n", ASSTime(cw.Start), ASSTime(cw.End), blur, text)
 	}
 	return bw.Flush()
 }
 
-// jordanLines is one cue's words as a single ASS line, upper-cased, with
-// emphasisIdx (an index into words, or any out-of-range value for "nothing")
-// wrapped in emphasisColor and reset back to white right after.
+// karaokeSeg is one Dialogue event: the whole block's text, with one word lit.
+type karaokeSeg struct {
+	start, end float64
+	text       string
+}
+
+// karaokeSegments turns one cue into its per-word highlight events.
 //
-// It no longer inserts \N breaks. libass wraps this itself, inside the style's
-// MarginL/MarginR column and under WrapStyle 3 — it has the font metrics this
-// package does not, and the old fixed 3-words-per-line rule put THREE lines on
-// screen where Jordan never uses more than two.
+// Timing rule: a word is lit from ITS OWN start until the next word's start, so
+// the highlight moves exactly with the voice and never leaves a gap. The block
+// as a whole still occupies [cue.Start, cue.End] — the first word lights from
+// the cue's start (not the word's) so nothing flickers in before the text, and
+// the last stays lit to the cue's end.
+//
+// A cue with no usable words yields nothing, which is correct: silence stays
+// silent rather than holding an empty box on screen.
+func karaokeSegments(cw CueWords, emphasisColor string) []karaokeSeg {
+	type idxWord struct {
+		i int
+		w Word
+	}
+	var shown []idxWord
+	for i, w := range cw.Words {
+		if assWordText(w) != "" {
+			shown = append(shown, idxWord{i, w})
+		}
+	}
+	if len(shown) == 0 {
+		return nil
+	}
+	out := make([]karaokeSeg, 0, len(shown))
+	for n, iw := range shown {
+		start := iw.w.Start
+		if n == 0 || start < cw.Start {
+			start = cw.Start
+		}
+		end := cw.End
+		if n+1 < len(shown) {
+			end = shown[n+1].w.Start
+		}
+		if end > cw.End {
+			end = cw.End
+		}
+		// A word whose timings collapsed (ASR jitter, or a cue boundary landing
+		// on it) would emit a zero-length event libass simply drops, taking its
+		// text off screen with it. Give it the rest of the block instead.
+		if end <= start {
+			end = cw.End
+		}
+		if end <= start {
+			continue
+		}
+		out = append(out, karaokeSeg{start: start, end: end,
+			text: jordanLines(cw.Words, iw.i, emphasisColor)})
+	}
+	return out
+}
+
+// jordanMaxLineChars is the widest ONE line of his caption block, measured off
+// his own render: the longest line is "ME FINISH THAT", 715px at 66% of a
+// 1080-wide frame — 14 characters. 15 is that plus a single character of slack,
+// which is as much as the column can hold before a word falls to a third line.
+const jordanMaxLineChars = 15
+
+// jordanLines is one cue's words as ASS text, upper-cased, with emphasisIdx
+// (an index into words, or any out-of-range value for "nothing") wrapped in
+// emphasisColor and reset back to white right after.
+//
+// AT MOST TWO LINES, and the break is placed here rather than by libass —
+// see WriteASS's WrapStyle note for why balanced auto-wrapping produced three.
+// The split point is the one that comes closest to evening the two lines out
+// while keeping the first inside jordanMaxLineChars, which is how his own
+// blocks read (AREN'T / SUPPOSED, WELL LET / ME FINISH THAT).
+//
+// A block that cannot fit two lines is NOT broken into three: it stays as two
+// and runs slightly wide. Three lines is the thing he objected to seeing; a
+// wide line is a chunker problem, fixed by MaxChars upstream, and hiding it
+// behind a third line would only make it invisible.
 func jordanLines(words []Word, emphasisIdx int, emphasisColor string) string {
-	var parts []string
+	var plain, marked []string
 	for j, w := range words {
 		text := assWordText(w)
 		if text == "" {
 			continue
 		}
+		plain = append(plain, text)
 		if j == emphasisIdx {
-			text = `{\c` + emphasisColor + `}` + text + emphasisReset
+			marked = append(marked, `{\c`+emphasisColor+`}`+text+emphasisReset)
+		} else {
+			marked = append(marked, text)
 		}
-		parts = append(parts, text)
 	}
-	return strings.Join(parts, " ")
+	if len(plain) == 0 {
+		return ""
+	}
+
+	total := len(plain) - 1 // the spaces
+	for _, p := range plain {
+		total += len(p)
+	}
+	if total <= jordanMaxLineChars || len(plain) == 1 {
+		return strings.Join(marked, " ")
+	}
+
+	// Choose the break that leaves the two lines most equal, never letting the
+	// FIRST line exceed the measured column. Scanning every split beats a greedy
+	// fill: greedy packs line one to the cap and strands one short word below it,
+	// which is the stranded-word look his own captions never have.
+	best, bestScore := 1, 1<<30
+	run := 0
+	for i := 0; i < len(plain)-1; i++ {
+		if i > 0 {
+			run++
+		}
+		run += len(plain[i])
+		rest := total - run - 1
+		score := absInt(run - rest)
+		if run > jordanMaxLineChars {
+			score += 1000 * (run - jordanMaxLineChars) // strongly discouraged, still possible
+		}
+		if score < bestScore {
+			best, bestScore = i+1, score
+		}
+	}
+	return strings.Join(marked[:best], " ") + `\N` + strings.Join(marked[best:], " ")
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // ASSTime renders seconds as ASS's H:MM:SS.cc (centiseconds).
@@ -222,3 +341,8 @@ func ASSTime(sec float64) string {
 	cs := totalCS - s*100
 	return fmt.Sprintf("%d:%02d:%02d.%02d", h, m, s, cs)
 }
+
+// JordanLinesForTest exposes the line-breaking rule to becky-short's --selftest,
+// which is an OFFLINE PROOF Jordan can run and must be able to check the
+// two-line guarantee with. The rule itself stays unexported.
+func JordanLinesForTest(words []Word) string { return jordanLines(words, -1, "") }

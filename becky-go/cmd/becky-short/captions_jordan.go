@@ -105,10 +105,7 @@ func captionASS(cfg config.Config, video string, in, out, fps float64, outW, out
 		return "", "", 0, nil
 	}
 
-	sig, _ := asig.get(cfg, video) // best-effort: no signal just means no emphasis anywhere
-	emphasis := jordanEmphasis(cues, segments, sig)
-
-	return writeJordanFiles(cues, emphasis, outW, outH, dir)
+	return writeJordanFiles(cues, outW, outH, dir)
 }
 
 // captionASSJumpcut is captionASS for a jumpcut short: cues span every kept
@@ -139,15 +136,12 @@ func captionASSJumpcut(cfg config.Config, video string, winIn, winOut, fps float
 		return "", "", 0, nil
 	}
 
-	sig, _ := asig.get(cfg, video)
-	emphasis := jordanEmphasis(cues, segments, sig)
-
-	return writeJordanFiles(cues, emphasis, outW, outH, dir)
+	return writeJordanFiles(cues, outW, outH, dir)
 }
 
 // writeJordanFiles is the file-writing tail shared by captionASS and
 // captionASSJumpcut: the .ass to burn plus the plain .srt sidecar for review.
-func writeJordanFiles(cues []subs.CueWords, emphasis []int, outW, outH int, dir string) (assPath, srtPath string, n int, err error) {
+func writeJordanFiles(cues []subs.CueWords, outW, outH int, dir string) (assPath, srtPath string, n int, err error) {
 	st := subs.DefaultJordanStyle(outH, outW)
 
 	assPath = filepath.Join(dir, "captions.ass")
@@ -155,7 +149,7 @@ func writeJordanFiles(cues []subs.CueWords, emphasis []int, outW, outH int, dir 
 	if err != nil {
 		return "", "", 0, err
 	}
-	if err = subs.WriteASS(af, cues, emphasis, st, outW, outH); err != nil {
+	if err = subs.WriteASS(af, cues, st, outW, outH); err != nil {
 		af.Close()
 		return "", "", 0, err
 	}
@@ -187,66 +181,6 @@ func captionFilterASS(assPath string) string {
 	return fmt.Sprintf("subtitles=%s", subs.EscapeFilterPath(assPath))
 }
 
-// jordanEmphasis picks, for each cue, which word (index into cue.Words)
-// coincides with the STRONGEST audio event inside that block. -1 means no
-// event landed in the block: the block renders with no coloured word.
-//
-// "Strongest" mixes two different units (loudness dB rise vs. pitch ratio)
-// with no principled common scale, so this is a simple, documented
-// tie-break rather than a fabricated one: a loudness SPIKE wins over a pitch
-// rise whenever a block has both (loudness is the more direct signal for
-// "hit hard"), and within one type the biggest value wins.
-//
-// cue.Words are on the OUTPUT timeline (subs.BuildWithWords); audiosig
-// always analyses the whole SOURCE file, so events are on the SOURCE
-// timeline. segmentAt converts one cue at a time using the exact segment it
-// came from — a cue never spans a cut (internal/subs: "A CUT ENDS THE
-// CHUNK"), so one segment is always enough to do this correctly.
-func jordanEmphasis(cues []subs.CueWords, segments []subs.Segment, sig audiosig.Signals) []int {
-	out := make([]int, len(cues))
-	for i := range out {
-		out[i] = -1
-	}
-	if !sig.OK {
-		return out
-	}
-	for i, cue := range cues {
-		if len(cue.Words) == 0 {
-			continue
-		}
-		seg, offset, ok := segmentAt(segments, (cue.Start+cue.End)/2)
-		if !ok {
-			continue
-		}
-		srcStart := seg.Start + (cue.Start - offset)
-		srcEnd := seg.Start + (cue.End - offset)
-
-		bestSrcT, bestMag, have := 0.0, -1.0, false
-		for _, e := range sig.Spikes {
-			if e.T < srcStart || e.T > srcEnd {
-				continue
-			}
-			if !have || e.RiseDB > bestMag {
-				bestSrcT, bestMag, have = e.T, e.RiseDB, true
-			}
-		}
-		if !have {
-			for _, e := range sig.PitchRises {
-				if e.T < srcStart || e.T > srcEnd {
-					continue
-				}
-				if !have || e.Ratio > bestMag {
-					bestSrcT, bestMag, have = e.T, e.Ratio, true
-				}
-			}
-		}
-		if !have {
-			continue
-		}
-		out[i] = nearestWord(cue.Words, offset+(bestSrcT-seg.Start))
-	}
-	return out
-}
 
 // nearestWord returns the index of the word in words (output-timeline)
 // whose span is closest to t (0 if t falls inside a word).

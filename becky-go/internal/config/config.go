@@ -37,6 +37,15 @@ type Config struct {
 	GemmaMMProj    string `json:"gemma_mmproj"`     // BF16 multimodal projector GGUF (vision + audio)
 	GemmaModel12B  string `json:"gemma_model_12b"`  // ALTERNATE AVLM: Gemma-4 12B-it QAT GGUF (select via BECKY_AVLM_VARIANT=12b)
 	GemmaMMProj12B string `json:"gemma_mmproj_12b"` // BF16 multimodal projector GGUF for the 12B model
+	// Reka Edge 2603 — the GROUNDED detector (internal/ground, pyhelpers/ground.py).
+	// It is the only local model that answers WHERE, as a box, for a thing named in
+	// plain English ("Detect: pointing hand"). Gemma-4 and Qwen describe a frame but
+	// cannot localise inside it — measured 2026-08-20: E4B called every tile of a
+	// 3x3 grid "clipped: 0" including the ones with a person half out of frame,
+	// while Reka returned tight, correct boxes in 1.7s/frame on the 3070. That
+	// split — Gemma says WHAT, Reka says WHERE — is why both exist.
+	RekaModel  string `json:"reka_model"`  // Reka Edge 2603 Q4_K_M GGUF (grounded detection)
+	RekaMMProj string `json:"reka_mmproj"` // Reka Edge Q8_0 vision projector
 	// Qwen3.5-4B (Unsloth GGUF) — becky's GENERATIVE orchestrator/router AND a
 	// SINGLE-IMAGE corroborator. It drives the TEXT brain (becky-ask intent
 	// routing, becky-scout's proposer, becky-new-tool reasoning) and, via its own
@@ -272,6 +281,12 @@ func defaults() Config {
 		GemmaMMProj12B: firstExisting(
 			`X:\AI-2\becky-tools\models\gemma4\mmproj-12B-BF16.gguf`,
 			`X:\AI-2\becky-tools\models\gemma4\mmproj-F16.gguf`,
+		),
+		RekaModel: firstExisting(
+			`X:\AI-2\becky-tools\models\reka-edge\reka-edge-2603-Q4_K_M.gguf`,
+		),
+		RekaMMProj: firstExisting(
+			`X:\AI-2\becky-tools\models\reka-edge\mmproj-reka-edge-2603-Q8_0.gguf`,
 		),
 		// Qwen3.5-4B orchestrator/router + SINGLE-IMAGE corroborator. The Unsloth
 		// UD-Q4_K_XL is THE model (Jordan pinned this exact GGUF — the Dynamic-2.0

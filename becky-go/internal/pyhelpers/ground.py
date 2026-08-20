@@ -56,9 +56,34 @@ import tempfile
 import urllib.error
 import urllib.request
 
-# <ref>LABEL</ref> ... <bbox>x1,y1,x2,y2  — deliberately does not require the
-# closing </bbox>, because the model does not reliably emit one.
-BOX_RE = re.compile(r"<ref>(.*?)</ref>\s*<bbox>\s*([0-9]{1,3}(?:\s*,\s*[0-9]{1,3}){3})")
+# THE TAGS ARE NOT XML AND ARE NOT EVEN CONSISTENT. Four real replies to the
+# SAME frame, differing only in the noun asked for (measured 2026-08-20):
+#
+#   <answer>Platinum blonde hair</ref><bbox>28,12,81,100</answer>
+#   <answer>person in the center</ref><bbox>28,12,81,100</answer>
+#   <answer>\n<list>\n<item>person ...</ref><bbox>28,11,81,100</bbox>\n</list>
+#   <ref>person</ref><bbox>18,05,72,100</answer><ref>microphone</ref><bbox>...
+#
+# Note the first three have NO OPENING <ref> at all - the label sits directly
+# after <answer> or <item> and is closed by </ref>. A pattern anchored on <ref>
+# matched none of them, so becky reported "nothing grounded" on a frame holding
+# three people and REFUSED the short over it.
+#
+# So the anchor is <bbox> and its four numbers, which every variant does emit.
+# The LABEL is whatever text precedes it since the last tag - best effort, and
+# never load-bearing: the crop needs the box, the label is only for the note.
+BOX_RE = re.compile(r"([^<>]*?)\s*(?:</ref>|<bbox>)\s*<?/?b?box?>?\s*"
+                    r"([0-9]{1,3}(?:\s*,\s*[0-9]{1,3}){3})")
+
+# A fifth reply shape, and the one that matters most: NO tags and NO label at
+# all, just semicolon-separated quadruples.
+#
+#   <answer>00,00,21,100;34,07,94,100</answer>
+#
+# That is the TWO-SHOT answer - two people, both boxed - so losing it loses
+# exactly the case where framing is hardest. Only tried when the tagged pattern
+# above finds nothing, so a labelled reply is never re-parsed by the looser rule.
+BARE_BOX_RE = re.compile(r"\b([0-9]{1,3}(?:\s*,\s*[0-9]{1,3}){3})\b")
 
 
 def parse_boxes(text):
@@ -67,8 +92,11 @@ def parse_boxes(text):
     Boxes are returned as fractions. A degenerate or inverted box is dropped
     rather than passed on - a zero-area crop target is worse than none.
     """
+    found = BOX_RE.findall(text or "")
+    if not found:
+        found = [("", nums) for nums in BARE_BOX_RE.findall(text or "")]
     out = []
-    for label, nums in BOX_RE.findall(text or ""):
+    for label, nums in found:
         try:
             x1, y1, x2, y2 = (float(v.strip()) / 100.0 for v in nums.split(","))
         except ValueError:
@@ -127,16 +155,16 @@ def extract_frames(ffmpeg, video, start, end, fps, outdir):
     return sorted(os.path.join(outdir, f) for f in os.listdir(outdir) if f.startswith("f_"))
 
 
-def ask(server, image_path, target, timeout):
+def _post(server, image_path, prompt, timeout, max_tokens=300):
     with open(image_path, "rb") as fh:
         b64 = base64.b64encode(fh.read()).decode()
     body = json.dumps({
         "model": "reka",
         "messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
-            {"type": "text", "text": "Detect: " + target},
+            {"type": "text", "text": prompt},
         ]}],
-        "max_tokens": 300,
+        "max_tokens": max_tokens,
         "temperature": 0,
     }).encode()
     req = urllib.request.Request(server.rstrip("/") + "/v1/chat/completions", data=body,
@@ -144,6 +172,53 @@ def ask(server, image_path, target, timeout):
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         out = json.loads(resp.read())
     return out["choices"][0]["message"].get("content") or ""
+
+
+def ask(server, image_path, target, timeout):
+    return _post(server, image_path, "Detect: " + target, timeout)
+
+
+# Answers that are true of any frame and therefore ground nothing. Reka reaches
+# for these when it cannot see a subject, and detecting them returns a box
+# around the whole frame - which is a centre crop wearing a disguise, the exact
+# thing this helper exists to stop.
+_USELESS_SUBJECTS = {
+    "the scene", "scene", "the image", "image", "the video", "video",
+    "the frame", "frame", "the background", "background", "the room", "room",
+    "nothing", "unknown", "the picture", "picture", "everything",
+}
+
+
+def name_subject(server, image_path, timeout):
+    """Ask WHAT the viewer is meant to look at, as a short noun phrase.
+
+    This is the half a person detector cannot do. It runs only when `Detect:
+    person` came back empty, so its answer is by construction about a shot with
+    no person in it - a prop, a plate, a hand, a screen.
+
+    Returns "" when the answer is too generic to ground (see _USELESS_SUBJECTS);
+    the caller must then REFUSE the span rather than fall back to centre.
+    """
+    txt = _post(server, image_path,
+                "In one short noun phrase of at most four words, name the single object "
+                "the viewer is meant to look at in this frame. Name a concrete physical "
+                "thing, not the scene as a whole. Reply with the noun phrase only.",
+                timeout, max_tokens=40)
+    # The model wraps free-form answers in tags AND opens with a preamble even
+    # when told not to. Measured: "The answer is silver knife" came back and was
+    # then fed to `Detect:` verbatim, which of course found nothing. Strip both.
+    txt = re.sub(r"</?[a-z_]+>", " ", txt, flags=re.I)
+    txt = " ".join(txt.split())
+    txt = re.sub(r"^(the\s+answer\s+is|the\s+viewer\s+is\s+meant\s+to\s+look\s+at|"
+                 r"this\s+is|it\s+is|i\s+see|the\s+object\s+is|answer:)\s*[:\-]?\s*",
+                 "", txt, flags=re.I)
+    txt = re.sub(r"^(a|an|the)\s+", "", txt, flags=re.I)
+    txt = txt.strip().strip('."\'' + "“”").strip()
+    if not txt or len(txt.split()) > 6:
+        return ""
+    if txt.lower() in _USELESS_SUBJECTS:
+        return ""
+    return txt
 
 
 def selftest():
@@ -159,6 +234,28 @@ def selftest():
     b = parse_boxes(real)
     ck("parses the real reply despite </answer> closing the first <bbox>", len(b) == 2,
        f"got {len(b)}")
+
+    # THE REPLY SHAPES THAT SHIPPED A BUG. Reka answers the SAME frame in at
+    # least four formats depending on the noun asked for, and three of them have
+    # NO OPENING <ref> - the label is closed by </ref> having never been opened.
+    # A pattern anchored on <ref> matched none of them, so becky reported
+    # "nothing grounded" on a frame holding three people and refused the short.
+    for name, reply, want in [
+        ("bare label closed by </ref>",
+         "<answer>Platinum blonde hair</ref><bbox>28,12,81,100</answer>", 1),
+        ("label wrapped in <list>/<item>",
+         "<answer><list><item>person</ref><bbox>28,11,81,100</bbox></list>", 1),
+        ("untagged semicolon-separated pair (the TWO-SHOT answer)",
+         "<answer>00,00,21,100;34,07,94,100</answer>", 2),
+    ]:
+        got = parse_boxes(reply)
+        ck("parses " + name, len(got) == want, f"got {len(got)}, want {want}: {got}")
+
+    # Prose with no coordinates must stay EMPTY - a tolerant parser that starts
+    # inventing boxes from sentence text is worse than one that misses.
+    ck("prose with no coordinates yields no boxes",
+       parse_boxes("<answer>person in the center; person on the left</assistant>") == [], "")
+
     ck("labels survive", [x["label"] for x in b] == ["person", "microphone"],
        str([x["label"] for x in b]))
     ck("coordinates are fractions, not percentages",
@@ -222,8 +319,8 @@ def main():
 
     if args.selftest:
         return selftest()
-    if not args.video or not args.target:
-        print(json.dumps({"ok": False, "reason": "--video and --target are required"}))
+    if not args.video:
+        print(json.dumps({"ok": False, "reason": "--video is required"}))
         return 0
 
     try:
@@ -232,6 +329,34 @@ def main():
             if not frames:
                 print(json.dumps({"ok": False, "reason": "no frames decoded from that window"}))
                 return 0
+
+            # SELF-ORCHESTRATION: with no --target, find the target first.
+            # `Detect: person` covers the overwhelmingly common case in one
+            # call; only when a shot genuinely has nobody in it do we spend a
+            # second call asking what it is ABOUT. That ordering matters -
+            # asking the open question first invites "the scene" on a shot with
+            # an obvious person in it.
+            target = args.target
+            named = ""
+            if not target:
+                target = "person"
+                probe = frames[len(frames) // 2]
+                try:
+                    if not parse_boxes(ask(args.server, probe, "person", args.timeout)):
+                        named = name_subject(args.server, probe, args.timeout)
+                        if not named:
+                            print(json.dumps({
+                                "ok": False,
+                                "reason": "no person in this shot and no nameable subject either - "
+                                          "REFUSING rather than returning a centre crop"}))
+                            return 0
+                        target = named
+                except (urllib.error.URLError, OSError) as e:
+                    print(json.dumps({"ok": False,
+                                      "reason": f"grounding server unreachable at {args.server}: {e}"}))
+                    return 0
+            args.target = target
+
             dets = []
             for i, f in enumerate(frames):
                 try:
@@ -242,7 +367,7 @@ def main():
                     return 0
                 dets.append({"t": round(args.start + i / args.fps, 4), "boxes": boxes})
         found, med, stable = stability(dets)
-        print(json.dumps({"ok": True, "target": args.target, "fps": args.fps,
+        print(json.dumps({"ok": True, "target": args.target, "named": named, "fps": args.fps,
                           "frames": len(dets), "found_frac": round(found, 3),
                           "median_jump": round(med, 3), "stable": stable,
                           "note": ("" if stable else

@@ -650,6 +650,13 @@ def main():
         # that patch renders a stale box - which is how a "short" ends up framing a
         # lamp. The caller gates on this, not on the average.
         "longest_gap_s": round(longest_miss / max(sample_fps, 1.0), 3),
+        # The gap AT THE VERY END - miss_run as the loop left it. A short must
+        # not END on footage with nothing to look at, and the whole-span gates
+        # cannot see this: a span that opens on the subject and closes on a
+        # blocked lens passes both coverage and longest-gap while still leaving
+        # the viewer on two seconds of somebody's shirt. Measured on the
+        # BLINDFOLD master, 553-555s. deadtail.go trims the final span by this.
+        "trailing_gap_s": round(miss_run / max(sample_fps, 1.0), 3),
         "path": path,
     }))
 

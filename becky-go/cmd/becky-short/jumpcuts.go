@@ -45,6 +45,12 @@ import (
 // just be a slower way to render the same continuous take.
 const jumpcutNoopEps = 0.05
 
+// edgeSliverSeconds is how short a FIRST or LAST span may be before an
+// unframeable one is dropped instead of refusing the whole short. The window's
+// edges land part-way through a shot, so a fragment of a few frames there is a
+// boundary artefact, not a shot Jordan chose. Interior spans never qualify.
+const edgeSliverSeconds = 0.5
+
 // jumpcutMinSpan drops a keep-span shorter than this AFTER intersecting with
 // the window (an edge span becky-cut kept can be clipped down to a sliver by
 // the window boundary). Too short to be a real beat of speech; its time is
@@ -74,6 +80,11 @@ type jumpcutPlan struct {
 	// non-zero value means becky-cut's threshold disagreed with what was
 	// actually said, and Jordan should be able to see that it did.
 	RescuedWords int
+	// ProtectedEdges is how many span edges the word guard had to pull back
+	// because the tightening would have cut through speech (already-edited
+	// path only — wordguard.go). Same honesty rule as RescuedWords: a non-zero
+	// value means the trim and the transcript disagreed, and the transcript won.
+	ProtectedEdges int
 }
 
 // planJumpcuts intersects becky-cut's WHOLE-FILE keep decisions (cached per
@@ -151,8 +162,13 @@ func boundaryTighten(removeSpans []keepSpan, boundary, flagDefault float64) floa
 // to invent a new cut list or apply a raw-footage silence threshold.
 //
 // cuts are source-absolute seconds inside (j.In, j.Out) (internal/shotcut).
-// Pure — no I/O — given cuts and removeSpans already resolved.
-func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float64) jumpcutPlan {
+// Pure — no I/O — given cuts, removeSpans and words already resolved.
+//
+// words are the source's word-level timings over this window and are the HARD
+// GUARD on every trim: a boundary may tighten into silence freely and may never
+// tighten into speech (wordguard.go). Pass nil only when no transcript exists —
+// then the old, unguarded behaviour applies and the caller says so.
+func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float64, words []subs.Word) jumpcutPlan {
 	bounds := []float64{j.In}
 	existing := 0
 	for _, c := range cuts {
@@ -171,17 +187,31 @@ func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float6
 
 	var spans []keepSpan
 	var removed float64
+	protected := 0
 	for i := 0; i < len(bounds)-1; i++ {
 		in, out := bounds[i], bounds[i+1]
 		if i > 0 {
-			trim := boundaryTighten(removeSpans, bounds[i], tighten) / 2
-			in += trim
-			removed += trim
+			// Tighten the START of this span, then CLAMP: the trim may eat
+			// silence, never a word. Without this the half-trim derived from a
+			// silence lying entirely on the OTHER side of the boundary shears
+			// the first word off every shot — the bug that made the render
+			// unusable.
+			want := in + boundaryTighten(removeSpans, bounds[i], tighten)/2
+			got := clampInToWords(want, in, words)
+			if got < want {
+				protected++
+			}
+			removed += got - in
+			in = got
 		}
 		if i < len(bounds)-2 {
-			trim := boundaryTighten(removeSpans, bounds[i+1], tighten) / 2
-			out -= trim
-			removed += trim
+			want := out - boundaryTighten(removeSpans, bounds[i+1], tighten)/2
+			got := clampOutToWords(want, out, words)
+			if got > want {
+				protected++
+			}
+			removed += out - got
+			out = got
 		}
 		if out-in < jumpcutMinSpan {
 			continue
@@ -189,7 +219,7 @@ func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float6
 		spans = append(spans, keepSpan{In: in, Out: out})
 	}
 	return jumpcutPlan{Spans: spans, RemovedSeconds: removed, ExistingCuts: existing,
-		PreservedCuts: len(bounds) - 2, Cuts: cuts}
+		PreservedCuts: len(bounds) - 2, Cuts: cuts, ProtectedEdges: protected}
 }
 
 // planPacing decides how to pace one short's window: if the SOURCE already
@@ -239,7 +269,17 @@ func planPacing(cfg config.Config, cache *cutCache, j job, tighten float64, logf
 		}
 		return plan, nil
 	}
-	return planShotSpans(cuts, cache.wholeFileRemoveSpans(j.Src), j, tighten), nil
+	// ALREADY-EDITED PATH. The boundaries themselves are Jordan's (inherited
+	// from the master) and are preserved exactly; only the TIGHTENING at each
+	// one is ours, and it is the thing that was cutting his words off. Read the
+	// word timings so the guard in wordguard.go can clamp every trim to silence.
+	// A missing transcript degrades to the old unguarded behaviour rather than
+	// failing the render — and planPacing's caller reports that it did.
+	words, _, wErr := transcribex.EnsureWords(j.Src, logf)
+	if wErr != nil {
+		words = nil
+	}
+	return planShotSpans(cuts, cache.wholeFileRemoveSpans(j.Src), j, tighten, words), nil
 }
 
 // cutsWithinSpan filters cuts to the ones strictly INSIDE (in,out) — the ones
@@ -499,6 +539,7 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		allFollowed              = true
 		notes                    []string
 		degraded                 int
+		dropped                  []int
 	)
 	if !forceCenter {
 		trimmed, droppedSec, droppedSpans := trimDeadTail(cfg, j, spans, aspectStr, sampleFPS, minCov, maxGap, cuts)
@@ -510,59 +551,79 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		}
 	}
 
+	// PASS 1 — DECIDE THE FRAMING FOR EVERY SPAN BEFORE RENDERING ANY OF IT.
+	// Separated from the render loop below because a span can turn out to be
+	// unframeable, and dropping one has to happen BEFORE spans is used to build
+	// the concat graph and the caption timeline (both index it directly).
+	crops := make([]cropResult, 0, len(spans))
+	kept := make([]keepSpan, 0, len(spans))
 	for i, sp := range spans {
 		cr, err := resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, forceCenter,
 			cutsWithinSpan(cuts, sp.In, sp.Out))
 		if err != nil {
-			// A span the tracker cannot follow is not a reason to throw away the
-			// other eighteen. Measured on the BLINDFOLD master (a three-person
-			// table scene): span 3 of 19 found a subject in 46% of samples and
-			// the entire short was refused over it.
+			// THE SPAN COULD NOT BE FRAMED, and by the time we are here
+			// resolveCrop has ALREADY asked the grounded detector what the shot
+			// is about (groundaim.go). So this is not "the pose tracker gave
+			// up" — it is "nothing in this footage could be named or located".
 			//
-			// Jordan's own edit of that same footage contains a shot with NO
-			// FACE AT ALL - 1.27 seconds of a pointing finger - so "every span
-			// must hold a trackable subject" is not a rule he works to. Fall
-			// back to a static centre crop for THIS span, say so, carry on.
-			cr, err = resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, true,
-				cutsWithinSpan(cuts, sp.In, sp.Out))
-			if err != nil {
-				return res, fmt.Errorf("kept span %d/%d [%.2f,%.2f]: %w", i+1, len(spans), sp.In, sp.Out, err)
+			// This used to re-run resolveCrop with forceCenter=true and carry
+			// on. That is the code path Jordan is describing: "simply failing to
+			// crop and leaving it in the center screen (which is essentially
+			// nonsense) for some of the crops - we can't have that" (2026-08-20).
+			// A short with one arbitrary centre span is, in his words, in the
+			// recycle bin — so shipping it is worth less than not shipping it.
+			//
+			// becky-moment offers ten candidates. Losing one to an honest
+			// refusal leaves nine; shipping a centred one loses his trust in all
+			// ten. Refuse, and name the timestamp so it is checkable.
+			//
+			// THE ONE EXCEPTION: A SLIVER AT THE WINDOW EDGE IS NOT A SHOT. The
+			// window's start and end land wherever the moment did, usually
+			// part-way through a shot, leaving a fragment of a few frames at each
+			// end. Measured: a 0.36s fragment at [533.00,533.36] refused the
+			// entire burger short. Dropping a fragment costs a third of a second;
+			// refusing costs all of it. Only the FIRST and LAST span qualify — a
+			// failure in the middle is a real shot, and silently dropping it
+			// would jump-cut the footage somewhere Jordan never chose.
+			if (i == 0 || i == len(spans)-1) && sp.Out-sp.In < edgeSliverSeconds {
+				where := "end"
+				if i == 0 {
+					where = "start"
+				}
+				dropped = append(dropped, i)
+				res.RemovedSeconds += sp.Out - sp.In
+				notes = append(notes, fmt.Sprintf(
+					"dropped a %.2fs fragment at the %s of the window that had nothing to frame",
+					sp.Out-sp.In, where))
+				continue
 			}
+			return res, fmt.Errorf("kept span %d/%d at [%.2f,%.2f] of the source cannot be framed "+
+				"on anything: %w", i+1, len(spans), sp.In, sp.Out, err)
+		}
+		// A GROUNDED span was not TRACKED, and the two must never be conflated in
+		// the coverage number. becky-short once claimed 0.952 on the BLINDFOLD
+		// render while an independent face pass over the RENDERED FILE measured
+		// 0.18, because degraded spans were left out of both the numerator and
+		// the denominator. An object is a legitimate thing to frame; it is still
+		// not a tracked subject, so it counts in the denominator only.
+		if cr.Grounded {
 			degraded++
-			// A degraded span was NOT tracked, so it must still count against
-			// coverage. Leaving it out of both the numerator and the denominator
-			// made the reported number describe only the spans that worked:
-			// becky-short claimed 0.952 on the BLINDFOLD render while an
-			// independent face pass over the RENDERED FILE measured 0.18. That
-			// 77-point gap is exactly what `--review` exists to catch, and it
-			// caught it on its first real run.
 			cr.Sampled, cr.Found = untrackedSamples(sp.Out-sp.In, fps), 0
 			cr.Coverage, cr.Followed = 0, false
-
-			// RULE 4: a shot with nobody in it is not an empty shot. Before
-			// settling for dead centre — the "split the difference" framing his
-			// own edit avoids — ask where the motion actually is. internal/focal
-			// refuses unless the moving thing is a REGION rather than the whole
-			// frame and it STAYS somewhere, so it either does better than centre
-			// or says nothing.
-			//
-			// OFF unless --focal-point. Measured on this exact footage it was two
-			// spans better and two worse — see focalaim.go for the four cases and
-			// why a coin toss with a confident note attached is not an improvement.
-			//
-			// Coverage is deliberately left at 0 above and not touched here: an
-			// object is not a tracked subject, and inflating the number is the
-			// exact lie `--review` caught last time.
-			if focalPoint && !forceCenter {
-				if w, h, perr := probeSize(j.Src); perr == nil {
-					if rects, note := aimStaticCrop(cfg, j.Src, sp.In, sp.Out, asp, w, h, fps); rects != nil {
-						cr.Rects, cr.Note = rects, note
-					} else if note != "" {
-						cr.Note = note
-					}
-				}
-			}
 		}
+		crops = append(crops, cr)
+		kept = append(kept, sp)
+	}
+	if len(dropped) > 0 {
+		spans = kept
+	}
+	if len(spans) == 0 {
+		return res, fmt.Errorf("nothing in this window could be framed on anything")
+	}
+
+	// PASS 2 — RENDER.
+	for i, sp := range spans {
+		cr := crops[i]
 		totalSampled += cr.Sampled
 		totalFound += cr.Found
 		if !cr.Followed {
@@ -614,11 +675,12 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 	// spans could not be tracked is not. More than half degraded means the
 	// window itself is not a talking-head short, and that IS worth refusing.
 	if tooManyDegraded(degraded, len(spans)) {
-		return res, fmt.Errorf("%d of %d kept spans had no trackable subject - this window is not a talking-head short; pass --center to force a static crop",
+		return res, fmt.Errorf("%d of %d kept spans had no trackable person - this window is not a talking-head short; pass --center to force a static crop",
 			degraded, len(spans))
 	}
 	if degraded > 0 {
-		note(&res, fmt.Sprintf("%d of %d spans fell back to a static crop (no trackable subject there)", degraded, len(spans)))
+		note(&res, fmt.Sprintf("%d of %d spans had no trackable person, so becky asked what the shot "+
+			"is about and framed THAT instead of centring (see the per-span notes)", degraded, len(spans)))
 	}
 
 	for _, n := range notes {

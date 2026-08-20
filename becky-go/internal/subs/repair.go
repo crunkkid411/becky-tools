@@ -32,9 +32,32 @@ var danglers = map[string]bool{
 }
 
 // isDangler reports whether ending a line on this word would split a phrase.
+//
+// A word carrying its own TERMINAL PUNCTUATION is never a dangler, whatever the
+// word is. This is not a refinement, it is the fix for a rule violation Jordan
+// caught by eye (2026-08-20): "a '?' or '!' MUST start a new text chunk...
+// that's really basic and it doesn't even follow it."
+//
+// The mechanism: isDangler stripped `.,;:!?` FIRST and then looked the bare word
+// up, so "this." matched the dangler "this" and pushDanglers moved it onto the
+// following line — demolishing the sentence boundary that ChunkWords had just
+// created for it. Measured on his own master at 545.7s, where the caption for
+// his PUNCHLINE, "Like this.", came out as two lines reading
+//
+//	"Like"  |  "this. Oh my god,"
+//
+// A period, question mark or exclamation mark means the phrase ENDED here. It
+// cannot also be a word left hanging into the next one.
 func isDangler(word string) bool {
-	s := strings.ToLower(strings.TrimRight(strings.TrimSpace(word), `.,;:!?"')`))
-	return danglers[s]
+	s := strings.TrimRight(strings.TrimSpace(word), `"')]}`)
+	if s == "" {
+		return false
+	}
+	switch s[len(s)-1] {
+	case '.', '?', '!', ',', ';', ':':
+		return false
+	}
+	return danglers[strings.ToLower(s)]
 }
 
 // splitToFit breaks a phrase run that is over the cap into lines that fit, filling

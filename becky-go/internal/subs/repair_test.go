@@ -127,3 +127,45 @@ func TestRepairModelGroupsReChunksDeterministically(t *testing.T) {
 		}
 	}
 }
+
+// THE REGRESSION. Jordan, 2026-08-20: "a '?' or '!' MUST start a new text
+// chunk ... that's really basic and it doesn't even follow it."
+//
+// The violation was real and this is the exact case from his own master at
+// 545.7s. "Like this." is his PUNCHLINE — he is about to throw a burger — and
+// it rendered as "Like" | "this. Oh my god,", because isDangler stripped the
+// period before matching, so the sentence-ending "this." was treated as the
+// hanging determiner "this" and pushed onto the next line.
+func TestPushDanglers_TerminalPunctuationIsNeverADangler(t *testing.T) {
+	words := []Word{
+		{Word: "Like", Start: 545.68, End: 545.76},
+		{Word: "this.", Start: 545.84, End: 545.92},
+		{Word: "Oh", Start: 546.24, End: 546.40},
+		{Word: "my", Start: 546.48, End: 546.56},
+		{Word: "god,", Start: 546.64, End: 546.80},
+	}
+	got := ChunkWords(words, 30, 0.32)
+
+	if len(got) != 2 {
+		t.Fatalf("got %d chunks, want 2: %s", len(got), strings.Join(renderChunks(got), " | "))
+	}
+	if s := renderChunks(got)[0]; s != "Like this." {
+		t.Errorf("chunk 0 = %q, want %q — the period ENDS the phrase", s, "Like this.")
+	}
+	if s := renderChunks(got)[1]; s != "Oh my god," {
+		t.Errorf("chunk 1 = %q, want %q", s, "Oh my god,")
+	}
+}
+
+// The dangler rule itself must still work on a word with NO terminal
+// punctuation — the fix must not disable it wholesale.
+func TestPushDanglers_StillPushesABareDangler(t *testing.T) {
+	if isDangler("the") != true {
+		t.Errorf("isDangler(%q) = false, want true", "the")
+	}
+	for _, w := range []string{"the.", "the?", "the!", "this.", "and,"} {
+		if isDangler(w) {
+			t.Errorf("isDangler(%q) = true, want false — it carries terminal punctuation", w)
+		}
+	}
+}

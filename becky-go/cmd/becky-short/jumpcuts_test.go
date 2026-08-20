@@ -180,7 +180,7 @@ func TestBoundaryTighten_CapsALongNearbySilence(t *testing.T) {
 func TestPlanShotSpans_PreservesBoundariesAndTightensByTheFlagDefault(t *testing.T) {
 	j := job{Src: "src.mp4", In: 0, Out: 10}
 	cuts := []float64{4, 7} // two existing cuts inside the window
-	plan := planShotSpans(cuts, nil, j, 0.2)
+	plan := planShotSpans(cuts, nil, j, 0.2, nil)
 
 	want := []keepSpan{
 		{In: 0, Out: 3.9},   // 4 - 0.2/2
@@ -214,7 +214,7 @@ func TestPlanShotSpans_PreservesBoundariesAndTightensByTheFlagDefault(t *testing
 func TestPlanShotSpans_EdgeCutCountsAsExistingButNotPreserved(t *testing.T) {
 	j := job{Src: "src.mp4", In: 0, Out: 10}
 	cuts := []float64{0.05, 5} // 0.05 is inside jumpcutMinSpan of the window start
-	plan := planShotSpans(cuts, nil, j, 0.1)
+	plan := planShotSpans(cuts, nil, j, 0.1, nil)
 
 	if plan.ExistingCuts != 2 {
 		t.Errorf("ExistingCuts = %d, want 2 (both found)", plan.ExistingCuts)

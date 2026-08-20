@@ -241,10 +241,18 @@ func paceScore(wps float64) float64 {
 	}
 }
 
-// fitScore rewards a duration in the short-form sweet spot. It peaks in the
-// middle of the configured band rather than at either edge: a clip at exactly
-// MinDuration usually has no room for a payoff, and one at MaxDuration usually
-// has slack that should have been trimmed.
+// fitScore says only whether a duration is INSIDE the safety rail. It no longer
+// prefers one length over another.
+//
+// It used to peak at 40% into the band, on the reasoning that "short-form
+// rewards brevity". That is a developer's rule of thumb, not Jordan's, and it
+// was actively ranking his long bits below arbitrary short slices of them —
+// "Picking random 15 second clips ... is useless" (2026-08-20). Whether a clip
+// is the right length is already measured, properly, by SelfContained (does it
+// open mid-setup) and Payoff (does the point land). Those are about the STORY.
+// A second opinion derived from the clock alone only fights them.
+//
+// So: 1 inside the rail, 0 outside it, and let the story signals decide.
 func fitScore(dur float64, opt Options) float64 {
 	lo, hi := opt.MinDuration, opt.MaxDuration
 	if hi <= lo {
@@ -253,16 +261,7 @@ func fitScore(dur float64, opt Options) float64 {
 	if dur < lo || dur > hi+opt.ExtendBudget {
 		return 0
 	}
-	// Peak at 40% into the band — short-form rewards brevity, so the ideal sits
-	// below the midpoint.
-	peak := lo + 0.4*(hi-lo)
-	var d float64
-	if dur <= peak {
-		d = (peak - dur) / (peak - lo + 1e-9)
-	} else {
-		d = (dur - peak) / (hi + opt.ExtendBudget - peak + 1e-9)
-	}
-	return clamp01(1 - d*0.8)
+	return 1
 }
 
 func clamp01(v float64) float64 {

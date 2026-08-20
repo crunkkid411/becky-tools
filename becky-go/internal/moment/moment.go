@@ -70,11 +70,24 @@ type Options struct {
 }
 
 // DefaultOptions is the shipped windowing configuration.
+//
+// THE BAND IS A SAFETY RAIL, NOT A TARGET. Jordan, 2026-08-20: "One hard rule
+// that should NOT exist is a time limit - some segments are 15 second comical
+// bits, and some might run on for 5 or 6 minutes. That's okay; the CONTEXT is
+// what matters. Picking random 15 second clips and making them vertical with
+// horrible framing choices is useless."
+//
+// The old band was 12..60(+8) and it was doing real damage: a complete bit that
+// ran 90 seconds could not be emitted AT ALL, so becky returned a 30-second
+// slice of it instead — which is exactly the "random 15 second clip" complaint.
+// 6..360 is wide enough that the STORY decides where it ends (selfContained /
+// payoff / the ending-completion pass), and narrow enough that a whole
+// unstructured hour still cannot come back as one "moment".
 func DefaultOptions() Options {
 	return Options{
-		MinDuration:   12,
-		MaxDuration:   60,
-		ExtendBudget:  8,
+		MinDuration:   6,
+		MaxDuration:   360,
+		ExtendBudget:  20,
 		MaxCandidates: 120,
 	}
 }

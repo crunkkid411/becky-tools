@@ -154,6 +154,11 @@ func main() {
 		os.Exit(runReview(cfg, *review, *reviewSRT, *reviewClaimed, *minCov, *maxGap, *verbose))
 	}
 
+	// The grounding server is started lazily by the first span that needs it
+	// (groundaim.go) and must be shut down however this process exits, or a
+	// multi-GB llama-server is left holding the card.
+	defer closeGrounder()
+
 	asp, err := crop.ParseAspect(*aspect)
 	if err != nil {
 		fail(err)
@@ -385,6 +390,11 @@ type cropResult struct {
 	Found    int
 	Coverage float64
 	Followed bool
+	// Grounded is true when the framing came from the grounded detector rather
+	// than the pose tracker — i.e. this span had no trackable person and becky
+	// asked what the shot is actually about instead of centring it
+	// (groundaim.go). Reported so the two are never confused in the output.
+	Grounded bool
 	Note     string
 }
 
@@ -400,18 +410,54 @@ type cropResult struct {
 func resolveCrop(cfg config.Config, src string, start, end float64, aspect string,
 	sampleFPS, minCov, maxGap float64, forceCenter bool, cutTimes []float64) (cropResult, error) {
 	if forceCenter {
+		// The ONE remaining way to get a centre crop without a reason, and it is
+		// an explicit human instruction, not a fallback becky chose.
 		return cropResult{Note: "--center: static crop, subject not tracked"}, nil
 	}
-	if cfg.PoseModel == "" {
-		return cropResult{}, nil
+	asp, aerr := crop.ParseAspect(aspect)
+	if aerr != nil {
+		return cropResult{}, aerr
 	}
+	// fallback is the shared exit for EVERY way the pose tracker can fail. It
+	// used to be "note it and centre-crop"; it is now "ask what is actually in
+	// the shot, and refuse if nothing answers" (groundaim.go). Routed through
+	// one closure precisely so a future failure case cannot quietly reintroduce
+	// the centre default by taking a different branch.
+	fallback := func(why string, partial cropResult) (cropResult, error) {
+		w, h, perr := probeSize(src)
+		if perr != nil {
+			return partial, fmt.Errorf("%s, and the source size could not be read (%v)", why, perr)
+		}
+		g, gerr := grounder(cfg, nil)
+		if gerr != nil {
+			partial.Note = why + "; the grounding model could not start (" + firstLineStr(gerr.Error()) +
+				") — REFUSED rather than centred"
+			return partial, fmt.Errorf("%s; %s", why, partial.Note)
+		}
+		rects, gnote, ok := aimByGrounding(g, src, start, end, asp, w, h)
+		partial.Note = why + "; " + gnote
+		if !ok {
+			return partial, fmt.Errorf("%s; %s", why, gnote)
+		}
+		partial.Rects = rects
+		partial.Grounded = true
+		return partial, nil
+	}
+
+	// No pose model on this machine is not a licence to centre-crop — it is
+	// simply the tracker being unavailable, which is a case the fallback already
+	// handles properly by asking what is in the shot.
+	if cfg.PoseModel == "" {
+		return fallback("no pose model is installed, so nothing can track a person", cropResult{})
+	}
+
 	p, err := crop.Run(cfg, crop.Options{
 		Video: src, Start: start, End: end, Aspect: aspect, FPS: sampleFPS, Model: cfg.PoseModel,
 		CutTimes: cutTimes,
 	})
 	switch {
 	case err != nil:
-		return cropResult{Note: "subject framing unavailable (" + err.Error() + "); STATIC CENTRE crop"}, nil
+		return fallback("subject framing unavailable ("+firstLine(err)+")", cropResult{})
 	case p.LongestGap > maxGap:
 		// Refuse on a CLUSTERED absence even when the average looks fine.
 		//
@@ -419,18 +465,16 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 		// even though Followed stays false. The caller needs it: "no subject at
 		// all" and "a subject found in 40% of frames" both land here, and they
 		// deserve different fallbacks. See the focal-aim gate in jumpcuts.go.
-		return cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()},
-			fmt.Errorf("the subject is off screen for %.1fs in a row (limit %.1fs) — "+
-				"not rendering a short that would hold a stale crop through it; "+
-				"pass --max-gap to allow it or --center for a static crop",
-				p.LongestGap, maxGap)
+		return fallback(
+			fmt.Sprintf("the subject is off screen for %.1fs in a row (limit %.1fs)", p.LongestGap, maxGap),
+			cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()})
 	case p.Coverage() < minCov:
-		// Refuse rather than ship a followed-looking file that mostly guessed.
-		// The measurement rides along — see the case above.
-		return cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()},
-			fmt.Errorf("subject found in only %.0f%% of samples (need %.0f%%) — "+
-				"not rendering a short that would frame the wrong thing; pass --center to force a static crop",
-				p.Coverage()*100, minCov*100)
+		// Never ship a followed-looking file that mostly guessed. The
+		// measurement rides along — see the case above.
+		return fallback(
+			fmt.Sprintf("the subject was found in only %.0f%% of samples (need %.0f%%)",
+				p.Coverage()*100, minCov*100),
+			cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()})
 	default:
 		return cropResult{Rects: p.Rects, Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage(), Followed: true}, nil
 	}

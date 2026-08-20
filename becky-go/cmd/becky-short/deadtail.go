@@ -19,6 +19,7 @@ package main
 
 import (
 	"becky-go/internal/config"
+	"becky-go/internal/crop"
 )
 
 const (
@@ -31,6 +32,11 @@ const (
 	// deadTailMinKeep is the shortest short worth rendering, in seconds. Below
 	// this there is nothing left to post, so the tail stays and --review says so.
 	deadTailMinKeep = 5.0
+
+	// deadTailMinTrim is the smallest trailing gap worth cutting off the end of
+	// the final span. Below this it is a blink, not an ending on nothing, and
+	// shaving a fifth of a second off every short would be noise.
+	deadTailMinTrim = 0.4
 )
 
 // trimDeadTail drops trailing spans that hold no trackable subject. It returns
@@ -68,8 +74,45 @@ func trimDeadTail(cfg config.Config, j job, spans []keepSpan, aspectStr string,
 		droppedSec += d
 		droppedSpans++
 	}
-	if droppedSpans == 0 {
+	// COPIED, not resliced: the in-span trim below writes to the last element,
+	// and spans[:end] shares its backing array with the caller's slice, so
+	// writing through it would silently rewrite the plan the caller still holds.
+	kept = append([]keepSpan(nil), spans[:end]...)
+
+	// AND THEN TRIM INSIDE THE LAST SURVIVING SPAN.
+	//
+	// Dropping whole spans cannot fix the common case, because the last span
+	// usually STARTS on the subject and only goes blank at its end — so it
+	// passes coverage and longest-gap, and dropping it would throw away the good
+	// seconds with the bad. Measured on the BLINDFOLD master: the short ended on
+	// 2.0 seconds of a shirt swinging across the lens, inside a span whose first
+	// half was fine, and the whole-span trim above removed 0.80s elsewhere and
+	// left every frame of it.
+	//
+	// crop.Path.TrailingGap measures exactly that stretch, so the fix is to cut
+	// it off. Same budget as the span trim — this cannot eat the short either.
+	if len(kept) > 0 {
+		last := kept[len(kept)-1]
+		p, err := crop.Run(cfg, crop.Options{Video: j.Src, Start: last.In, End: last.Out,
+			Aspect: aspectStr, FPS: sampleFPS, Model: cfg.PoseModel,
+			CutTimes: cutsWithinSpan(cuts, last.In, last.Out)})
+		if err == nil && p.TrailingGap >= deadTailMinTrim {
+			cut := p.TrailingGap
+			if remaining := last.Out - last.In - cut; remaining < jumpcutMinSpan {
+				cut = last.Out - last.In - jumpcutMinSpan
+			}
+			if over := droppedSec + cut - budget; over > 0 {
+				cut -= over
+			}
+			if cut >= deadTailMinTrim {
+				kept[len(kept)-1].Out = last.Out - cut
+				droppedSec += cut
+			}
+		}
+	}
+
+	if droppedSpans == 0 && droppedSec == 0 {
 		return spans, 0, 0
 	}
-	return spans[:end], droppedSec, droppedSpans
+	return kept, droppedSec, droppedSpans
 }
