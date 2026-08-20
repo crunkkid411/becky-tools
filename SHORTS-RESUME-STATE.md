@@ -1,22 +1,34 @@
 # SHORTS WORK — RESUME STATE
 
 Written so any session can pick this up with no input from Jordan. Overwrite as things land.
-Last updated 2026-08-20 ~04:30.
+Last updated 2026-08-20 ~08:00.
+
+## IT RUNS. Start here.
+
+**`Make Shorts.bat`** in the repo root. Drag a video or a folder onto it. It runs
+becky-moment -> becky-hits -> becky-short and drops vertical shorts in a `shorts`
+folder beside the footage. Verified end to end on 2026-08-20 against Jordan's own
+560-second long-form: **2 shorts in about 7 minutes**, framed on people, his cuts
+kept, his caption look burned in.
+
+`--caption-style` now DEFAULTS to `jordan`, so the button produces his look with
+no flags. It used to default to the plain `cli-cut` look, which is why the thing
+he was shown did not look like his.
+
+**`WATCH THESE/`** in the repo root holds tonight's output and the side-by-side.
 
 ## The test that matters — use these two files, nothing else
 
     master  2024-08-30_We_Tried_the_ULTIMATE_Fast_Food_Test_BLINDFOLD_Tasting_[unswA5Jv7fI].mp4
     his cut 2024-08-30_spitters_are_quitters..._[7409071570410327339].mp4
 
-His short is **master 22.11s → 54.07s**. The apples-to-apples run is
+His short is **master 22.11s -> 54.07s**. The apples-to-apples run is
 
-    becky-short -video <master> -start 22.11 -end 54.07 -caption-style jordan -out <x>.mp4
+    becky-short -video <master> -start 22.11 -end 54.07 -out <x>.mp4
 
-then measure the render against his. A previous session showed him a comparison built from a
-DIFFERENT video and he spotted it instantly. Do not do that again.
-
-**Look at `becky-vs-jordan.png`** in the repo root (on disk; root PNGs are gitignored) — his frames and becky's, same window, side by
-side. Canon for framing/cut timing stays `research/jordan-edit-reverse-engineered.md`.
+then measure the render against his. A previous session showed him a comparison
+built from a DIFFERENT video and he spotted it instantly. Do not do that again.
+Canon for framing and cut timing stays `research/jordan-edit-reverse-engineered.md`.
 
 ## Where becky stands against his own edit, measured
 
@@ -47,6 +59,10 @@ side. Canon for framing/cut timing stays `research/jordan-edit-reverse-engineere
 | `51390f2` | **"Pace with the content" was a cherry-pick** — struck. |
 | `d2d7c95` | **A busy stretch swallowed its own cuts** — recall 0.708 → 0.833. |
 | `76575df` | **Marlin-2B actually run** — it answers RULE 4. |
+| `0ee6559` | **The review pass failed every multi-person short** by construction. |
+| `851abc8` | **becky was deleting his words** on raw footage — 9 of 26 rendered. |
+| `2796a45` | **His caption look is the DEFAULT**, so the button produces it. |
+| `d0f2117` | **A short must not end on nothing** — 7.7s of blur trimmed. |
 
 ### Captions — done, and it matches
 Font settled by rendering every heavy sans installed here at his measured cap height and scoring
@@ -95,22 +111,39 @@ maxima**, gated by a measured **prominence** (a cut is an isolated spike; motion
 
 ## WHAT IS NOT DONE — honestly
 
-1. **Nothing joins WHAT to WHERE.** `--focal-point` is built and OFF because motion alone is one
-   signal and it measured two spans better, two worse. **Marlin-2B is the missing second signal**
-   and it now works — but Marlin gives a TIME and focal gives an X, so together they corroborate a
-   MOMENT, not a position. The position still has to come from focal.
-2. **Marlin and becky-speaking are both blocked on the GPU, not on capability.** See below.
-3. **The whole-block yellow caption** for a directive. Real in his edit — but only 2 instances in
-   the reference clip, and fitting a rule to 2 samples is exactly the mistake this session made
-   twice and caught twice. Needs more of his shorts before it is buildable.
-4. Face centre Y is still 33.4% against his 29.7%. On a close subject a 9:16 crop of 16:9 is
-   already the full source height, so part of that gap is structural.
+1. **Framing still loses the subject on about a third of spans.** On the two
+   shorts the button picked itself, `--review` measured face coverage 0.80 and
+   0.74, and 3-4 of 8-9 spans fell back to a static crop. The pose tracker is
+   what gives up; an independent InsightFace pass finds faces in more of the same
+   frames, so there is headroom here that has not been taken.
+2. **Nothing joins WHAT to WHERE.** `--focal-point` is built and OFF because
+   motion alone is one signal and it measured two spans better, two worse.
+   **Marlin-2B is the missing second signal** and it works — but Marlin gives a
+   TIME and focal gives an X, so together they corroborate a MOMENT, not a
+   position. The position still has to come from focal.
+3. **Marlin and becky-speaking are both blocked on the GPU, not capability.**
+4. **The whole-block yellow caption** for a directive. Real in his edit — but
+   only 2 instances in the reference clip, and fitting a rule to 2 samples is the
+   mistake this session made twice and caught twice. Needs more of his shorts.
+5. Face centre Y is 33.4% against his 29.7%. On a close subject a 9:16 crop of
+   16:9 is already the full source height, so part of that gap is structural.
+6. Both button-picked shorts still END mid-sentence. `becky-moment --extend`
+   exists to finish a thought and did not. Worth a look: the moment END is chosen
+   before the jumpcut pass runs, so the last complete sentence can be trimmed
+   away afterwards.
 
 ## THE GPU IS NOT VISIBLE TO THIS SESSION — check this first
 
     Win32_VideoController -> "Intel(R) UHD Graphics" only
     nvidia-smi            -> "failed because you do not have sufficient permissions"
     torch (cu128)         -> cuda.is_available() False, device_count 0, but nvcuda.dll loads
+    llama.cpp             -> "ggml_cuda_init: failed to initialize CUDA: no CUDA-capable
+                              device is detected", Available devices: (none)
+    Win32_PnPEntity       -> NVIDIA Virtual Audio + Platform Controllers present, NO GPU
+
+llama.cpp failing the same way is what rules out a torch/wheel problem: the card is not visible
+to ANYTHING. It is disabled or off the bus. A reboot, or re-enabling it in Device Manager, is
+Jordan's one-click fix and it very likely turns Marlin from 22 minutes into seconds.
 
 The RTX 3070 is not reachable. That is why Gemma-4 measured **~14s per frame** and why Marlin took
 22 minutes on a 22-second clip. Both are seconds-per-clip work on the card. **Before concluding
