@@ -1,144 +1,148 @@
 # SHORTS WORK — RESUME STATE
 
 Written so any session can pick this up with no input from Jordan. Overwrite as things land.
-Last updated 2026-08-19 ~21:45.
-
-## The reference standard — read this before touching framing or cut timing
-
-**`research/jordan-edit-reverse-engineered.md`.** Jordan's own 30-second vertical short plus the
-long-form it came from. The vertical is a crop of the master, so his decisions are recoverable as
-numbers. Three findings that changed the build: he INHERITED the cuts (11 of 14 within 100ms of an
-existing master cut, 8 frame-exact); he removes 10.3% of the time, not half; his cuts land on WORDS
-(median 57ms from a word boundary), not on silence.
+Last updated 2026-08-20 ~04:30.
 
 ## The test that matters — use these two files, nothing else
 
     master  2024-08-30_We_Tried_the_ULTIMATE_Fast_Food_Test_BLINDFOLD_Tasting_[unswA5Jv7fI].mp4
     his cut 2024-08-30_spitters_are_quitters..._[7409071570410327339].mp4
 
-His short is **master 22.11s -> 54.07s**. So the apples-to-apples run is
+His short is **master 22.11s → 54.07s**. The apples-to-apples run is
 
     becky-short -video <master> -start 22.11 -end 54.07 -caption-style jordan -out <x>.mp4
 
-and then measure the render against his. A previous session showed him a comparison built from a
-DIFFERENT video and he spotted it immediately. Do not do that again.
+then measure the render against his. A previous session showed him a comparison built from a
+DIFFERENT video and he spotted it instantly. Do not do that again.
 
-## Landed 2026-08-19 evening (5 commits, all on master, all verified on that footage)
+**Look at `becky-vs-jordan.png`** in the repo root (on disk; root PNGs are gitignored) — his frames and becky's, same window, side by
+side. Canon for framing/cut timing stays `research/jordan-edit-reverse-engineered.md`.
+
+## Where becky stands against his own edit, measured
+
+| | Jordan | becky (start of 2026-08-19) | becky now |
+|---|---|---|---|
+| caption cap height | 57px | — (wrong font entirely) | **58px** |
+| caption block bottom | 513px up | — | **510px** |
+| caption outline | 11px | — | 10px |
+| face height | 23.6% | 24.0% | **24.4%** |
+| face centre Y | 29.7% | 36.0% | 33.4% |
+| real cuts found | (inherits) | 17 of 24 | **20 of 24** |
+| existing cuts in window | ~22 | 17 | **21** |
+| time removed | 3.29s = 10.3% | 2.434s = 7.6% | **3.034s = 9.5%** |
+| tighten per boundary | 0.15–0.18s | 0.143s | **0.152s** |
+| coverage | — | 0.605 | **0.673** |
+| no face in frame | 11.5% | 20.3% | 17.2% |
+
+## Landed 2026-08-19 → 20 (10 commits, all on master, all measured on that footage)
 
 | Commit | What |
 |---|---|
-| `b8a7b5f` | **The caption look, measured off his own render.** |
-| `27e3d24` | **becky could not zoom at all** — and the knob for it was not connected. |
+| `b8a7b5f` | **The caption look**, measured off his own render. |
+| `27e3d24` | **becky could not zoom at all** — and the knob for it was disconnected. |
 | `28561a9` | **A `[` in a filename fed the model the wrong video, or none.** |
-| `26ba612` | **The shipped AV defaults could never finish**, so they returned nothing. |
+| `26ba612` | **The AV defaults could never finish**, so they returned nothing. |
 | `895597d` | `internal/focal` — where to point when there is no face. |
+| `9db36f8` | `--focal-point` wired, measured, and **off**: it is a coin toss. |
+| `51390f2` | **"Pace with the content" was a cherry-pick** — struck. |
+| `d2d7c95` | **A busy stretch swallowed its own cuts** — recall 0.708 → 0.833. |
+| `76575df` | **Marlin-2B actually run** — it answers RULE 4. |
 
 ### Captions — done, and it matches
-
 Font settled by rendering every heavy sans installed here at his measured cap height and scoring
-glyph IoU against his actual pixels: **Montserrat ExtraBold 0.803**, Gotham Black 0.801, Segoe UI
-Black 0.796, Arial Black 0.783, and **ProximaNova-Semibold 0.609 — what it used to ship**. A
-SEMIBOLD where his is an EXTRABOLD; that is the difference he saw on sight.
+glyph IoU against his actual pixels: **Montserrat ExtraBold 0.803** … and **ProximaNova-Semibold
+0.609, which is what it shipped**. A SEMIBOLD where his is an EXTRABOLD — the difference he saw on
+sight.
 
-Two things only a render could reveal: ASS `Fontsize` is not the em square (libass sizes by
-ascent+descent, so this face renders cap = Fontsize/2 — 80 gave a 40px cap against his 57, the
-right number is **114**), and `MarginV` is not the gap under the text (libass keeps the descender
-even on all-caps, 11px here, so 499 rendered 523 — the right number is **487**).
+Two traps only a render could reveal. ASS `Fontsize` is not the em square (libass sizes by
+ascent+descent; this face renders **cap = Fontsize/2**, so 80 gave a 40px cap against his 57 — the
+right number is **114**). `MarginV` is not the gap under the text (libass keeps the descender even
+on all-caps, 11px here, so 499 rendered 523 — the right number is **487**).
 
-Line breaking now belongs to libass (WrapStyle 3 in a 66%-wide column) instead of a fixed
-3-words-per-line rule that put THREE lines on screen where he never uses more than two.
-
-**Measured on the render, his vs becky: cap 57 / 57, text bottom 512 / 511.**
-
-**Correction to the record:** the "cyan vs yellow per-word" hypothesis was WRONG. Measured across
-his clip, cyan is his per-word emphasis inside a white block, and a WHOLE block goes yellow for a
-directive ("FRENCH FRY FIRST", "PUT THE"). The mixed-case yellow captions visible in his short are
-not his at all — they are the long-form's own burned-in captions showing through the crop.
+**Correction to the record:** the "cyan vs yellow per-word" idea was wrong. Cyan is his per-word
+emphasis inside a white block; a WHOLE block goes yellow for a directive. The mixed-case yellow
+captions in his short are not his — they are the long-form's own burned-in captions showing through
+the crop.
 
 ### Framing — the crop could not zoom
+All 128 crop rects came back **w=606 h=1080 y=0**: a pure horizontal pan, never a zoom, and with
+height pinned to the source height `--eye-line` had nothing to move. Two causes — `--shoulder-frac`
+was **inert** whenever a head was visible (the expression cancelled it), and `--min-crop-frac 0.34`
+made a punch-in **arithmetically impossible** on 16:9 (the floor sat above the full-height width).
+New `--head-frac` default **0.212**, his measured median. He does punch in: 446×792 recovered at his
+t=3.0s by SIFT+RANSAC and confirmed by rendering the rect back out.
 
-All 128 crop rects over the window came back **w=606 h=1080 y=0**. A pure horizontal pan, never a
-zoom, and with height pinned to the source height there was no vertical freedom either, so
-`--eye-line` had nothing to move. Two causes:
-
-1. `--shoulder-frac` was **inert** whenever a head was visible — the expression cancelled it out, so
-   0.30/0.46/0.58/0.70 all returned the same crop. This is why the earlier "0.46 -> 0.30 moved it
-   one percentage point" result was written off as "it is the footage".
-2. `--min-crop-frac 0.34` made a punch-in **arithmetically impossible** on any 16:9 source: the
-   floor (652.8px) sat above the full-height 9:16 width (607.5px).
-
-He does punch in — recovered 446x792 at his t=3.0s by SIFT+RANSAC and confirmed by rendering the
-recovered rect back out. New `--head-frac`, default **0.212** (his measured median), replaces the
-dead knob; `--min-crop-frac` 0.23.
-
-    metric          Jordan   before   after
-    face height      23.6%    24.0%   23.6%   <- exact
-    face centre Y    29.7%    36.0%   35.0%
-    punch-ins            -    0/128   35/128
-
-Face size is now exact. The remaining 5 points of vertical is a real structural limit: on a close
-subject a 9:16 crop of 16:9 is already the full source height.
-
-**This also answers HANDOFF question 2 without asking him.** His own edit is **full-bleed** — no
-padding, no blurred background. When he wants tighter he punches IN.
+**This also answers the old open question about close-up 16:9 without asking him.** His edit is
+**full-bleed** — no padding, no blurred background. When he wants tighter he punches IN.
 
 ### The AV model path — two bugs that made it useless on his own files
+`filepath.Glob` parses its whole argument as a pattern and `[` opens a character class. Frames are
+cached in a directory named after the clip, and his files are yt-dlp output with the video id in
+brackets — so every AV call on them got **zero frames**, or, when a sibling directory matched the
+character class, **another clip's frames**. And the defaults could not finish: 30 frames at ~14s
+each against a 240s timeout. Frames now downscale to 896 (Gemma-4's own tile size) and the count is
+budgeted against the deadline.
 
-- `filepath.Glob` parses its WHOLE argument as a pattern, and `[` opens a character class. Frames
-  are cached in a directory named after the clip, and Jordan's files are yt-dlp output with the
-  video id in brackets — so every AV call on them got **zero frames** (or, when a sibling directory
-  matched the character class, **another clip's frames**). Fixed with `pathx.FilesIn` in all four
-  places that globbed a literal directory.
-- The shipped defaults could not finish: 30 frames at ~14s each against a 240s timeout. Frames are
-  now downscaled to 896 (Gemma-4's own tile size, so nothing the model can use is lost) and the
-  frame count is budgeted against the deadline.
+### Cut detection — the one that moved the headline number
+becky removed 7.6% where he removes 10.3%, and it was not the tightening amount: becky found only
+17 of 24 real cuts, so there were fewer boundaries to tighten at. `cutTimes` advanced its run
+marker on every over-threshold frame, so once the difference signal stayed high it could not emit
+again — a busy stretch with several quick cuts collapsed into one. Candidates are now **local
+maxima**, gated by a measured **prominence** (a cut is an isolated spike; motion is a ramp):
 
-Measured cold on the 8GB card with E4B QAT: **1920x1080 = 273 tok / 17.1s per frame; 896 = 218 /
-13.5s; 640 = 113 / 5.9s**, all three giving the same answer.
-
-### RULE 4 — the VL can do it, and the deterministic half is built
-
-On the rubber-snake clip, a POV shot with **no face in frame**, becky-validate now returns:
-
-    FOCUS  = the coiled yellow garden hose
-    CHANGE = 46.0s, when the speaker mentions a snake
-
-That is Rule 4's shape working for the first time. `internal/focal` is the other half — the
-horizontal aim, from the spatial part of the frame difference `becky-motion` throws away, refusing
-unless the moving region is a region (not a camera move) and the centroid stays put.
+    phantoms, raw single-take footage : 2.24  2.42  2.79  2.89
+    real cuts, the edited master      : 4.01  8.59  11.71 … 144.50
 
 ## WHAT IS NOT DONE — honestly
 
-1. **`internal/focal` is NOT wired into the crop path.** The insertion point is the static-centre
-   fallback: `jumpcuts.go` ~line 487 (the `forceCenter=true` retry) and `main.go`'s `crop.Run` error
-   branch. Both branch on `len(cr.Rects) > 0`, so returning a ONE-rect slice aimed by focal works
-   through the existing sendcmd/FilterChain machinery with no new render code. Needs
-   `crop.StaticAt(srcW, srcH, aspect, xFrac)` — StaticCenter with an X. Do NOT override an explicit
-   user `--center`.
-2. **Nothing joins the VL's WHAT to focal's WHERE.** Corroborate-then-conclude: the VL naming a
-   thing is one signal, focal's stable aim is the second. Only commit when both agree.
-3. **Pace with the content** (his shots run 0.70/0.73/1.10/0.53 through the argument then hold 2.73s
-   on the punchline) and **zoom as an editorial device** — punch-ins now happen geometrically, but
-   nothing chooses them for dramatic reasons.
-4. **The whole-block yellow caption** for a directive. Real in his edit, needs a semantic call.
-5. `becky-speaking` is built (12/12) but not wired into framing.
+1. **Nothing joins WHAT to WHERE.** `--focal-point` is built and OFF because motion alone is one
+   signal and it measured two spans better, two worse. **Marlin-2B is the missing second signal**
+   and it now works — but Marlin gives a TIME and focal gives an X, so together they corroborate a
+   MOMENT, not a position. The position still has to come from focal.
+2. **Marlin and becky-speaking are both blocked on the GPU, not on capability.** See below.
+3. **The whole-block yellow caption** for a directive. Real in his edit — but only 2 instances in
+   the reference clip, and fitting a rule to 2 samples is exactly the mistake this session made
+   twice and caught twice. Needs more of his shorts before it is buildable.
+4. Face centre Y is still 33.4% against his 29.7%. On a close subject a 9:16 crop of 16:9 is
+   already the full source height, so part of that gap is structural.
 
-## The ONE thing that needs Jordan, and it is one click
+## THE GPU IS NOT VISIBLE TO THIS SESSION — check this first
 
-**Marlin-2B is a GATED Hugging Face repo.** Verified against his own authenticated session, not
-just the free model's 401: *"Access to model NemoStation/Marlin-2B is restricted and you are not in
-the authorized list."* Nobody can read the card, config or weights until he clicks request-access on
-https://huggingface.co/NemoStation/Marlin-2B. It is interesting because a 2B video model with native
-temporal grounding may fit the 8GB budget better than Gemma-4 12B.
+    Win32_VideoController -> "Intel(R) UHD Graphics" only
+    nvidia-smi            -> "failed because you do not have sufficient permissions"
+    torch (cu128)         -> cuda.is_available() False, device_count 0, but nvcuda.dll loads
 
-## Round-2 research verdicts (`research/shorts-gap-decisions.md`)
+The RTX 3070 is not reachable. That is why Gemma-4 measured **~14s per frame** and why Marlin took
+22 minutes on a 22-second clip. Both are seconds-per-clip work on the card. **Before concluding
+that any model is too slow, re-check this.**
 
-EditDuet (arXiv 2509.10761) — SKIP, 8xH100 + GPT-4o judge + CC BY-NC-ND. TimeLens (arXiv
-2512.14698) — SKIP the task, but its Table 2 finding is ADOPTED and shipped: interleaved raw-text
-timestamps beat a list up front, which is what becky was sending. Aero Realtime 4B — NO, a streaming
-assistant model, wrong problem and it does not fit the card. Marlin-2B — BLOCKED, see above.
+## Marlin-2B — gate opened, tested, and it is the right tool
 
-## Gate status at this checkpoint
+`research/model-marlin-2b-TESTED.md`. Apache-2.0, 2B, ~4GB at bf16. Two calls:
+
+    caption(video)           -> Scene paragraph + <start - end> timestamped events
+    find(video, event='...')  -> a parsed (start, end) tuple
+
+Checked against the frames on his snake clip: *"a person reacts with a shocked facial expression"*
+→ **60.5–61.5s, correct** — the hand-to-head payoff right after "FAKE SNAKE PRANK!". That is the
+harder half of RULE 4 (*"on Robby's face 1–3 frames BEFORE he realises"*) and becky could not do it
+at all. *"the snake starts to move"* → 43.2–44.2s, which is the reveal rather than the motion onset:
+right object, right region, wrong verb.
+
+Reproduce with `scripts/marlin_probe.py` and the `.venv-marlin` venv (untracked — multi-GB torch;
+`.gitignore` is hook-protected so it was left alone, and it will show in `git status`).
+
+## Two things struck from the plan this session, both cherry-picks
+
+- **"Pace with the content."** His 22 shot durations have no accelerate-then-hold arc, and the same
+  window of the MASTER has the same shape. His shots are uniformly 0.18s shorter — that is the
+  tightening, and it is the entire difference. becky's pacing model already IS his.
+- **A coverage gate for focal aiming**, fitted to 4 spans on one clip and removed again.
+
+**The method that caught both: measure the whole distribution, and measure the SOURCE too.** A
+number from an edit means nothing until you know what the footage handed him for free.
+
+## Gate status
 
     go build ./...          clean
     go vet ./...            clean
@@ -151,5 +155,6 @@ assistant model, wrong problem and it does not fit the card. Marlin-2B — BLOCK
     becky-short --selftest  53/53
     becky-moment --selftest 15/15
     ground.py --selftest    13/13
-    crop_path.py --selftest 15/15 (7 of them new)
+    crop_path.py --selftest 15/15
     internal/focal          7/7
+    internal/shotcut        all green, precision 0.909 recall 0.833
