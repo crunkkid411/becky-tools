@@ -175,17 +175,26 @@ func TestDetect_RealFootage(t *testing.T) {
 	precision := float64(tp) / float64(len(cuts))
 	recall := float64(tp) / float64(len(ref))
 	t.Logf("detected=%d ref=%d tp=%d precision=%.3f recall=%.3f", len(cuts), len(ref), tp, precision, recall)
-	// MEASURED 2026-08 (post-confirmation): precision/recall stay in the same
-	// band as before confirmedCut was added — see this file's header comment.
-	// Gate loosely (0.65) so the test catches a real regression without
-	// chasing every footage-dependent half-frame.
-	// Measured 0.944 with the histogram check in place; 0.85 leaves headroom
-	// for footage variation without letting the old 0.833 back in.
+	// MEASURED 2026-08-20, after cutTimes began considering LOCAL MAXIMA inside a
+	// busy stretch instead of only the first frame of an over-threshold run, with
+	// minProminence added to keep motion ramps out:
+	//
+	//	before: precision 0.944  recall 0.708  (17 of 24 real cuts)
+	//	after : precision 0.909  recall 0.833  (20 of 24)
+	//
+	// Recall is what matters most for becky-short, because Jordan INHERITS the
+	// source's cuts rather than choosing them: a cut this detector misses is a
+	// shot boundary his edit would have kept. End to end that moved becky from
+	// removing 7.6% of the reference window to 9.5%, against his own 10.3%, at
+	// 0.152s per boundary against his 0.15-0.18s.
+	//
+	// Gates leave footage-variation headroom without letting either number back
+	// to where it was.
 	if precision < 0.85 {
 		t.Errorf("precision regressed: %.3f < 0.85", precision)
 	}
-	if recall < 0.65 {
-		t.Errorf("recall regressed: %.3f < 0.65", recall)
+	if recall < 0.78 {
+		t.Errorf("recall regressed: %.3f < 0.78", recall)
 	}
 }
 
@@ -227,5 +236,47 @@ func TestDetect_RawFootageHasNoCutsAtAll(t *testing.T) {
 	}
 	if len(cuts) != 0 {
 		t.Errorf("Detect found %d cuts in a single-take raw file, want 0: %v", len(cuts), cuts)
+	}
+}
+
+// TestProminence pins the number that separates a cut from a wobble on a motion
+// ramp, using the two MEASURED populations (see minProminence). Values, not
+// truthiness: the gate has to sit in the empty band between them.
+func TestProminenceSeparatesCutsFromMotionRamps(t *testing.T) {
+	// A motion ramp: everything around the peak is already high, so the peak
+	// barely stands out. These are the measured phantom values, 2.24 to 2.89.
+	ramp := make([]float64, 61)
+	for i := range ramp {
+		ramp[i] = 8
+	}
+	ramp[30] = 22 // 22/8 = 2.75, right in the phantom band
+	if p := prominence(ramp, 30, 15); p >= minProminence {
+		t.Errorf("a wobble on a motion ramp scored %.2f, at or above the %.2f gate", p, minProminence)
+	}
+
+	// An isolated cut: ordinary content either side, one big jump.
+	quiet := make([]float64, 61)
+	for i := range quiet {
+		quiet[i] = 3
+	}
+	quiet[30] = 70
+	if p := prominence(quiet, 30, 15); p < minProminence {
+		t.Errorf("an isolated cut scored %.2f, below the %.2f gate", p, minProminence)
+	}
+
+	// The gate must sit BETWEEN the two measured populations, not on top of
+	// either. Worst phantom 2.89, weakest real cut kept 4.01.
+	if minProminence <= 2.89 {
+		t.Errorf("minProminence %.2f does not clear the worst measured phantom (2.89)", minProminence)
+	}
+	if minProminence >= 4.01 {
+		t.Errorf("minProminence %.2f would reject the weakest real cut measured (4.01)", minProminence)
+	}
+
+	// A dead-still neighbourhood must not divide by ~zero into a huge score.
+	still := make([]float64, 61)
+	still[30] = 1
+	if p := prominence(still, 30, 15); p > 3 {
+		t.Errorf("a lone flicker in a dead-still stretch scored %.2f; the median floor should cap it", p)
 	}
 }

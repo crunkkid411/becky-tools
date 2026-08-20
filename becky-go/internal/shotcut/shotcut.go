@@ -96,6 +96,36 @@ const madScale = 6.0
 // spike has clearly decayed back by the time it's checked.
 const confirmSeconds = 0.1
 
+// minProminence is how far a candidate must stand above its OWN neighbourhood
+// before it counts as a cut: its frame difference divided by the median
+// difference of the half-second around it.
+//
+// This is the measurement the package header already describes in words — "a
+// smooth ~1s RAMP up to a peak of ~7.1" versus "an ISOLATED single-frame jump
+// to ~60-80 with the ordinary content on both sides sitting at 1-4" — turned
+// into a number, because considering local maxima inside a busy stretch (see
+// cutTimes) needs a way to tell a cut from a wobble in a motion ramp.
+//
+// MEASURED, prominence over +/-0.5s:
+//
+//	phantoms, raw single-take footage : 2.24  2.42  2.79  2.89
+//	real cuts, the edited master      : 4.01  8.59  11.71 ... 144.50  (22 of 24)
+//
+// The two real cuts below that band are 45.00s (2.14) and — just above it —
+// 54.64s (4.01). 45.00s is the weakest cut in the whole reference list, the
+// 12.08 the minDiffFloor comment already calls the floor case, and this
+// detector does not find it today either. So the gate costs nothing that was
+// being caught and buys back the whole phantom population.
+//
+// 3.5 is the middle of the empty band between 2.89 and 4.01.
+const minProminence = 3.5
+
+// prominenceHalf is the half-window, in SECONDS, the neighbourhood median is
+// taken over. Half a second either side: long enough to contain the ramp of a
+// motion blur (measured at ~1s) so a wobble on it is compared against the ramp
+// itself, short enough that it is mostly one shot.
+const prominenceHalf = 0.5
+
 // confirmFrac is how much of the threshold the FAR diff (frames well before
 // vs. well after the spike) must still clear to confirm a candidate as a
 // real, lasting cut rather than a transient blur that snapped back.
@@ -205,6 +235,10 @@ func meanAbsDiff(a, b []byte) float64 {
 // minDiff), collapses adjacent detections into one candidate per run, then
 // CONFIRMS each candidate (confirmedCut) before calling it a cut.
 func cutTimes(frames [][]byte, start, fps, minDiff float64, confirmFrames int) []float64 {
+	promHalf := int(math.Round(prominenceHalf * fps))
+	if promHalf < 3 {
+		promHalf = 3
+	}
 	if len(frames) < 2 {
 		return nil
 	}
@@ -231,21 +265,54 @@ func cutTimes(frames [][]byte, start, fps, minDiff float64, confirmFrames int) [
 	// blend-run into two on the BLINDFOLD reference footage.
 	const runGap = 2
 
+	// A candidate is a LOCAL MAXIMUM of the difference signal, not merely the
+	// first over-threshold frame of a run.
+	//
+	// It used to be the first frame of a run, with lastHit advanced on every
+	// over-threshold frame — which meant that once the signal stayed above
+	// threshold, no further cut could be emitted until it dropped back for
+	// runGap+1 consecutive frames. A blend across two frames was the case that
+	// rule was written for, and it handles that correctly. What it could not
+	// handle is a BUSY STRETCH: several quick cuts inside footage that is also
+	// moving fast, where the difference never settles between them, so the whole
+	// stretch collapsed into a single cut.
+	//
+	// MEASURED on the BLINDFOLD reference window, which is exactly that kind of
+	// footage: recall 0.708, and the seven misses cluster right after a hit —
+	// 44.70 found, 45.00 and 45.70 swallowed; 37.32 found, 38.02 swallowed.
+	//
+	// A blend still yields ONE cut, because a blend has one peak. A stretch with
+	// several real cuts has several peaks separated by dips, and now yields all
+	// of them. confirmedCut and the histogram check are unchanged and still have
+	// the final say, so this widens what is CONSIDERED without widening what is
+	// accepted.
 	var cuts []float64
-	lastHit := -1 - runGap
+	lastEmit := -1 - runGap
 	for i, d := range diffs {
 		if d <= threshold {
 			continue
 		}
-		if i-lastHit > runGap+1 {
-			// diffs[i] is the jump INTO frame i+1, so a candidate at this
-			// index means the new shot starts at frame i+1.
-			frameIdx := i + 1
-			if confirmedCut(frames, frameIdx, threshold, confirmFrames) {
-				cuts = append(cuts, start+float64(frameIdx)/fps)
-			}
+		if i > 0 && diffs[i-1] > d {
+			continue // still climbing toward a later, bigger peak
 		}
-		lastHit = i
+		if i+1 < len(diffs) && diffs[i+1] > d {
+			continue // the peak is the next frame, not this one
+		}
+		// runGap+1, matching the merge rule this function has always documented:
+		// two spikes that close are one cut whose blend dipped, not two cuts.
+		if i-lastEmit <= runGap+1 {
+			continue
+		}
+		if prominence(diffs, i, promHalf) < minProminence {
+			continue // a wobble on a motion ramp, not an isolated cut
+		}
+		// diffs[i] is the jump INTO frame i+1, so a candidate at this
+		// index means the new shot starts at frame i+1.
+		frameIdx := i + 1
+		if confirmedCut(frames, frameIdx, threshold, confirmFrames) {
+			cuts = append(cuts, start+float64(frameIdx)/fps)
+			lastEmit = i
+		}
 	}
 	return cuts
 }
@@ -259,6 +326,33 @@ func cutTimes(frames [][]byte, start, fps, minDiff float64, confirmFrames int) [
 // Too close to either edge of the decoded window to check both sides: kept,
 // not rejected — this function can only rule OUT a false positive, never
 // manufacture a true one, so "can't tell" defaults to trusting the spike.
+// prominence is diffs[i] over the median of the surrounding window, excluding
+// the peak itself. Floored at 0.5 so a dead-still neighbourhood cannot divide
+// by ~0 and make any flicker look infinitely prominent.
+func prominence(diffs []float64, i, half int) float64 {
+	lo, hi := i-half, i+half
+	if lo < 0 {
+		lo = 0
+	}
+	if hi >= len(diffs) {
+		hi = len(diffs) - 1
+	}
+	w := make([]float64, 0, hi-lo)
+	for j := lo; j <= hi; j++ {
+		if j != i {
+			w = append(w, diffs[j])
+		}
+	}
+	if len(w) == 0 {
+		return 0
+	}
+	m := median(w)
+	if m < 0.5 {
+		m = 0.5
+	}
+	return diffs[i] / m
+}
+
 func confirmedCut(frames [][]byte, frameIdx int, threshold float64, confirmFrames int) bool {
 	lo := frameIdx - 1 - confirmFrames
 	hi := frameIdx + confirmFrames
@@ -285,7 +379,24 @@ func confirmedCut(frames [][]byte, frameIdx int, threshold float64, confirmFrame
 	//   0.96      -> precision 0.850 recall 0.708   (false positives return)
 	// 0.93 is the middle of that flat region, and raw footage reports ZERO cuts
 	// at every value tested, so the raw/edited decision is not knife-edge.
-	return HistIntersection(frames[frameIdx-1], frames[frameIdx]) < MaxHistOverlap
+	if HistIntersection(frames[frameIdx-1], frames[frameIdx]) >= MaxHistOverlap {
+		return false
+	}
+	// And the distribution change has to LAST. The adjacent-frame test above
+	// asks "did the picture change?"; this asks "did it stay changed?".
+	//
+	// That distinction is what separates a cut from a hand sweeping past the
+	// lens. A sweep really does change the brightness distribution for a frame
+	// or two — it passes the test above — and then the scene comes back to
+	// itself. A cut does not come back.
+	//
+	// It earns its place on raw footage. Considering local maxima inside a busy
+	// stretch (see cutTimes) recovered three real cuts on the edited master and
+	// simultaneously resurrected FOUR phantom cuts in a five-minute single-take
+	// file that must report zero — two of them 0.13s apart inside one motion
+	// burst. Comparing the same 100ms-apart frames the persistence check above
+	// already loads costs nothing extra and removes them.
+	return HistIntersection(frames[lo], frames[hi]) < MaxHistOverlap
 }
 
 // MaxHistOverlap is how similar the greyscale histograms either side of a
