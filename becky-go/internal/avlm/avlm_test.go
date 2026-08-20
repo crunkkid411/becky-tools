@@ -1,9 +1,11 @@
 package avlm
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestReadyMissingArtifacts verifies Ready() returns a *DegradeError naming the
@@ -122,5 +124,46 @@ func TestDefaultsFillsUnset(t *testing.T) {
 	defaults(&o)
 	if o.FPS != 1.0 || o.WindowSec != 30 || o.MaxTokens != 512 || o.Seed != 42 {
 		t.Errorf("defaults not applied: %+v", o)
+	}
+}
+
+// frameBudget is what stops the shipped defaults from being a guaranteed
+// timeout: a 30s window at 1 fps is 30 frames, one frame costs ~14s on this
+// card, and the tool's own timeout is 240s. The request could never finish, and
+// what came back was zero observations with a note blaming the model.
+func TestFrameBudgetFitsTheDeadline(t *testing.T) {
+	// No deadline: ask for everything, report no cap.
+	if n, capped := frameBudget(context.Background(), MaxFrames); n != MaxFrames || capped {
+		t.Errorf("no deadline: got (%d, %v), want (%d, false)", n, capped, MaxFrames)
+	}
+
+	// becky-validate's own default: 240s.
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	n, capped := frameBudget(ctx, MaxFrames)
+	if !capped {
+		t.Fatalf("240s should not afford %d frames at ~%.0fs each", MaxFrames, secPerFrameEstimate)
+	}
+	// (240s - 25s slack) / 14s = 15
+	if n != 15 {
+		t.Errorf("240s deadline affords %d frame(s), want 15", n)
+	}
+	if float64(n)*secPerFrameEstimate+generationSlack.Seconds() > 240 {
+		t.Errorf("budget of %d frames does not actually fit 240s", n)
+	}
+
+	// A generous deadline must not cap at all.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3600*time.Second)
+	defer cancel2()
+	if n, capped := frameBudget(ctx2, MaxFrames); n != MaxFrames || capped {
+		t.Errorf("an hour: got (%d, %v), want (%d, false)", n, capped, MaxFrames)
+	}
+
+	// Already past the deadline: ask for one rather than zero. A frame the
+	// caller can still show beats an empty result.
+	ctx3, cancel3 := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel3()
+	if n, capped := frameBudget(ctx3, MaxFrames); n != 1 || !capped {
+		t.Errorf("expired deadline: got (%d, %v), want (1, true)", n, capped)
 	}
 }

@@ -3,8 +3,9 @@
 // It turns a short video clip + a prompt into the model's free-text answer by:
 //  1. extracting <= 60 s of video as ~1 fps frames and <= 30 s of 16 kHz mono
 //     audio via ffmpeg (Gemma 4's documented multimodal limits),
-//  2. baking [t.s] timestamps into per-frame captions (Gemma 4 has no native
-//     timestamp awareness — this is the documented workaround), and
+//  2. sending each frame's timestamp as raw text IMMEDIATELY BEFORE that frame
+//     (Gemma 4 has no native timestamp awareness; TimeLens, arXiv 2512.14698
+//     Table 2, measured this interleaved encoding as the best of four), and
 //  3. driving llama.cpp's llama-server (NOT llama-mtmd-cli) with the Gemma-4
 //     E4B-it GGUF + BF16 mmproj, GPU-offloaded (-ngl 99), via its OpenAI-
 //     compatible /v1/chat/completions endpoint with base64 image + audio parts.
@@ -43,12 +44,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"becky-go/internal/pathx"
 	"strings"
 	"time"
 
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/pathx"
 )
 
 // Gemma 4 multimodal limits (from Google + llama.cpp). Audio is hard-capped at
@@ -57,8 +57,36 @@ import (
 const (
 	MaxAudioSeconds = 30.0
 	MaxVideoSeconds = 60.0
-	MaxFrames       = 40 // capped so frames(~256 tok ea) + audio + prompt fit the 16384-token server context
+	MaxFrames       = 40 // capped so frames + audio + prompt fit the 16384-token server context
 	audioSampleRate = 16000
+
+	// frameLongEdge downscales every sampled frame before it is sent.
+	//
+	// 896 is Gemma-4's own vision tile size, so anything larger is resampled
+	// away inside the projector: sending a 1920x1080 frame buys nothing and
+	// costs real time. MEASURED here on the 8GB RTX 3070 with E4B QAT, cold
+	// (no prompt cache), on the rubber-snake clip:
+	//
+	//	frame size    tokens/frame   seconds/frame   answer
+	//	1920x1080          273           17.1        "the coiled yellow object"
+	//	 896x504           218           13.5        "the coiled yellow object"
+	//	 640x360           113            5.9        "the yellow coiled object"
+	//
+	// 640 is faster still and gave the same answer, but this is a forensic tool
+	// and throwing away half the remaining detail is a quality trade that should
+	// not be made silently. 896 is the free part: no information the model can
+	// use is lost.
+	frameLongEdge = 896
+
+	// secPerFrameEstimate is what one 896px frame costs to prefill, measured as
+	// above (13.5s, rounded up for the audio and prompt that ride along). It is
+	// only ever used to BUDGET a request against its deadline - being wrong just
+	// means asking for a few more or fewer frames.
+	secPerFrameEstimate = 14.0
+
+	// generationSlack is time reserved for the model to actually answer once
+	// every frame is in, so the budget never spends the whole deadline on input.
+	generationSlack = 25 * time.Second
 
 	// serverStartTimeout caps how long we wait for a freshly-spawned llama-server
 	// to load the ~5 GB model + mmproj and answer /health.
@@ -286,17 +314,52 @@ func clampWindow(sec float64) float64 {
 	return sec
 }
 
-// extractFrames samples frames at fps within [start, start+window] and returns
-// their paths sorted by time. Frame count is capped at MaxFrames.
+// frameBudget is how many frames this request can afford before ctx's deadline.
+//
+// It exists because the old behaviour was a guaranteed silent failure at the
+// shipped defaults: becky-validate asks for a 30s window at 1 fps = 30 frames,
+// with a 240s timeout, and one frame costs ~14s on this card. The request could
+// never finish. What Jordan saw was a four-minute wait and then zero
+// observations with a note blaming the model.
+//
+// Fewer frames is a real answer. No answer is not. The caller logs the cap so
+// the number of frames actually looked at is never silently smaller than asked.
+func frameBudget(ctx context.Context, want int) (int, bool) {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return want, false
+	}
+	usable := time.Until(dl) - generationSlack
+	if usable <= 0 {
+		return 1, true // something is better than a certain timeout
+	}
+	afford := int(usable.Seconds() / secPerFrameEstimate)
+	if afford < 1 {
+		afford = 1
+	}
+	if afford >= want {
+		return want, false
+	}
+	return afford, true
+}
+
+// extractFrames samples frames at fps within [start, start+window], downscaled
+// to frameLongEdge, and returns their paths sorted by time. The count is capped
+// at MaxFrames and again at whatever ctx's deadline can actually afford.
 func (r *Runner) extractFrames(ctx context.Context, clip, work string, start, window, fps float64) ([]string, error) {
 	pat := filepath.Join(work, "frame_%04d.jpg")
-	// -vf fps=N samples at N fps; -frames:v caps the count so we never exceed
-	// the model's token budget even for a long window.
+	want, capped := frameBudget(ctx, MaxFrames)
+	if capped {
+		r.Logf("avlm: deadline allows %d frame(s) at ~%.0fs each, not %d — asking for fewer "+
+			"rather than timing out with nothing", want, secPerFrameEstimate, MaxFrames)
+	}
+	// -vf fps=N samples at N fps then scales the long edge down to what the
+	// vision encoder can actually use; -frames:v caps the count.
 	args := []string{
 		"-y", "-ss", ftoa(start), "-t", ftoa(window),
 		"-i", clip,
-		"-vf", fmt.Sprintf("fps=%s", ftoa(fps)),
-		"-frames:v", itoa(MaxFrames),
+		"-vf", fmt.Sprintf("fps=%s,scale='min(%d,iw)':-2", ftoa(fps), frameLongEdge),
+		"-frames:v", itoa(want),
 		"-q:v", "3",
 		"-loglevel", "error",
 		pat,
@@ -313,8 +376,8 @@ func (r *Runner) extractFrames(ctx context.Context, clip, work string, start, wi
 	if err != nil {
 		return nil, degrade("cannot list extracted frames", err)
 	}
-	if len(matches) > MaxFrames {
-		matches = matches[:MaxFrames]
+	if len(matches) > want {
+		matches = matches[:want]
 	}
 	// ffmpeg exiting 0 while writing nothing is not a shrug. It used to return an
 	// empty slice here and the run continued to an audio-only answer with zero
