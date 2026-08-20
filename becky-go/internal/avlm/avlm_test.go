@@ -67,19 +67,39 @@ func TestChatRequestDisablesThinking(t *testing.T) {
 	}
 }
 
-// TestBuildPromptFramesFirstWithTimestamps verifies frame timestamps are baked
-// into the prompt (the no-native-timestamp workaround) and the question follows.
-func TestBuildPromptFramesFirstWithTimestamps(t *testing.T) {
+// The timestamps no longer live in the prompt as a list — each one is now a
+// separate text part sitting immediately before its own frame's image tokens,
+// which is the encoding TimeLens (arXiv 2512.14698, Table 2) measured as best.
+// So the prompt must ANNOUNCE that and must NOT re-list them.
+func TestBuildPromptDoesNotListTimestamps(t *testing.T) {
 	opts := Options{Prompt: "QUESTION-MARKER", FPS: 1, WindowStart: 0}
 	p := buildPrompt(opts, []string{"f1.jpg", "f2.jpg"}, "a.wav", 30)
-	if !strings.Contains(p, "[0.0s]") || !strings.Contains(p, "[1.0s]") {
-		t.Errorf("prompt missing baked frame timestamps: %q", p)
+	if strings.Contains(p, "[0.0s]") || strings.Contains(p, "frame 1 =") {
+		t.Errorf("prompt still lists timestamps up front; they belong interleaved: %q", p)
+	}
+	if !strings.Contains(p, "preceded by its clip-absolute timestamp") {
+		t.Errorf("prompt must tell the model where the timestamps are: %q", p)
 	}
 	if !strings.Contains(p, "the clip's audio") {
 		t.Errorf("prompt should mention audio when present: %q", p)
 	}
-	if i := strings.Index(p, "[0.0s]"); i < 0 || i > strings.Index(p, "QUESTION-MARKER") {
-		t.Error("frame captions must come before the question")
+	if !strings.Contains(p, "2 video frame(s)") {
+		t.Errorf("prompt should state the frame count: %q", p)
+	}
+}
+
+// frameStamp is what actually carries the time now, so its VALUES are asserted.
+func TestFrameStampIsTheInterleavedTimestamp(t *testing.T) {
+	opts := Options{FPS: 2, WindowStart: 10}
+	if got := frameStamp(opts, 0); got != "[10.0s]" {
+		t.Errorf("frameStamp(0) = %q, want [10.0s]", got)
+	}
+	if got := frameStamp(opts, 3); got != "[11.5s]" {
+		t.Errorf("frameStamp(3) = %q, want [11.5s] (10 + 3/2)", got)
+	}
+	// FPS 0 means "unset" everywhere else in this package; it must not divide by zero.
+	if got := frameStamp(Options{FPS: 0, WindowStart: 4}, 2); got != "[6.0s]" {
+		t.Errorf("frameStamp with FPS 0 = %q, want [6.0s] (fall back to 1 fps)", got)
 	}
 }
 

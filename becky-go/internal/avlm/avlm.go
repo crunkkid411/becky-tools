@@ -43,7 +43,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+
+	"becky-go/internal/pathx"
 	"strings"
 	"time"
 
@@ -303,10 +304,23 @@ func (r *Runner) extractFrames(ctx context.Context, clip, work string, start, wi
 	if err := r.runFFmpeg(ctx, args); err != nil {
 		return nil, err
 	}
-	matches, _ := filepath.Glob(filepath.Join(work, "frame_*.jpg"))
-	sort.Strings(matches)
+	// pathx.FilesIn, NOT filepath.Glob: `work` is a LITERAL directory and it is
+	// routinely named after the clip, so any glob metacharacter in the clip name
+	// gets reinterpreted. Jordan's files are yt-dlp output and nearly all of them
+	// carry the video id in brackets, which glob reads as a character class. See
+	// pathx.FilesIn's comment for exactly how that failed.
+	matches, err := pathx.FilesIn(work, "frame_", ".jpg")
+	if err != nil {
+		return nil, degrade("cannot list extracted frames", err)
+	}
 	if len(matches) > MaxFrames {
 		matches = matches[:MaxFrames]
+	}
+	// ffmpeg exiting 0 while writing nothing is not a shrug. It used to return an
+	// empty slice here and the run continued to an audio-only answer with zero
+	// observations and a note that blamed the model.
+	if len(matches) == 0 {
+		return nil, degrade("ffmpeg reported success but wrote no frames to "+work, nil)
 	}
 	r.Logf("avlm: extracted %d frame(s) at %.2f fps", len(matches), fps)
 	return matches, nil
@@ -356,11 +370,7 @@ func buildPrompt(opts Options, frames []string, audioPath string, window float64
 		if audioPath != "" {
 			b.WriteString(" and the clip's audio")
 		}
-		b.WriteString(". Frame timestamps (clip-absolute seconds):\n")
-		for i := range frames {
-			t := opts.WindowStart + float64(i)/opts.FPS
-			fmt.Fprintf(&b, "  frame %d = [%.1fs]\n", i+1, t)
-		}
+		b.WriteString(". Each frame is preceded by its clip-absolute timestamp.\n")
 	} else if audioPath != "" {
 		fmt.Fprintf(&b, "You are given the clip's audio (%.0fs, 16kHz mono).\n", window)
 	}

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"becky-go/internal/pathx"
@@ -231,7 +230,9 @@ func DiscoverModels(dir string) (model, mmproj string, err error) {
 	if dir == "" {
 		return "", "", fmt.Errorf("no model directory to search (set --model/--mmproj or --dir/%s)", EnvDir)
 	}
-	matches, _ := filepath.Glob(filepath.Join(dir, "*.gguf"))
+	// pathx.FilesIn, not filepath.Glob: a literal directory containing a glob
+	// metacharacter silently matches nothing (see pathx.FilesIn).
+	matches, _ := pathx.FilesIn(dir, "", ".gguf")
 	var mains []string
 	for _, m := range matches {
 		if isMMProj(m) {

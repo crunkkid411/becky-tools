@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"becky-go/internal/pathx"
 	"sort"
 	"strings"
 
@@ -85,7 +87,9 @@ func loadKnowledgeBase(kbDir string, verbose bool) (Knowledge, error) {
 // Missing/unreadable entity files are tolerated (the dir name is the fallback).
 func loadEntities(dir string, verbose bool) map[string]Entity {
 	out := map[string]Entity{}
-	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	// pathx.FilesIn, not filepath.Glob: a literal directory containing a glob
+	// metacharacter silently matches nothing (see pathx.FilesIn).
+	files, err := pathx.FilesIn(dir, "", ".json")
 	if err != nil {
 		return out
 	}

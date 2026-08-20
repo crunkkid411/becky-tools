@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"becky-go/internal/pathx"
 	"strings"
 )
 
@@ -186,7 +188,10 @@ type EntityCard struct {
 func loadEntityCard(kb, name string) (bool, EntityCard) {
 	card := EntityCard{Name: name, Aliases: []string{}}
 
-	files, _ := filepath.Glob(filepath.Join(kb, "entities", "*.json"))
+	// pathx.FilesIn, not filepath.Glob: `kb` is a literal directory and a `[` in
+	// it is read as a character class, silently matching nothing (see
+	// pathx.FilesIn).
+	files, _ := pathx.FilesIn(filepath.Join(kb, "entities"), "", ".json")
 	best := 0
 	for _, f := range files {
 		data, err := os.ReadFile(f)

@@ -72,6 +72,17 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
+// frameStamp is the raw-text timestamp emitted immediately before frame i's
+// image tokens. Kept to the shortest form that still reads as a time, because
+// it is repeated once per frame and MaxFrames is 40.
+func frameStamp(opts Options, i int) string {
+	fps := opts.FPS
+	if fps <= 0 {
+		fps = 1.0
+	}
+	return fmt.Sprintf("[%.1fs]", opts.WindowStart+float64(i)/fps)
+}
+
 // invokeServer runs one multimodal request against llama-server and returns the
 // assistant text. Every recoverable failure is a *DegradeError. It resolves a
 // base URL (reusing Runner.ServerURL or spawning a transient server) and then
@@ -84,14 +95,33 @@ func (r *Runner) invokeServer(ctx context.Context, prompt string, opts Options, 
 	}
 	defer cleanup()
 
-	// Build the multimodal user message: text first, then images, then audio.
+	// Build the multimodal user message: the instruction, then each frame
+	// IMMEDIATELY PRECEDED by its own timestamp, then audio.
+	//
+	// The timestamps used to be one list at the top of the prompt ("frame 1 =
+	// [0.0s], frame 2 = [1.0s], ...") followed by an undifferentiated stack of
+	// images. TimeLens (arXiv 2512.14698, Table 2) compared four ways of telling
+	// a video model WHEN a frame is - rotary position embeddings, burning the
+	// time into the pixels, one list up front, and a raw-text timestamp
+	// tokenised immediately before each frame's visual tokens - and the
+	// interleaved raw-text prefix won on all three of their benchmarks. The list
+	// up front is the variant it beat.
+	//
+	// That matters here because becky's questions are temporal: WHEN does the
+	// snake start moving, WHICH frame is just before he realises. Interleaving
+	// is also slightly CHEAPER than the list it replaces - one short string per
+	// frame instead of a whole numbered line.
 	parts := []contentPart{{Type: "text", Text: prompt}}
-	for _, f := range frames {
+	for i, f := range frames {
 		b64, err := readBase64(f)
 		if err != nil {
 			r.Logf("avlm: skipping frame %s (%v)", filepath.Base(f), err)
 			continue
 		}
+		parts = append(parts, contentPart{
+			Type: "text",
+			Text: frameStamp(opts, i),
+		})
 		parts = append(parts, contentPart{
 			Type:     "image_url",
 			ImageURL: &imageURL{URL: "data:image/jpeg;base64," + b64},
