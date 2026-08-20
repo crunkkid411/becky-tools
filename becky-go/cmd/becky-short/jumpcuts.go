@@ -487,6 +487,10 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		return fmt.Sprintf("crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos", r.W, r.H, r.X, r.Y, outW, outH), nil
 	}
 
+	// A short must not END on footage with nothing to look at. --review caught
+	// exactly that on the first two shorts the one-click chain produced; see
+	// deadtail.go. A face-less shot mid-clip is deliberate (RULE 4) and is left
+	// alone - only the tail is trimmed, and only while it fails to track.
 	var (
 		inputArgs                []string
 		chains                   []string
@@ -496,6 +500,15 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		notes                    []string
 		degraded                 int
 	)
+	if !forceCenter {
+		trimmed, droppedSec, droppedSpans := trimDeadTail(cfg, j, spans, aspectStr, sampleFPS, minCov, maxGap, cuts)
+		if droppedSpans > 0 {
+			spans = trimmed
+			res.RemovedSeconds += droppedSec
+			notes = append(notes, fmt.Sprintf("trimmed %.2fs of dead tail (%d span(s) at the end with no "+
+				"trackable subject) so the short does not end on nothing", droppedSec, droppedSpans))
+		}
+	}
 
 	for i, sp := range spans {
 		cr, err := resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, forceCenter,
