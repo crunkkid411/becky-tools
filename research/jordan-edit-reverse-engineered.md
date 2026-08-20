@@ -308,3 +308,62 @@ switched on by default.
   The "shown vs speaking" split is directionally right; individual rows may be off.
 - Caption colour semantics (cyan = reaction stress, yellow = directive) is a reading of ~15 samples.
   It is a hypothesis, not a measurement — worth asking him about rather than implementing.
+
+---
+
+# ADDENDUM 2026-08-20 — "pace with the content" is not a thing he does
+
+An earlier pass recorded, as a to-build item: *"his shots run 0.70/0.73/1.10/0.53
+through the argument, then hold 2.73s on the punchline. Accelerate in, hold the
+payoff."* That was a cherry-picked subsequence. Measured over the whole clip it
+does not survive, and the reason is the finding this document already leads with.
+
+**Every shot duration in his vertical, measured by scene detection:**
+
+    1.47 1.43 1.20 1.63 1.90 1.07 0.93 1.00 1.74 0.70 0.73 1.63
+    2.74 1.43 0.87 1.00 1.23 1.27 2.86 0.84 1.00 1.83
+
+    22 shots   median 1.25s   mean 1.39s
+    thirds (median): 1.43 / 1.43 / 1.115
+
+The two long holds are at index 12 and 18, mid-clip. **The last shot is 1.83s** —
+not a hold at all. There is no accelerate-then-hold arc.
+
+**The same window of the master (22.11–54.07s):**
+
+    0.95 1.43 3.94 1.63 1.91 1.16 1.74 1.73 0.70 0.74 1.63
+    2.71 2.33 1.00 1.24 0.83 1.57 1.63 1.24 0.83 1.00
+
+    21 shots   median 1.43s   mean 1.52s
+    thirds (median): 1.63 / 1.63 / 1.24
+
+**The two sequences are the same shape.** Flat, flat, slightly shorter in the last
+third — in BOTH. The 0.70 and 0.73 that the cherry-pick called "accelerating
+through the argument" are 0.70 and 0.74 in the master, at the same position. So
+is the 2.7s "hold on the punchline".
+
+His shots are uniformly **0.18s shorter** than the master's, which is the
+tightening this document already measured at 150ms per cut. That is the entire
+difference.
+
+## What this means for the build
+
+**Strike "pace with the content" as a feature.** It described a decision he does
+not make. He inherits the master's shot rhythm and tightens every boundary by
+roughly the same amount, which is *exactly* what `becky-short` already does:
+`planShotSpans` preserves the existing cuts and `boundaryTighten` trims a small,
+even amount at each one. On the reference window becky removes 2.434s across 17
+spans = **0.143s per span**, against his measured 0.15–0.18s.
+
+becky's pacing model is already his pacing model. The remaining difference is
+that he removes 10.3% of the window and becky removes 7.6% — a tightening
+AMOUNT, one constant, not a missing dramatic structure.
+
+## The method note, because this keeps happening
+
+Both of the last two "obvious" framing/pacing features turned out to be
+artefacts of looking at a subset: this one, and the `--shoulder-frac` knob that
+appeared not to work because it was disconnected. The check that caught both is
+the same one — **measure the whole distribution, and measure the SOURCE too.**
+A number from an edit means nothing until you know what the footage handed him
+for free.
