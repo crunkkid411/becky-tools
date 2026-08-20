@@ -60,6 +60,10 @@ type shortOut struct {
 	// becky-cut found nothing worth cutting) so the note isn't the only signal.
 	KeepSpans      int     `json:"keep_spans"`
 	RemovedSeconds float64 `json:"removed_seconds"`
+	// RescuedWords is how many words the raw-footage silence threshold cut and
+	// the transcript put back. Reported so a disagreement between the level and
+	// what was actually said is visible rather than silent.
+	RescuedWords int `json:"rescued_words,omitempty"`
 	// ExistingCuts/PreservedCuts are only set when the SOURCE ITSELF already
 	// carried hard cuts inside this window (planShotSpans) — Jordan
 	// inherited these cuts rather than choosing them, so RemovedSeconds in
@@ -223,7 +227,7 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 	// window) degrades to the old continuous render below rather than
 	// refusing the whole job.
 	if useJumpcuts {
-		plan, jcErr := planPacing(cfg, cache, j, tighten)
+		plan, jcErr := planPacing(cfg, cache, j, tighten, func(f string, a ...any) { logIfShort(verbose, f, a...) })
 		switch {
 		case jcErr != nil:
 			note(&res, "jumpcuts unavailable: "+firstLine(jcErr)+"; continuous render")
@@ -242,6 +246,11 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 				note(&res, fmt.Sprintf("source already edited: preserved %d/%d existing cuts, tightened %.3fs total "+
 					"(inherited the cuts, did not re-cut with a silence threshold)",
 					plan.PreservedCuts, plan.ExistingCuts, plan.RemovedSeconds))
+			}
+			if plan.RescuedWords > 0 {
+				res.RescuedWords = plan.RescuedWords
+				note(&res, fmt.Sprintf("the silence threshold cut %d word(s) that the transcript says were "+
+					"spoken; put them back (see wordrescue.go)", plan.RescuedWords))
 			}
 			return renderJumpcutShort(cfg, j, plan.Spans, plan.Cuts, res, asp, outW, outH, sampleFPS, minCov, maxGap,
 				forceCenter, focalPoint, withCaptions, capStyle, asig, verbose)

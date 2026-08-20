@@ -233,7 +233,7 @@ func TestPlanPacing_DegradesToRawFootagePathWhenDetectionFails(t *testing.T) {
 	cache.spans["missing.mp4"] = []keepSpan{{In: 0, Out: 5}}
 	j := job{Src: "missing.mp4", In: 0, Out: 5}
 
-	plan, err := planPacing(config.Config{}, cache, j, defaultTighten)
+	plan, err := planPacing(config.Config{}, cache, j, defaultTighten, nil)
 	if err != nil {
 		t.Fatalf("planPacing: %v", err)
 	}

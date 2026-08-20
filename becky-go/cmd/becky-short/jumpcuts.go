@@ -69,6 +69,11 @@ type jumpcutPlan struct {
 	ExistingCuts  int
 	PreservedCuts int
 	Cuts          []float64
+	// RescuedWords is how many words the silence threshold cut and the
+	// transcript put back (raw-footage path only). Reported, never hidden: a
+	// non-zero value means becky-cut's threshold disagreed with what was
+	// actually said, and Jordan should be able to see that it did.
+	RescuedWords int
 }
 
 // planJumpcuts intersects becky-cut's WHOLE-FILE keep decisions (cached per
@@ -207,11 +212,32 @@ func planShotSpans(cuts []float64, removeSpans []keepSpan, j job, tighten float6
 //
 // A detection failure (ffmpeg missing, etc.) degrades to the raw-footage path
 // rather than failing the render.
-func planPacing(cfg config.Config, cache *cutCache, j job, tighten float64) (jumpcutPlan, error) {
+func planPacing(cfg config.Config, cache *cutCache, j job, tighten float64, logf transcribex.Logf) (jumpcutPlan, error) {
 	all, err := cache.wholeFileCuts(cfg, j.Src)
 	cuts := cutsWithin(all, j.In, j.Out)
 	if err != nil || len(cuts) == 0 {
-		return planJumpcuts(cache, j)
+		plan, perr := planJumpcuts(cache, j)
+		if perr != nil {
+			return plan, perr
+		}
+		// RAW-FOOTAGE PATH ONLY. The shot path preserves boundaries the source
+		// already has and only tightens at them, so it cannot swallow a word;
+		// this path is the one driven by an absolute silence threshold, and on
+		// quiet footage that threshold deletes speech. See wordrescue.go for the
+		// measurement — 6.5 seconds of Jordan talking, cut from a window with no
+		// silence in it at all.
+		words, _, wErr := transcribex.EnsureWords(j.Src, logf)
+		if wErr != nil || len(words) == 0 {
+			return plan, nil // no transcript to check against; leave the plan alone
+		}
+		before := spansDuration(plan.Spans)
+		spans, rescued := rescueWords(plan.Spans, words, j.In, j.Out, wordRescuePad)
+		if rescued > 0 {
+			plan.Spans = spans
+			plan.RemovedSeconds -= spansDuration(spans) - before
+			plan.RescuedWords = rescued
+		}
+		return plan, nil
 	}
 	return planShotSpans(cuts, cache.wholeFileRemoveSpans(j.Src), j, tighten), nil
 }
