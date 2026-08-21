@@ -229,6 +229,12 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 
 	j = absoluteJob(j)
 
+	// Each short is its own scene, so rung 6 of the framing ladder (INHERIT the
+	// framing the rest of this short settled on) must not carry across to the
+	// next one — short 3 inheriting short 1's framing would be worse than no
+	// signal at all.
+	resetShortFraming(j.In, j.Out)
+
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
 
 	// Decide the pacing FIRST: is this a continuous window, does the SOURCE
@@ -390,11 +396,16 @@ type cropResult struct {
 	Found    int
 	Coverage float64
 	Followed bool
-	// Grounded is true when the framing came from the grounded detector rather
-	// than the pose tracker — i.e. this span had no trackable person and becky
-	// asked what the shot is actually about instead of centring it
-	// (groundaim.go). Reported so the two are never confused in the output.
+	// Grounded is true when the framing came from somewhere other than the pose
+	// tracker — the ladder in framing.go located the subject by grounding,
+	// a second detector, motion, or scene continuity. It is a SUCCESS, not a
+	// degrade: reported separately from Followed only so the two signals are
+	// never confused in the coverage number.
 	Grounded bool
+	// Unverified is true only when the ladder ran out of rungs and fell to a
+	// centre crop it cannot defend (rung 7). THIS is the failure, not Grounded,
+	// and it is what the "is this window even a short" gate counts.
+	Unverified bool
 	Note     string
 }
 
@@ -428,19 +439,19 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 		if perr != nil {
 			return partial, fmt.Errorf("%s, and the source size could not be read (%v)", why, perr)
 		}
+		// The LADDER (framing.go). It always returns something to render, so
+		// this no longer returns an error: a span the pose tracker cannot follow
+		// is a framing question, not a reason to lose the clip.
 		g, gerr := grounder(cfg, nil)
 		if gerr != nil {
-			partial.Note = why + "; the grounding model could not start (" + firstLineStr(gerr.Error()) +
-				") — REFUSED rather than centred"
-			return partial, fmt.Errorf("%s; %s", why, partial.Note)
+			g = nil // the ladder skips the grounding rungs and carries on
 		}
-		rects, gnote, ok := aimByGrounding(g, src, start, end, asp, w, h)
-		partial.Note = why + "; " + gnote
-		if !ok {
-			return partial, fmt.Errorf("%s; %s", why, gnote)
-		}
+		srcFPS, _ := sourceFPS(cfg.FFprobe, src)
+		rects, lnote, located := frameSpan(cfg, g, &shortFraming, src, start, end, asp, srcFPS, w, h, cutTimes)
 		partial.Rects = rects
-		partial.Grounded = true
+		partial.Grounded = located
+		partial.Unverified = !located
+		partial.Note = why + "; " + lnote
 		return partial, nil
 	}
 

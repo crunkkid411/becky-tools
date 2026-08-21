@@ -393,10 +393,43 @@ func pythonFor(cfg config.Config) string {
 	return cfg.Python
 }
 
+// childEnv builds a DETERMINISTIC environment for the pose helper.
+//
+// This machine sets PIP_TARGET and PYTHONUSERBASE globally, both pointing at
+// X:\PythonUserBase — the same tree becky puts on PYTHONPATH for mediapipe and
+// cv2. So every `pip install` anyone runs, for any project, writes into becky's
+// import path. It currently holds SIX stacked numpy dist-infos (1.26.4, 2.1.2,
+// 2.2.6, 2.4.6, 2.5.0, 2.5.1), and the pose helper died on Jordan's own clip with
+//
+//	ValueError: numpy.dtype size changed, may indicate binary incompatibility.
+//	Expected 96 from C header, got 88 from PyObject
+//
+// which is a C extension built against one numpy running against another.
+//
+// Two things make it deterministic: PYTHONNOUSERSITE stops Python auto-adding
+// the user site on top of what we asked for, and PIP_TARGET is dropped so a
+// child that shells out to pip cannot write into the tree mid-run. FacePyLib
+// stays FIRST on PYTHONPATH so the resolved mediapipe/cv2/numpy are the ones
+// installed together.
+//
+// This cannot repair an already-broken tree — see framing.go for why a pose
+// failure no longer costs the clip either way.
 func childEnv(cfg config.Config) []string {
-	env := os.Environ()
+	var env []string
+	for _, kv := range os.Environ() {
+		switch {
+		case strings.HasPrefix(kv, "PIP_TARGET="),
+			strings.HasPrefix(kv, "PYTHONPATH="),
+			strings.HasPrefix(kv, "PYTHONNOUSERSITE="):
+			continue // replaced or dropped below
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "PYTHONNOUSERSITE=1")
 	if cfg.FacePyLib != "" {
 		env = append(env, "PYTHONPATH="+cfg.FacePyLib+string(os.PathListSeparator)+os.Getenv("PYTHONPATH"))
+	} else if p := os.Getenv("PYTHONPATH"); p != "" {
+		env = append(env, "PYTHONPATH="+p)
 	}
 	return env
 }

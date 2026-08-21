@@ -539,6 +539,7 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		allFollowed              = true
 		notes                    []string
 		degraded                 int
+		unverified               int
 		dropped                  []int
 	)
 	if !forceCenter {
@@ -606,6 +607,9 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		// 0.18, because degraded spans were left out of both the numerator and
 		// the denominator. An object is a legitimate thing to frame; it is still
 		// not a tracked subject, so it counts in the denominator only.
+		if cr.Unverified {
+			unverified++
+		}
 		if cr.Grounded {
 			degraded++
 			cr.Sampled, cr.Found = untrackedSamples(sp.Out-sp.In, fps), 0
@@ -674,13 +678,29 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 	// Refusing a span is honest; refusing the WHOLE short because a minority of
 	// spans could not be tracked is not. More than half degraded means the
 	// window itself is not a talking-head short, and that IS worth refusing.
-	if tooManyDegraded(degraded, len(spans)) {
-		return res, fmt.Errorf("%d of %d kept spans had no trackable person - this window is not a talking-head short; pass --center to force a static crop",
-			degraded, len(spans))
+	// THE GATE COUNTS UNVERIFIED SPANS, NOT UN-POSED ONES.
+	//
+	// It used to count every span the POSE tracker skipped, and refuse the short
+	// when that passed half. With the ladder (framing.go) that is the wrong
+	// number by a mile: Jordan's hidden-camera prank has 16 of 18 spans with no
+	// trackable person — he is across a car park, filmed from a tree — and every
+	// one of them frames correctly by grounding or continuity. Refusing it told
+	// him "this window is not a talking-head short" about a short that was fine.
+	//
+	// What actually warrants refusing is footage where the ladder ran out of
+	// rungs: nothing located, anywhere, by any model. That is Unverified.
+	if tooManyDegraded(unverified, len(spans)) {
+		return res, fmt.Errorf("%d of %d kept spans hold nothing any of becky's models could locate - "+
+			"there is no honest framing of this window; pass --center to force a static crop anyway",
+			unverified, len(spans))
 	}
 	if degraded > 0 {
 		note(&res, fmt.Sprintf("%d of %d spans had no trackable person, so becky asked what the shot "+
 			"is about and framed THAT instead of centring (see the per-span notes)", degraded, len(spans)))
+	}
+	if unverified > 0 {
+		note(&res, fmt.Sprintf("%d of %d spans could not be located by ANY model and are centre-cropped "+
+			"on a guess - check those", unverified, len(spans)))
 	}
 
 	for _, n := range notes {

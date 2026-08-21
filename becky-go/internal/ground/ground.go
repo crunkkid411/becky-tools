@@ -103,6 +103,11 @@ type Options struct {
 	FPS float64
 	// Timeout is the per-frame server timeout in seconds. 0 uses 120.
 	Timeout float64
+	// MaxFrames caps how many frames this call may spend. 0 uses MaxSamples,
+	// which is sized for ONE SPAN. A whole-window sweep (cmd/becky-short's
+	// groundcache) must raise it, or a 40-second window is answered from eight
+	// frames and every span reads the same one or two sightings.
+	MaxFrames float64
 }
 
 // DefaultFPS is one sample a second. Grounding decides WHERE TO POINT for a
@@ -230,12 +235,15 @@ func (r *Runner) Run(opt Options) (Result, error) {
 			opt.FPS = need
 		}
 	}
-	// And a LONG span must not cost minutes. Framing is one decision for the
-	// whole shot, so past MaxSamples more frames buy nothing: the rate is capped
-	// so a 60-second span costs the same eight calls a 8-second one does.
+	// And a LONG call must not cost minutes. The rate is capped so the frame
+	// COUNT stays bounded however long the range is.
+	maxFrames := opt.MaxFrames
+	if maxFrames <= 0 {
+		maxFrames = MaxSamples
+	}
 	if d := opt.End - opt.Start; d > 0 {
-		if cap := MaxSamples / d; cap < opt.FPS {
-			opt.FPS = cap
+		if capped := maxFrames / d; capped < opt.FPS {
+			opt.FPS = capped
 		}
 	}
 	if opt.Timeout <= 0 {

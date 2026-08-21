@@ -49,6 +49,9 @@ var AudioSignals []byte
 //go:embed ground.py
 var Ground []byte
 
+//go:embed falcon_detect.py
+var FalconDetect []byte
+
 // Materialize writes an embedded script to a stable temp path and returns it.
 func Materialize(name string, content []byte) (string, error) {
 	dir := filepath.Join(os.TempDir(), "becky-pyhelpers")
