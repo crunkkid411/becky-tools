@@ -18,22 +18,32 @@
 // Every rung says which one answered, so the output is never a mystery:
 //
 //	1 POSE      MediaPipe body tracking, per frame. The best answer when it works.
-//	2 PAN       Grounded boxes that MOVE become a camera path, not a refusal.
-//	            This is the rung that was missing: a subject crossing 46% of the
-//	            frame is a pan, and becky called it unframeable.
-//	3 AIM       Grounded boxes that HOLD become a static crop aimed at them.
+//	2 PAN       STEADY grounded boxes that MOVE become a camera path, not a
+//	            refusal. This is the rung that was missing: a subject crossing
+//	            46% of the frame is a pan, and becky called it unframeable.
+//	3 AIM       STEADY grounded boxes that HOLD become a static crop aimed at them.
 //	4 FALCON    A second, independent open-vocabulary detector (ONNX, no torch)
 //	            for the shots Reka cannot see. Two architectures agreeing is real
 //	            corroboration; either one alone is a candidate.
 //	5 MOTION    internal/focal — where the movement is, when nothing is nameable.
-//	6 INHERIT   What the REST OF THIS SHORT is framed on. A hidden-camera wide
+//	6 HINT      An UNSTABLE grounded sighting, held still. Good enough to beat a
+//	            centre crop, never good enough to steer a camera or to out-vote
+//	            the person detector on rung 4 (see the stability note below).
+//	7 INHERIT   What the REST OF THIS SHORT is framed on. A hidden-camera wide
 //	            shot with nobody detectable is still the same scene as the shot
 //	            before it, and continuity is a real signal, not a guess.
-//	7 CENTRE    Only when no rung above answered ANYWHERE in the short. Labelled
+//	8 CENTRE    Only when no rung above answered ANYWHERE in the short. Labelled
 //	            as the honest unknown it is — never silent, never a default.
 //
-// Rung 7 is reached when the footage genuinely offers nothing, and Jordan's rule
+// Rung 8 is reached when the footage genuinely offers nothing, and Jordan's rule
 // still holds: it is allowed as a REASON, never as an assumption.
+//
+// NOTHING ON THIS LADDER DECIDES WHETHER THE CLIP IS ANY GOOD. Jordan, twice:
+// "tracking a subject does not determine if the clip is good or not... All these
+// data points are to help becky conceptually understand what is happening in the
+// video so it can make accurate decisions." So every rung answers WHERE TO POINT
+// and nothing else. What the clip IS, and where it starts and ends, is the
+// watching model's call (watchpass.go) — never the tracker's.
 package main
 
 import (
@@ -92,6 +102,8 @@ var shortFraming framingMemory
 func resetShortFraming(winStart, winEnd float64) {
 	shortFraming = framingMemory{}
 	resetShortGround(winStart, winEnd)
+	setShortPayoff(0)
+	setShortWatched(false)
 }
 
 // frameSpan walks the ladder for ONE span and always returns something to
@@ -101,7 +113,26 @@ func resetShortFraming(winStart, winEnd float64) {
 func frameSpan(cfg config.Config, g *ground.Runner, mem *framingMemory, src string,
 	start, end, aspect, fps float64, srcW, srcH int, cuts []float64) (rects []crop.Rect, note string, grounded bool) {
 
-	// --- rungs 2-4: what is in this shot, and where ---
+	// --- rungs 2-3: what is in this shot, and where ---
+	//
+	// STABILITY IS THE GATE HERE, and it is not a new rule invented in this
+	// file — it is ground.py's own contract, which this caller was ignoring.
+	// `stable` means the boxes agreed with each other across the window: seen in
+	// at least half the frames, and never jumping more than a quarter of the
+	// frame between sightings. Of an UNSTABLE result ground.py says, in its own
+	// words, "treat as a HINT about which region matters, not as a camera path".
+	//
+	// Ignoring that is what put a Pikachu poster in charge of Jordan's short on
+	// 2026-08-21: the model saw a "colorful poster" in 9 of 33 frames (27%, so
+	// not stable by any reading) and becky PANNED across 75% of the frame
+	// chasing it, straight past the person sitting at the desk. An unstable
+	// sighting is now kept as a HINT and used at the BOTTOM of the ladder if
+	// nothing better answers — it never steers the camera, and it never
+	// pre-empts the person detector on the rung below.
+	var (
+		hintX    float64
+		haveHint bool
+	)
 	if g != nil {
 		res, err := shortGround.sweep(g, src)
 		switch {
@@ -117,7 +148,18 @@ func frameSpan(cfg config.Config, g *ground.Runner, mem *framingMemory, src stri
 			// An occlusion carries no position, so the sweep drops those frames
 			// outright rather than letting a full-frame box vote on where to aim.
 			samples := shortGround.samplesIn(start, end, occlusionArea)
-			if len(samples) > 0 {
+			switch {
+			case len(samples) == 0:
+				note = fmt.Sprintf("%q could not be located in any sampled frame", subject)
+
+			case !res.Stable:
+				hintX, haveHint = meanX(samples), true
+				note = fmt.Sprintf("grounded %q, but only in %.0f%% of frames and jumping between "+
+					"them, so it is a hint about where to look rather than something to point a "+
+					"camera at (%d sightings in %d frames)",
+					subject, res.FoundFrac*100, len(samples), res.Frames)
+
+			default:
 				// Shot boundaries inside this span are HARD WALLS for the pan —
 				// a multi-camera cut is not a camera move (ground.PanPath).
 				path := ground.PanPath(samples, start, end, panOutFPS, panSmoothSeconds, cuts)
@@ -133,25 +175,20 @@ func frameSpan(cfg config.Config, g *ground.Runner, mem *framingMemory, src stri
 					mid := path[len(path)/2].X
 					mem.remember(mid)
 					return rects, fmt.Sprintf(
-						"no person to track; grounded %q and PANNED with it across %.0f%% of the "+
+						"no person to track; grounded %q steadily and PANNED with it across %.0f%% of the "+
 							"frame (%d sightings in %d frames)", subject, travel*100, len(samples), res.Frames), true
 				}
 				// RUNG 3 — AIM. It holds still, so hold the crop still too.
-				var sum float64
-				for _, s := range samples {
-					sum += s.X
-				}
-				x := sum / float64(len(samples))
+				x := meanX(samples)
 				mem.remember(x)
 				where := fmt.Sprintf("aimed the crop at x=%.2f", x)
 				if absf(x-0.5) <= centredEnough {
 					where = "already centred in the source, so a centre crop IS the subject"
 				}
 				return []crop.Rect{crop.StaticAt(srcW, srcH, aspect, x)},
-					fmt.Sprintf("no person to track; grounded %q and %s (%d sightings in %d frames)",
+					fmt.Sprintf("no person to track; grounded %q steadily and %s (%d sightings in %d frames)",
 						subject, where, len(samples), res.Frames), true
 			}
-			note = fmt.Sprintf("%q could not be located in any sampled frame", subject)
 		}
 	} else {
 		note = "the grounding model is not available"
@@ -173,17 +210,40 @@ func frameSpan(cfg config.Config, g *ground.Runner, mem *framingMemory, src stri
 				"(x=%.2f, steady to %.3f over %d frame pairs)", note, a.X, a.Spread, a.Pairs), true
 	}
 
-	// --- rung 6: what the rest of this short is framed on ---
+	// --- rung 6: the unstable grounding hint, now that nothing better answered ---
+	// It was not good enough to steer a camera and it was not good enough to
+	// out-vote a person detector, but it IS better than centring on nothing.
+	if haveHint {
+		mem.remember(hintX)
+		return []crop.Rect{crop.StaticAt(srcW, srcH, aspect, hintX)},
+			fmt.Sprintf("%s; nothing steadier answered either, so the crop HOLDS STILL aimed at that "+
+				"hint (x=%.2f) instead of panning around after it", note, hintX), true
+	}
+
+	// --- rung 7: what the rest of this short is framed on ---
 	if x, ok := mem.known(); ok {
 		return []crop.Rect{crop.StaticAt(srcW, srcH, aspect, x)},
 			fmt.Sprintf("%s; nothing could be located in this shot, so it INHERITS the framing the "+
 				"rest of this short settled on (x=%.2f) rather than snapping to centre", note, x), true
 	}
 
-	// --- rung 7: the honest unknown, said out loud ---
+	// --- rung 8: the honest unknown, said out loud ---
 	return []crop.Rect{crop.StaticCenter(srcW, srcH, aspect)},
 		note + "; nothing in this entire short could be located, so this is a CENTRE crop and " +
 			"that is a guess, not a decision — the framing here is unverified", false
+}
+
+// meanX is the average horizontal position of a set of sightings, which is
+// where a static crop aimed at them belongs.
+func meanX(samples []ground.Sample) float64 {
+	if len(samples) == 0 {
+		return 0.5
+	}
+	var sum float64
+	for _, s := range samples {
+		sum += s.X
+	}
+	return sum / float64(len(samples))
 }
 
 func absf(v float64) float64 {
@@ -192,3 +252,13 @@ func absf(v float64) float64 {
 	}
 	return v
 }
+
+// maxSpanNotes is how many DISTINCT per-span framing notes reach the JSON
+// report. The rest are counted and summarised, and every one of them is still
+// printed by --verbose.
+//
+// Jordan reads this output and reading costs him physically (ACCESSIBILITY.md).
+// One 30-span short emitted a single ~700-word note that was the same two
+// sentences thirty times with different decimals - which buries the one line
+// that actually mattered (which window the model chose, and why).
+const maxSpanNotes = 4

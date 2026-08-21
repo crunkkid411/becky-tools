@@ -828,3 +828,92 @@ func TestNoInvisibleCaptions(t *testing.T) {
 		}
 	}
 }
+
+// A caption may bridge a breath; it may not sit over a payoff.
+//
+// THE REGRESSION. On Jordan's mouse-trap prank the words stop at 42s and the
+// next ones are at 55.4s. Gap-fill has no ceiling of its own, so "TOLD YOU
+// THAT?" stayed on screen for THIRTEEN SECONDS - across the trap snapping, the
+// recoil and the jump. Asserted as a VALUE: the cue must end within MaxHold of
+// its last word, not merely "sooner than before".
+func TestBuild_CaptionDoesNotHoldAcrossALongSilence(t *testing.T) {
+	words := []Word{
+		{Word: "don't", Start: 40.0, End: 40.4},
+		{Word: "eat.", Start: 40.5, End: 41.0},
+		{Word: "Told", Start: 55.4, End: 55.8},
+		{Word: "you.", Start: 55.9, End: 56.3},
+	}
+	// ShortOptions, not DefaultOptions: the cap belongs to callers captioning a
+	// RAW window. cli-cut's own look stays contiguous and uncapped.
+	opt := ShortOptions()
+	opt.GapSeconds = 0.3
+	cues := BuildWithWords([]Segment{{Source: "clip", Start: 40, End: 57, Words: words}}, opt)
+
+	if opt.MaxHold <= 0 {
+		t.Fatal("ShortOptions no longer caps the hold; this test cannot detect the bug it exists for")
+	}
+	if len(cues) < 2 {
+		t.Fatalf("want at least 2 cues, got %d: %+v", len(cues), cues)
+	}
+	first := cues[0]
+	// The first cue's words end at 41.0, i.e. 1.0s into the segment.
+	if got := first.End; got > 1.0+opt.MaxHold+1e-6 {
+		t.Errorf("first cue ends at %.2f, more than MaxHold (%.2f) past its last word at 1.00 — "+
+			"it is holding across the silence", got, opt.MaxHold)
+	}
+	// And the NEXT cue must still start when its words do, not early.
+	if got := cues[len(cues)-1].Start; got < 15.0 {
+		t.Errorf("last cue starts at %.2f, want ~15.4 (55.4s source, segment starts at 40)", got)
+	}
+}
+
+// The cap must not fire on normal speech, where gap-fill is doing its job of
+// bridging a breath between phrases.
+func TestBuild_StillBridgesAShortGap(t *testing.T) {
+	words := []Word{
+		{Word: "hello.", Start: 0.0, End: 0.5},
+		{Word: "there.", Start: 1.0, End: 1.5},
+	}
+	opt := ShortOptions()
+	opt.GapSeconds = 0.3
+	cues := BuildWithWords([]Segment{{Source: "clip", Start: 0, End: 2, Words: words}}, opt)
+	if len(cues) != 2 {
+		t.Fatalf("want 2 cues, got %d", len(cues))
+	}
+	if got := cues[0].End; got < cues[1].Start-1e-6 {
+		t.Errorf("cue 0 ends at %.2f but cue 1 starts at %.2f — a 0.5s breath should be bridged",
+			got, cues[1].Start)
+	}
+}
+
+// CLI-CUT'S CAPTIONS ARE CONTIGUOUS AND MUST STAY THAT WAY.
+//
+// MaxHold shipped as part of DefaultOptions on 2026-08-20 and quietly rewrote
+// every caller that had nothing to do with the bug it was fixing - cmd/clip
+// (Becky Review's chunker, whose contiguity rules Jordan calls inviolable)
+// started emitting captions with holes in them. The cap belongs to ShortOptions,
+// which captions a RAW window; the cli-cut look is the already-cut edit and has
+// no silences to hold across.
+func TestDefaultOptionsStayUncappedAndContiguous(t *testing.T) {
+	if got := DefaultOptions().MaxHold; got != 0 {
+		t.Fatalf("DefaultOptions caps the hold at %.2f; that is cli-cut's look, not becky-short's", got)
+	}
+	words := []Word{
+		{Word: "don't", Start: 40.0, End: 40.4},
+		{Word: "eat.", Start: 40.5, End: 41.0},
+		{Word: "Told", Start: 55.4, End: 55.8},
+		{Word: "you.", Start: 55.9, End: 56.3},
+	}
+	opt := DefaultOptions()
+	opt.GapSeconds = 0.3
+	cues := BuildWithWords([]Segment{{Source: "clip", Start: 40, End: 57, Words: words}}, opt)
+	if len(cues) < 2 {
+		t.Fatalf("want at least 2 cues, got %d", len(cues))
+	}
+	for i := 0; i < len(cues)-1; i++ {
+		if gap := cues[i+1].Start - cues[i].End; gap > 1e-6 {
+			t.Errorf("cli-cut left a %.3fs hole between cue %d and %d (%.3f -> %.3f)",
+				gap, i+1, i+2, cues[i].End, cues[i+1].Start)
+		}
+	}
+}

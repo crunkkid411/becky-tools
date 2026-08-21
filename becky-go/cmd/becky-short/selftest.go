@@ -273,15 +273,26 @@ func runSelftest() int {
 	//     (cli-cut) path is byte-identical to before it existed.
 
 	// 12a. REGRESSION: the subs.BuildWithWords refactor that made the jordan
-	//     style possible must not have changed cli-cut's own output at all —
-	//     exact values, the same two-cue split this input always produced.
+	//     style possible must not have changed how cli-cut SPLITS — same two
+	//     cues, same words, same starts.
+	//
+	//     The first cue's END is deliberately no longer the next cue's start.
+	//     Gap-fill used to run every caption until the next one began, which on
+	//     the mouse trap prank left "TOLD YOU THAT?" on screen for THIRTEEN
+	//     SECONDS across the whole payoff, because the ASR left a 13.4s hole.
+	//     subs.Options.MaxHold (1.25s past a caption's own last word) is the fix
+	//     and this input exercises it: "there" ends at 0.60, so the cue may hold
+	//     to 1.85, quantized to 56/30 = 1.8667 — NOT stretched to 2.0.
 	ccWords := []subs.Word{{Word: "hello", Start: 0.0, End: 0.3}, {Word: "there", Start: 0.32, End: 0.6},
 		{Word: "world", Start: 2.0, End: 2.3}}
 	ccCues := captionCues(ccWords, 0, 3, 30)
-	check("--caption-style=cli-cut output is unchanged: exact cue text and timing",
+	check("--caption-style=cli-cut splits the same way it always did",
 		len(ccCues) == 2 &&
-			ccCues[0].Start == 0 && abs(ccCues[0].End-2.0) < 1e-9 && ccCues[0].Text == "hello there" &&
+			ccCues[0].Start == 0 && ccCues[0].Text == "hello there" &&
 			abs(ccCues[1].Start-2.0) < 1e-9 && ccCues[1].End == 3 && ccCues[1].Text == "world",
+		fmt.Sprintf("%+v", ccCues))
+	check("a caption does not outlive its own last word by more than MaxHold",
+		len(ccCues) == 2 && abs(ccCues[0].End-56.0/30.0) < 1e-9,
 		fmt.Sprintf("%+v", ccCues))
 
 	// 12b. captionFilterASS needs no force_style — an .ass file already carries

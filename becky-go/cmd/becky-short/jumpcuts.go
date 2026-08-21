@@ -538,6 +538,7 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		totalSampled, totalFound int
 		allFollowed              = true
 		notes                    []string
+		suppressedNotes          int
 		degraded                 int
 		unverified               int
 		dropped                  []int
@@ -633,8 +634,23 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 		if !cr.Followed {
 			allFollowed = false
 		}
-		if cr.Note != "" && !containsNote(notes, cr.Note) {
-			notes = append(notes, cr.Note)
+		// EVERY span note goes to --verbose; only the first few go in the JSON.
+		//
+		// Jordan reads this note and reading is physically costly for him
+		// (ACCESSIBILITY.md). A 30-span short produced a SEVEN HUNDRED WORD
+		// note here - the same two sentences about the pose tracker, thirty
+		// times over, with only the decimals different. The summary lines above
+		// ("23 of 30 spans had no trackable person...") already carry the fact;
+		// the repetition carried nothing and buried the parts that mattered.
+		if cr.Note != "" {
+			logIfShort(verbose, "  span %d/%d: %s", i+1, len(spans), cr.Note)
+			if !containsNote(notes, cr.Note) {
+				if len(notes) < maxSpanNotes {
+					notes = append(notes, cr.Note)
+				} else {
+					suppressedNotes++
+				}
+			}
 		}
 
 		var vchain string
@@ -705,6 +721,10 @@ func renderJumpcutShort(cfg config.Config, j job, spans []keepSpan, cuts []float
 
 	for _, n := range notes {
 		note(&res, n)
+	}
+	if suppressedNotes > 0 {
+		note(&res, fmt.Sprintf("%d more spans were framed the same way and their notes are not repeated "+
+			"here - run with --verbose to read every one", suppressedNotes))
 	}
 
 	vOut := "[vout]"
@@ -877,7 +897,7 @@ func captionCuesJumpcut(words []subs.Word, winIn, winOut float64, spans []keepSp
 	for i, sp := range spans {
 		segs[i] = subs.Segment{Source: "clip", Start: sp.In, End: sp.Out, Words: words}
 	}
-	opt := subs.DefaultOptions()
+	opt := subs.ShortOptions()
 	opt.GapSeconds = subs.AutoGapSeconds(words)
 	opt.FPS = fps
 	return subs.Build(segs, opt)

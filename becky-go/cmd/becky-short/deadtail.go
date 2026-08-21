@@ -39,6 +39,55 @@ const (
 	deadTailMinTrim = 0.4
 )
 
+// shortPayoff is the moment the watching model identified as THE PAYOFF, in
+// source seconds, or 0 when it did not watch. Nothing may trim it away.
+//
+// THIS IS THE GUARD JORDAN'S PRANK NEEDED. The model chose 0-58.6s and put the
+// payoff at 55.4s - correctly, it is the mouse trap snapping shut on Robby. The
+// tail trim then removed NINETEEN SECONDS, ten spans, because Robby is across
+// the room and the pose tracker cannot follow him: "no trackable subject" is
+// true of the payoff and utterly irrelevant to whether it belongs in the clip.
+//
+// So "the short must not end on nothing" is now subordinate to "the short must
+// contain the thing it is about". A payoff with no trackable person in it is
+// still the payoff.
+var shortPayoff float64
+
+// shortWatched is true when the model actually WATCHED this short and returned a
+// window. When it did, the out point is the model's decision and the pose
+// tracker does not get to revise it.
+//
+// Jordan, 2026-08-21, on a clip that had already gone viral: "I've already said
+// MULTIPLE times that tracking a subject does not determine if the clip is good
+// or not... All these data points are to help becky conceptually understand what
+// is happening in the video so it can make accurate decisions."
+//
+// He is right, and the tail trim was the one place a tracker still had a vote on
+// CONTENT rather than on framing. "Nothing to look at" is a claim about the
+// footage, and a pose model that cannot follow a person across a room is not
+// entitled to make it — it is the same false negative that ate the mouse trap
+// payoff. So: the model watched, the model chose the end, the end stands.
+var shortWatched bool
+
+// setShortPayoff records the watched payoff for this short. Reset per short
+// alongside the framing memory.
+func setShortPayoff(t float64) { shortPayoff = t }
+
+// setShortWatched records that the model watched this short and its window is
+// the model's own answer.
+func setShortWatched(b bool) { shortWatched = b }
+
+// payoffProtected reports whether a span may not be trimmed because the payoff
+// lands inside it or after it. payoffGrace keeps the reaction that FOLLOWS the
+// action - a payoff cut the instant it happens is a payoff with no landing.
+func payoffProtected(sp keepSpan) bool {
+	return shortPayoff > 0 && sp.Out > shortPayoff-payoffGrace
+}
+
+// payoffGrace is how much room before the payoff is also protected, so the
+// build-up to it survives too.
+const payoffGrace = 2.0
+
 // trimDeadTail drops trailing spans that hold no trackable subject. It returns
 // the spans to render, how many seconds it removed, and how many spans it cut.
 //
@@ -49,6 +98,13 @@ const (
 func trimDeadTail(cfg config.Config, j job, spans []keepSpan, aspectStr string,
 	sampleFPS, minCov, maxGap float64, cuts []float64) (kept []keepSpan, droppedSec float64, droppedSpans int) {
 
+	// THE MODEL'S OUT POINT IS THE OUT POINT (see shortWatched above). This trim
+	// exists for the case where nobody watched and becky is guessing from cheap
+	// signals; it is not a second opinion on a decision already made by the only
+	// thing here that understood the clip.
+	if shortWatched {
+		return spans, 0, 0
+	}
 	if len(spans) < 2 {
 		return spans, 0, 0
 	}
@@ -60,6 +116,10 @@ func trimDeadTail(cfg config.Config, j job, spans []keepSpan, aspectStr string,
 		sp := spans[end-1]
 		d := sp.Out - sp.In
 		if droppedSec+d > budget || total-(droppedSec+d) < deadTailMinKeep {
+			break
+		}
+		// THE PAYOFF IS NOT DEAD AIR, whatever the tracker says about it.
+		if payoffProtected(sp) {
 			break
 		}
 		cr, err := resolveCrop(cfg, j.Src, sp.In, sp.Out, aspectStr, sampleFPS, minCov, maxGap, false,
@@ -91,7 +151,7 @@ func trimDeadTail(cfg config.Config, j job, spans []keepSpan, aspectStr string,
 	//
 	// crop.Path.TrailingGap measures exactly that stretch, so the fix is to cut
 	// it off. Same budget as the span trim — this cannot eat the short either.
-	if len(kept) > 0 {
+	if len(kept) > 0 && !payoffProtected(kept[len(kept)-1]) {
 		last := kept[len(kept)-1]
 		p, err := crop.Run(cfg, crop.Options{Video: j.Src, Start: last.In, End: last.Out,
 			Aspect: aspectStr, FPS: sampleFPS, Model: cfg.PoseModel,

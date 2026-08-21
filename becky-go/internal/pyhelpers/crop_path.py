@@ -373,6 +373,11 @@ def main():
     rescued = 0
 
     times, cxs, cys, widths = [], [], [], []
+    # seens[i] is whether THIS sample had a REAL detection, as opposed to
+    # carrying the last good framing forward. The caller needs it to use the path
+    # where it is real instead of throwing the whole path away because of one
+    # dead stretch - see cmd/becky-short's spliceTracked.
+    seens = []
     miss_run, longest_miss = 0, 0
     faces_l, faces_r = [], []
     found = 0
@@ -522,7 +527,8 @@ def main():
             # out of frame, which happens constantly when someone leans over).
             # Guard on every value the path needs, not just cx: a None reaching
             # the median filter sorts against floats and kills the whole run.
-            if cx is None or cy is None or crop_w is None:
+            seen = not (cx is None or cy is None or crop_w is None)
+            if not seen:
                 miss_run += 1
                 if miss_run > longest_miss:
                     longest_miss = miss_run
@@ -538,6 +544,7 @@ def main():
                     cx, cy = src_w / 2.0, src_h / 2.0
 
             times.append(round(t - args.start, 4))
+            seens.append(seen)
             cxs.append(cx)
             cys.append(cy)
             widths.append(crop_w)
@@ -595,7 +602,7 @@ def main():
     widths = smooth_by_segments(widths, seg_bounds, k, 0.06, 0.12 * median(widths))
 
     path = []
-    for t, cx, cy, cw, fl, fr in zip(times, cxs, cys, widths, faces_l, faces_r):
+    for t, sn, cx, cy, cw, fl, fr in zip(times, seens, cxs, cys, widths, faces_l, faces_r):
         ch = cw / aspect
         # Never ask for more than the source has; scale the rect down to fit.
         if cw > src_w:
@@ -637,7 +644,7 @@ def main():
         ix, iy = int(x) & ~1, int(y) & ~1
         ix = min(ix, src_w - iw)
         iy = min(iy, src_h - ih)
-        path.append({"t": t, "x": ix, "y": iy, "w": iw, "h": ih})
+        path.append({"t": t, "x": ix, "y": iy, "w": iw, "h": ih, "seen": bool(sn)})
 
     print(json.dumps({
         "ok": True,

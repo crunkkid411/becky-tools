@@ -31,6 +31,13 @@ type Rect struct {
 	Y int     `json:"y"`
 	W int     `json:"w"`
 	H int     `json:"h"`
+	// Seen is whether the subject was ACTUALLY DETECTED at this sample, as
+	// opposed to this rect carrying the last good framing forward. The tracker
+	// holds through a miss on purpose (a blink is not a teleport), which means a
+	// held rect and a tracked rect are indistinguishable without this flag — and
+	// callers were therefore forced into an all-or-nothing choice about the
+	// whole path. cmd/becky-short splices on it.
+	Seen bool `json:"seen"`
 }
 
 // Path is the sampled camera path over one window.

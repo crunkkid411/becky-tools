@@ -12,6 +12,7 @@ for *how we work*. The other markdown files are reference material;
 - `STATE-OF-MASTER.md` tells you the current state of Master
 - `HANDOFF-LOG.md` - **The full branch-by-branch history**
 - `README.md` — project overview, tool catalog, non-obvious decisions.
+- `hair-jordan-personality-profile.md` - detailed personality profile of Hair Jordan based on video-understanding dataset. Intended to be used for his AI clone, but useful within becky-tools whenever stylistic choices are required (such as editing Hair Jordan videos - NOT to be confused with editing the forensic criminal videos)
 
 **Please make sure these files stay up-to-date as you iterate on the project** but ensure your additions match the nature of previous entries in each file.
 
@@ -166,6 +167,28 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   NEVER presence; never put a window a model looked at — and the subject wasn't there —
   on a timeline anyway. (2026-06-24: a forensic task failed exactly here — the tools
   worked, the agent's chaining didn't.)
+- **A DETECTOR IS A SIGNAL, NEVER A VERDICT ON THE FOOTAGE.** Jordan, three times now:
+  "tracking a subject does not determine if the clip is good or not... All these data
+  points are to help becky conceptually understand what is happening in the video so it
+  can make accurate decisions." A pose tracker that cannot follow a person across a room
+  is reporting its own limits, not the clip's. So: a failed/partial detection may change
+  WHERE THE CROP POINTS and nothing else — it may never shorten a clip, drop a span, or
+  refuse a render. Concretely, and each was a real bug: (1) never discard a whole pose
+  path because one stretch of it is dead — splice, keep the tracked seconds
+  (`cmd/becky-short/splice.go`); (2) once a model has WATCHED the clip, its in/out is the
+  in/out — no tracker-driven trim revises it (`deadtail.go`'s `shortWatched`); (3) honour
+  `ground.Result.Stable` — an unstable sighting is "a HINT about which region matters, not
+  a camera path" in ground.py's own words, and ignoring that panned a short across a
+  Pikachu poster instead of the person. Word every such note as an OBSERVATION ("the
+  tracker lost him for 3.4s"), never as a refusal ("limit 2.0s") — Jordan reads these.
+- **NAME THE FONT in every ffmpeg `drawtext`.** With no `fontfile=`, drawtext asks
+  fontconfig for a default, and `C:\Program Files\ffmpeg\...\bin\ffmpeg.exe` — which
+  is on this PC's PATH and which `exec.LookPath("ffmpeg")` will pick depending on how
+  becky was launched — prints `Fontconfig error: Cannot load default config file: No such
+  file: (null)` and then DIES with `0xc0000005`. Measured against all five ffmpeg builds
+  on this machine (2026-08-21): anaconda's warns and continues, that one hard-crashes.
+  It silently killed the whole Gemma watch pass, which then reported "the model watched
+  this but its answer was unusable" about a clip no model had ever seen.
 - **Recall is for DETECTION, not NAMING.** Surface every face/voice; attach a NAME
   only when corroborated.
 - **Offline + deterministic.** No network at runtime; same input → same output

@@ -103,10 +103,15 @@ func main() {
 		outDir    = flag.String("outdir", "", "output folder (--reel mode)")
 		aspect    = flag.String("aspect", "9:16", "target aspect, width:height")
 		sampleFPS = flag.Float64("sample-fps", 0, "how often to look for the subject; 0 = EVERY FRAME (default)")
-		maxGap    = flag.Float64("max-gap", 2.0, "refuse if the subject is undetected for this many seconds in a row; "+
-			"a glance away is normal and the last good framing covers it, but a real absence "+
-			"means there is no honest crop of that window")
-		minCov = flag.Float64("min-coverage", 0.6, "refuse if the subject was found in less than this fraction of samples")
+		// NEITHER OF THESE REFUSES ANYTHING. They decide only whether the POSE
+		// TRACKER'S path is trustworthy enough to steer the crop; when it is
+		// not, framing.go's ladder answers instead and the short still renders.
+		// They are framing thresholds, never a verdict on the clip.
+		maxGap = flag.Float64("max-gap", 2.0, "how many seconds the subject may be undetected in a row before "+
+			"the pose path is distrusted and the framing ladder answers instead; a glance away is normal "+
+			"and the last good framing covers it")
+		minCov = flag.Float64("min-coverage", 0.6, "how much of the window the pose tracker must actually see the "+
+			"subject in before its path is trusted to steer the crop")
 		center = flag.Bool("center", false, "skip pose entirely and use a static centre crop")
 		// OFF by default and the reason is measured, not cautious - see
 		// focalaim.go: on Jordan's own footage it improved two spans and made two
@@ -131,6 +136,13 @@ func main() {
 			"short preserves, when becky-cut finds no real dead air right at that cut to trim instead — "+
 			"default is Jordan's own measured tightening rate on already-edited footage (150ms/cut, "+
 			"research/jordan-edit-reverse-engineered.md), not a raw-footage silence threshold")
+		// ON BY DEFAULT. Jordan, 2026-08-20: "GEMMA needs to decide the final
+		// output". The transcript-and-audio signals that used to choose the
+		// window are blind to physical action, which is how the payoff got cut
+		// out of a prank video. --watch=false restores the old behaviour for a
+		// machine with no model or when the window is already known-good.
+		useWatch = flag.Bool("watch", true, "let the model WATCH the clip and choose its "+
+			"in and out points, instead of trusting the transcript-derived window")
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -199,7 +211,7 @@ func main() {
 	cutCache := newCutCache()
 	asigCache := newAudioSigCache()
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *focalPoint, *captions, *capStyle, *jumpcuts, *tighten, cutCache, asigCache, *verbose)
+		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *focalPoint, *captions, *capStyle, *jumpcuts, *tighten, *useWatch, cutCache, asigCache, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -225,17 +237,40 @@ type job struct {
 
 func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, minCov, maxGap float64,
 	forceCenter, focalPoint, withCaptions bool, capStyle string, useJumpcuts bool, tighten float64,
-	cache *cutCache, asig *audioSigCache, verbose bool) (shortOut, error) {
+	useWatch bool, cache *cutCache, asig *audioSigCache, verbose bool) (shortOut, error) {
 
 	j = absoluteJob(j)
 
-	// Each short is its own scene, so rung 6 of the framing ladder (INHERIT the
-	// framing the rest of this short settled on) must not carry across to the
-	// next one — short 3 inheriting short 1's framing would be worse than no
-	// signal at all.
+	// THE MODEL WATCHES FIRST, AND ITS ANSWER IS THE WINDOW.
+	//
+	// Everything below - pacing, framing, captions - then works on the clip the
+	// model chose rather than on the one the transcript-and-audio signals
+	// guessed at. Those signals are blind to physical action, which is how a
+	// mouse trap snapping in thirteen silent seconds got cut out of the short
+	// built around it (watchpass.go).
+	//
+	// It shuts its own model down before returning, because the framing ladder
+	// starts a different one and two multimodal models do not fit on this card.
+	var watchNote string
+	if useWatch {
+		cuts, _ := cache.wholeFileCuts(cfg, j.Src)
+		j, watchNote = watchAndDecide(cfg, j, cuts, verbose)
+	}
+
+	// AFTER the watch, so the grounding sweep covers the FINAL window and the
+	// framing memory belongs to it. Each short is its own scene, so rung 6 of
+	// the ladder (INHERIT what the rest of this short settled on) must not carry
+	// across to the next one.
+	//
+	// It clears the payoff too, so re-record what the model just said.
+	payoff := shortPayoff
 	resetShortFraming(j.In, j.Out)
+	setShortPayoff(payoff)
 
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
+	if watchNote != "" {
+		note(&res, watchNote)
+	}
 
 	// Decide the pacing FIRST: is this a continuous window, does the SOURCE
 	// already carry hard cuts to preserve (planShotSpans), or does becky-cut
@@ -434,7 +469,10 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 	// the shot, and refuse if nothing answers" (groundaim.go). Routed through
 	// one closure precisely so a future failure case cannot quietly reintroduce
 	// the centre default by taking a different branch.
-	fallback := func(why string, partial cropResult) (cropResult, error) {
+	// p is the pose path when there IS one (nil when the tracker never ran).
+	// Passing it in is what lets a span keep the seconds the tracker really did
+	// follow instead of losing them with the ones it didn't — see splice.go.
+	fallback := func(why string, partial cropResult, p *crop.Path) (cropResult, error) {
 		w, h, perr := probeSize(src)
 		if perr != nil {
 			return partial, fmt.Errorf("%s, and the source size could not be read (%v)", why, perr)
@@ -448,6 +486,28 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 		}
 		srcFPS, _ := sourceFPS(cfg.FFprobe, src)
 		rects, lnote, located := frameSpan(cfg, g, &shortFraming, src, start, end, asp, srcFPS, w, h, cutTimes)
+
+		// KEEP THE TRACKING THAT WORKED. A dead stretch invalidates the dead
+		// stretch, not the whole path (splice.go): the seconds the tracker
+		// really held the subject keep their tracked framing, and only the rest
+		// takes the ladder's answer.
+		if p != nil && len(p.Rects) > 0 {
+			fps := sampleFPS
+			if fps <= 0 {
+				fps = p.FPS
+			}
+			if spliced, tracked, filled, ok := spliceTracked(p.Rects, rects, fps, maxGap); ok {
+				partial.Rects = spliced
+				// NOT "grounded": part of this span is real tracking, and
+				// jumpcuts.go zeroes Found for a grounded span. The measured
+				// numbers already riding in `partial` are the honest ones.
+				partial.Grounded = false
+				partial.Unverified = false
+				partial.Note = why + "; " + spliceNote(tracked, filled, lnote)
+				return partial, nil
+			}
+		}
+
 		partial.Rects = rects
 		partial.Grounded = located
 		partial.Unverified = !located
@@ -459,7 +519,7 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 	// simply the tracker being unavailable, which is a case the fallback already
 	// handles properly by asking what is in the shot.
 	if cfg.PoseModel == "" {
-		return fallback("no pose model is installed, so nothing can track a person", cropResult{})
+		return fallback("no pose model is installed, so nothing can track a person", cropResult{}, nil)
 	}
 
 	p, err := crop.Run(cfg, crop.Options{
@@ -468,7 +528,7 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 	})
 	switch {
 	case err != nil:
-		return fallback("subject framing unavailable ("+firstLine(err)+")", cropResult{})
+		return fallback("subject framing unavailable ("+firstLine(err)+")", cropResult{}, nil)
 	case p.LongestGap > maxGap:
 		// Refuse on a CLUSTERED absence even when the average looks fine.
 		//
@@ -477,15 +537,16 @@ func resolveCrop(cfg config.Config, src string, start, end float64, aspect strin
 		// all" and "a subject found in 40% of frames" both land here, and they
 		// deserve different fallbacks. See the focal-aim gate in jumpcuts.go.
 		return fallback(
-			fmt.Sprintf("the subject is off screen for %.1fs in a row (limit %.1fs)", p.LongestGap, maxGap),
-			cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()})
+			fmt.Sprintf("the pose tracker lost the subject for %.1fs in a row (it treats up to %.1fs as a "+
+				"glance away)", p.LongestGap, maxGap),
+			cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()}, &p)
 	case p.Coverage() < minCov:
 		// Never ship a followed-looking file that mostly guessed. The
 		// measurement rides along — see the case above.
 		return fallback(
-			fmt.Sprintf("the subject was found in only %.0f%% of samples (need %.0f%%)",
-				p.Coverage()*100, minCov*100),
-			cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()})
+			fmt.Sprintf("the pose tracker found the subject in only %.0f%% of frames (it trusts a path "+
+				"from %.0f%%)", p.Coverage()*100, minCov*100),
+			cropResult{Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage()}, &p)
 	default:
 		return cropResult{Rects: p.Rects, Sampled: p.Sampled, Found: p.Found, Coverage: p.Coverage(), Followed: true}, nil
 	}

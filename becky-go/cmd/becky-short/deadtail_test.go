@@ -41,3 +41,32 @@ func TestTrimDeadTailNeverEmptiesTheShort(t *testing.T) {
 		t.Errorf("nil spans returned %+v / %d", got2, n2)
 	}
 }
+
+// THE MODEL'S OUT POINT IS THE OUT POINT. Jordan, 2026-08-21: "tracking a
+// subject does not determine if the clip is good or not." The tail trim was the
+// last place a pose tracker still had a vote on CONTENT, and once a model has
+// actually watched the clip and chosen where it ends, it does not get one.
+func TestWatchedShortIsNeverTailTrimmed(t *testing.T) {
+	spans := []keepSpan{{In: 0, Out: 10}, {In: 10, Out: 20}, {In: 20, Out: 25}}
+
+	setShortWatched(true)
+	defer setShortWatched(false)
+	got, sec, n := trimDeadTail(config.Config{}, job{}, spans, "9:16", 0, 0.6, 2, nil)
+	if n != 0 || sec != 0 || len(got) != len(spans) {
+		t.Errorf("a watched short lost %d span(s) / %.2fs to the tail trim; the model chose the end",
+			n, sec)
+	}
+	if len(got) > 0 && got[len(got)-1].Out != 25 {
+		t.Errorf("the watched out point moved from 25.00 to %.2f", got[len(got)-1].Out)
+	}
+}
+
+// ...and resetting a short must clear that, or short 2 in a --reel run inherits
+// short 1's protection and is never trimmed either.
+func TestResetClearsTheWatchedFlag(t *testing.T) {
+	setShortWatched(true)
+	resetShortFraming(0, 10)
+	if shortWatched {
+		t.Error("resetShortFraming left shortWatched set; the next short would inherit it")
+	}
+}

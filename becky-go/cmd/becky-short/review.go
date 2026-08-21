@@ -314,7 +314,7 @@ func reviewEnding(words []subs.Word, wErr error, fps float64) reviewEndingCheck 
 		return reviewEndingCheck{OK: true, Note: "no speech in this clip to check"}
 	}
 	last := words[len(words)-1]
-	opt := subs.DefaultOptions()
+	opt := subs.ShortOptions()
 	opt.GapSeconds = subs.AutoGapSeconds(words)
 	opt.FPS = fps
 	cues := subs.Build([]subs.Segment{{Source: "clip", Start: words[0].Start, End: last.End, Words: words}}, opt)

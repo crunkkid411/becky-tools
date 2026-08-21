@@ -95,7 +95,7 @@ func captionASS(cfg config.Config, video string, in, out, fps float64, outW, out
 		return "", "", 0, nil
 	}
 
-	opt := subs.DefaultOptions()
+	opt := subs.ShortOptions()
 	opt.GapSeconds = subs.AutoGapSeconds(segments[0].Words)
 	opt.FPS = fps
 	opt.MaxChars = jordanMaxChars
@@ -126,7 +126,7 @@ func captionASSJumpcut(cfg config.Config, video string, winIn, winOut, fps float
 		segments[i] = subs.Segment{Source: "clip", Start: sp.In, End: sp.Out, Words: words}
 	}
 
-	opt := subs.DefaultOptions()
+	opt := subs.ShortOptions()
 	opt.GapSeconds = subs.AutoGapSeconds(words)
 	opt.FPS = fps
 	opt.MaxChars = jordanMaxChars

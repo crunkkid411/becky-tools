@@ -102,6 +102,20 @@ type Options struct {
 	GapSeconds float64
 	// MinDuration floors a caption's on-screen time so it is never a flash.
 	MinDuration float64
+
+	// MaxHold caps how long a caption may stay up AFTER its last word, once
+	// gap-filling has stretched it toward the next one.
+	//
+	// Gap-fill has no ceiling of its own: every caption runs until the next
+	// begins, which is right across a breath and wrong across a silence. On
+	// Jordan's mouse-trap prank the words stop at 42s and the next ones are at
+	// 55.4s, so "TOLD YOU THAT?" sat on screen for THIRTEEN SECONDS over the
+	// entire payoff - the trap snapping, the recoil, the jump. Text that
+	// outlasts its sentence by that much stops reading as a caption and starts
+	// reading as a bug.
+	//
+	// 0 disables the cap (the old, uncapped behaviour).
+	MaxHold float64
 	// PostSpeechHold extends the last caption of a cut across a gap to the next
 	// cut, when that gap is no longer than this. In a gapless reel (clips butted
 	// end to end) cuts never have gaps, so this is a no-op there; it exists for
@@ -134,6 +148,29 @@ func DefaultOptions() Options {
 		PostSpeechHold: 0.35,
 		Lowercase:      true,
 	}
+}
+
+// ShortOptions is DefaultOptions with the caption hold CAPPED, for callers that
+// caption a RAW window instead of an already-cut edit.
+//
+// The difference is the silence. cli-cut captions footage whose dead air has
+// already been removed, so "run each caption until the next one starts" never
+// spans more than a breath and the captions come out contiguous — which is
+// exactly what Jordan's tools expect and what cmd/clip asserts.
+//
+// becky-short captions the ORIGINAL window, silences and all. On the mouse-trap
+// prank the words stop at 42.0s and the next ones are at 55.4s, so uncapped
+// gap-fill left "TOLD YOU THAT?" on screen for THIRTEEN SECONDS across the whole
+// payoff. Capping the hold there is correct; doing it everywhere quietly
+// rewrote cli-cut's look, which is why this is its own function and not a change
+// to DefaultOptions.
+func ShortOptions() Options {
+	o := DefaultOptions()
+	// A second and a bit past the last word: long enough that a caption still
+	// bridges a breath or a quick cut, short enough that the screen clears when
+	// someone actually stops talking.
+	o.MaxHold = 1.25
+	return o
 }
 
 // Auto-gap bounds. The floor is cli-cut's original constant, so a transcript
@@ -585,6 +622,10 @@ func buildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 		offset float64
 		dur    float64
 		cues   []CueWords // Cue times are LOCAL to the segment (0..dur); Words are already output-absolute
+		// spoken[j] is cue j's LAST WORD's end, segment-local, captured before
+		// any snapping overwrites it. MaxHold measures the hold against this
+		// rather than against whatever the cue's End became.
+		spoken []float64
 	}
 	prepared := make([]built, 0, len(segments))
 
@@ -629,6 +670,7 @@ func buildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 				continue
 			}
 			b.cues = append(b.cues, CueWords{Cue: Cue{Start: localStart, End: localEnd, Text: text}, Words: outWords})
+			b.spoken = append(b.spoken, localEnd)
 		}
 
 		// Snap the segment's outer edges: the first caption starts with the cut,
@@ -660,6 +702,30 @@ func buildFromChunks(segments []Segment, chunksPerSeg [][][]Word, opt Options) [
 		// Gap-fill: each caption runs until the next one begins.
 		for j := 0; j < len(cues)-1; j++ {
 			cues[j].End = cues[j+1].Start
+		}
+
+		// ...but NEVER more than MaxHold past its own last word, and that
+		// includes the LAST cue of the segment, which the cut-snap above has
+		// just stretched to the segment's end.
+		//
+		// The last cue is the one that mattered. On Jordan's mouse-trap prank
+		// the words stop at 42.0s and the next are at 55.4s, both inside one
+		// kept span, so "TOLD YOU THAT?" was snapped to the span end and sat on
+		// screen for THIRTEEN SECONDS across the entire payoff. Capping only the
+		// interior cues missed it completely.
+		//
+		// The snap itself is still right where it is small: it is what kills the
+		// trailing flash at a cut. MaxHold only overrides it when the overshoot
+		// stopped being a flash-guard and became a stuck caption.
+		if opt.MaxHold > 0 {
+			for j := range cues {
+				if j >= len(b.spoken) {
+					break
+				}
+				if limit := b.offset + b.spoken[j] + opt.MaxHold; cues[j].End > limit {
+					cues[j].End = limit
+				}
+			}
 		}
 
 		// Floor every caption so none is a flash. Ported faithfully from cli-cut:
@@ -782,8 +848,16 @@ func QuantizeToFrames(cues []Cue, fps float64) []Cue {
 		cues[i].Start = float64(s) / fps
 		cues[i].End = float64(e) / fps
 	}
+	// Restore adjacency ONLY where rounding broke it. A gap of a frame or two
+	// is the one-frame minimum above pushing a boundary; a gap of seconds is a
+	// DELIBERATE hold limit (Options.MaxHold) and closing it undoes that.
+	//
+	// This ran unconditionally and silently defeated MaxHold: the cue was capped
+	// 1.25s after its last word, then re-stretched right back across a
+	// thirteen-second silence because the next cue started there.
 	for i := 0; i < len(cues)-1; i++ {
-		if cues[i].End < cues[i+1].Start {
+		gap := cues[i+1].Start - cues[i].End
+		if gap > 0 && gap <= 2.0/fps {
 			cues[i].End = cues[i+1].Start
 		}
 	}

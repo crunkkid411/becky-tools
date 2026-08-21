@@ -69,7 +69,7 @@ func captionCues(words []subs.Word, in, out, fps float64) []subs.Cue {
 		return nil
 	}
 
-	opt := subs.DefaultOptions()
+	opt := subs.ShortOptions()
 	// The pause threshold comes from THIS transcript's own word gaps. 49% of
 	// Parakeet's words carry end == start, so a constant tuned on another ASR
 	// shatters a Parakeet transcript into one caption per word.
