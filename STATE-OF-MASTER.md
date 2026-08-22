@@ -6,6 +6,40 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### CURRENT — clipping pipeline: it renders, watches itself back, and fixes it (2026-08-21, local)
+
+**On master, pushed, green.** `1d5ce19` (a tracker that loses him is not a clip that is bad) →
+`f626b2b` (the critic loop + LR-ASD) → `c873b9f` (no-op re-render guard).
+
+**Canon moved into `SKILL.md` → the `VIDEO CLIPPING` section.** Read that before any shorts work:
+every tool and flag, the nine-rung ladder, the critic loop, Jordan's measured edit standard, the six
+rules that are law, the traps, and an index of the research behind each decision. The running detail
+is `HANDOFF-SHORTS-2026-08-20.md`.
+
+What changed, in one line each:
+
+- **`becky-short` is now a LOOP.** After rendering, Gemma-4 watches a contact sheet OF THE OUTPUT and
+  can send it back; a rejection must NAME what should be in frame, and that name becomes the
+  grounding target for the re-frame (`--critic-passes`, default 2).
+- **LR-ASD wired as rung 0** of the framing ladder. `cmd/becky-speaking` had done the whole job since
+  it was built and nothing had ever called it.
+- **A detector may no longer decide CONTENT** — only where the crop points.
+- **Four faults fixed** that shipped a short framed on a Pikachu poster: an ffmpeg `drawtext` crash
+  that killed the watch pass silently, an unstable grounding steering the camera, 985 tracked frames
+  discarded over a 3.4s gap, and a tail trim deleting what a model had chosen.
+
+**VERIFIED on real footage, by eye:** his opening close-up is framed on his face (it used to render
+as a dark door); Robbie's reaction is centred; on the door-slam clip the critic said *"The crop
+focuses only on the speaker and misses the door, which is the central subject of the dialogue."*
+
+**NOT DONE, and the next piece of work:** the critic can name a subject but **becky can only move a
+crop, not widen one** — asked for "the door and the speaker" (a zoom-out) it produced a
+byte-identical file. Also: becky-diarize is not crossed with LR-ASD; Marlin-2B's GGUF is unverified.
+
+**Two PRE-EXISTING test failures on master, unrelated and untouched:** `cmd/tts`
+`TestRun_DegradesWhenNoModel`, `internal/assistant` `TestHandleTier2Funnel`. Neither imports
+anything this work touched.
+
 ### Open branch: `claude/qwen-video-analysis-research-x408kl` (2026-08-17, cloud) — DOCS ONLY, safe to merge
 
 **Nothing in `becky-go/` was touched — no build/test risk.** Adds

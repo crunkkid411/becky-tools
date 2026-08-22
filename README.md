@@ -47,6 +47,7 @@ The friendly entry point is **`becky.exe`** (the orchestrator).
 | Index/report | `embed` (Qwen3 vectors), `search` (hybrid FTS5+vec+OCR RRF), `ocr` (text off frames), `consolidate`, `review` (LLM annotate), `export` | searchable corpus + reports |
 | Orchestration | `becky` (plain-language op runner), `enroll` (wiki→KB + `becky "this is X" <clip>`), `cluster` (recurring-unknown "Person A"), `ask` (TUI front-door, saves output next to source) | drive the toolset; build/grow the KB |
 | Utility/meta | `web2md`, `deslop`, `debt-scan`, `eval` (recall harness), `pipeline` (chains the above), `new-tool` (AI-assisted tool scaffolding) | |
+| Clipping (shorts) | `moment` (which bits are worth posting), `hits` (moments -> reel), `short` (**the vertical short: Gemma-4 picks the in/out, nine-rung framing ladder, then a CRITIC watches the render and can send it back**), `speaking` (LR-ASD: which visible face is talking) | finished video -> 9:16 short. See SKILL.md's VIDEO CLIPPING section |
 | Music / DAW | `compose` (genre→MIDI stems), `hum`, `vox`, `mix`, `drum`, `wire`, `reaper` (**AI-first DAW: authors REAPER `.rpp` sessions + drives REAPER, which hosts all his VSTs**) | becky as the AI brain over a real DAW |
 
 ## Captions that do not flash (`becky-subtitle`)
@@ -168,6 +169,26 @@ All GUI windows build as `-tags gui -ldflags "-H windowsgui"` (no console flash)
 every human-facing finding. A lone weak signal → "unknown"/candidate; **≥2 independent signals
 agreeing → state the conclusion plainly** (`identify`'s `fuse.go` emits one `corroborated` entry:
 "Shelby, conf 0.94 (voice 0.80 + face 0.68)"). A flood of maybes a human must sort = tool failure.
+
+**Clipping: a detector is a signal, never a verdict on the footage.** Jordan, repeatedly: *"tracking
+a subject does not determine if the clip is good or not... All these data points are to help becky
+conceptually understand what is happening in the video."* A failed or partial detection may change
+**where the crop points** and nothing else — never shorten a clip, drop a span, or refuse a render.
+Three real bugs came from forgetting it: a whole 985-frame pose path discarded because 3.4s of it
+was dead (fixed: `splice.go` keeps the tracked seconds); a tail trim deleting content a model had
+already chosen (fixed: `deadtail.go`'s `shortWatched`); and a camera panned 75% across the frame
+chasing a poster because `ground.Result.Stable` was ignored.
+
+**Clipping: an LLM watches the OUTPUT before it ships.** Detectors do not understand video — they
+lock onto posters, doorways and empty sofas, and the file plays fine. So `becky-short` ends with
+Gemma-4 looking at the **rendered file**, judged against what the clip is about, able to name a
+better subject and send it back for a re-frame + re-render (`--critic-passes`, default 2). This is
+EditDuet's Editor/Critic loop (`research/paper-2509.10761.md`). The older `--review` pass is NOT
+this: it is deterministic, counts faces, and cannot notice the thing in frame is a poster.
+
+**Clipping is not editing.** Already-edited footage keeps its own cuts (Jordan's own short inherited
+8 of them frame-exact and removed only ~10% of the time); raw footage gets `becky-cut`'s dead-air
+spans. Running a silence threshold over a finished video and re-cutting it is the wrong job.
 
 **Recall is for DETECTION, not NAMING.** Every face/voice is surfaced (recall), but a NAME is only
 attached above a confidence bar. `identify --face-threshold` default is **0.55, deliberately not

@@ -1,5 +1,14 @@
 # SHORTS — STATE 2026-08-21
 
+## READ `SKILL.md` FIRST — the `VIDEO CLIPPING` section
+
+**The reference is `SKILL.md` -> `VIDEO CLIPPING`** (added 2026-08-21): every tool and flag in the
+chain, the nine-rung framing ladder, the critic loop, Jordan's measured edit standard, the six rules
+that are law here, the traps, and an index of which research doc already answered which question.
+It exists because these conclusions kept getting re-researched and then ignored.
+
+**This file is the running state**: what was broken, what is verified, and what to do next, in order.
+
 ## WHERE THIS IS
 
 **The button works.** `Make Shorts.bat` → a vertical short, framed, captioned,
@@ -164,18 +173,103 @@ a fact about the session, not the model. A **GGUF pair exists**
 documented `llama-mtmd-cli --video` path. Not yet verified on this machine; the
 open questions are written down in that file.
 
-## STILL WEAK / NOT DONE
+## THE CRITIC WORKS AND ITS CORRECTION WAS A NO-OP — read this before anything else
 
-- **`becky-moment` still picks windows from the transcript alone.** The watch
-  pass corrects it inside `becky-short`, which is enough for the button, but the
-  ranker itself is blind to physical action.
-- **The grounding probe names ONE subject for a whole window.** "colorful poster"
-  for 33 seconds that contain four different rooms. Should be per-shot.
-- **becky-diarize is not crossed with LR-ASD** — see round two, item 2.
-- **Marlin-2B GGUF is unverified on this machine.**
+Verified end to end on the door-slam clip. The critic watched the render and said, unprompted:
+
+> *"The crop focuses only on the speaker and misses the door, which is the central subject of the
+> dialogue."* -> named `"the door and the speaker"`
+
+becky re-grounded on that name, re-framed, re-rendered — and **the second file was byte-identical to
+the first (same MD5).** Two reasons, and the second is the one that matters:
+
+1. **The critic's subject steers exactly ONE rung**, the grounding sweep. Reka found "the door and
+   the speaker" in 33% of frames — unstable, so rung 6 HINT — and the ladder fell through to the
+   same Falcon answer at the same x. Same input, same output.
+2. **"The door and the speaker" is a request for a WIDER SHOT.** Two things in one frame.
+   `becky-short` can *move* a fixed-width crop; it cannot *widen* one. The instruction was not
+   merely unmet, it was **unmeetable by construction**.
+
+`fileFingerprint` (`critic.go`) now catches an identical re-render and says so plainly instead of
+shipping the same file under a note claiming a re-frame.
+
+## NEXT, IN ORDER — a work order, not a wish list
+
+**1. LET THE CRITIC CHANGE THE CROP WIDTH.** Highest-value item; it is what turns the critic's notes
+into actual edits.
+- Where: `crop.StaticAt(srcW, srcH, aspect, x)` fixes the width from the aspect and never varies it.
+  `framing.go` only ever chooses **x**.
+- What: a rung (or a `Verdict` field) that can ask for a WIDER rect containing two named boxes, then
+  let `crop_path.py`'s existing `--min-crop-frac` punch-in machinery handle the scale.
+- Why it is right, measured: `research/jordan-edit-reverse-engineered.md` — he frames **himself**
+  widest (median face height 20% vs Shelby 32%) *because his shots carry gesture*: "when the gesture
+  is the point, he frames wide enough to hold the hands". Widening on purpose is his own behaviour,
+  not a new idea. Same doc: 16 of 22 shots change scale by <±15%, so **a scale change must be an
+  event, never a default**.
+- Guard: the no-op detector above is the test — a width change must produce a different file.
+
+**2. GROUND PER SHOT, NOT PER WINDOW.** `groundcache.go` sweeps the whole short once and every span
+slices it, so ONE subject name covers 33 seconds and four different rooms ("colorful poster"). Split
+the sweep at the shot boundaries `internal/shotcut` already found. Keep the cache — the fix is one
+sweep *per shot*, not one call per span (that was the 10-minute render this cache was built to kill).
+
+**3. CROSS becky-diarize WITH LR-ASD** — the third speaker signal. `speakeraim.go` joins two today
+(LR-ASD lip motion + ArcFace identity) and says so honestly at the bottom of the file. Diarize emits
+anonymous `SPEAKER_00` labels per utterance; the missing piece is an alignment pass binding a diarize
+label to a face track (highest overlap between a track's visible span and that label's turns,
+corroborated across the whole video). Jordan's framing: *"three independent signals into one
+decision, which is the >=2-signal rule applied to speaker selection."*
+
+**4. TEST MARLIN-2B ON THE GPU, VIA GGUF.** `research/model-marlin-2b-TESTED.md` has the open
+questions written down. Its `find()` answers *"the very first frame in which it starts to move"* in
+one call — nothing else in becky does that, and it is exactly what RULE 4 framing needs. The
+22 min/22 s figure was CPU-only because the GPU was not visible to that session; **it is not a
+verdict.** Check the mmproj tensors against build 9551's `mtmd.dll` over an HTTP range request BEFORE
+downloading 5.5GB — that is how the Reka check was done (`research/reka-edge-vs-gemma4.md`).
+
+**5. MAKE `becky-moment` SEE.** It still picks windows from the transcript alone and is blind to
+physical action. The watch pass corrects it inside `becky-short`, which is enough for the button, but
+the ranker is still choosing candidates with its eyes shut. `research/shorts-models.md` section 6 is
+the analysis of why becky's vision is weak, and it is not the model choice.
+
+## THE RESEARCH THAT ALREADY ANSWERED THESE — do not re-derive it
+
+| File | What it already settled |
+|---|---|
+| `research/jordan-edit-reverse-engineered.md` | **his edit standard as numbers**: inherited cuts (8 frame-exact), removes ~10% of time, cuts on WORDS not silence, face centre Y 29.9%, 8.3% of frames deliberately have no face, camera locked in 34% of frames, he frames himself widest |
+| `research/shorts-gap-decisions.md` | what 21 reference projects do that becky does not — each item marked BUILD or a stated reason not to |
+| `research/shorts-models.md` | the six-stage chain; becky has the better model at 3 stages and nothing at 5; section 6 = why the vision is weak, and it is not model choice |
+| `research/reka-edge-vs-gemma4.md` | Gemma says WHAT, Reka says WHERE; Reka's **measured** limits (per-frame grounding of a SMALL target is not trustworthy — 2 of 4 frames, one box on empty counter); `--reasoning off`; mismatched tags; percentages not pixels |
+| `research/model-marlin-2b-TESTED.md` | Marlin's real capability, the CPU-only timing that is not a verdict, and the GGUF pair |
+| `research/paper-2509.10761.md` | EditDuet's Editor/Critic loop — the shape `critic.go` implements |
+| `research/paper-2512.14698.md` | TimeLens: interleaved **raw timestamps** beat position-embedding and overlay encodings — which is why the contact sheet burns the time into each tile |
+| `research/iphone-ai-video-sweep.md` | 1-2 FPS sampling loses micro-expressions; a payoff frame is a 1-3 frame window (33-100ms) |
+| `HANDOFF-SHORTS-PIPELINE.md` | the earlier arc: steps 0-2 built, 3-6 needing the native CV dep |
+
+## STILL WEAK / NOT DONE (summary)
+
+- The critic can name a subject but becky **cannot widen a crop** — item 1 above.
+- Grounding names one subject per window, not per shot — item 2.
+- becky-diarize is not crossed with LR-ASD; two of three speaker signals joined — item 3.
+- Marlin-2B GGUF unverified here — item 4.
+- `becky-moment` is blind to physical action — item 5.
 - **Two PRE-EXISTING test failures on master, untouched and unrelated to shorts:**
   `cmd/tts` `TestRun_DegradesWhenNoModel` and `internal/assistant`
   `TestHandleTier2Funnel`. Neither imports anything this work touched.
+
+## TEST RENDERS — kept on purpose, do not delete
+
+Jordan, 2026-08-21: *"please ensure you don't delete your test footage this time; otherwise there is
+no way for me to verify it without running the whole test myself."*
+
+```
+X:\Videos\Hair-Jordan-Clips\shorts\01_Prank_...mp4                  the button's own output
+X:\Videos\Hair-Jordan-Clips\shorts-critic\01_Prank_...mp4           run 2, before the yardstick fix
+X:\Videos\Hair-Jordan-Clips\shorts-critic-fixed\PASS1-before-critic_...mp4   before the correction
+X:\Videos\Hair-Jordan-Clips\shorts-critic-fixed\01_Prank_...mp4     after - byte-identical (no-op evidence)
+X:\AI-2\becky-tools\becky-clip-work\critic-run2.log                 the full verbose run
+X:\AI-2\becky-tools\becky-clip-work\critic-test.reel.json           a PINNED reel - %TEMP% reels get overwritten
+```
 
 **RUNTIME IS NOT ON THIS LIST AND MUST NOT BE ADDED TO IT.** Jordan: "video
 editing is iterative, even if it takes a long time... I don't care if it takes an
@@ -198,3 +292,24 @@ which is what the two caches exist to prevent.
   as a guess when it happens.
 - "I don't care if it has to use like 15 different models iteratively."
 - No hard time limit on a clip. Context decides. (6s–360s band is a safety rail.)
+- **CLIPPING is not EDITING** (2026-08-21). "Since this run is focused on editing footage that has
+  already been edited, it's referred to as *clipping* (whereas *editing* is generally used when
+  discussing raw footage, or when specific edits or revisions are requested)." Clipping INHERITS the
+  master's cuts; it does not re-cut on a silence threshold.
+- **"video editing is iterative, even if it takes a long time... I'm a world class video editor and
+  I don't care if it takes an hour; if the edits look like shit, I can't use any of this."** Never
+  list runtime as a weakness. Never drop a model or a pass for being slow. Never reject a model on a
+  timing measured under the wrong conditions.
+- **"Even if Gemma4 or other models have to be fired up more than once at different steps in the
+  pipeline that is okay!"** More passes are welcome; the only real waste is doing IDENTICAL work
+  twice for one answer.
+- **"an LLM needs to verify all of that - we're not picking random dumb data points and rendering
+  that shit; quickest way to get someone fired. I re-watch a video clip like 10 fucking times before
+  I hit render."** The critic loop exists because of this.
+- **"The reason becky-tools has so many small, specialized models is so that we can get USABLE
+  output - best quality possible."** The model count is the point, not a cost to minimise.
+- **"just make sure that if there is no visible speaker that it doesn't break the pipeline; only
+  relevant when there are people visibly speaking."** Rung 0 is silent on 1 face, 0 faces, a tie, or
+  a POV shot.
+- **"please ensure you don't delete your test footage this time; otherwise there is no way for me to
+  verify it without running the whole test myself."** Renders stay on disk. See TEST RENDERS above.

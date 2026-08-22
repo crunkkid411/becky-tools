@@ -107,7 +107,7 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   UI with plain text "for accessibility"; keep user text tight (he has reading limits); no
   Microsoft TTS (he wants a real researched TTS instead). Canon: `ACCESSIBILITY.md`. This
   was violated once already — don't repeat it.
-- **NEVER BURN JORDAN'S USAGE PLAN ON GITHUB BABYSITTING. NO SELF-SCHEDULED CHECK-INS. EVER.**
+- **NEVER BURN JORDAN'S USAGE PLAN ON GITHUB BABYSITTING. NO SELF-SCHEDULED CHECK-INS FOR CLOUD AGENTS. EVER.**
   Jordan's Anthropic plan is a FINITE, SHARED budget across every chat he has. A background
   wake-up costs him the same as a real question — and he gets nothing for it. Violated badly
   on 2026-08-17: a docs-only PR triggered ~6 hours of automatic "check on the PR" wake-ups
@@ -124,15 +124,16 @@ These are settled and each was a real bug or measured failure. Full reasoning in
     stop. Do not wait for CI, do not verify it went green later, do not "keep an eye on it."
   - CI red on a docs-only branch, or red for a failure that already exists on `master`, is **not
     yours** and is **never** a reason to schedule anything. Say so once in chat and stop.
-  - The ONLY acceptable scheduled job is one **Jordan explicitly asks for, in his own words**, in
+  - Local agents can schedule jobs when **Jordan explicitly asks for, in his own words**, in
     that conversation. Not implied, not inferred from "keep me posted", not a standing default.
-  Mechanically backstopped by `deny` rules in `.claude/settings.json` — do not remove them.
+  Mechanically backstopped by `deny` rules in `.claude/settings.json` — do not remove them (EDIT: this might need to be removed from the local Claude Code settings if it causes problems; the token-eating primarily came from Cloud agents, not local)
 - **NEVER SPEND JORDAN'S MONEY. FREE OR OAUTH, NOTHING ELSE — NO EXCEPTIONS.**
-  Jordan pays for **Claude Max**. Sonnet 5, Opus, Haiku and every other Anthropic model
+  Jordan stopped paying for **Claude Max** and downgraded to **Claude Pro** due to poor performance. Sonnet 5, Opus, Haiku and every other Anthropic model
   are ALREADY PAID FOR and are reached through the **OAuth session** (`claude` /
   `claude --model sonnet` / the Agent tool). Calling an Anthropic model through
   OpenRouter or any pay-per-token API is spending his money on something he already
-  owns — he called it theft, and he was right. **OpenRouter is for `:free` model ids
+  owns — he called it theft, and he was right.
+- **OpenRouter is for `:free` model ids
   only** (`tencent/hy3:free` and friends, until they expire). Every other provider must
   be a free tier. This is ENFORCED IN CODE, not trusted to judgement:
   `cmd/subtitle/openrouter.go`'s `isFreeModel` refuses any id not ending in `:free`
@@ -169,6 +170,17 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   NEVER presence; never put a window a model looked at — and the subject wasn't there —
   on a timeline anyway. (2026-06-24: a forensic task failed exactly here — the tools
   worked, the agent's chaining didn't.)
+- **"CLIPPING" and "EDITING" ARE DIFFERENT JOBS — use his words correctly.** Jordan, 2026-08-21:
+  *"Since this run is focused on editing footage that has already been edited, it's referred to as
+  clipping (whereas editing is generally used when discussing raw footage, or when specific edits or
+  revisions are requested)."* This is not vocabulary, it changes the defaults. **CLIPPING** takes a
+  FINISHED video and INHERITS its cuts — his own vertical short kept 8 of the master's cuts
+  frame-exact and removed only ~10% of the running time. Running a silence threshold over an edited
+  video and re-cutting it is the wrong job and produces shredded output. **EDITING** is raw footage,
+  or a specific revision he asked for. The full canon for the clipping pipeline — every tool, every
+  flag, the framing ladder, the critic loop, his measured edit standard, the traps, and which
+  research doc already answered which question — is **`SKILL.md`'s `VIDEO CLIPPING` section**. Read
+  it before touching `becky-short`/`becky-moment`/`becky-hits`.
 - **EDITING IS ITERATIVE. QUALITY IS THE ONLY BUDGET. STOP OPTIMISING FOR SPEED.**
   Jordan, repeatedly, most recently 2026-08-21: "I continue telling you that video editing
   is iterative, even if it takes a long time... I'm a world class video editor and I don't

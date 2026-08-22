@@ -321,3 +321,272 @@ its force/resistance dynamics**, flag only genuine uncertainty. Clarity = recall
 JSON-in / JSON-out, exit-coded, offline. Chain the `becky-*` tools or drive `becky`. Never modify
 source videos. `--bin <dir>` overrides where the `becky-*.exe` live; `--verbose` for progress;
 `--json` (on `becky`) suppresses the headline for machine parsing.
+
+---
+
+# VIDEO CLIPPING — turning finished videos into vertical shorts
+
+**Read this whole section before proposing ANY change to the shorts pipeline.** It exists because
+the same conclusions kept getting re-researched, re-decided and then ignored. Everything below is
+either measured on Jordan's own footage or is a direct instruction from him. Where something is
+NOT built, it says so — do not claim it.
+
+## CLIPPING vs EDITING — they are different jobs
+
+Jordan's own distinction (2026-08-21), and it changes the defaults:
+
+| | **CLIPPING** | **EDITING** |
+|---|---|---|
+| Input | footage that is **already edited** — a finished YouTube video, a cut master | **raw** footage, or a specific revision he asked for |
+| The cuts | **INHERIT them.** The master's cut points are the edit; keep them | you are deciding the cuts |
+| What changes | reframe to 9:16, tighten, caption, pick the window | anything he asked for |
+| Tool | `becky-short` (this section) | `becky-cut`, `becky-edit`, VEGAS scripts |
+
+**This section is CLIPPING.** The single most-ignored consequence: on already-edited footage you
+do **not** run a silence threshold over it and re-cut. You preserve the existing cuts and tighten
+them. `becky-short` does this automatically (`planShotSpans` + `--tighten`); an agent that
+"improves" it by re-cutting on silence has broken it.
+
+## The one call
+
+```bat
+REM the button Jordan actually uses - drag a video or a folder onto it
+"Make Shorts.bat"
+```
+
+It runs three tools. Everything else is internal.
+
+```bat
+becky-moment.exe --transcript <video>  --top 10 --out moments.json     REM 1. which bits are worth posting
+becky-hits.exe   --hits moments.json --folder <folder> --out reel.json REM 2. match them to the footage
+becky-short.exe  --reel reel.json --outdir <folder>\shorts            REM 3. render the vertical shorts
+```
+
+Single clip, no reel:
+
+```bat
+becky-short.exe --video "clip.mp4" --start 22.08 --end 62.0 --out out.mp4
+```
+
+## What `becky-short` does inside one call
+
+It is a **loop, not a line**. Nothing ships until a model has looked at the finished file.
+
+```
+  WATCH     Gemma-4 sees 25 frames + the transcript and CHOOSES the in/out points.
+            Its answer REPLACES the proposed window. Then it shuts down.
+     |
+  CUTS      Preserves the cuts the footage already has; tightens each by 150ms.
+            (Raw footage instead? becky-cut's dead-air spans are used.)
+     |
+  LADDER    Per shot: where does the 9:16 crop point? Nine rungs, below.
+     |
+  SPLICE    Keeps the seconds the pose tracker really held him; the ladder fills the rest.
+     |
+  CAPTIONS  Jordan's look, word-timed, burned in.
+     |
+  RENDER    ffmpeg: moving crop via sendcmd + captions.
+     |
+  CRITIC    Gemma-4 WATCHES THE RENDERED FILE. Wrong? It names what should be in
+            frame -> that name becomes the grounding target -> re-frame -> RE-RENDER.
+            Up to --critic-passes times (default 2).
+```
+
+## Every flag, and what it is for
+
+`becky-short` (`--selftest` runs 54 offline checks; run it after any change):
+
+| Flag | Default | What it does / when to touch it |
+|---|---|---|
+| `--video` / `--start` / `--end` / `--out` | — | single-clip mode |
+| `--reel` / `--outdir` | — | render every clip in a becky-hits reel |
+| `--aspect` | `9:16` | target aspect |
+| `--watch` | `true` | **Gemma-4 chooses the in/out points.** Turning this off puts the transcript back in charge, which is what cut the payoff out of the mouse-trap prank. Only disable when the window is already known-good. |
+| `--critic-passes` | `2` | how many times the model may watch the render and send it back. `0` = old feed-forward behaviour. |
+| `--jumpcuts` | `true` | preserve existing cuts / cut dead air. `false` = one unbroken take. |
+| `--tighten` | `0.15` | seconds trimmed **total** at each preserved cut. **This is Jordan's own measured rate (150ms/cut)**, not a silence threshold. |
+| `--caption-style` | `jordan` | his measured look. `cli-cut` is the plain shipped look. |
+| `--captions` | `true` | burn captions |
+| `--sample-fps` | `0` | 0 = look for the subject on EVERY frame. Do not raise it; 8fps on 30fps footage is what made the crop lag. |
+| `--max-gap` | `2.0` | seconds the subject may be undetected before the **pose path** is distrusted. **This does NOT refuse anything** — the ladder answers instead. |
+| `--min-coverage` | `0.6` | how much of the window pose must see the subject before its path steers the crop. Same: not a refusal. |
+| `--center` | `false` | force a static centre crop. The ONE sanctioned way to get a centre crop, because it is an explicit human instruction. |
+| `--focal-point` | `false` | EXPERIMENTAL. Measured two spans better and two worse — a coin toss. Leave off. |
+| `--review` | — | measure an already-rendered file (deterministic: faces, caption drift, ending). **Not the critic** — no model call. |
+| `--verbose` | — | per-span framing decisions to stderr; the JSON note only carries the first few |
+
+`becky-moment` — which bits are worth posting: `--min 6` / `--max 360` (a 6s–360s safety rail, **not**
+a target length — "no hard time limit on a clip, context decides"), `--extend 20` (may run past
+`--max` to finish a thought), `--judge` (second independent content pass), `--escalate` (ask the 12B
+only about disputed moments), `--max-overlap 0.5`, `--no-face` / `--no-audio` to drop a signal.
+
+`becky-hits` — moments to a reel: `--pad 0.5` lead/tail, `--window 4` fallback when a timestamp
+matches no cue.
+
+`becky-speaking` — who is talking: `--boxes` emits per-frame face geometry (that is what the
+framing ladder's rung 0 steers with).
+
+## The framing ladder — nine rungs, first confident answer wins
+
+`cmd/becky-short/framing.go`. **It never refuses.** Every rung names itself in the output.
+
+| # | Rung | What it is |
+|---|---|---|
+| 0 | **SPEAKER** | 2+ tracked faces and LR-ASD says which one is talking (`speakeraim.go` → `becky-speaking`). Silent on 1 face, 0 faces, a tie, or a POV shot. |
+| 1 | **POSE** | MediaPipe body tracking, per frame. Best answer when it works. |
+| 2 | **PAN** | A **steady** grounded box that MOVES becomes a camera move. |
+| 3 | **AIM** | A **steady** grounded box that HOLDS becomes a still crop on it. |
+| 4 | **FALCON** | A second, independent detector (ONNX, no torch) looking for a person. |
+| 5 | **MOTION** | `internal/focal` — where the movement is, when nothing is nameable. |
+| 6 | **HINT** | An **unstable** grounded sighting, held still. Never steers, never out-votes rung 4. |
+| 7 | **INHERIT** | What the rest of this short settled on. Continuity is a real signal. |
+| 8 | **CENTRE** | Last resort, and it labels itself a guess. |
+
+**Rung 2/3 require `ground.Result.Stable`** — that is `ground.py`'s own contract (`seen >= 2 and
+found_frac >= 0.5 and median_jump <= 0.25`), and of an unstable result it says in its own words:
+*"treat as a HINT about which region matters, not as a camera path."* Ignoring that panned a short
+75% across the frame chasing a Pikachu poster past the person at the desk.
+
+## THE RULES THAT ARE LAW HERE
+
+Each of these was a real failure, and each has been stated by Jordan more than once.
+
+1. **A DETECTOR IS A SIGNAL, NEVER A VERDICT ON THE FOOTAGE.**
+   *"tracking a subject does not determine if the clip is good or not... All these data points are
+   to help becky conceptually understand what is happening in the video so it can make accurate
+   decisions."* A failed detection may change **where the crop points** and nothing else. It may
+   never shorten a clip, drop a span, or refuse a render. Concretely: never discard a whole pose
+   path because one stretch is dead (`splice.go` keeps the tracked seconds); once a model has
+   WATCHED, its out point stands (`deadtail.go`'s `shortWatched`).
+
+2. **AN LLM MUST WATCH THE OUTPUT BEFORE IT SHIPS.**
+   *"an LLM needs to verify all of that - we're not picking random dumb data points and rendering
+   that shit; quickest way to get someone fired. I re-watch a video clip like 10 fucking times
+   before I hit render."* `critic.go` + `internal/watch/critique.go`. A deterministic check over
+   the output is **not** this — `--review` counts faces and cannot notice the thing in frame is a
+   poster.
+
+3. **NEVER LET THE MACHINE'S WRONG ANSWER BECOME PART OF THE QUESTION.**
+   Two bugs, same shape, both measured 2026-08-21. Showing the critic becky's own framing note
+   made it reply *"the colorful poster, WHICH THE CLIP IS ABOUT, is not visible"* and demand a
+   re-frame onto the poster. And `aboutFromNote` searched too far along the `"; "`-joined note and
+   picked up `grounded "colorful poster"` from further down it — so the **yardstick was the
+   poster**. Guarded by `Verdict.Usable` + tests.
+
+4. **EDITING IS ITERATIVE. QUALITY IS THE ONLY BUDGET.**
+   *"I'm a world class video editor and I don't care if it takes an hour; if the edits look like
+   shit, I can't use any of this."* Never list runtime as a weakness, never drop a model or a pass
+   for being slow, never reject a model on a timing measured under the wrong conditions. Firing the
+   same model up more than once at different steps is explicitly fine. The ONLY real waste is doing
+   **identical** work twice for one answer — that is what `groundCache` and `speakerCache` prevent.
+
+5. **ONE MODEL AT A TIME — a hardware fact, not a preference.** 8GB is a tested hard ceiling.
+   Gemma-4 E4B is 4.2GB, Reka Edge Q4_K_M + mmproj is ~5.5GB; they do not co-exist. The watch pass
+   closes before the ladder starts Reka; `closeGrounder()` runs before each critique and the
+   grounder **restarts** afterwards (this is why it is not a `sync.Once`).
+
+6. **Corroborate, then conclude.** One signal is a candidate; two agreeing is a conclusion.
+
+## Jordan's edit standard, MEASURED (`research/jordan-edit-reverse-engineered.md`)
+
+Reverse-engineered from his own vertical short against the master it was cut from (SIFT+RANSAC per
+frame, InsightFace on all 915 frames). These are numbers, not taste:
+
+- **He inherited the cuts** — 8 of them frame-exact from the master. He did not choose them.
+- **He removes ~10% of the time, not half.** Aggressive silence-cutting is wrong for clipping.
+- **His cuts land on WORDS, not on silence.**
+- Face **height** median 24.3% of frame; **centre X** 49.6%; **centre Y 29.9%** (90% of frames put
+  the face in the **upper 40%**).
+- **8.3% of frames contain NO FACE AT ALL, deliberately.** Half his shots are not on the speaker.
+- **He frames himself widest** (median face height: Shelby 32%, Allison 27%, Jordan 20%) — when the
+  gesture is the point, he frames wide enough to hold the hands.
+- **The camera is locked far more often than it moves**: 34% of frames move <2px; 16 of 22 shots
+  change scale by less than ±15%. **A move is an event, not a default.**
+
+## Models — what runs, when, and why that one
+
+| Model | Job | Where |
+|---|---|---|
+| **Gemma-4 E4B QAT** (4.2GB) | the JUDGE: what the clip is, in/out points, and the critic that watches the render | `internal/watch` |
+| **Reka Edge 2603 Q4_K_M** + Q8_0 mmproj (~5.5GB) | the EYE: grounded boxes, "where is X" | `internal/ground` → `pyhelpers/ground.py` |
+| **MediaPipe Pose** (heavy) | per-frame body tracking | `internal/crop` → `pyhelpers/crop_path.py` |
+| **Falcon-Perception** (0.6B ONNX, no torch) | second, independent person detector | `falconaim.go` |
+| **LR-ASD** + InsightFace/ArcFace | who is speaking, and whose face is whose | `cmd/becky-speaking` |
+| **Parakeet** ASR | word-level transcript | `internal/transcribex` |
+
+Gemma says **WHAT**; Reka says **WHERE**. That split is the reason both exist
+(`research/reka-edge-vs-gemma4.md`).
+
+## What is NOT built — do not claim these
+
+- **becky-diarize is not crossed with LR-ASD.** Two of the three speaker signals are joined (lip
+  motion + face identity). Diarize's labels are anonymous (`SPEAKER_00`) and binding them to face
+  tracks needs an alignment pass that does not exist.
+- **becky can move a crop, not WIDEN one.** Measured 2026-08-21: the critic asked for *"the door
+  and the speaker"* — two things in one frame, i.e. zoom out — and the re-render came out
+  **byte-identical**. `fileFingerprint` now detects that and says so instead of claiming a fix.
+  **Giving the critic the power to change the crop WIDTH is the highest-value next piece of work.**
+- **The grounding probe names ONE subject for a whole window**, not per shot.
+- **`becky-moment` still picks windows from the transcript alone** — blind to physical action. The
+  watch pass corrects it inside `becky-short`, which is enough for the button, but the ranker is
+  still blind.
+- **Marlin-2B is unverified here.** A GGUF pair exists (`jadeonrails/marlin-2b-gguf`, text tower +
+  mmproj) with a documented `llama-mtmd-cli --video` path. Its `find()` answers "the first frame in
+  which it starts to move" in one call, which nothing else here does.
+
+## Traps that already cost hours
+
+- **`drawtext` with no `fontfile=` HARD-CRASHES one of the five ffmpeg builds on this PC**
+  (`C:\Program Files\ffmpeg\...\bin`) with `0xc0000005`, after printing a Fontconfig error. Which
+  ffmpeg becky gets is `exec.LookPath`, so it depends on how she was launched. **Always name the
+  font.**
+- **Gemma-4 QAT has a hidden `reasoning_content` channel** that eats the token budget before any
+  answer appears. At `max_tokens=100` it returns `finish_reason=length` with `content:""` — a model
+  that looks broken and is not. Give it 2000 and read `content`.
+- **Burn timestamps INTO each contact-sheet tile**, and `drawtext` must come AFTER `fps=` and
+  `scale=` (before `fps` the label is drawn at full res then shrunk to nothing).
+- **Reka needs `--reasoning off`** — its chat template ships `thinking = 1` and free-form answers
+  come back as meta-commentary. Its detection output has **mismatched tags**; parse tolerantly with
+  a regex, never an XML parser. Coordinates are **percentages**, not pixels.
+- **`subs.ShortOptions()` vs `subs.DefaultOptions()`.** `MaxHold` (a caption may not outlive its
+  last word by >1.25s) belongs to becky-short, which captions a RAW window with silences in it.
+  `DefaultOptions` is cli-cut's look and its captions are **contiguous** — putting MaxHold there
+  silently put holes in `cmd/clip`'s captions.
+- **`n_ubatch` is 512 and asserts (crashes the server) above it.** One media item must fit one
+  micro-batch.
+- **Jordan's footage is rotated portrait** — 1920x1080 coded with a -90 display matrix. Anything
+  picking an output SIZE must use display dims, not coded dims.
+
+## The research behind all of this — READ BEFORE RE-DECIDING
+
+| File | The conclusion it already reached |
+|---|---|
+| `research/jordan-edit-reverse-engineered.md` | his measured edit standard (the numbers above) |
+| `research/shorts-gap-decisions.md` | what 21 reference projects do that becky does not — build it, or say why not |
+| `research/shorts-models.md` | the six-stage chain; becky already has the better model at 3 stages and nothing at 5 |
+| `research/reka-edge-vs-gemma4.md` | why both models exist; Reka's measured limits (per-frame grounding of a SMALL target is NOT trustworthy) |
+| `research/model-marlin-2b-TESTED.md` | Marlin's real capability, the CPU-only timing that is **not** a verdict, and the GGUF pair |
+| `research/paper-2509.10761.md` | EditDuet's Editor/Critic loop — the shape `critic.go` implements |
+| `research/paper-2512.14698.md` | TimeLens: interleaved raw-timestamp encoding beats the alternatives |
+| `research/iphone-ai-video-sweep.md` | 1–2 FPS sampling loses micro-expressions; a payoff frame is a 1–3 frame window |
+| `research/repo-*.md` (22 files) | per-project notes on every reference short-form pipeline |
+
+## Building a new clipping pipeline on this
+
+Reuse, do not rebuild:
+
+- **A new "watch and decide" question** → add a method to `internal/watch` (it already owns the
+  Gemma server lifecycle, the contact sheet, the font fix and the reasoning-channel workaround).
+- **A new "where is X" question** → `internal/ground` with `Options.Target`.
+- **A new framing source** → a rung in `framing.go`. Return `(rects, note, ok)`; return `ok=false`
+  to fall through. Never refuse.
+- **A new whole-window pass** → follow `groundCache` / `speakerCache`: compute once per short,
+  slice per span.
+- **A new quality check on the output** → a `Critique`-shaped call. It must NAME what to do
+  instead, or it is not actionable.
+- **Anything that shells out to a sibling `becky-*`** → copy `resolveCutBin`'s order
+  (env var → beside the exe → PATH → degrade to `("", false)`).
+
+Every new tool: JSON in → JSON out → exit code, offline, deterministic, degrades with a typed note
+instead of crashing. After any change: `go build ./... && go test ./... && go run ./cmd/becky-short
+--selftest` **and** `build-all-tools.bat`.

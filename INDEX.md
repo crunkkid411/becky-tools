@@ -80,7 +80,12 @@
   wall), what's BUILT (embeds + scrubs at 130fps, committed `49f90e0`), and the complete roadmap to port
   EVERY Becky Review feature/integration into the native timeline. `gui/BeckyReviewNative` is a DELIBERATE
   throwaway copy of `gui/BeckyReview` — iterate freely; the goal is to replace that timeline entirely.
-- `SKILL.md` — how to *build* becky-tools, this is for YOU, not for the agents **USING** them
+- `SKILL.md` — how to *build* becky-tools, this is for YOU, not for the agents **USING** them.
+  **Its last section, `VIDEO CLIPPING`, is the canon for the shorts pipeline** — every tool and
+  flag in the chain, the nine-rung framing ladder, the critic loop, Jordan's measured edit
+  standard, the six rules that are law, the traps, and an index of the research behind each
+  decision. Written 2026-08-21 so a fresh agent can build a clipping pipeline without
+  re-deriving any of it. Read it before touching `becky-short`/`becky-moment`/`becky-hits`.
 - `FORENSIC-OUTPUT-PHILOSOPHY.md` — how findings must be reported. Governs every
   human-facing output.
 - `CANVAS-INSPIRATION.md` — design-research brief for becky-canvas (Jordan's GUI):
@@ -169,6 +174,10 @@
   model is a different one (`qwen3.5-omni-plus`); (4) **Qoder cannot take video at all** —
   images/PDFs only, so the subscription is not the vehicle for this. Use chat.qwen.ai (free,
   ~500 MB uploads) or the Model Studio API (1M free tokens/model, 90 days, Singapore).
+- `HANDOFF-SHORTS-2026-08-20.md` — **the CURRENT state of the clipping pipeline** (rewritten
+  2026-08-21): what broke and why, the critic loop, LR-ASD as rung 0, what is verified on real
+  footage vs what is not, and the ordered next steps. `SKILL.md`'s VIDEO CLIPPING section is the
+  reference; this is the running log of the work.
 - `research/shorts-models.md` + `HANDOFF-SHORTS-PIPELINE.md` — **the short-form repurposing
   arc (2026-08-15, cloud). Steps 0-2 BUILT + proven; steps 3-6 need the native CV dep Jordan
   ratified. Read before any short-form / 9:16 / auto-reframe / active-speaker work.** Ships

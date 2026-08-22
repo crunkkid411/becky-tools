@@ -81,6 +81,44 @@ See `SPEC-BECKY-CHROME.md` for why and the fix.
 
 ---
 
+## Making vertical shorts from a finished video (clipping)
+
+**Drag a video, or a folder of videos, onto `Make Shorts.bat`.** That is the whole thing. Shorts land
+in a `shorts` folder beside the footage and the folder opens when it finishes.
+
+What it does, in plain terms:
+
+1. Reads the transcript and picks the bits worth posting.
+2. **Gemma-4 watches the clip** and chooses where it actually starts and ends — not the transcript.
+3. Keeps the cuts your footage already has and tightens each one slightly.
+4. Works out where the 9:16 crop should point, shot by shot. If several people are on screen it
+   frames the one who is **talking**.
+5. Burns your caption look in.
+6. **Watches the finished file back** and, if the crop is on the wrong thing, says what it should
+   have been on and renders it again.
+
+**It takes a few minutes per clip and that is on purpose.** It loads several models one at a time
+and can render the same short more than once to fix it.
+
+### If you want to change something
+
+You do not need any of these for normal use.
+
+| You want | Add this |
+|---|---|
+| It to stop re-rendering to fix itself | `--critic-passes 0` |
+| One clip, exact in/out | `--video "clip.mp4" --start 22 --end 62 --out out.mp4` |
+| No captions | `--captions=false` |
+| A square or wide crop | `--aspect 1:1` / `--aspect 16:9` |
+| To see every decision as it happens | `--verbose` |
+
+### If a short comes out wrong
+
+Read the `note` in the output — it says which signal chose the framing and why, in words. It is
+never a refusal: becky always renders something and tells you how confident it was. If it says the
+crop is on the wrong thing and it could not fix it, that is a real limitation and it will say so
+rather than pretending.
+
 ## Workflows — the .json file
 
 A workflow is a small file: a name, trigger phrases, and an ordered list of steps.

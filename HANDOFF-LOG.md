@@ -10,6 +10,135 @@
 
 ---
 
+## Clipping: becky renders it, watches it back, and fixes it (2026-08-21, local, `master`)
+
+`1d5ce19` → `f626b2b` → `c873b9f`. **Canon now lives in `SKILL.md`'s `VIDEO CLIPPING` section**;
+this entry is the story of the session, not the reference.
+
+Jordan ran `Make Shorts.bat` on a clip that had already gone viral and got back a file he called
+unusable, under a note that read like a refusal. Then, reading the fix, he named three more things
+that were still wrong. All of it was one point: **nothing in the pipeline was ever checked by
+something that understands video.**
+
+### Round one — four faults behind one bad render
+
+1. **The watch pass was DEAD and lied about why.** `"the model watched this but its answer was
+   unusable: could not build the contact sheet: exit status 0xc0000005 (Fontconfig error...)"` — no
+   model had watched anything. `drawtext` with no `fontfile=` asks fontconfig for a default, and the
+   `C:\Program Files\ffmpeg\...\bin` build on this PC's PATH has none and **hard-crashes**.
+   Reproduced against all five ffmpeg builds on this machine: anaconda's warns and continues, that
+   one dies. Which one becky gets is `exec.LookPath`, so it depended on how she was launched.
+   `internal/reel/drawtext.go` had already learned this in June; `watch.go` had not.
+2. **A Pikachu poster was steering the camera.** The ladder built a *camera path* out of a sighting
+   seen in 9 of 33 frames and panned across 75% of the frame past the person at the desk.
+   `ground.py` already returns `stable` and already says an unstable result is *"a HINT about which
+   region matters, not a camera path"* — `framing.go` was ignoring its own contract.
+3. **331 tracked frames thrown away because 3.4s of them were dead.** The tracker followed him
+   perfectly for 14.7s of a 33s walk-and-talk; becky discarded all 985 frames because one gap beat a
+   2.0s gate, then framed the whole short from four sampled frames of a different shot — so his
+   opening close-up rendered as a **dark door**. `splice.go` + `crop.Rect.Seen` (new, from
+   `crop_path.py`) fix it: a held rect and a tracked rect were previously indistinguishable.
+4. **Tracking still had a vote on CONTENT.** `trimDeadTail` deleted trailing spans purely because
+   pose could not follow them.
+
+Also found on the way: `MaxHold` had shipped inside `subs.DefaultOptions()` and silently put holes
+in `cmd/clip`'s captions, whose contiguity is one of Jordan's inviolable cli-cut rules. It belongs to
+`subs.ShortOptions()`.
+
+### Round two — the pipeline now iterates
+
+Jordan: *"an LLM needs to verify all of that — we're not picking random dumb data points and
+rendering that shit; quickest way to get someone fired. I re-watch a video clip like 10 fucking
+times before I hit render... Even if Gemma4 or other models have to be fired up more than once at
+different steps in the pipeline that is okay!"*
+
+- **`internal/watch/critique.go` + `cmd/becky-short/critic.go`.** After rendering, Gemma-4 watches a
+  contact sheet OF THE OUTPUT, judged against what the watch pass said the clip is about, and
+  answers `{ok, problem, subject}`. A rejection must NAME what should have been in frame; that name
+  goes into `ground.Options.Target`, Reka re-grounds, the ladder re-frames, it renders again.
+  `--critic-passes`, default 2. This is EditDuet's Editor/Critic loop
+  (`research/paper-2509.10761.md`). The older `--review` is NOT this — its own header says *"No
+  model call anywhere in this file"*.
+- **LR-ASD wired as rung 0** (`speakeraim.go`). `cmd/becky-speaking` had done the whole job since it
+  was built — faces → ArcFace tracks → LR-ASD lip-vs-audio — and **nothing had ever called it**, so
+  becky framed on whoever MediaPipe found most prominent, which on a two-shot is whoever is nearest
+  the lens. Fires only on ≥2 tracked faces with a clear winner; everything else falls through, which
+  is most of his footage. Cached per short. `becky-speaking` gained `--boxes`.
+- **`groundaim.go`'s singleton stopped being a `sync.Once`.** Reka (5.5GB) and Gemma (4.2GB) do not
+  both fit on 8GB, so the grounding server shuts down before each critique and restarts for each
+  re-frame; a `sync.Once` stays tripped, so every span after the first close would have silently got
+  a nil runner.
+
+### What running it actually taught us — two bugs, one shape
+
+**Never let the machine's wrong answer become part of the question.**
+
+- The first prompt passed becky's own framing note in as context so the critic could catch a stated
+  reason that did not match the pixels. It anchored on it and replied *"The colorful poster, WHICH
+  THE CLIP IS ABOUT, is not visible in any of the frames"* — demanding a re-frame onto the exact
+  thing it was supposed to catch.
+- Worse and quieter: `aboutFromNote` searched the **whole** `"; "`-joined note for a quoted phrase
+  and picked up `grounded "colorful poster"` from further down it. **The yardstick handed to the
+  critic WAS the poster.** Now it cuts to the segment first. Both have regression tests;
+  `Verdict.Usable` is the backstop.
+
+Tracing the retry path also found two silent bugs: the re-render used the **original** window
+(throwing away the in/out the model chose) and lost the watched flag (re-enabling the tail trim the
+first pass had switched off).
+
+### VERIFIED, by eye, on his own footage
+
+- `Prank Clips_..._1080[20].mp4` via `Make Shorts.bat`: opening close-up framed on his FACE (was a
+  dark door); Robbie's reaction framed CENTRE (was a desk corner).
+- `Mouse Trap McDonald's Prank.mp4`: the model watched and cut 0.0–61.0s, payoff 55.4s protected,
+  30/30 existing cuts preserved. Better than the previous session's result.
+- The critic, unprompted, on the door-slam clip: *"The crop focuses only on the speaker and misses
+  the door, which is the central subject of the dialogue."* → named "the door and the speaker".
+
+### THE HONEST LIMIT, and the next piece of work
+
+**The correction was a NO-OP.** The re-render came out **byte-identical** (same MD5). Two reasons,
+and the second is the real one:
+
+- The critic's subject steers exactly ONE rung. Reka found "the door and the speaker" in 33% of
+  frames — unstable, so a hint — and the ladder fell through to the same Falcon answer at the same x.
+- **"The door and the speaker" is a request for a WIDER SHOT.** becky can move a fixed-width crop;
+  it cannot widen one. The instruction was not merely unmet, it was unmeetable by construction.
+
+`fileFingerprint` now detects an identical re-render and says so instead of claiming a fix.
+**Giving the critic the power to change the crop WIDTH is the highest-value next work** — it is what
+turns its notes into edits. Jordan's own standard already says the shape: he frames himself widest
+(median face height 20% vs Shelby 32%) *because his shots carry gesture*, so "wide enough to hold
+the hands" is a real, measured behaviour becky cannot yet produce on request.
+
+Also still open: **becky-diarize is not crossed with LR-ASD** (its labels are anonymous; binding them
+to face tracks needs an alignment pass that does not exist — two of the three speaker signals are
+joined, and only two are claimed); the grounding probe names ONE subject per window rather than per
+shot; `becky-moment` still picks windows from the transcript alone.
+
+### Corrections written into `CLAUDE.md` so they stop being relearned
+
+- **Editing is iterative; runtime is not a weakness.** *"I don't care if it takes an hour; if the
+  edits look like shit, I can't use any of this."* Never reject a model on a timing measured under
+  the wrong conditions — **Marlin-2B was written off at 22 min/22s on CPU because the GPU was not
+  visible to that session**. A GGUF pair exists (`jadeonrails/marlin-2b-gguf`, 4.79GB text tower +
+  0.67GB mmproj) with a documented `llama-mtmd-cli --video` path; unverified here, open questions in
+  `research/model-marlin-2b-TESTED.md`.
+- **An LLM must watch the output before it ships.**
+- **A detector is a signal, never a verdict on the footage.**
+- **Name the font in every ffmpeg `drawtext`.**
+
+`--selftest` 54/54. `go build`/`vet`/`test` green and `build-all-tools.bat` PASS, except two
+**pre-existing** failures on master that neither import nor touch this work: `cmd/tts`
+`TestRun_DegradesWhenNoModel` and `internal/assistant` `TestHandleTier2Funnel`.
+
+**Test renders kept for Jordan** (he asked that they not be deleted):
+`X:\Videos\Hair-Jordan-Clips\shorts\`, `...\shorts-critic\`, `...\shorts-critic-fixed\` (the latter
+holds `PASS1-before-critic_...mp4` alongside the final file — byte-identical, which is the evidence
+for the no-op above).
+
+---
+
 ## Qwen3.8-Max as becky's frontier eyes — research + spec, nothing built (2026-08-17, cloud, `claude/qwen-video-analysis-research-x408kl`)
 
 Jordan sent the Qwen3.8-Max announcement — *"the ability to ingest 100 hours of livestream
