@@ -38,7 +38,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"becky-go/internal/config"
@@ -111,6 +115,7 @@ func renderAndCritique(cfg config.Config, j job, asp float64, outW, outH int,
 		// the model picked every time the critic asked for a re-frame.
 		rj := j
 		rj.In, rj.Out = res.Start, res.End
+		before := fileFingerprint(res.Out)
 		retry, rerr := render(cfg, rj, asp, outW, outH, sampleFPS, minCov, maxGap, forceCenter, focalPoint,
 			withCaptions, capStyle, useJumpcuts, tighten, false, cache, asig, verbose)
 		if rerr != nil {
@@ -118,6 +123,28 @@ func renderAndCritique(cfg config.Config, j job, asp float64, outW, outH int,
 			note(&res, fmt.Sprintf("the model watched the finished file and said %q, but re-framing on "+
 				"%q would not render (%s) - this is the original framing",
 				v.Problem, v.Subject, firstLine(rerr)))
+			return res, nil
+		}
+		// A BYTE-IDENTICAL RE-RENDER IS NOT A FIX, AND MUST NOT BE REPORTED AS ONE.
+		//
+		// The critic's subject only steers ONE rung - the grounding sweep. When
+		// that sweep cannot find the named thing steadily, the ladder falls
+		// through to exactly the answer it gave last time and the file comes out
+		// identical. Measured 2026-08-21: asked for "the door and the speaker",
+		// Reka found it in 33% of frames (unstable, so a hint), Falcon answered
+		// with the same person at the same x, and the re-render matched the
+		// original byte for byte.
+		//
+		// Note also WHY it could not act. "the door and the speaker" is a request
+		// for a WIDER SHOT - two things in one frame - and becky can only move a
+		// fixed-width crop, never widen it. Saying so is the honest report and it
+		// is the next piece of work; silently shipping the same file under a note
+		// claiming a re-frame is not.
+		if after := fileFingerprint(retry.Out); before != "" && after == before {
+			note(&res, fmt.Sprintf("the model watched the finished file and asked for %q, but re-framing "+
+				"on that produced an IDENTICAL file - becky can move the crop, not widen it, so it "+
+				"could not act on that instruction. The render stands and the note is here so it does "+
+				"not look like a fix", v.Subject))
 			return res, nil
 		}
 		note(&retry, fmt.Sprintf("PASS %d: the model watched the previous render and said %q, so becky "+
@@ -227,4 +254,35 @@ func currentSubjectFromNote(n string) string {
 		return ""
 	}
 	return rest[:j]
+}
+
+// fileFingerprint is a cheap identity for a rendered file: size plus a SHA-256
+// of its first and last megabyte. A full hash of a 50MB render buys nothing here
+// - two renders that differ do so in the video stream throughout, and this is
+// asking "did anything change at all", not "prove these are the same file".
+func fileFingerprint(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return ""
+	}
+	const window = 1 << 20
+	h := sha256.New()
+	fmt.Fprintf(h, "%d:", st.Size())
+	buf := make([]byte, window)
+	if n, _ := io.ReadFull(f, buf); n > 0 {
+		h.Write(buf[:n])
+	}
+	if st.Size() > 2*window {
+		if _, err := f.Seek(-window, io.SeekEnd); err == nil {
+			if n, _ := io.ReadFull(f, buf); n > 0 {
+				h.Write(buf[:n])
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

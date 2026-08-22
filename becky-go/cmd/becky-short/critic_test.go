@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"becky-go/internal/config"
@@ -177,4 +180,43 @@ func TestReRenderKeepsTheWatchedFlag(t *testing.T) {
 	}
 	setShortWatched(false)
 	setShortPayoff(0)
+}
+
+// A re-render that changed nothing must be DETECTABLE, or becky reports a
+// re-frame that did not happen. Measured 2026-08-21: the critic asked for "the
+// door and the speaker", the ladder could not act on it, and the second render
+// came out byte-identical (same MD5) while the note claimed a re-frame.
+func TestFileFingerprintSpotsAnIdenticalRerender(t *testing.T) {
+	dir := t.TempDir()
+	body := bytes.Repeat([]byte("becky"), 700_000) // > 2 windows, so both ends hash
+
+	a := filepath.Join(dir, "a.mp4")
+	b := filepath.Join(dir, "b.mp4")
+	if err := os.WriteFile(a, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fileFingerprint(a) != fileFingerprint(b) {
+		t.Error("two identical renders fingerprinted differently; a real no-op would be reported as a fix")
+	}
+
+	// A different ENDING is the common case: same opening shot, different crop
+	// later. It must not read as identical.
+	changed := append(append([]byte(nil), body...), []byte("different tail")...)
+	copy(changed[len(changed)-1_000_000:], bytes.Repeat([]byte("x"), 1_000_000))
+	c := filepath.Join(dir, "c.mp4")
+	if err := os.WriteFile(c, changed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fileFingerprint(a) == fileFingerprint(c) {
+		t.Error("a render that differs at the end fingerprinted as identical")
+	}
+
+	// A missing file is not "identical to everything" — it must be empty, so the
+	// guard never fires on it.
+	if fileFingerprint(filepath.Join(dir, "nope.mp4")) != "" {
+		t.Error("a missing file returned a fingerprint")
+	}
 }
