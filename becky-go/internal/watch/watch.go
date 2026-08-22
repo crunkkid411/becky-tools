@@ -260,14 +260,23 @@ func gridFont() string {
 // the sheet costs the whole watch pass. A model that watched the footage without
 // a ruler beats a model that never saw it. The prompt is told which it got.
 func (r *Runner) buildGrid(video string, lo, hi float64) (path string, interval float64, labelled bool, err error) {
+	return r.buildGridN(video, lo, hi, gridCols, gridRows, tileWidth)
+}
+
+// buildGridN is buildGrid with the sheet's shape spelled out, so the critic pass
+// can read a denser sheet of a SHORT file than the watch pass reads of a long
+// source. Same filter chain, same font fix, same unlabelled fallback.
+func (r *Runner) buildGridN(video string, lo, hi float64, cols, rows, tileW int) (path string, interval float64, labelled bool, err error) {
 	span := hi - lo
 	if span <= 0 {
 		return "", 0, false, fmt.Errorf("nothing to watch")
 	}
-	interval = span / float64(maxFrames)
+	frames := cols * rows
+	interval = span / float64(frames)
 	if interval < 0.5 {
 		interval = 0.5
 	}
+	gridCols, gridRows, tileWidth := cols, rows, tileW
 	f, err := os.CreateTemp("", "becky-watch-*.png")
 	if err != nil {
 		return "", 0, false, err

@@ -143,6 +143,15 @@ func main() {
 		// machine with no model or when the window is already known-good.
 		useWatch = flag.Bool("watch", true, "let the model WATCH the clip and choose its "+
 			"in and out points, instead of trusting the transcript-derived window")
+		// ON BY DEFAULT, and it costs a whole extra render per correction.
+		// Jordan, 2026-08-21: "an LLM needs to verify all of that - we're not
+		// picking random dumb data points and rendering that shit... I re-watch
+		// a video clip like 10 fucking times before I hit render". Speed is
+		// explicitly not the goal here: "I don't care if it takes an hour; if
+		// the edits look like shit, I can't use any of this."
+		criticPasses = flag.Int("critic-passes", 2, "after rendering, let the model WATCH THE FINISHED FILE "+
+			"and re-frame + re-render up to this many times if it says the crop is on the wrong thing "+
+			"(0 = render once and ship it, the old feed-forward behaviour)")
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -211,7 +220,9 @@ func main() {
 	cutCache := newCutCache()
 	asigCache := newAudioSigCache()
 	for _, j := range jobs {
-		s, err := render(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center, *focalPoint, *captions, *capStyle, *jumpcuts, *tighten, *useWatch, cutCache, asigCache, *verbose)
+		s, err := renderAndCritique(cfg, j, asp, outW, outH, *sampleFPS, *minCov, *maxGap, *center,
+			*focalPoint, *captions, *capStyle, *jumpcuts, *tighten, *useWatch, *criticPasses,
+			cutCache, asigCache, *verbose)
 		if err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("%s @ %.2f: %v", pathx.Base(j.Src), j.In, err))
 			continue
@@ -263,9 +274,16 @@ func render(cfg config.Config, j job, asp float64, outW, outH int, sampleFPS, mi
 	// across to the next one.
 	//
 	// It clears the payoff too, so re-record what the model just said.
-	payoff := shortPayoff
+	// resetShortFraming clears BOTH the payoff and the watched flag, and both
+	// have to survive it. The payoff is what the trims may not remove; the
+	// watched flag is what says the model chose this out point and no tracker
+	// gets to revise it (deadtail.go). On a critic RE-RENDER useWatch is false —
+	// the window was already decided — so without this the second pass would
+	// quietly re-enable the tail trim the first pass had switched off.
+	payoff, watched := shortPayoff, shortWatched
 	resetShortFraming(j.In, j.Out)
 	setShortPayoff(payoff)
+	setShortWatched(watched)
 
 	res := shortOut{Out: j.Dst, Source: j.Src, Start: j.In, End: j.Out, Width: outW, Height: outH}
 	if watchNote != "" {

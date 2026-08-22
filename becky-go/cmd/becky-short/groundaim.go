@@ -33,8 +33,17 @@ import (
 // Package-level rather than threaded through render -> renderJumpcutShort ->
 // resolveCrop because those already carry a dozen parameters and one process
 // only ever wants one server. groundOnce makes the start race-free.
+// RESTARTABLE, not a sync.Once. The critic pass (critic.go) watches the
+// rendered file with Gemma-4, and Gemma (4.2GB) plus Reka (5.5GB) do not both
+// fit on an 8GB card - so the grounding server must SHUT DOWN before the critic
+// runs and START AGAIN for the re-frame that follows. A sync.Once cannot do
+// that: once tripped it stays tripped, so after the first closeGrounder() every
+// later span silently got a nil runner and the whole ladder skipped its
+// grounding rungs. Same laziness, same one-server-per-process guarantee, but the
+// flag can be cleared.
 var (
-	groundOnce   sync.Once
+	groundMu     sync.Mutex
+	groundOpened bool
 	groundRunner *ground.Runner
 	groundErr    error
 )
@@ -43,18 +52,30 @@ var (
 // A failure is remembered, so a machine without the model pays the failed start
 // once rather than once per span.
 func grounder(cfg config.Config, logf func(string, ...any)) (*ground.Runner, error) {
-	groundOnce.Do(func() {
+	groundMu.Lock()
+	defer groundMu.Unlock()
+	if !groundOpened {
+		groundOpened = true
 		groundRunner, groundErr = ground.New(cfg, logf)
-	})
+	}
 	return groundRunner, groundErr
 }
 
 // closeGrounder shuts the shared server down. main defers it.
+// closeGrounder shuts the shared server down and frees the card. main defers
+// it, and the critic loop calls it before starting Gemma-4. The next grounder()
+// starts a fresh server - a failed start is NOT remembered across a close,
+// because "the model would not load while Gemma had the card" is a different
+// fact from "this machine has no model".
 func closeGrounder() {
+	groundMu.Lock()
+	defer groundMu.Unlock()
 	if groundRunner != nil {
 		groundRunner.Close()
 		groundRunner = nil
 	}
+	groundOpened = false
+	groundErr = nil
 }
 
 // centredEnough is how close a grounded subject's centre must sit to the

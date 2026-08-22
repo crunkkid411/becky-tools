@@ -158,6 +158,27 @@ func lastJSONLine(s string) string {
 // the honest per-track shape: score_mean/speaking_frac stay nil when LR-ASD could
 // not score that track (too few frames on screen) rather than defaulting to 0,
 // which would silently read as "confirmed not speaking".
+// attachBoxes copies each track's per-frame geometry onto the matching report
+// row. Separate from joinTracks so the default (summary-only) output is
+// byte-identical to what it has always been.
+func attachBoxes(out []trackOut, tracks []facetrack.Track) {
+	byID := make(map[int]facetrack.Track, len(tracks))
+	for _, t := range tracks {
+		byID[t.ID] = t
+	}
+	for i := range out {
+		t, ok := byID[out[i].ID]
+		if !ok {
+			continue
+		}
+		bs := make([]boxAt, 0, len(t.Detections))
+		for _, d := range t.Detections {
+			bs = append(bs, boxAt{T: d.Time, BBox: d.BBox})
+		}
+		out[i].Boxes = bs
+	}
+}
+
 func joinTracks(tracks []facetrack.Track, scored []asdOutTrack) []trackOut {
 	byID := make(map[int]asdOutTrack, len(scored))
 	for _, s := range scored {

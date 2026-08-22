@@ -41,6 +41,12 @@ const groundSweepMaxFrames = 60.0
 // the cache is reset per short alongside the framing memory.
 type groundCache struct {
 	done bool
+	// target is what the CRITIC told us to look for after watching the last
+	// render ("the man in the pink shirt"). Empty on the first pass, which is
+	// ground.py's normal mode: find a person, else name whatever it sees. On a
+	// re-frame it is passed as --target, so Reka stops volunteering a Pikachu
+	// poster and goes looking for the thing the critic actually named.
+	target string
 	// winStart/winEnd are the SHORT's whole window, recorded when the short
 	// begins so a span deep in the call stack does not have to carry it:
 	// resolveCrop already takes ten parameters and knows only its own slice.
@@ -54,8 +60,17 @@ var shortGround groundCache
 // resetShortGround clears the sweep between shorts. A different window is
 // different frames.
 func resetShortGround(winStart, winEnd float64) {
-	shortGround = groundCache{winStart: winStart, winEnd: winEnd}
+	shortGround = groundCache{winStart: winStart, winEnd: winEnd, target: shortTarget}
 }
+
+// shortTarget is the critic's named subject for the NEXT framing pass. It
+// survives resetShortFraming (which runs per pass) precisely because the whole
+// point is to carry one pass's conclusion into the next one; the critic loop
+// clears it between shorts.
+var shortTarget string
+
+// setShortTarget aims every grounding sweep of the next pass at one named thing.
+func setShortTarget(s string) { shortTarget = s }
 
 // sweep grounds [start,end] once and returns the result for every later caller.
 // The FIRST span to ask pays for the whole window; every other span is free.
@@ -70,7 +85,7 @@ func (c *groundCache) sweep(g *ground.Runner, src string) (ground.Result, error)
 		return c.res, c.err
 	}
 	c.res, c.err = g.Run(ground.Options{Video: src, Start: start, End: end,
-		FPS: groundSweepFPS, MaxFrames: groundSweepMaxFrames})
+		FPS: groundSweepFPS, MaxFrames: groundSweepMaxFrames, Target: c.target})
 	return c.res, c.err
 }
 

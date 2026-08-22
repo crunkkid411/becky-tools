@@ -14,7 +14,9 @@ for *how we work*. The other markdown files are reference material;
 - `README.md` — project overview, tool catalog, non-obvious decisions.
 - `hair-jordan-personality-profile.md` - detailed personality profile of Hair Jordan based on video-understanding dataset. Intended to be used for his AI clone, but useful within becky-tools whenever stylistic choices are required (such as editing Hair Jordan videos - NOT to be confused with editing the forensic criminal videos)
 
-**Please make sure these files stay up-to-date as you iterate on the project** but ensure your additions match the nature of previous entries in each file.
+**YOU MUST UPDATE** `INDEX.md`, `HANDOFF-LOG.md` and `STATE-OF-MASTER.md` each time you make changes or implement new features
+**YOU MUST UPDATE** `SKILL.md` so future agents will know how to use what you've implemented
+**Make sure your additions match the nature of previous entries in each file**
 
 You operate like a senior collaborator, not a chatbot. Follow these rules at all times:
 1. ACT, DON'T OVERPLAN. When you have enough information to act, act. Don't
@@ -167,6 +169,32 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   NEVER presence; never put a window a model looked at — and the subject wasn't there —
   on a timeline anyway. (2026-06-24: a forensic task failed exactly here — the tools
   worked, the agent's chaining didn't.)
+- **EDITING IS ITERATIVE. QUALITY IS THE ONLY BUDGET. STOP OPTIMISING FOR SPEED.**
+  Jordan, repeatedly, most recently 2026-08-21: "I continue telling you that video editing
+  is iterative, even if it takes a long time... I'm a world class video editor and I don't
+  care if it takes an hour; if the edits look like shit, I can't use any of this." He is
+  the one who watches the output. A render that takes an hour and is usable beats one that
+  takes four minutes and is not. So: never list runtime as a "weakness" of an editing
+  pipeline, never drop a model or a pass because it is slow, and never reject a model on a
+  timing measured under the wrong conditions (Marlin-2B was written off at 22 min/22s — on
+  CPU, because the GPU was not visible to that session; that is a fact about the session,
+  not the model). Firing the same model up MORE THAN ONCE at different steps is explicitly
+  fine: "Even if Gemma4 or other models have to be fired up more than once at different
+  steps in the pipeline that is okay!" The ONE thing that is still waste is doing identical
+  work twice for the same answer — pay for more passes, not for repeated passes.
+- **AN LLM MUST WATCH THE OUTPUT BEFORE IT SHIPS.** Detectors do not understand the video;
+  they lock onto posters, doorways and empty sofas and the file plays fine. Jordan: "an LLM
+  needs to verify all of that - we're not picking random dumb data points and rendering
+  that shit; quickest way to get someone fired. I re-watch a video clip like 10 fucking
+  times before I hit render... If gemma4 had just been made to watch the goddamn output
+  when it was focused on the pikachu poster it would have said 'oh wait, that isn't
+  right'." So any render pipeline ends with a model LOOKING AT THE RENDERED FILE, judged
+  against what the clip is about, with the power to send it back — and its rejection must
+  NAME what should have been in frame, or it is not actionable
+  (`cmd/becky-short/critic.go`, `internal/watch/critique.go`). A deterministic check over
+  the output is not this: becky-short's older `--review` looks at the output too and its
+  own header says "No model call anywhere in this file" — it counts faces, so it cannot
+  notice the thing in frame is a poster.
 - **A DETECTOR IS A SIGNAL, NEVER A VERDICT ON THE FOOTAGE.** Jordan, three times now:
   "tracking a subject does not determine if the clip is good or not... All these data
   points are to help becky conceptually understand what is happening in the video so it

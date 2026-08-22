@@ -104,6 +104,66 @@ Repro:
    becky-short captions a RAW window (silences and all); cli-cut captions an
    already-cut edit and has no silence to hold across.
 
+## ROUND TWO, SAME DAY — THE PIPELINE NOW ITERATES
+
+Jordan read the round-one write-up and named three things that were still wrong,
+all of them variations on one point: **nothing was ever checked by something that
+understands video.**
+
+### 1. An LLM now WATCHES THE RENDER and can send it back
+
+`internal/watch/critique.go` + `cmd/becky-short/critic.go`. After the file is
+rendered, Gemma-4 looks at a contact sheet OF THE OUTPUT, judged against what the
+watch pass said the clip is about, and answers `{ok, problem, subject}`. A
+rejection must NAME what should have been in frame — that name goes straight into
+`ground.Options.Target`, so Reka re-grounds on the named thing, the ladder
+re-frames, and it renders again. `--critic-passes` (default 2).
+
+This is the Editor/Critic loop from `research/paper-2509.10761.md`, and it is the
+thing that would have caught the Pikachu poster: the detectors had no idea what
+the clip was about, and nothing ever looked at what came out.
+
+The older `--review` pass is NOT this. Its own header says "No model call
+anywhere in this file" — it counts faces and checks caption timing, so it cannot
+notice that the thing in frame is a poster.
+
+**Hardware consequence:** Reka (5.5GB) and Gemma (4.2GB) do not both fit on 8GB,
+so the grounding server is shut down before each critique and started again for
+each re-frame. That is why `groundaim.go`'s singleton had to stop being a
+`sync.Once` — once tripped it stayed tripped, and every span after the first
+`closeGrounder()` would have silently got a nil runner.
+
+### 2. LR-ASD is wired in — rung 0 of the ladder
+
+`cmd/becky-short/speakeraim.go`. `cmd/becky-speaking` had done the whole job since
+it was built (face detection -> ArcFace tracking -> LR-ASD lip-motion-vs-audio
+scoring) and **nothing in the shorts pipeline had ever called it**. becky-short
+framed on whoever MediaPipe found most prominent, which on a two-shot is whoever
+is nearest the lens, not whoever is talking.
+
+It only fires when there are >=2 tracked faces AND becky-speaking reports
+`conclusion` (its margin rule). One face, no faces, a tie, a POV shot, no LR-ASD
+checkout — all fall straight through, which is the normal case in this footage
+and must never cost a render. Cached per short (`speakerCache`), the same way
+`groundCache` is, so a 30-span short pays for ONE pass and not thirty.
+
+`becky-speaking` gained `--boxes` to emit the geometry it already computed;
+asking twice would have paid for face detection and LR-ASD twice for one answer.
+
+**The third signal is NOT joined in.** becky-diarize's voice turns would close
+Jordan's "LR-ASD *and* diarize *and* ArcFace" loop. Diarize labels are
+per-utterance and anonymous (`SPEAKER_00`), so binding them to face tracks needs
+an alignment pass that does not exist. Two signals shipped, two claimed.
+
+### 3. Marlin-2B was written off on a bad measurement
+
+`research/model-marlin-2b-TESTED.md` updated. The 22-min-per-22-second figure was
+measured **on CPU in float32** because the GPU was not visible to that session —
+a fact about the session, not the model. A **GGUF pair exists**
+(`jadeonrails/marlin-2b-gguf`: 4.79GB text tower + a 0.67GB mmproj) with a
+documented `llama-mtmd-cli --video` path. Not yet verified on this machine; the
+open questions are written down in that file.
+
 ## STILL WEAK / NOT DONE
 
 - **`becky-moment` still picks windows from the transcript alone.** The watch
@@ -111,10 +171,18 @@ Repro:
   ranker itself is blind to physical action.
 - **The grounding probe names ONE subject for a whole window.** "colorful poster"
   for 33 seconds that contain four different rooms. Should be per-shot.
-- **Cost.** ~4 min for a 40s clip. Acceptable, not fast.
+- **becky-diarize is not crossed with LR-ASD** — see round two, item 2.
+- **Marlin-2B GGUF is unverified on this machine.**
 - **Two PRE-EXISTING test failures on master, untouched and unrelated to shorts:**
   `cmd/tts` `TestRun_DegradesWhenNoModel` and `internal/assistant`
   `TestHandleTier2Funnel`. Neither imports anything this work touched.
+
+**RUNTIME IS NOT ON THIS LIST AND MUST NOT BE ADDED TO IT.** Jordan: "video
+editing is iterative, even if it takes a long time... I don't care if it takes an
+hour; if the edits look like shit, I can't use any of this." Round one listed
+"~4 min for a 40s clip" as a weakness; that was wrong and is deleted. More passes
+are welcome. The only real waste is doing IDENTICAL work twice for one answer,
+which is what the two caches exist to prevent.
 
 ## Jordan's words, so the next agent does not re-argue settled things
 

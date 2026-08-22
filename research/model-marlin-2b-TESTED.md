@@ -63,6 +63,36 @@ One exact hit and one near miss, and the exact hit is the harder question: Rule 
 says *"the framing must be on Robby's face 1–3 frames BEFORE he realises"*.
 Locating the realisation is the part becky could not do at all.
 
+## 2026-08-21 — A GGUF PAIR EXISTS, AND THE CPU TIMING ABOVE IS NOT A VERDICT
+
+Jordan, on the numbers below: the GPU was unavailable to that session, so 22 minutes for a
+22-second clip is a measurement of **this machine's CPU in float32**, not of Marlin. Do not
+carry it forward as a reason to skip the model. Standing rule now in `CLAUDE.md`: never
+reject a model on a timing measured under the wrong conditions, and never on speed alone.
+
+He also asked that we use GGUF if we use it. **A GGUF pair exists** — found and file-listed
+2026-08-21 via the Hub API (not a blog post):
+
+    https://huggingface.co/jadeonrails/marlin-2b-gguf
+      marlin-2b-text.gguf   4.79 GB   text tower
+      marlin-2b.gguf        0.67 GB   VISION PROJECTOR (mmproj)
+
+The mmproj being present is the thing that matters — its absence is what would make the
+whole GGUF useless for video, exactly the trap `reka-edge-vs-gemma4.md` flags. The repo's
+README documents a first-class llama.cpp path:
+
+    llama-mtmd-cli -m marlin-2b-text.gguf --mmproj marlin-2b.gguf       --video input.mp4 -p "Describe the scene and events."
+
+**NOT YET VERIFIED HERE.** Unlike the Reka entry, nothing in this section has been run on
+this machine. Open questions, in order: (1) does build 9551's `mtmd.dll` carry Marlin's
+projector tensors, or does it need a rebuild — check the GGUF header over an HTTP range
+request BEFORE downloading 5.5GB, the way the Reka check was done; (2) is
+`marlin-2b-text.gguf` at 4.79GB F16 rather than quantized, and does F16 + mmproj fit under
+the 8GB ceiling beside nothing else; (3) does `find()`'s second-precise answer survive the
+conversion. The repo is a single third-party upload (0 likes, ~395 downloads, 344-byte
+README) — treat the conversion itself as unverified until its output is checked against the
+float32 answers recorded below.
+
 ## The blocker is runtime, not capability
 
 Measured here, **on CPU in float32**, because the discrete GPU is not visible to

@@ -57,6 +57,13 @@ const minSpeakingFrac = 0.50
 // frameJPEGQuality is ffmpeg's -q:v for extracted frames (lower = better).
 const frameJPEGQuality = 3
 
+// boxAt is one tracked face box at one instant, as FRACTIONS of the frame
+// ([x1,y1,x2,y2]) — facetrack's own convention.
+type boxAt struct {
+	T    float64    `json:"t"`
+	BBox [4]float64 `json:"bbox"`
+}
+
 type trackOut struct {
 	ID           int      `json:"id"`
 	Start        float64  `json:"start"`
@@ -67,6 +74,15 @@ type trackOut struct {
 	SpeakingFrac *float64 `json:"speaking_frac"`
 	Speaking     bool     `json:"speaking"`
 	Note         string   `json:"note,omitempty"`
+	// Boxes is the track's per-frame geometry, emitted only under --boxes.
+	// OFF by default because a 60s window at 30fps is ~1800 boxes per track and
+	// the summary is what a human reads; ON for callers that need to STEER
+	// something with it (cmd/becky-short's speaker rung builds its camera path
+	// from exactly these). Emitting them here rather than exposing a second
+	// query is deliberate: the geometry is a free by-product of a run that costs
+	// face detection plus LR-ASD, and asking twice would pay that twice for
+	// nothing.
+	Boxes []boxAt `json:"boxes,omitempty"`
 }
 
 type speakingReport struct {
@@ -89,6 +105,8 @@ func main() {
 		end      = flag.Float64("end", 0, "window end (seconds); 0 = to end of file")
 		out      = flag.String("out", "", "write JSON here instead of stdout")
 		device   = flag.String("device", "", "face detector device: cpu|cuda (default: config)")
+		boxes    = flag.Bool("boxes", false, "include each track's per-frame face boxes in the JSON "+
+			"(large; for callers that steer a crop with them, not for reading)")
 		selftest = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose  = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -110,7 +128,7 @@ func main() {
 		dev = cfg.Device
 	}
 
-	rep, err := run(cfg, *video, *start, *end, dev, *verbose)
+	rep, err := run(cfg, *video, *start, *end, dev, *boxes, *verbose)
 	if err != nil {
 		rep = speakingReport{OK: false, Video: *video, Start: *start, End: *end,
 			Confidence: "none", Note: err.Error()}
@@ -131,7 +149,7 @@ func main() {
 
 // run is the whole chain, factored out of main so selftest-adjacent logic (the
 // pure decision functions below) can be exercised without it.
-func run(cfg config.Config, video string, start, end float64, device string, verbose bool) (speakingReport, error) {
+func run(cfg config.Config, video string, start, end float64, device string, withBoxes, verbose bool) (speakingReport, error) {
 	if cfg.FaceModelRoot == "" {
 		return speakingReport{}, fmt.Errorf("face model not configured — becky-speaking needs the same face model becky-identify uses")
 	}
@@ -196,6 +214,9 @@ func run(cfg config.Config, video string, start, end float64, device string, ver
 	}
 
 	outTracks := joinTracks(tracks, asdRes.Tracks)
+	if withBoxes {
+		attachBoxes(outTracks, tracks)
+	}
 	speaker, confidence := decideSpeaker(outTracks)
 
 	return speakingReport{

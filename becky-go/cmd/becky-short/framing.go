@@ -17,6 +17,10 @@
 // THE LADDER. Each rung is tried in order and the first confident answer wins.
 // Every rung says which one answered, so the output is never a mystery:
 //
+//	0 SPEAKER   Several faces on screen and LR-ASD says which one is TALKING
+//	            (speakeraim.go). Only fires on a real multi-person shot with a
+//	            clear winner; silent on everything else, which on POV and
+//	            hidden-camera footage is most of it.
 //	1 POSE      MediaPipe body tracking, per frame. The best answer when it works.
 //	2 PAN       STEADY grounded boxes that MOVE become a camera path, not a
 //	            refusal. This is the rung that was missing: a subject crossing
@@ -102,6 +106,7 @@ var shortFraming framingMemory
 func resetShortFraming(winStart, winEnd float64) {
 	shortFraming = framingMemory{}
 	resetShortGround(winStart, winEnd)
+	resetShortSpeaker(winStart, winEnd)
 	setShortPayoff(0)
 	setShortWatched(false)
 }
@@ -112,6 +117,22 @@ func resetShortFraming(winStart, winEnd float64) {
 // cached sweep (groundcache.go) and this span reads the slice of it it needs.
 func frameSpan(cfg config.Config, g *ground.Runner, mem *framingMemory, src string,
 	start, end, aspect, fps float64, srcW, srcH int, cuts []float64) (rects []crop.Rect, note string, grounded bool) {
+
+	// --- rung 0: WHICH PERSON. Only when there is a choice to make ---
+	//
+	// This sits above everything else because "which of these people" is a
+	// different and prior question to "where is a person". Pose answers the
+	// second one and, on a two-shot, answers it with whoever is nearest the
+	// lens — which is how a reaction shot ends up framed on the back of the
+	// prankster's head. It stays silent unless several faces are tracked AND
+	// LR-ASD picks a clear winner, so a POV shot pays only the detection.
+	if sr, snote, sok := speakerAim(cfg, src, start, end, aspect, srcW, srcH, cuts); sok {
+		if len(sr) > 0 && srcW > 0 {
+			mid := sr[len(sr)/2]
+			mem.remember((float64(mid.X) + float64(mid.W)/2) / float64(srcW))
+		}
+		return sr, snote, true
+	}
 
 	// --- rungs 2-3: what is in this shot, and where ---
 	//
