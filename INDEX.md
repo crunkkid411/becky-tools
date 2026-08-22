@@ -157,6 +157,16 @@
   the decided architecture, the exact FFmpeg API map, and the risk order; the handoff is the
   8-step staged work order (harness first, wire-in last) for the local agent. Read WITH the
   mpv verdict in `CONTINUE-HERE.md`. Does NOT touch render/export.
+- `becky-review-user-feedback-11.md` — **the latest Becky Review 3 feedback round
+  (2026-08-21) and what was done about it** (see the newest `HANDOFF-LOG.md` entry):
+  the timeline right-click menu root cause (the window's focus-steal closing its own
+  popup mid-click), Ctrl+M markers with typed notes (engine-owned, saved beside the
+  reel as `<reel>.markers.json`), right-click-the-caption-lane = blank custom caption,
+  overlay/name/captions OFF by default (the name toggle now reaches the render), the
+  3-state Newest/Oldest/Best-Matches result sort, opaque green transcript highlights,
+  folder-search "Open Transcript" that lands ON the quote, and TAB-plays-first-match
+  inside a transcript. The fixed 8-colour source palette lives engine-side
+  (`becky-go/cmd/clip/clipcolor.go`).
 - `research/videoagent-integration.md` — the VideoAgent→becky **intent→verb mapping**
   (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH

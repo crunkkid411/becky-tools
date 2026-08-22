@@ -10,6 +10,12 @@
 #include <thread>
 #include <exception>
 
+// Timeline markers (Ctrl+M) - the UI mirror of the engine's marker list; see
+// TimelineMarker in timeline_draw.h. loadTimelineView refreshes this from the
+// engine's TimelineView, so the engine stays the one source of truth.
+std::vector<TimelineMarker> g_markers;
+double g_markerReqAt = -1;
+
 // ---- Ctrl+Left / Ctrl+Right: step to the previous/next EDIT POINT ----
 //
 // Jordan marked this CRITICAL and noted "we've tried to fix this several times".
@@ -220,6 +226,7 @@ void drawTimeline(double& curSec, bool& playing) {
                                     [rp, &curSec, &playing](const json& r) {
                         if (r.value("ok", false)) {
                             loadTimelineView(r.contains("data") ? r["data"] : r);
+                            pushOverlayDefaults();   // feedback 11: a fresh load starts OFF
                             // NB: no lastComposed reset here (unlike the Load Reel button) -
                             // that variable is local to main()'s loop, out of scope in
                             // drawTimeline; playing=false already makes main()'s own
@@ -421,6 +428,43 @@ void drawTimeline(double& curSec, bool& playing) {
             }
         }
         else if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
+        else if (showCaps && my >= capY && my <= capY + capH) {
+            // Jordan (feedback 11): right-clicking EMPTY caption-lane space creates a
+            // fresh blank segment he can type a custom caption into - same click-to-edit
+            // flow an existing cue uses, just starting from nothing. The start snaps to
+            // the reel's cut points exactly like a moved cue does (Alt = free), the end
+            // runs to the next cue's start (or ~2s, whichever is sooner), and the cue is
+            // anchored to the clip under it so reorders/trims carry it along.
+            double t = capSnapCut(xToSec(mx));
+            t = quantToFrame(std::max(0.0, std::min(t, g_compDur)));
+            double end = t + 2.0;
+            for (auto& c : g_caps)
+                if (c.start > t + 1e-6 && c.start < end) end = c.start;
+            if (end > g_compDur) end = g_compDur;
+            if (end - t < 0.2) end = t + 0.2;   // keep a typable span even at the very end
+            end = quantToFrame(end);
+            Caption nc; nc.start = t; nc.end = end;
+            for (auto& c : g_track[0])
+                if (t >= c.compStart && t < c.compStart + (c.out - c.in)) {
+                    if (!c.id.empty()) {
+                        nc.clipId = c.id;
+                        nc.srcIn = nc.srcOut = c.in + (t - c.compStart);
+                    }
+                    break;
+                }
+            pushCapUndo();
+            g_caps.push_back(nc);
+            saveCaptions();   // sorts g_caps - find the new cue again by its times
+            int newIdx = -1;
+            for (size_t i = 0; i < g_caps.size(); i++)
+                if (g_caps[i].text.empty() && std::fabs(g_caps[i].start - t) < 1e-6 &&
+                    std::fabs(g_caps[i].end - end) < 1e-6) { newIdx = (int)i; break; }
+            if (newIdx >= 0) {
+                g_capSel = newIdx; g_capEdit = newIdx; g_capEditFocus = true;
+                g_capEditSnapped = false;
+                g_capEditBuf[0] = 0;
+            }
+        }
     }
     if (ImGui::BeginPopup("clipctx")) {
         if (s_ctxIdx >= 0 && s_ctxIdx < (int)g_track[0].size()) {
@@ -430,12 +474,6 @@ void drawTimeline(double& curSec, bool& playing) {
             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(c.source);
             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(c.source).c_str());
             if (ImGui::MenuItem("Open Transcript")) { g_searchMode.clear(); g_searchErr.clear(); openTranscript(c.source); }
-            ImGui::Separator();
-            // Item 27: build REAL TikTok-style captions (becky-subtitle: cut-snapped +
-            // phrase-broken) for the whole timeline, not the raw Parakeet transcript.
-            ImGui::BeginDisabled(g_cliCutBusy.load());
-            if (ImGui::MenuItem("Get Captions")) triggerGetCaptions();
-            ImGui::EndDisabled();
         }
         ImGui::EndPopup();
     }
@@ -838,6 +876,88 @@ void drawTimeline(double& curSec, bool& playing) {
                 dl->AddLine(ImVec2(xm, p.y + rulerH - 5), ImVec2(xm, p.y + rulerH), COL_TICKMIN);
             }
         }
+    }
+
+    // ---- MARKERS (Ctrl+M, feedback 11) ----
+    // A yellow Vegas-style flag on the ruler per marker; hover shows the note,
+    // click reopens the note editor. The editor modal + the Ctrl+M request are
+    // handled just below / above; the engine owns the list (add_marker/set_marker).
+    static int   s_mkEditIdx = -1;
+    static double s_mkEditAt = 0;
+    static char  s_mkBuf[512] = { 0 };
+    static bool  s_mkFocus = false;
+    if (g_markerReqAt >= 0) {
+        double at = quantToFrame(std::max(0.0, std::min(g_markerReqAt, g_compDur)));
+        int idx = -1;
+        for (size_t i = 0; i < g_markers.size(); i++)
+            if (std::fabs(g_markers[i].at - at) < 0.02) { idx = (int)i; break; }
+        s_mkEditIdx = idx;
+        s_mkEditAt = (idx >= 0) ? g_markers[idx].at : at;
+        snprintf(s_mkBuf, sizeof s_mkBuf, "%s", idx >= 0 ? g_markers[idx].label.c_str() : "");
+        s_mkFocus = true;
+        g_markerReqAt = -1;
+        ImGui::OpenPopup("##markeredit");
+    }
+    const ImU32 kMarkerCol = IM_COL32(0xFF, 0xD7, 0x00, 255);
+    for (size_t mi = 0; mi < g_markers.size(); mi++) {
+        float xm = secToX(g_markers[mi].at);
+        if (xm < tlX - 20 || xm > tlX + tlW + 20) continue;
+        dl->AddLine(ImVec2(xm, p.y + 2), ImVec2(xm, p.y + rulerH), kMarkerCol, 1.5f);
+        dl->AddTriangleFilled(ImVec2(xm - 5, p.y + 1), ImVec2(xm + 5, p.y + 1), ImVec2(xm, p.y + 9), kMarkerCol);
+        if (ImGui::IsMouseHoveringRect(ImVec2(xm - 6, p.y), ImVec2(xm + 6, p.y + rulerH))) {
+            char tb[24]; fmtTime(g_markers[mi].at, tb, sizeof tb, true);
+            if (g_markers[mi].label.empty())
+                ImGui::SetTooltip("Marker %s - click to type a note", tb);
+            else
+                ImGui::SetTooltip("Marker %s\n%s", tb, g_markers[mi].label.c_str());
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                s_mkEditIdx = (int)mi; s_mkEditAt = g_markers[mi].at;
+                snprintf(s_mkBuf, sizeof s_mkBuf, "%s", g_markers[mi].label.c_str());
+                s_mkFocus = true;
+                ImGui::OpenPopup("##markeredit");
+            }
+        }
+    }
+    if (ImGui::BeginPopupModal("##markeredit", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        char tb[24]; fmtTime(s_mkEditAt, tb, sizeof tb, true);
+        ImGui::TextDisabled("Marker at %s", tb);
+        ImGui::SetNextItemWidth(340.0f * ImGui::GetIO().FontGlobalScale);
+        if (s_mkFocus) { ImGui::SetKeyboardFocusHere(); s_mkFocus = false; }
+        bool ok = ImGui::InputText("##mknote", s_mkBuf, sizeof s_mkBuf,
+                                   ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (ImGui::Button("Save")) ok = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        if (ok) {
+            std::string note = s_mkBuf;
+            double at = s_mkEditAt;
+            int idx = s_mkEditIdx;
+            auto refresh = [](const json& r) {
+                // The engine echoes the full marker list back (TimelineView) - adopt
+                // it verbatim so UI and engine can never drift.
+                if (!r.value("ok", false)) return;
+                const json& d = r.contains("data") ? r["data"] : r;
+                g_markers.clear();
+                if (d.contains("markers") && d["markers"].is_array())
+                    for (auto& m : d["markers"])
+                        g_markers.push_back({ m.value("at", 0.0), m.value("label", std::string()) });
+            };
+            if (idx >= 0 && idx < (int)g_markers.size()) {
+                g_markers[idx].label = note;
+                engineCallAsync("set_marker", { {"at", at}, {"label", note} }, 10.0,
+                                "Saving marker...", refresh);
+            } else {
+                g_markers.push_back({ at, note });
+                std::sort(g_markers.begin(), g_markers.end(),
+                          [](const TimelineMarker& a, const TimelineMarker& b) { return a.at < b.at; });
+                engineCallAsync("add_marker", { {"at", at}, {"label", note} }, 10.0,
+                                "Saving marker...", refresh);
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     dl->AddRectFilled(ImVec2(tlX, aY), ImVec2(tlX + tlW, aY + laneH), COL_LANE, 3);

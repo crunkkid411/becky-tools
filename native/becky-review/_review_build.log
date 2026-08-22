@@ -1,4 +1,12 @@
-Microsoft Windows [Version 10.0.19045.6332]
-(c) Microsoft Corporation. All rights reserved.
-
-X:\AI-2\becky-tools\native\becky-review>
+'vswhere.exe' is not recognized as an internal or external command,
+operable program or batch file.
+main.cpp
+engine.cpp
+imgui.cpp
+imgui_draw.cpp
+imgui_tables.cpp
+imgui_widgets.cpp
+imgui_impl_win32.cpp
+imgui_impl_dx11.cpp
+Generating Code...
+   Creating library becky-review.lib and object becky-review.exp

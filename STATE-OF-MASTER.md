@@ -6,7 +6,34 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — clipping pipeline: it renders, watches itself back, and fixes it (2026-08-21, local)
+### CURRENT — Becky Review 3: the feedback-11 round (2026-08-21, local)
+
+**On master, pushed, built green** (native `_build.bat` + rebuilt `becky-review-engine.exe`
++ `build-all-tools.bat`; `go test ./cmd/clip/...` green incl. two new marker tests). Full
+story at the TOP of `HANDOFF-LOG.md`; the input was `becky-review-user-feedback-11.md`.
+
+- **Timeline right-click menu FIXED at the root cause.** The window's focus-steal
+  (added for the "keys dead after typing" bug) treated the popup as a child of the
+  timeline and closed it on the same frame an item was clicked. One-line guard:
+  never re-steal focus while a popup is open. Both behaviours survive.
+- **Ctrl+M markers**: yellow ruler flags, type a note, engine-owned (`add_marker`/
+  new `set_marker`), saved beside the reel (`<reel>.markers.json`) across sessions.
+  Vegas import/export of markers = a later round by design.
+- **Right-click empty caption lane = blank caption to type into**; right-click ON a
+  caption is still glue-to-next.
+- **Overlay/Name/Captions default OFF**, re-asserted at boot and on every reel load;
+  the name toggle now actually reaches the render (it was preview-only before).
+- **Clip colours**: the fixed 8-colour ordered palette he listed already lived in the
+  engine (`clipcolor.go`); the engine exe is rebuilt so it is actually delivered.
+- **Left panel**: opaque green highlights (60→150 alpha), 3-state result sort
+  (Newest / Oldest / Best Matches), folder-search "Open Transcript" lands ON the
+  quote, TAB in a transcript search plays the first match.
+- Transcribe/Get Captions removed from every right-click menu (menus only - the
+  header buttons stay).
+- **Not mouse-verified this session** (build + root-cause instrumentation only);
+  Jordan drives it first.
+
+### PREVIOUS — clipping pipeline: it renders, watches itself back, and fixes it (2026-08-21, local)
 
 **On master, pushed, green.** `1d5ce19` (a tracker that loses him is not a clip that is bad) →
 `f626b2b` (the critic loop + LR-ASD) → `c873b9f` (no-op re-render guard).

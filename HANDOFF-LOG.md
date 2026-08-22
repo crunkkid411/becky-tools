@@ -10,6 +10,75 @@
 
 ---
 
+## Becky Review 3: feedback-11 round - the right-click menu root cause, markers, and defaults (2026-08-21, local, `master`)
+
+`becky-review-user-feedback-11.md` was the input; every item below is implemented, built
+(`_build.bat` + `go build -o bin\becky-review-engine.exe ./cmd/clip` + `build-all-tools.bat`,
+`go test ./cmd/clip/...` green incl. two new marker tests), and ready for Jordan's eyes.
+
+### 1. The broken timeline right-click menu - ROOT CAUSE FOUND, one-line fix
+
+The menu OPENED but every item did nothing, and a click could even fall through and move
+the playhead. Reproduced live + instrumented: on the click frame the popup was already
+GONE - ImGui had closed it before its MenuItems were submitted. Why: the timeline window's
+"focus follows click" block (added for the thrice-reported "keys dead after typing in the
+search box" bug) called `ImGui::SetWindowFocus()` whenever the timeline *or any child of
+it* was clicked - and in ImGui a popup IS a child of the window it opened from
+(`IsWindowHovered(ImGuiHoveredFlags_ChildWindows)` is true while hovering the menu).
+`FocusWindow` -> `ClosePopupsOverWindow` -> the menu died on the very frame its item was
+clicked. Fix (`main.cpp`, timeline window): never re-steal focus while ANY popup is open
+(`!ImGui::IsPopupOpen("", AnyPopupId|AnyPopupLevel)`); ImGui restores focus when the popup
+closes, so the original keyboard bug stays fixed.
+
+### 2. What else feedback 11 asked for, and how each landed
+
+- **Transcribe / Get Captions removed from ALL right-click menus** (timeline clip menu,
+  library card menu, search-hit menu) - "that's not how I work". The capabilities were
+  removed from the menus only; the header "Transcribe all" and the card robot button remain.
+- **Right-click EMPTY caption-lane space creates a blank caption** and drops the caret in
+  it (cut-point snapped like every cue move, anchored to the clip under it so reorders
+  carry it, saved through the existing `.srt` sidecar). Right-click ON a caption is still
+  glue-to-next (Jordan 2026-07-24, untouched).
+- **Ctrl+M = marker at the playhead, then type a note.** Markers are ENGINE-owned
+  (`add_marker` + NEW `set_marker` verbs - re-typing a note edits in place, never stacks a
+  duplicate flag), drawn as yellow Vegas-style ruler flags with hover tooltips, click a
+  flag to re-edit. **Saved with the reel** as `<reel>.markers.json` (written on save_reel,
+  loaded on load_reel; an empty marker list deletes the sidecar so dead markers can't
+  resurrect). Vegas `.veg` marker IMPORT/EXPORT is deliberately NOT done yet - Jordan's ask
+  was create+note first; the sidecar keeps them safe until that round.
+- **Overlay / Name / Captions default OFF** (`g_ovMode=0`, `showFilename=false`,
+  `g_capsOn=false`) and re-asserted on the engine at boot and after every reel load
+  (`pushOverlayDefaults`, fire-and-forget, never blocks the UI). Fresh reels - including
+  Jordan's converted Vegas `.xml` exports - inherit the engine's all-on defaults, which is
+  why asserting once at boot wasn't enough.
+- **The name toggle now reaches the RENDER** - it only flipped the local preview mirror,
+  so exports burned the filename line even with the button off; it now pushes
+  `set_overlay show_filename` to the engine like the overlay mode does.
+- **Clip colours: already exactly what he asked** - the engine's `clipcolor.go` fixed
+  8-colour palette (#14FF39, #00AEEF, #DC143C, #8A2BE2, #FF57D1, #FFD700, #16F0EA, #FF8C00),
+  assigned in first-appearance order, persisted per project, stable across delete/re-add
+  (`ReseedClipColorsInOrder` on load). The stale `becky-review-engine.exe` predated parts
+  of it - it is REBUILT this round, which is the actual delivery.
+- **Search-result sort is now a named 3-state cycle** on the crown button: Newest ->
+  Oldest -> Best Matches (engine relevance score, exact quotes first). Was a 2-state
+  relevance toggle.
+- **Green highlights turned up**: within-transcript match fill alpha 60 -> 150, selected-cue
+  fill 70 -> 110 ("too semi-transparent and difficult to see").
+- **Folder-search hit menu gained "Open Transcript"** that lands ON the quote: opens the
+  transcript and, the frame the cues arrive, selects + scrolls to + auditions the cue at
+  the hit's timestamp (`g_cueSeekPending`, cleared on transcript errors so nothing strands).
+- **TAB inside a transcript search jumps to the FIRST match and plays it** (same audition
+  a cue click does), focus stays in the search box.
+
+### Not verified interactively this round (say it plainly)
+
+The fixes are code-verified (root cause proven by instrumentation logs from the live app;
+all builds + Go tests green), but no mouse-driven pass over every item happened this
+session - Jordan is the first to drive it. If anything misbehaves, `crash.log` + the
+sections named above say exactly where each behaviour lives.
+
+---
+
 ## Clipping: becky renders it, watches it back, and fixes it (2026-08-21, local, `master`)
 
 `1d5ce19` → `f626b2b` → `c873b9f`. **Canon now lives in `SKILL.md`'s `VIDEO CLIPPING` section**;

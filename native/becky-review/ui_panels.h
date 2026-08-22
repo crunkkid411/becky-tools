@@ -111,7 +111,7 @@ extern bool g_smartSearch;
 extern std::vector<Hit> g_hits;
 extern int g_hitSel;
 extern bool g_hitScrollPending;
-extern bool g_hitRelevance;
+extern int g_hitSort;              // 0 = Newest, 1 = Oldest, 2 = Best Matches (feedback 11)
 extern std::string g_searchMode;
 extern std::string g_searchNote;
 extern std::string g_searchErr;
@@ -128,6 +128,10 @@ extern int g_cueSel;
 extern std::set<int> g_cueMulti;
 extern int g_cueAnchor;
 extern bool g_cueScrollPending;
+// Feedback 11: pending "Open Transcript -> jump to the quote's timestamp" nav.
+extern bool g_cueSeekPending;
+extern std::string g_cueSeekName;
+extern double g_cueSeekT;
 extern char g_withinBuf[128];
 extern std::string g_withinLast;
 extern int g_withinMatchIdx;

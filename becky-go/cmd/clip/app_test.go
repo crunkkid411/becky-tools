@@ -578,6 +578,63 @@ func TestSaveLoadReelRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSetMarkerEditsInPlace verifies re-typing a marker's note replaces it
+// instead of stacking a duplicate flag at the same spot (feedback 11: Ctrl+M
+// at the playhead, then type the note - a second Ctrl+M there edits, not adds).
+func TestSetMarkerEditsInPlace(t *testing.T) {
+	app := NewApp()
+	app.AddMarker(10.5, "first note")
+	tl := app.SetMarker(10.5, "rewritten note")
+	if len(tl.Markers) != 1 {
+		t.Fatalf("want exactly 1 marker after set at the same spot, got %d", len(tl.Markers))
+	}
+	if tl.Markers[0].Label != "rewritten note" {
+		t.Errorf("label = %q, want %q", tl.Markers[0].Label, "rewritten note")
+	}
+	// A DIFFERENT spot still creates a new marker, list stays time-sorted.
+	tl = app.SetMarker(2.0, "earlier one")
+	if len(tl.Markers) != 2 || tl.Markers[0].At != 2.0 || tl.Markers[1].At != 10.5 {
+		t.Errorf("markers wrong after second set: %+v", tl.Markers)
+	}
+}
+
+// TestMarkersSurviveSaveLoadReel verifies markers persist beside the reel
+// (<reel>.markers.json) across a save/load round trip, and that a reel with
+// NO markers leaves no stale sidecar behind.
+func TestMarkersSurviveSaveLoadReel(t *testing.T) {
+	app, dir := openFixture(t)
+	app.AddClip(filepath.Join(dir, "ring.mp4"), 1, 3, "money")
+	app.AddMarker(1.25, "the note")
+
+	out := filepath.Join(app.workDir, "case.reel.json")
+	saved, err := app.SaveReel(out)
+	if err != nil {
+		t.Fatalf("SaveReel: %v", err)
+	}
+	if _, err := os.Stat(saved + ".markers.json"); err != nil {
+		t.Fatalf("markers sidecar not written: %v", err)
+	}
+
+	app2 := NewApp()
+	app2.workDir = t.TempDir()
+	tl, err := app2.LoadReel(saved)
+	if err != nil {
+		t.Fatalf("LoadReel: %v", err)
+	}
+	if len(tl.Markers) != 1 || tl.Markers[0].At != 1.25 || tl.Markers[0].Label != "the note" {
+		t.Errorf("loaded markers wrong: %+v", tl.Markers)
+	}
+
+	// No markers -> saving removes any stale sidecar so dead markers never resurrect.
+	app2.markers = nil
+	if _, err := app2.SaveReel(saved); err != nil {
+		t.Fatalf("SaveReel (no markers): %v", err)
+	}
+	if _, err := os.Stat(saved + ".markers.json"); !os.IsNotExist(err) {
+		t.Errorf("stale markers sidecar still present after markerless save (err=%v)", err)
+	}
+}
+
 // TestPickFolderPickedIndexes verifies the native-picker wiring: when the dialog
 // returns a real folder, PickFolder indexes it (the existing open flow) and
 // reports Picked=true with the FolderView — fed through the pickFolderFn seam so

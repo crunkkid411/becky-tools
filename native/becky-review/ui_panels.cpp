@@ -109,15 +109,19 @@ std::vector<Hit> g_hits;
 // rows, including the "scroll it into view after an arrow key" flag.
 int g_hitSel = -1;
 bool g_hitScrollPending = false;
-// Items 18/19: the third sort, "most relevant results at top". The engine already
-// returns a score on every hit and sorts by date, so this is purely a client-side
-// re-sort. Sticky across searches - having to re-assert it every query would make
-// it useless.
-bool g_hitRelevance = false;
+// Items 18/19 + feedback 11: THREE named result orders, cycled by the crown
+// button - 0 = Newest (the engine returns hits date-sorted newest first),
+// 1 = Oldest (its reverse), 2 = Best Matches (the engine's relevance score,
+// exact quotes first). Sticky across searches - having to re-assert it every
+// query would make it useless.
+int g_hitSort = 0;
 void applyHitSort() {
-    if (g_hitRelevance)
+    if (g_hitSort == 2)
         std::stable_sort(g_hits.begin(), g_hits.end(),
                          [](const Hit& a, const Hit& b) { return a.score > b.score; });
+    else if (g_hitSort == 1)
+        std::stable_sort(g_hits.begin(), g_hits.end(),
+                         [](const Hit& a, const Hit& b) { return a.ord > b.ord; });
     else
         std::stable_sort(g_hits.begin(), g_hits.end(),
                          [](const Hit& a, const Hit& b) { return a.ord < b.ord; });
@@ -160,6 +164,12 @@ int g_cueSel = -1;
 std::set<int> g_cueMulti;
 int g_cueAnchor = -1;
 bool g_cueScrollPending = false;
+// Feedback 11: "Open Transcript" on a folder-search hit asks to land ON the
+// quote - the hit's timestamp is parked here and consumed by the main loop the
+// frame the cues for g_cueSeekName are in (openTranscript is async).
+bool g_cueSeekPending = false;
+std::string g_cueSeekName;
+double g_cueSeekT = 0;
 char g_withinBuf[128] = { 0 };     // search-within-this-transcript
 std::string g_withinLast;          // last frame's search text, to fire the
                                            // auto-scroll-to-first-match only on change
@@ -946,7 +956,11 @@ void openTranscript(const std::string& fullVideoPath) {
     engineCallAsync("transcript", { {"name", name} }, 25.0, "Opening transcript...",
         [name](const json& r) {
             if (g_cueName != name) return;   // he moved to another row - stale reply
-            if (!r.value("ok", false)) { g_cueErr = r.value("error", std::string("transcript unavailable")); g_cues.clear(); return; }
+            if (!r.value("ok", false)) { g_cueErr = r.value("error", std::string("transcript unavailable")); g_cues.clear();
+                // Feedback 11: a transcript that never lands must not strand a
+                // pending "take me to the quote" navigation.
+                if (g_cueSeekPending && g_cueSeekName == name) g_cueSeekPending = false;
+                return; }
             const json& d = r.contains("data") ? r["data"] : r;
             g_cues.clear();
             if (d.is_array()) {

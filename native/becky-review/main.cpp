@@ -406,23 +406,25 @@ double g_previewFrozenPlayhead = 0.0;
 // every loadTimelineView reply's "overlay" object - the engine is the one
 // source of truth, this is just a read-only mirror for preview rendering.
 struct OverlayState {
-    bool enabled = true, showFilename = true, showTimecode = true, showDate = true;
+    bool enabled = true, showFilename = false, showTimecode = true, showDate = true;
     bool showLink = true, showPerson = true, showLocation = true;
     std::string position = "bottom";
 };
 static OverlayState g_overlay;
 // 3-state PREVIEW toggle (BUILD_1.md D-6): 0=off (no overlay anywhere), 1=on
-// but hidden in the live preview (DEFAULT - render still burns it in), 2=on
-// and shown in the live preview too. This is purely a native/preview concept;
-// "enabled" on the engine's Overlay always tracks state!=0 so render is never
-// out of sync with "off".
-static int g_ovMode = 1;
+// (hidden in preview, still burns into export), 2=on (shown in preview).
+// Jordan (feedback 11): overlay, name and captions all start OFF - the engine's
+// new-reel defaults have them on, so the app pushes them off once at boot and
+// again after every reel load (pushOverlayDefaults below).
+static int g_ovMode = 0;
+// This is purely a native/preview concept; "enabled" on the engine's Overlay
+// always tracks state!=0 so render is never out of sync with "off".
 static std::atomic<bool> g_ovEngineEnabled{ true }; // last "enabled" value pushed to the engine
 // Item 7 (round 2): "there should be a way to toggle OFF the captions, they
-// should be optional." Default ON (captions are the useful default); gates
-// BOTH the timeline caption lane and the preview's burned-in-style overlay -
-// off means fully hidden, not just dimmed.
-bool g_capsOn = true;
+// should be optional." Gates BOTH the timeline caption lane and the preview's
+// burned-in-style overlay - off means fully hidden, not just dimmed.
+// Feedback 11: OFF by default (same as the overlay and the name line).
+bool g_capsOn = false;
 
 static void relabel(int tr) {
     const char* p = tr == 0 ? "clip " : "pip ";
@@ -654,6 +656,23 @@ static void setOverlayMode(int m) {
             if (r.value("ok", false)) g_ovEngineEnabled.store(wantEnabled);
         }).detach();
     }
+}
+
+// Feedback 11: overlay, name (filename line) and captions are OFF by default.
+// The engine's newReel defaults carry them ON, and a loaded reel (Jordan's
+// Vegas .xml exports convert to fresh reels) inherits those defaults - so the
+// app re-asserts the defaults at boot and after every successful reel load.
+// Fire-and-forget like setOverlayMode (never a UI-thread stall); the mirror is
+// set locally right away so the buttons read correctly at once.
+void pushOverlayDefaults() {
+    g_ovMode = 0;
+    g_overlay.enabled = false;
+    g_overlay.showFilename = false;
+    std::thread([] {
+        json r1 = engineCall("set_overlay", { {"field", "enabled"}, {"value", false} }, 20.0);
+        if (r1.value("ok", false)) g_ovEngineEnabled.store(false);
+        engineCall("set_overlay", { {"field", "show_filename"}, {"value", false} }, 20.0);
+    }).detach();
 }
 
 static void splitTrack(int tr, double t) {
@@ -1341,6 +1360,13 @@ void loadTimelineView(const json& tv) {
         }
     }
     packTrack(0); recomputeDur();
+    // Markers (Ctrl+M): mirror the engine's list verbatim - it is part of the
+    // same TimelineView the clips came from, refreshed on every reply so the
+    // engine stays the one source of truth.
+    g_markers.clear();
+    if (tv.contains("markers") && tv["markers"].is_array())
+        for (auto& m : tv["markers"])
+            g_markers.push_back({ m.value("at", 0.0), m.value("label", std::string()) });
     g_trackClipCountForLog.store(g_track[0].size(), std::memory_order_relaxed);
     // PACK boundary logging: OPT-IN via BECKY_REVIEW_PACK_LOG=1 (2026-07-25).
     // Was unconditional, causing 10 flushed disk writes per timeline reload
@@ -2533,6 +2559,12 @@ int main(int argc, char** argv) {
             g_swap->Present(0, 0);   // no driver vsync-wait (that busy-spun); DwmFlush at the loop top paces us
             continue;
         }
+        // Feedback 11: first frame after boot - assert the overlay/name defaults
+        // (OFF) on the engine once. Reels loaded later re-assert at load time.
+        {
+            static bool s_bootOverlayPushed = false;
+            if (!s_bootOverlayPushed) { s_bootOverlayPushed = true; pushOverlayDefaults(); }
+        }
 
         // keyboard (standalone focus): play / split / delete / trim / group / seek.
         // Gated on !WantCaptureKeyboard so typing in the search/ask/within boxes
@@ -2573,6 +2605,14 @@ int main(int argc, char** argv) {
                 if (playing) stopPlayback(curSec, playing, false);   // stop HERE - keep the frame he just heard
                 else { playing = true; g_playingExt = true; }        // same start as Space, below
             }
+            // Ctrl+M = MARKER at the playhead (feedback 11). Requests drawTimeline
+            // to open the note editor at this comp time (g_markerReqAt); the engine
+            // owns the marker list (add_marker/set_marker). While PLAYING the marker
+            // lands at the STOCK (same editT() every other edit key uses), paused at
+            // curSec. Gated with the rest of this block on !WantCaptureKeyboard, so
+            // Ctrl+M inside any text box belongs to the box.
+            if (ImGui::IsKeyPressed(ImGuiKey_M) && ImGui::GetIO().KeyCtrl)
+                g_markerReqAt = editT();
             // NOTE (fixes the "split-brain edit model" the adversarial review flagged as
             // priority #1): track 0 is no longer mutated locally by these handlers. The
             // engine's reel is the ONE model - every S/Del/O/I keypress calls a REAL verb
@@ -3191,6 +3231,27 @@ int main(int argc, char** argv) {
         drainAsync();
         stageMark("key-input+drainAsync");
 
+        // Feedback 11: a folder-search hit's "Open Transcript" asked to be TAKEN TO
+        // the quote - once the transcript's cues have landed (they arrive via
+        // drainAsync above), select the cue holding the timestamp, scroll it into
+        // view and audition it. Runs until consumed; openTranscript's error path
+        // clears it so a missing transcript can't leave it pending forever.
+        if (g_cueSeekPending && !g_cueName.empty() && g_cueName == g_cueSeekName && !g_cues.empty()) {
+            int best = -1; double bestD = 1e18;
+            for (size_t i = 0; i < g_cues.size(); i++) {
+                if (g_cues[i].start <= g_cueSeekT + 1e-3 && g_cues[i].end >= g_cueSeekT - 1e-3) { best = (int)i; break; }
+                double d = (std::min)(std::fabs(g_cues[i].start - g_cueSeekT), std::fabs(g_cues[i].end - g_cueSeekT));
+                if (d < bestD) { bestD = d; best = (int)i; }
+            }
+            if (best >= 0) {
+                g_cueSel = best; g_cueMulti.clear(); g_cueAnchor = best;
+                g_cueScrollPending = true;
+                previewPlaySpan(g_cues[best].source, g_cues[best].start, g_cues[best].end,
+                                curSec, playing, lastComposed);
+            }
+            g_cueSeekPending = false;
+        }
+
         // WHERE THIS RUN OF PLAYBACK BEGAN (item 59). Detected centrally, as a
         // false->true transition, rather than assigned at each of the four places
         // that start playback (Space, the Play button, seekToSpan, playWholeVideo)
@@ -3641,11 +3702,17 @@ int main(int argc, char** argv) {
                 {
                     const float S = ImGui::GetIO().FontGlobalScale;
                     ImGui::SameLine(0, 8 * S);
-                    if (crownButton(g_hitRelevance)) { g_hitRelevance = !g_hitRelevance; applyHitSort(); }
+                    // Feedback 11: the toggle now has THREE named settings and cycles
+                    // Newest -> Oldest -> Best Matches (the crown = best matches, the
+                    // engine's relevance score, exact quotes first). Newest is the
+                    // order the search returns; Oldest is its reverse.
+                    if (crownButton(g_hitSort == 2)) { g_hitSort = (g_hitSort + 1) % 3; applyHitSort(); }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", g_hitRelevance
-                            ? "BEST MATCHES FIRST - click to go back to the order the search returned"
-                            : "sorted the way the search returned them - click for best matches first (most relevant)");
+                        ImGui::SetTooltip("%s", g_hitSort == 2
+                            ? "BEST MATCHES FIRST - click for NEWEST first"
+                            : g_hitSort == 1
+                            ? "OLDEST FIRST - click for BEST MATCHES first"
+                            : "NEWEST FIRST - click for OLDEST first");
                 }
                 ImGui::Separator();
                 // ---- KEYBOARD REACH ON HITS (items 68/76) ----
@@ -3735,10 +3802,18 @@ int main(int argc, char** argv) {
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
                             ImGui::Separator();
                             if (ImGui::MenuItem("Add to Timeline")) addHitToTimeline(h, curSec, playing, lastComposed);
+                            // Feedback 11: open THIS quote's transcript, navigated straight to
+                            // the quote's timestamp (pending-seek consumed once the cues land).
+                            if (ImGui::MenuItem("Open Transcript")) {
+                                g_cueSeekName = baseName(h.source);
+                                g_cueSeekT = h.start;
+                                g_cueSeekPending = true;
+                                g_searchMode.clear(); g_searchErr.clear();
+                                openTranscript(h.source);
+                            }
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
                             if (ImGui::MenuItem("Copy Quote")) ImGui::SetClipboardText(h.text.c_str());
-                            if (ImGui::MenuItem("Transcribe")) requestTranscribe(h.source, baseName(h.source));
                             if (showIdx && ImGui::MenuItem("Index for Search")) requestIndexSource(h.source);
                             ImGui::EndPopup();
                         }
@@ -3815,6 +3890,24 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(); ImGui::TextDisabled("%s", g_cueName.c_str());
                 ImGui::InputTextWithHint("##within", "search within this transcript", g_withinBuf, sizeof g_withinBuf);
                 inputFocusBorder();
+                // Feedback 11: TAB jumps to the FIRST match and starts playing it -
+                // type the words, hit Tab, hear the quote. Only while the box owns
+                // the keyboard (IsItemActive) and a match exists; focus is pushed
+                // back into the box so Tab doesn't wander off to another widget.
+                if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Tab) &&
+                    g_withinBuf[0] && g_withinMatchCount > 0) {
+                    std::string withinTab(g_withinBuf);
+                    g_withinMatchIdx = 0;
+                    for (size_t j = 0; j < g_cues.size(); j++) {
+                        if (!ciContains(g_cues[j].text, withinTab)) continue;
+                        g_cueSel = (int)j; g_cueMulti.clear(); g_cueAnchor = (int)j;
+                        g_cueScrollPending = true;
+                        previewPlaySpan(g_cues[j].source, g_cues[j].start, g_cues[j].end,
+                                        curSec, playing, lastComposed);
+                        break;
+                    }
+                    ImGui::SetKeyboardFocusHere(-1);
+                }
                 // Match counter: show "N/M" beside the search box, or red "0 results".
                 if (g_withinBuf[0]) {
                     ImGui::SameLine();
@@ -3995,7 +4088,10 @@ int main(int argc, char** argv) {
                         // all 15 words of the sentence it was in.
                         if (isMatch && ciContains(word, within)) {
                             ImVec2 p0 = ImGui::GetCursorScreenPos();
-                            dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0x14, 0xFF, 0x39, 60), 2.0f);
+                            // Feedback 11: alpha 60 was "too semi-transparent and
+                            // difficult to see" - 150 stays readable under the white
+                            // word but actually visible.
+                            dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0x14, 0xFF, 0x39, 150), 2.0f);
                         }
                         ImGui::PushID((int)wstart);
                         ImVec2 wp0 = ImGui::GetCursorScreenPos();
@@ -4053,8 +4149,11 @@ int main(int argc, char** argv) {
                     bool cueSelected = g_cueMulti.empty() ? (g_cueSel == (int)i) : (g_cueMulti.count((int)i) > 0);
                     if (cueSelected && cueMax.x > cueMin.x) {
                         cueSplit.SetCurrentChannel(dl, 0);
+                        // Feedback 11: same visibility complaint as the match
+                        // highlight above - 70 was near-invisible; 110 with the
+                        // 220-alpha border reads clearly without washing the words.
                         dl->AddRectFilled(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
-                                          IM_COL32(0x14, 0xFF, 0x39, 70), 3.0f);
+                                          IM_COL32(0x14, 0xFF, 0x39, 110), 3.0f);
                         dl->AddRect(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
                                     IM_COL32(0x14, 0xFF, 0x39, 220), 3.0f, 0, 1.5f);
                         cueSplit.SetCurrentChannel(dl, 1);
@@ -4228,22 +4327,10 @@ int main(int argc, char** argv) {
                             g_libSel = i;
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(v.path);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(v.path).c_str());
-                            // B-2: one-click local transcription (Parakeet, official-first) - never
-                            // overwrites an original transcript (enforced engine-side). Disabled
-                            // while this exact video is already transcribing (in-flight guard).
-                            if (inFlight) ImGui::BeginDisabled();
-                            if (ImGui::MenuItem(v.hasTranscript ? "Re-transcribe" : "Transcribe")) requestTranscribe(v.path, v.name);
-                            if (inFlight) ImGui::EndDisabled();
-                            // Item 27: "Get Captions" for a sidebar video = put the WHOLE video
-                            // on the timeline, then build real TikTok captions for it with
-                            // becky-subtitle (cut-snapped + phrase-broken), once the add lands.
-                            ImGui::BeginDisabled(g_cliCutBusy.load());
-                            if (ImGui::MenuItem("Get Captions")) {
-                                endPreviewRestore(curSec, playing, lastComposed);
-                                requestAddExternal(v.path, insertIndexAtPlayhead(curSec));
-                                g_getCaptionsAfterAdd = true;
-                            }
-                            ImGui::EndDisabled();
+                            // Feedback 11: Transcribe/Get Captions do NOT belong in this
+                            // right-click menu ("that's not how I work") - transcription
+                            // still lives on the "Transcribe all" header button and the
+                            // card's own robot/auto-cut button; removed, not re-homed.
                             // #4: when a saved auto-cut exists the robot button LOADS it, so
                             // re-analysing lives here instead (it overwrites the saved cut).
                             if (v.hasSavedCut) {
@@ -4908,7 +4995,15 @@ int main(int argc, char** argv) {
             // A click anywhere in this panel now moves window focus here, which
             // deactivates the InputText and drops WantCaptureKeyboard on the next
             // frame. Focus follows the click, the way it does in every NLE.
+            //
+            // Feedback 11 root cause: the ChildWindows flag made a click INSIDE an
+            // open context menu (a popup is a child of this window in ImGui's
+            // parent chain) re-focus this window mid-click - and FocusWindow closes
+            // popups over it, so the menu vanished on the very frame its item was
+            // clicked and the click fell through to the timeline. Never re-steal
+            // focus while a popup is open; ImGui restores focus when it closes.
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
                 (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
                 ImGui::SetWindowFocus();
             }
@@ -5245,7 +5340,18 @@ int main(int argc, char** argv) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kPalette[0]));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
                 }
-                if (refBtn("name##ovname")) g_overlay.showFilename = !g_overlay.showFilename;
+                if (refBtn("name##ovname")) {
+                    g_overlay.showFilename = !g_overlay.showFilename;
+                    // Feedback 11: the RENDER must honour this toggle. The engine's
+                    // overlay is the burn-in source of truth; the old code flipped
+                    // only the local preview mirror, so a render still carried the
+                    // filename line with the button off. Same fire-and-forget push
+                    // setOverlayMode uses (never a UI-thread stall).
+                    bool want = g_overlay.showFilename;
+                    std::thread([want] {
+                        engineCall("set_overlay", { {"field", "show_filename"}, {"value", want} }, 20.0);
+                    }).detach();
+                }
                 if (nameOn) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Include the filename line in the overlay (off = date/timecode/link only): %s", nameOn ? "ON" : "OFF");
@@ -5278,7 +5384,7 @@ int main(int argc, char** argv) {
                     if (!path.empty()) {
                         engineCallAsync("load_reel", { {"path", path} }, 30.0, "Loading reel...",
                                         [path, &curSec, &playing, &lastComposed](const json& r) {
-                            if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
+                            if (r.value("ok", false)) { loadTimelineView(r.contains("data") ? r["data"] : r); pushOverlayDefaults(); curSec = 0; playing = false; g_playingExt = false; lastComposed = -1; loadCaptions(path); g_renderMsg = "Loaded reel " + baseName(path); }
                             else g_renderMsg = "Load reel failed: " + r.value("error", std::string("?"));
                             g_renderMsgAt = nowSec();
                         });

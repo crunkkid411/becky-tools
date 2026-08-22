@@ -19,7 +19,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1011,6 +1013,25 @@ func (a *App) AddMarker(at float64, label string) TimelineView {
 	return a.timelineLocked()
 }
 
+// SetMarker edits the note of the marker sitting at `at` (within half a frame
+// of NTSC), so re-typing a marker's note never stacks a duplicate flag on the
+// same spot. No marker there yet = it is created (AddMarker semantics).
+func (a *App) SetMarker(at float64, label string) TimelineView {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	at = clampNonNeg(at)
+	const eps = 1.0 / 60.0
+	for i := range a.markers {
+		if math.Abs(a.markers[i].At-at) < eps {
+			a.markers[i].Label = strings.TrimSpace(label)
+			return a.timelineLocked()
+		}
+	}
+	a.markers = append(a.markers, MarkerView{At: at, Label: strings.TrimSpace(label)})
+	sort.SliceStable(a.markers, func(i, j int) bool { return a.markers[i].At < a.markers[j].At })
+	return a.timelineLocked()
+}
+
 // Timeline returns the current timeline view (locks internally).
 func (a *App) Timeline() TimelineView {
 	a.mu.Lock()
@@ -1143,7 +1164,9 @@ func (a *App) Redo() (TimelineView, bool) {
 // ---- save / load reel -----------------------------------------------------
 
 // SaveReel writes the in-memory reel to path (or the last reelPath). Only the
-// small JSON is written — never a source video.
+// small JSON is written — never a source video. Markers live BESIDE the reel
+// (<path>.markers.json) because they are not part of edl.Reel; they are saved
+// with it so a reopened project keeps them (feedback 11).
 func (a *App) SaveReel(path string) (string, error) {
 	a.mu.Lock()
 	if strings.TrimSpace(path) == "" {
@@ -1153,6 +1176,8 @@ func (a *App) SaveReel(path string) (string, error) {
 		path = filepath.Join(a.workDir, slugName(a.reel.Name)+".reel.json")
 	}
 	r := a.reel
+	mk := make([]MarkerView, len(a.markers))
+	copy(mk, a.markers)
 	a.mu.Unlock()
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1161,14 +1186,54 @@ func (a *App) SaveReel(path string) (string, error) {
 	if err := edl.Save(path, r); err != nil {
 		return "", err
 	}
+	if err := saveMarkersSidecar(path, mk); err != nil {
+		return "", err
+	}
 	a.mu.Lock()
 	a.reelPath = path
 	a.mu.Unlock()
 	return path, nil
 }
 
+// markersSidecarPath is where a reel's markers live: <reelPath>.markers.json.
+func markersSidecarPath(reelPath string) string { return reelPath + ".markers.json" }
+
+// saveMarkersSidecar writes the marker list next to the reel; an empty list
+// removes any stale sidecar so it can never resurrect dead markers.
+func saveMarkersSidecar(reelPath string, mk []MarkerView) error {
+	p := markersSidecarPath(reelPath)
+	if len(mk) == 0 {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	b, err := json.MarshalIndent(mk, "", " ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, b, 0o644)
+}
+
+// loadMarkersSidecar reads the markers saved beside reelPath (nil when the
+// file is absent or unreadable - markers degrade, the reel must not).
+func loadMarkersSidecar(reelPath string) []MarkerView {
+	b, err := os.ReadFile(markersSidecarPath(reelPath))
+	if err != nil {
+		return nil
+	}
+	var mk []MarkerView
+	if json.Unmarshal(b, &mk) != nil {
+		return nil
+	}
+	sort.SliceStable(mk, func(i, j int) bool { return mk[i].At < mk[j].At })
+	return mk
+}
+
 // LoadReel replaces the in-memory reel with one read from path. Clip IDs are
-// re-synced so future adds don't collide; markers reset (not part of the reel).
+// re-synced so future adds don't collide; markers come back from the reel's
+// sidecar (<path>.markers.json) when one exists (feedback 11), otherwise they
+// reset (markers are not part of the reel file itself).
 func (a *App) LoadReel(path string) (TimelineView, error) {
 	r, err := edl.Load(path)
 	if err != nil {
@@ -1207,7 +1272,7 @@ func (a *App) LoadReel(path string) (TimelineView, error) {
 	a.reel = r
 	a.reelPath = path
 	a.nextID = maxClipID(r.Clips)
-	a.markers = nil
+	a.markers = loadMarkersSidecar(path)
 	a.mu.Unlock()
 	return a.Timeline(), nil
 }

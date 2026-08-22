@@ -170,6 +170,8 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 		return a.SetOverlay(argString(args, "field"), argBool(args, "value"), argString(args, "position"))
 	case "add_marker":
 		return a.AddMarker(argFloat(args, "at"), argString(args, "label")), nil
+	case "set_marker":
+		return a.SetMarker(argFloat(args, "at"), argString(args, "label")), nil
 	case "timeline":
 		return a.Timeline(), nil
 	case "undo":

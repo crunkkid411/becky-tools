@@ -84,6 +84,16 @@ struct ThumbTex { ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
 // same "WndProc stays a thin OS-message forwarder" pattern as g_resize/g_W/g_H.
 struct PendingDrop { std::vector<std::string> paths; int clientX = 0, clientY = 0; };
 
+// Timeline markers (Ctrl+M): a compilation-timeline position + typed note. The
+// engine's reel is the source of truth (add_marker/set_marker verbs; the
+// TimelineView reply carries "markers") - this is the UI mirror, refreshed by
+// loadTimelineView the same way clips are.
+struct TimelineMarker { double at = 0; std::string label; };
+extern std::vector<TimelineMarker> g_markers;
+// >= 0: a Ctrl+M request for drawTimeline to open the marker-note editor at this
+// comp time (the key handler lives in main.cpp's key block, the popup here).
+extern double g_markerReqAt;
+
 // --------------- globals from main.cpp that the timeline surface uses ---------------
 extern double g_compDur;
 extern double g_pps;
@@ -116,6 +126,7 @@ bool emitView();
 void emitSelect();
 void emitThreshold(bool final_);
 void recomputeQuiet();
+void pushOverlayDefaults();
 void loadTimelineView(const json& tv);
 void drainThumbs();
 ThumbTex* getThumb(const std::string& source);
