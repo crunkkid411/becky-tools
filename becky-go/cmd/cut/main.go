@@ -57,6 +57,7 @@ func main() {
 	codec := flag.String("codec", "", "video codec (default from config: h264_nvenc)")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD post-pass")
 	threshold := flag.String("threshold", "auto", "audio detection threshold: \"auto\" (from the file's own level), or an auto-editor value like -27dB / 4%")
+	headroom := flag.Float64("headroom", defaultHeadroomDB, "with --threshold auto: dB above the file's mean volume the cut threshold sits; negative keeps more (quiet-mic footage), positive cuts harder")
 	dryRun := flag.Bool("dry-run", false, "print edit decisions without encoding")
 	emitTimeline := flag.String("emit-timeline", "", "write the v1 timeline JSON to <path> as a first-class artifact (works in dry-run too)")
 	keepTemp := flag.Bool("keep-temp", false, "keep temp XML/timeline/segment files")
@@ -103,10 +104,10 @@ func main() {
 		if meanDB, mErr := measureMeanVolumeDB(cfg.FFmpeg, input); mErr != nil {
 			beckyio.Logf(*verbose, "level measure failed (%v); using auto-editor's default threshold", mErr)
 		} else {
-			t := detectThresholdDB(meanDB)
+			t := detectThresholdDB(meanDB, *headroom)
 			editArg = editExpr(t)
-			thresholdNote = fmt.Sprintf("%.1fdB (file mean %.1fdB)", t, meanDB)
-			beckyio.Logf(*verbose, "level: mean %.1f dBFS -> threshold %.1f dB", meanDB, t)
+			thresholdNote = fmt.Sprintf("%.1fdB (file mean %.1fdB, headroom %+.1fdB)", t, meanDB, *headroom)
+			beckyio.Logf(*verbose, "level: mean %.1f dBFS + headroom %+.1f -> threshold %.1f dB", meanDB, *headroom, t)
 		}
 	default:
 		editArg = fmt.Sprintf("audio:%s,stream=all", strings.TrimSpace(*threshold))

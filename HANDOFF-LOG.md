@@ -10,6 +10,39 @@
 
 ---
 
+## becky-roughcut: raw takes to a populated Vegas Pro timeline, one dumb call (2026-08-24, local, `master`)
+
+Jordan's Davinci Resolve MCP experiment failed (he doesn't edit in Resolve; the MCP is a remote
+control with zero content intelligence — see `X:\Videos\2026\08_august\23_hj-fbi-recap\WE_TRIED.md`),
+and the previous session's hand-rolled FCP7 XML crashed Vegas 18's importer
+(`Fcp7Importer.ImportFrameRate` NPE). The fix is a new tool that does the deciding in Go and uses
+Vegas only as a dumb assembler:
+
+- **`cmd/roughcut` (becky-roughcut)** — one call over a session folder: orders takes by embedded
+  `creation_time`; cuts silence by DURATION on per-clip calibrated audio (p90/p10 RMS envelope ->
+  linear gain to -20 dB, clap-proof; silencedetect floor room+3 dB, d=1.2s); 0.5s margins (onset
+  ramps measured 0.55s below any usable floor); transcript rescue (Parakeet cues the audio missed
+  come back); multi-signal re-take detector (score >=6 cuts chains to a fixpoint, clean alternates
+  become RETAKE? markers); zero-crossing snap on the original audio (no pops); QA gate = 0 dropped
+  3+ word cues; emits `cut.yaml`, `library.yaml`, `qa.json`, `vegas_cut.json`.
+- **`vegas/BeckyRoughCut.cs`** — headless assembler: `vegas180.exe -SCRIPT:<cs>` + env
+  `BECKY_ROUGHCUT_JSON`; builds video+audio tracks, paired events, markers, regions; saves the
+  `.veg`; exits. **`vegas/BeckyVerifyProject.cs`** reads a `.veg` back headless and writes
+  `<file>.veg.verify.txt`. VP18 gotchas canonized: `Timecode` has no `.Seconds` (use
+  `.Nanos * 1e-7`); `Vegas.ScriptArgs` does not exist (use env vars); a `.cs` that fails to
+  compile pops the same dialog as a bad project.
+- **`becky-cut` got `--headroom`** (dial for the adaptive threshold; default unchanged).
+- **`import-to-vegas.bat`** now also accepts a dragged `vegas_cut.json`.
+
+Measured on hj-fbi-recap (16 sources, 2:25:25 raw, Rode mic ~35 dB quiet, clap tests at 0 dB):
+**1:56:37 rough cut, 842 events, 36 quote markers, 16 regions, 36 retake cues cut, 0 dropped
+cues**, verified by reading the saved `.veg` back headless (842+842 events, 6997.3s). All traps
+now canon in `SKILL.md`'s new `# ROUGH CUT` section: auto-editor/becky-cut shred this audio at
+any threshold (30-41% kept even at -70 dB), Silero finds nothing raw and everything boosted,
+LUFS is poisoned by the clap, Vegas cannot import FCP7/OTIO at all.
+
+---
+
 ## Becky Review 3: feedback-11 round - the right-click menu root cause, markers, and defaults (2026-08-21, local, `master`)
 
 `becky-review-user-feedback-11.md` was the input; every item below is implemented, built

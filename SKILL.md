@@ -590,3 +590,89 @@ Reuse, do not rebuild:
 Every new tool: JSON in → JSON out → exit code, offline, deterministic, degrades with a typed note
 instead of crashing. After any change: `go build ./... && go test ./... && go run ./cmd/becky-short
 --selftest` **and** `build-all-tools.bat`.
+
+# ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
+
+Read this before touching `cmd/roughcut` or `vegas/BeckyRoughCut.cs`. Everything below was
+measured on Jordan's hj-fbi-recap session (16 sources, 2:25:25 raw, Rode mic recorded ~35 dB too
+quiet, clap tests clipping at 0 dB) on 2026-08-24, or is his direct instruction.
+
+A rough cut is an EDIT, not an inventory (canon: `WE_TRIED.md` in the session folder): it plays
+start to finish with nothing in it that isn't content. 80% of its cuts survive to the final edit.
+An "AI-slop cut" that makes the editor touch every cut is WORSE than no output.
+
+## The one call
+
+```bat
+becky-roughcut "X:\Videos\...\session-folder" -markers markers.json -launch-vegas -verbose
+```
+
+That is the whole interaction. It orders the takes by EMBEDDED `creation_time` (filesystem times
+are lies), cuts silence and re-takes, places quote markers, writes `cut.yaml` / `library.yaml` /
+`qa.json` / `vegas_cut.json` into `_roughcut\`, and with `-launch-vegas` starts Vegas Pro 18
+headless (`vegas180.exe -SCRIPT:vegas\BeckyRoughCut.cs`), which builds the timeline, saves
+`rough_cut.veg` and quits. Jordan walks away; when he comes back the timeline is populated.
+Dragging `vegas_cut.json` onto `import-to-vegas.bat` does the same Vegas step by hand.
+
+## Every flag, and what it is for
+
+| Flag | Default | What it does / when to touch it |
+|---|---|---|
+| `-pause` | 1.2 | a quiet stretch this long (s) is a jump cut. **Do not lower below ~1.0**: the 0.5s margins eat 1.0s of every cut, so a 1.2s thinking pause still leaves a visible cut. |
+| `-vad-threshold` / `-vad-speech-pct` | 0.5 / 20 | Silero sanity pass: a keep with less speech than this is junk and is cut. Degrades to keep-everything on any VAD failure. |
+| `-markers` | none | `markers.json` = `[{source, source_time, title, kind}]`; quote lead-ins in SOURCE time, mapped onto the timeline. A lead-in that got cut away lands at the end, suffixed `[lead-in was cut - review]`. |
+| `-launch-vegas` | off | the unattended Vegas build. **One heavy media app at a time** — never with Resolve open. |
+| `-out` | `<dir>\_roughcut` | artifact dir. |
+
+## What happens inside the call (the measured recipe)
+
+1. **calibrate** — per clip, the 0.4s RMS envelope's p90 is the speaker, p10 the room. Linear gain
+   puts speech at -20 dB (clamped 0..+45, so clipping clap-test clips get NO boost). No dynamic
+   loudnorm: a loudness pump raises room tone inside the very pauses we cut.
+2. **silencedetect** on the boosted copy, floor = room+3 dB, `d=-pause`. Duration is the ONLY
+   thing that separates a word gap from a thinking pause on this footage.
+3. **margins 0.5s/0.5s** — measured: sentence onsets ramp up to 0.55s below any usable floor;
+   room tone at a boundary is trimmable, a clipped syllable is not. Single-word ad-libs get
+   0.5/0.7 (delivered with visual emphasis on purpose).
+4. **transcript rescue** — a 3+ word Parakeet cue the audio missed (quiet delivery) comes back as
+   a keep. The transcript drives; the audio arbitrates.
+5. **re-takes** (`badtake.go`) — several signals agreeing, never one hard rule: same statement
+   (>=4-word run, may begin several words in) + gather-himself pause (>=1.5s) + earlier attempt
+   abandoned mid-flight + later take fuller. Score >=6 CUTS to a fixpoint; two clean alternate
+   phrasings become `RETAKE?` markers and Jordan picks in the morning.
+6. **zero-crossing snap** (`zcross.go`) on the ORIGINAL audio: every boundary moves to the nearest
+   quiet crossing within +/-20ms (peak < -40 dBFS), else extends to a quiet pocket within 0.35s,
+   else stays. No cut pops.
+7. **QA gate** — every 3+ word cue must still have its words on the timeline (onset and offset
+   covered; a mid-cue jump cut is fine). `qa.json` lists every dropped cue and every retake cue
+   cut, for audit. **0 dropped is the ship condition.**
+
+Measured result: 2:25:25 raw -> 1:56:37 rough cut, 842 events, 36 quote markers, 16 regions,
+36 retake cues cut, 0 dropped cues.
+
+## Why not auto-editor / becky-cut / loudnorm here (the traps, measured)
+
+- becky-cut/auto-editor on this audio kept 30% and shredded sentences; at its -50 dB FLOOR it
+  still kept 34%, and at -70 dB 41% — a volume threshold cannot work when speech RMS is -55 dBFS.
+- Silero VAD on the raw level found NOTHING; on boosted audio it marks 40-second pauses as speech.
+  It is only the junk-keep sanity layer, never the detector.
+- The clap test puts true peak at -1.4 dB, so any loudness-derived gain (LUFS) is poisoned; the
+  p90/p10 envelope is clap-proof (one clap is one window in hundreds).
+- **Vegas Pro 18 cannot import our FCP7 XML** (`Fcp7Importer.ImportFrameRate` NPE) and cannot
+  import OTIO. The ONLY reliable seam is the scripting API: `vegas180.exe -SCRIPT:<file.cs>` with
+  the input passed as an ENV var (the `Vegas.ScriptArgs` property does not exist in VP18).
+- A `.cs` that fails to COMPILE pops the same "error loading the project file" dialog as a bad
+  project — the Details button shows the compiler error. Verify scripts headless with
+  `vegas/BeckyVerifyProject.cs` (writes `<file>.veg.verify.txt`) before claiming a delivery works.
+  `Timecode` has no `.Seconds` in VP18; use `.Nanos * 1e-7`.
+
+## Rules that are law here
+
+- Sources are READ-ONLY; everything is additive artifacts + a .veg.
+- Excessive mid-sentence silence (longer than conversational pace) is a jump cut and MUST go;
+  breath pauses inside a delivered sentence stay.
+- Obvious re-start chains are cut; clean alternates are markers. "Don't make me do the obvious,
+  tedious work" — but "if they are clean takes I can decide which to keep in the morning."
+- One heavy media app at a time; detection passes first, review app after.
+- The QA gate is honesty: report what was cut and what was dropped, never a duration-% vanity
+  number.

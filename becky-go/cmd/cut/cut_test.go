@@ -30,10 +30,22 @@ func TestDetectThresholdDBFollowsTheFileLevel(t *testing.T) {
 		{"near silent", -70.0, -50.0},
 	}
 	for _, c := range cases {
-		got := detectThresholdDB(c.meanDB)
+		got := detectThresholdDB(c.meanDB, defaultHeadroomDB)
 		if math.Abs(got-c.want) > 0.05 {
 			t.Errorf("%s: detectThresholdDB(%.1f) = %.2f, want %.2f", c.name, c.meanDB, got, c.want)
 		}
+	}
+	// The --headroom knob (2026-08-24, hj-fbi-recap): quiet-mic footage whose
+	// in-sentence pauses read as silence at +1dB headroom dials DOWN with a
+	// negative one; the clamps still hold at both ends.
+	if got := detectThresholdDB(-42.2, -6.0); math.Abs(got-(-48.2)) > 0.05 {
+		t.Errorf("negative headroom: got %.2f, want -48.2", got)
+	}
+	if got := detectThresholdDB(-42.2, -20.0); math.Abs(got-minThresholdDB) > 0.05 {
+		t.Errorf("headroom must not break the floor: got %.2f, want %.1f", got, minThresholdDB)
+	}
+	if got := detectThresholdDB(-20.0, 5.0); math.Abs(got-defaultThresholdDB) > 0.05 {
+		t.Errorf("headroom must not break the ceiling: got %.2f, want %.1f", got, defaultThresholdDB)
 	}
 }
 

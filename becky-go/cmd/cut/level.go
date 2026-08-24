@@ -44,16 +44,20 @@ const (
 	// minThresholdDB is the floor: below this we would be keeping room tone on a
 	// near-silent recording, and the VAD post-pass would have to clean it all up.
 	minThresholdDB = -50.0
-	// meanHeadroomDB is how far above the file's mean volume the threshold sits.
-	// Calibrated against Jordan's own numbers: his polished audio measures -27.8
-	// dBFS mean and he cuts it at -27 dB.
-	meanHeadroomDB = 1.0
+	// defaultHeadroomDB is how far above the file's mean volume the threshold
+	// sits. Calibrated against Jordan's own numbers: his polished audio measures
+	// -27.8 dBFS mean and he cuts it at -27 dB. Footage whose mic level sits
+	// close to the room tone needs a NEGATIVE headroom (threshold BELOW the mean)
+	// or the pauses inside sentences read as silence — dial it with --headroom.
+	defaultHeadroomDB = 1.0
 )
 
 // detectThresholdDB converts a file's mean volume (dBFS) into the auto-editor
-// audio threshold to use for it. PURE — unit-tested in cut_test.go.
-func detectThresholdDB(meanDB float64) float64 {
-	t := meanDB + meanHeadroomDB
+// audio threshold to use for it. headroomDB is how far above the mean the
+// threshold sits (defaultHeadroomDB unless the caller dials it). PURE — unit-
+// tested in cut_test.go.
+func detectThresholdDB(meanDB, headroomDB float64) float64 {
+	t := meanDB + headroomDB
 	if t > defaultThresholdDB {
 		t = defaultThresholdDB
 	}

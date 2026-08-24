@@ -6,7 +6,23 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — Becky Review 3: the feedback-11 round (2026-08-21, local)
+### CURRENT — becky-roughcut: raw takes to a populated Vegas Pro timeline (2026-08-24, local)
+
+**On master, pushed, built green** (`build-all-tools.bat`; `go test ./cmd/roughcut/ ./cmd/cut/`
+green). Full story at the TOP of `HANDOFF-LOG.md`; canon in `SKILL.md`'s `# ROUGH CUT` section.
+
+- **`becky-roughcut <dir>`** = one dumb call: creation_time ordering, duration-based silence
+  jump-cuts on per-clip calibrated audio (clap-proof p90/p10 gain), 0.5s anti-clip margins,
+  transcript rescue, multi-signal re-take cuts (clean alternates -> RETAKE? markers),
+  zero-crossing snap, QA gate (0 dropped cues = ship).
+- **Vegas seam**: `vegas/BeckyRoughCut.cs` builds the timeline headless via
+  `vegas180.exe -SCRIPT:` + env var, saves `rough_cut.veg`, exits; `BeckyVerifyProject.cs`
+  audits any `.veg` headless. `-launch-vegas` makes the whole delivery walk-away-able.
+- **Delivered + verified on hj-fbi-recap**: 2:25:25 raw -> 1:56:37, 842 events, 36 quote
+  markers, 16 regions, 36 retake cues cut, 0 dropped cues; `.veg` read back clean.
+- `becky-cut --headroom` knob; `import-to-vegas.bat` accepts `vegas_cut.json` drags.
+
+### PREVIOUS — Becky Review 3: the feedback-11 round (2026-08-21, local)
 
 **On master, pushed, built green** (native `_build.bat` + rebuilt `becky-review-engine.exe`
 + `build-all-tools.bat`; `go test ./cmd/clip/...` green incl. two new marker tests). Full
