@@ -17,17 +17,18 @@ import "math"
 const (
 	snapWindowSec = 0.020 // +/- window for the zero-crossing search
 	snapExtendSec = 0.350 // outward search for a quiet pocket when the window fails
-	quietFloorDB  = -40.0 // neighbourhood peak must be below this to be "quiet"
 	peakWinSec    = 0.003 // half-width of the peak measured around a crossing
 	rmsWinSec     = 0.010 // window for the quiet-pocket RMS scan
 )
 
 // snapBoundary returns the sample time of the quiet zero-crossing nearest to
 // t, or t unchanged (snapped=false) when none exists within the search budget.
-// samples is mono float32 in -1..1 at rate. Ties prefer the EARLIER crossing:
-// keeping a hair more audio before a word is the safe direction (clipped
-// onsets were the defect this fixes).
-func snapBoundary(samples []float32, rate int, t float64) (float64, bool) {
+// quietDB is the clip's own room tone plus a few dB: on quiet recordings an
+// absolute floor like -40 dBFS would call everything quiet and snap straight
+// into speech. samples is mono float32 in -1..1 at rate. Ties prefer the
+// EARLIER crossing: keeping a hair more audio before a word is the safe
+// direction (clipped onsets were the defect this fixes).
+func snapBoundary(samples []float32, rate int, t, quietDB float64) (float64, bool) {
 	if rate <= 0 || len(samples) == 0 {
 		return t, false
 	}
@@ -50,7 +51,7 @@ func snapBoundary(samples []float32, rate int, t float64) (float64, bool) {
 		if !isCrossing(samples[i-1], samples[i]) {
 			continue
 		}
-		if peakDB(samples, i, peakW) > quietFloorDB {
+		if peakDB(samples, i, peakW) > quietDB {
 			continue
 		}
 		if d := abs(i - center); d < bestDist {
@@ -71,7 +72,7 @@ func snapBoundary(samples []float32, rate int, t float64) (float64, bool) {
 			if i < rmsW || i+rmsW >= len(samples) {
 				continue
 			}
-			if rmsDB(samples, i, rmsW) <= quietFloorDB {
+			if rmsDB(samples, i, rmsW) <= quietDB {
 				return float64(i) / float64(rate), true
 			}
 		}

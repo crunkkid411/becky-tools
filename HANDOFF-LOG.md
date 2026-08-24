@@ -34,12 +34,27 @@ Vegas only as a dumb assembler:
 - **`becky-cut` got `--headroom`** (dial for the adaptive threshold; default unchanged).
 - **`import-to-vegas.bat`** now also accepts a dragged `vegas_cut.json`.
 
-Measured on hj-fbi-recap (16 sources, 2:25:25 raw, Rode mic ~35 dB quiet, clap tests at 0 dB):
-**1:56:37 rough cut, 842 events, 36 quote markers, 16 regions, 36 retake cues cut, 0 dropped
-cues**, verified by reading the saved `.veg` back headless (842+842 events, 6997.3s). All traps
-now canon in `SKILL.md`'s new `# ROUGH CUT` section: auto-editor/becky-cut shred this audio at
-any threshold (30-41% kept even at -70 dB), Silero finds nothing raw and everything boosted,
-LUFS is poisoned by the clap, Vegas cannot import FCP7/OTIO at all.
+Measured on hj-fbi-recap (16 sources, 2:25:25 raw, Rode mic ~35 dB quiet, clap tests at 0 dB),
+after Jordan's "too much silence / verify your work" round: **1:40:49 rough cut, 1767 events,
+25 verified quote clips on Quotes tracks, 36 markers, 16 regions, 36 retake cues cut, 0 dropped
+cues, 3.0 s residual silence >=0.5s in the ASSEMBLED audio (0.0%)**. Verified three ways: QA gate
+over the SRTs, silencedetect over the re-assembled delivered audio, and headless `.veg` read-back
+(19 tracks, 1792+1792 events). Vegas left OPEN on the project for Jordan's morning review.
+
+Iteration-round additions over the first pass:
+
+- jump-cut pause 1.2 -> 0.45s, margins 0.5/0.5 -> 0.2/0.25, transcript rescue moved AFTER snaps
+  and retake cuts (they eroded its padding), QA window now checks head/tail 0.25s of each cue so
+  intentional mid-cue jump cuts pass.
+- delivered audio made audible via ONE audio track per clip at the measured gain
+  (`AudioTrack.Volume`, float!); per-event Normalize hung Vegas 25+ min and was dropped.
+- quotes: reel windows manually checked against corpus SRTs (full quote present, repeated
+  yelling runs extended), pre-cut to `_roughcut\quotes\qNN.mp4` (probe-verified; some sources
+  need yuv420p+even-dims for nvenc), placed at marker positions, multi-candidate quotes
+  sequentially for Jordan to pick.
+- new traps canonized in `SKILL.md` # ROUGH CUT: the float-Volume compile error masquerading as a
+  project-load dialog, crash-recovery dialogs after force-kill (`*.restored.veg`), partial mp4s
+  from failed ffmpeg cuts, synchronous indexing of multi-hour corpus Media.
 
 ---
 

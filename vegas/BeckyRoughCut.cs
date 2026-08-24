@@ -53,10 +53,13 @@ public class EntryPoint
         public List<RCEvent> events;
         public List<RCMarker> markers;
         public List<RCRegion> regions;
+        public List<RCOverlay> overlays;
+        public Dictionary<string, double> gains;
     }
     class RCEvent  { public string source; public double @in; public double @out; }
     class RCMarker { public double t; public string title; }
     class RCRegion { public double t; public double len; public string label; }
+    class RCOverlay { public string source; public double @in; public double @out; public double at; }
 
     public void FromVegas(Vegas vegas)
     {
@@ -105,8 +108,11 @@ public class EntryPoint
 
         VideoTrack vtrack = vegas.Project.AddVideoTrack();
         vtrack.Name = "Rough Cut (video)";
-        AudioTrack atrack = vegas.Project.AddAudioTrack();
-        atrack.Name = "Rough Cut (audio)";
+        // One audio track per source clip: each carries that clip's measured
+        // gain (quiet Rode mic clips boosted, clap-clipped clips at unity).
+        // Per-event Normalize would also work but makes Vegas scan every
+        // event's audio and hangs the build for tens of minutes.
+        Dictionary<string, AudioTrack> atracks = new Dictionary<string, AudioTrack>(StringComparer.OrdinalIgnoreCase);
 
         // One Media per source file, reused for every event of that file.
         Dictionary<string, Media> media = new Dictionary<string, Media>(StringComparer.OrdinalIgnoreCase);
@@ -143,6 +149,17 @@ public class EntryPoint
                 AudioStream au = m.GetAudioStreamByIndex(0);
                 if (au != null)
                 {
+                    AudioTrack atrack;
+                    if (!atracks.TryGetValue(e.source, out atrack))
+                    {
+                        atrack = vegas.Project.AddAudioTrack();
+                        atrack.Name = "Audio " + Path.GetFileName(e.source);
+                        double db = 20.0;
+                        if (rc.gains != null && rc.gains.ContainsKey(Path.GetFileName(e.source)))
+                            db = rc.gains[Path.GetFileName(e.source)];
+                        atrack.Volume = (float)Math.Pow(10.0, db / 20.0);
+                        atracks[e.source] = atrack;
+                    }
                     AudioEvent ae = atrack.AddAudioEvent(start, length);
                     ae.AddTake(au).Offset = offset;
                     ok = true;
@@ -170,6 +187,45 @@ public class EntryPoint
                 try { vegas.Project.Markers.Add(new Marker(Timecode.FromSeconds(mk.t), mk.title)); }
                 catch { }
             }
+        }
+
+        // Verified quote clips (corpus media) land on their own tracks ABOVE
+        // the main edit, at the marker positions.
+        if (rc.overlays != null && rc.overlays.Count > 0)
+        {
+            VideoTrack qv = vegas.Project.AddVideoTrack();
+            qv.Name = "Quotes (video)";
+            AudioTrack qa = vegas.Project.AddAudioTrack();
+            qa.Name = "Quotes (audio)";
+            int qplaced = 0;
+            foreach (RCOverlay o in rc.overlays)
+            {
+                if (o.@out <= o.@in) continue;
+                Media m;
+                if (!media.TryGetValue(o.source, out m))
+                {
+                    try { m = new Media(o.source); }
+                    catch (Exception ex) { log.Add("overlay skip: " + o.source + " (" + ex.Message + ")"); continue; }
+                    media[o.source] = m;
+                }
+                Timecode start  = Timecode.FromSeconds(o.at);
+                Timecode length = Timecode.FromSeconds(o.@out - o.@in);
+                Timecode offset = Timecode.FromSeconds(o.@in);
+                try
+                {
+                    VideoStream vs = m.GetVideoStreamByIndex(0);
+                    if (vs != null) qv.AddVideoEvent(start, length).AddTake(vs).Offset = offset;
+                }
+                catch { }
+                try
+                {
+                    AudioStream au = m.GetAudioStreamByIndex(0);
+                    if (au != null) qa.AddAudioEvent(start, length).AddTake(au).Offset = offset;
+                }
+                catch { }
+                qplaced++;
+            }
+            log.Add("overlays: " + qplaced + " of " + rc.overlays.Count);
         }
 
         try { vegas.Transport.CursorPosition = Timecode.FromSeconds(0.0); } catch { }

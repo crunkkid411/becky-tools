@@ -47,9 +47,11 @@ const (
 	// clip, quiet Rode mic or already-clipping clap test alike.
 	targetSpeechDB  = -20.0
 	maxBoostDB      = 45.0
-	defaultPauseSec = 1.2 // quieter-than-this-for-this-long = jump cut; the margins eat 1.0s of it, so a 1.2s thinking pause still leaves a visible cut
-	marginBeforeSec = 0.5 // sentence onsets ramp up to 0.55s below any usable floor (measured); room tone here is trimmable, clipped syllables are not
-	marginAfterSec  = 0.5
+	defaultPauseSec = 0.6 // quieter-than-this-for-this-long = jump cut; Jordan jump-cuts frequently, even mid-sentence
+	marginBeforeSec = 0.2 // measured: detector onsets run up to 0.2s late vs the true word; 0.2s of room tone is inaudible, a clipped consonant is not
+	marginAfterSec  = 0.25
+	rescueBeforeSec = 0.6 // rescue padding: only fires when a cue's words are at risk, so it can afford to be generous
+	rescueAfterSec  = 0.5
 	minKeepSec      = 0.30 // a keep shorter than this is a detection blip
 	envWindowSec    = 0.4  // RMS envelope resolution for calibration
 )
@@ -135,7 +137,7 @@ func normalize(wav string, gain float64) (string, error) {
 	norm := strings.TrimSuffix(wav, ".wav") + ".norm.wav"
 	cmd := exec.Command(cfg.FFmpeg, "-hide_banner", "-nostdin", "-y",
 		"-i", wav, "-af",
-		fmt.Sprintf("volume=%.1fdB,asoftclip=type=tanh", gain),
+		fmt.Sprintf("highpass=f=80,volume=%.1fdB,asoftclip=type=tanh", gain),
 		"-c:a", "pcm_s16le", norm)
 	proc.NoWindow(cmd)
 	if err := cmd.Run(); err != nil {
@@ -251,7 +253,7 @@ func vadSanity(norm string, keeps []span, vadThreshold, vadPct float64, verbose 
 	}
 	var out []span
 	for _, k := range keeps {
-		if k.End-k.Start < minKeepSec || speechPctOf(raw.FullSegments, k) >= vadPct {
+		if k.End-k.Start < minKeepSec || vadPct <= 0 || speechPctOf(raw.FullSegments, k) >= vadPct {
 			out = append(out, k)
 		}
 	}
@@ -271,7 +273,7 @@ func rescueMissedCues(cues []quotes.Cue, keeps []span) []span {
 		if wordsCovered(cue, keeps) {
 			continue
 		}
-		keeps = append(keeps, span{cue.Start - marginBeforeSec, cue.End + marginAfterSec})
+		keeps = append(keeps, span{cue.Start - rescueBeforeSec, cue.End + rescueAfterSec})
 	}
 	sort.SliceStable(keeps, func(i, j int) bool { return keeps[i].Start < keeps[j].Start })
 	var merged []span

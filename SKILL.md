@@ -618,8 +618,8 @@ Dragging `vegas_cut.json` onto `import-to-vegas.bat` does the same Vegas step by
 
 | Flag | Default | What it does / when to touch it |
 |---|---|---|
-| `-pause` | 1.2 | a quiet stretch this long (s) is a jump cut. **Do not lower below ~1.0**: the 0.5s margins eat 1.0s of every cut, so a 1.2s thinking pause still leaves a visible cut. |
-| `-vad-threshold` / `-vad-speech-pct` | 0.5 / 20 | Silero sanity pass: a keep with less speech than this is junk and is cut. Degrades to keep-everything on any VAD failure. |
+| `-pause` | 0.45 | a quiet stretch this long (s) is a jump cut. Jordan: anything longer than conversational pace goes; breaths stay. |
+| `-vad-threshold` / `-vad-speech-pct` | 0.5 / 0 | opt-in Silero junk-keep filter; **0 = off** — Silero proved untrustworthy on quiet-mic footage (finds nothing raw, everything boosted). |
 | `-markers` | none | `markers.json` = `[{source, source_time, title, kind}]`; quote lead-ins in SOURCE time, mapped onto the timeline. A lead-in that got cut away lands at the end, suffixed `[lead-in was cut - review]`. |
 | `-launch-vegas` | off | the unattended Vegas build. **One heavy media app at a time** — never with Resolve open. |
 | `-out` | `<dir>\_roughcut` | artifact dir. |
@@ -628,27 +628,37 @@ Dragging `vegas_cut.json` onto `import-to-vegas.bat` does the same Vegas step by
 
 1. **calibrate** — per clip, the 0.4s RMS envelope's p90 is the speaker, p10 the room. Linear gain
    puts speech at -20 dB (clamped 0..+45, so clipping clap-test clips get NO boost). No dynamic
-   loudnorm: a loudness pump raises room tone inside the very pauses we cut.
-2. **silencedetect** on the boosted copy, floor = room+3 dB, `d=-pause`. Duration is the ONLY
-   thing that separates a word gap from a thinking pause on this footage.
-3. **margins 0.5s/0.5s** — measured: sentence onsets ramp up to 0.55s below any usable floor;
-   room tone at a boundary is trimmable, a clipped syllable is not. Single-word ad-libs get
+   loudnorm: a loudness pump raises room tone inside the very pauses we cut. The same gains are
+   applied in the delivered Vegas project as ONE audio track per clip (track Volume), so the
+   timeline is actually audible.
+2. **highpass 80 Hz + silencedetect** on the boosted copy, floor = room+3 dB, `d=-pause`.
+   Duration is the ONLY thing that separates a word gap from a thinking pause on this footage.
+3. **margins 0.2s/0.25s** — measured: detector onsets run up to 0.2s late vs the true word;
+   0.2s of room tone is inaudible, a clipped consonant is not. Single-word ad-libs get
    0.5/0.7 (delivered with visual emphasis on purpose).
-4. **transcript rescue** — a 3+ word Parakeet cue the audio missed (quiet delivery) comes back as
-   a keep. The transcript drives; the audio arbitrates.
-5. **re-takes** (`badtake.go`) — several signals agreeing, never one hard rule: same statement
+4. **re-takes** (`badtake.go`) — several signals agreeing, never one hard rule: same statement
    (>=4-word run, may begin several words in) + gather-himself pause (>=1.5s) + earlier attempt
    abandoned mid-flight + later take fuller. Score >=6 CUTS to a fixpoint; two clean alternate
    phrasings become `RETAKE?` markers and Jordan picks in the morning.
-6. **zero-crossing snap** (`zcross.go`) on the ORIGINAL audio: every boundary moves to the nearest
-   quiet crossing within +/-20ms (peak < -40 dBFS), else extends to a quiet pocket within 0.35s,
-   else stays. No cut pops.
-7. **QA gate** — every 3+ word cue must still have its words on the timeline (onset and offset
-   covered; a mid-cue jump cut is fine). `qa.json` lists every dropped cue and every retake cue
+5. **zero-crossing snap** (`zcross.go`) on the ORIGINAL audio at a floor relative to the clip's
+   room tone: every boundary moves to the nearest quiet crossing within +/-20ms, else extends to
+   a quiet pocket within 0.35s, else stays. No cut pops.
+6. **transcript rescue AFTER the snaps and retake cuts** (they erode padding), then snap again:
+   a 3+ word Parakeet cue whose first/last 0.25s is not inside a keep comes back with 0.6/0.5
+   padding. The transcript drives; the audio arbitrates.
+7. **QA gate** — every 3+ word cue must still have its words on the timeline (head and tail in
+   keeps; a mid-cue jump cut is fine). `qa.json` lists every dropped cue and every retake cue
    cut, for audit. **0 dropped is the ship condition.**
+8. **quotes** — the reviewed reel's clips are pre-cut to small mp4s (`_roughcut\quotes\`), each
+   window manually checked against the corpus SRT (full quote present, repeated yelling runs
+   extended to the whole run), and placed on `Quotes (video/audio)` tracks above the main edit
+   at their marker positions. Multi-candidate quotes sit sequentially at the marker for Jordan
+   to pick.
 
-Measured result: 2:25:25 raw -> 1:56:37 rough cut, 842 events, 36 quote markers, 16 regions,
-36 retake cues cut, 0 dropped cues.
+Measured result (iterated 2026-08-24): 2:25:25 raw -> **1:40:49** rough cut, 1767 events,
+25 quote overlays, 36 markers, 16 regions, 36 retake cues cut, 0 dropped cues, and **3.0 s of
+residual silence >=0.5s in the assembled audio (0.0%)** — verified by assembling the delivered
+audio and running silencedetect over it, and by reading the saved `.veg` back headless.
 
 ## Why not auto-editor / becky-cut / loudnorm here (the traps, measured)
 
@@ -665,6 +675,19 @@ Measured result: 2:25:25 raw -> 1:56:37 rough cut, 842 events, 36 quote markers,
   project — the Details button shows the compiler error. Verify scripts headless with
   `vegas/BeckyVerifyProject.cs` (writes `<file>.veg.verify.txt`) before claiming a delivery works.
   `Timecode` has no `.Seconds` in VP18; use `.Nanos * 1e-7`.
+- `AudioTrack.Volume` is a **float**: assigning `Math.Pow(...)` (double) is a COMPILE error, which
+  manifests as that same misleading dialog and silently blocks the whole headless build.
+- Per-event `Normalize` makes Vegas scan every event's audio on the UI thread — the build "hangs"
+  for tens of minutes. One audio track per clip with the measured gain is instant and better.
+- Force-killing Vegas leaves crash-recovery state that pops a blocking dialog on every later
+  start (and blocks `-SCRIPT`). Delete `AppData\Local\Vegas Pro\18.0\*.restored.veg`, or better:
+  never kill — let `vegas.Exit()` end it.
+- A failed ffmpeg cut leaves a PARTIAL mp4 that `os.path.exists` then trusts forever — probe
+  every produced clip (video+audio streams, duration) before handing it to Vegas, or the project
+  loads with media-offline dialogs. Some corpus streams need `format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2`
+  before nvenc accepts them.
+- Multi-hour corpus files opened via `new Media(path)` make Vegas index them synchronously for
+  many minutes. Pre-cut quote clips to small mp4s first (which is also the documented workflow).
 
 ## Rules that are law here
 

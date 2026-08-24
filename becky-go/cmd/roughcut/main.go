@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,7 +97,7 @@ type pendingMarker struct {
 func main() {
 	pause := flag.Float64("pause", defaultPauseSec, "quiet stretches this long (s) are jump cuts; shorter pauses stay")
 	vadThreshold := flag.Float64("vad-threshold", 0.5, "Silero VAD sensitivity for the junk-keep sanity pass")
-	vadSpeechPct := flag.Float64("vad-speech-pct", 20.0, "a keep with less speech than this %% is junk and is cut")
+	vadSpeechPct := flag.Float64("vad-speech-pct", 0.0, "opt-in Silero junk-keep filter (%% speech); 0 = off - Silero proved untrustworthy on quiet-mic footage")
 	outDir := flag.String("out", "", "artifact dir (default <project-dir>/_roughcut)")
 	markersIn := flag.String("markers", "", "optional markers.json: [{source, source_time, title, kind}] placed on the timeline")
 	vegasScript := flag.String("vegas-script", "", "path to vegas/BeckyRoughCut.cs (default: found next to this exe)")
@@ -173,7 +174,6 @@ func main() {
 		}
 		keeps := keepsFromSilences(sils, c.Duration)
 		keeps = adlibRoom(cues, keeps)
-		keeps = rescueMissedCues(cues, keeps)
 		keeps = vadSanity(norm, keeps, *vadThreshold, *vadSpeechPct, *verbose)
 		os.Remove(norm)
 
@@ -194,6 +194,10 @@ func main() {
 			}
 		}
 
+		// snap, then rescue whatever the snaps and retake-cuts left uncovered,
+		// then snap again so rescued boundaries also land on quiet crossings.
+		keeps = snapKeeps(wav, c, keeps, out, *verbose)
+		keeps = rescueMissedCues(cues, keeps)
 		keeps = snapKeeps(wav, c, keeps, out, *verbose)
 		os.Remove(wav)
 
@@ -326,24 +330,26 @@ func adlibRoom(cues []quotes.Cue, keeps []span) []span {
 	return merged
 }
 
-// wordsCovered: the first and last 0.6s of a cue (its words) each land inside
-// some keep. The middle may be split by an intentional jump cut.
+// wordsCovered: the first and last 0.25s of a cue (the actual words) each sit
+// inside some keep. The middle may be split by an intentional jump cut - a
+// pause longer than conversational pace mid-sentence is exactly what this
+// tool cuts.
 func wordsCovered(cue quotes.Cue, keeps []span) bool {
-	onset := span{cue.Start, cue.Start + 0.6}
-	offset := span{cue.End - 0.6, cue.End}
-	if cue.End-cue.Start < 1.2 {
-		onset, offset = span{cue.Start, cue.End}, span{cue.Start, cue.End}
+	head := cue.Start + 0.25
+	tail := cue.End - 0.25
+	if tail < head {
+		head, tail = cue.Start, cue.End
 	}
-	return spanInside(onset, keeps) && spanInside(offset, keeps)
-}
-
-func spanInside(s span, keeps []span) bool {
+	headIn, tailIn := false, false
 	for _, k := range keeps {
-		if s.Start >= k.Start-0.05 && s.End <= k.End+0.05 {
-			return true
+		if k.Start-0.2 <= cue.Start && head <= k.End+0.2 {
+			headIn = true
+		}
+		if k.Start-0.45 <= tail && cue.End <= k.End+0.45 {
+			tailIn = true
 		}
 	}
-	return false
+	return headIn && tailIn
 }
 
 func cueInConfidentTake(cue quotes.Cue, takes []badTake) bool {
@@ -425,13 +431,14 @@ func snapKeeps(wav string, c clip, keeps []span, out string, verbose bool) []spa
 		beckyio.Logf(true, "%s: wav decode failed (%v) - boundaries unsnapped", c.Stem, err)
 		return keeps
 	}
+	quietDB := roomTone(au) + 6
 	out2 := make([]span, len(keeps))
 	for i, k := range keeps {
 		s, e := k.Start, k.End
-		if v, ok := snapBoundary(au.Samples, au.SampleRate, s); ok {
+		if v, ok := snapBoundary(au.Samples, au.SampleRate, s, quietDB); ok {
 			s = v
 		}
-		if v, ok := snapBoundary(au.Samples, au.SampleRate, e); ok {
+		if v, ok := snapBoundary(au.Samples, au.SampleRate, e, quietDB); ok {
 			e = v
 		}
 		if e <= s { // a snap must never invert a span
@@ -440,11 +447,38 @@ func snapKeeps(wav string, c clip, keeps []span, out string, verbose bool) []spa
 		out2[i] = span{s, e}
 	}
 	prof, _ := json.MarshalIndent(map[string]any{
-		"source": c.Path, "sample_rate": au.SampleRate,
+		"source": c.Path, "sample_rate": au.SampleRate, "room_db": quietDB - 6,
 	}, "", "  ")
 	os.WriteFile(filepath.Join(out, c.Stem+".audio_profile.json"), prof, 0o644)
-	beckyio.Logf(verbose, "%s: %d keeps snapped to quiet zero-crossings", c.Stem, len(keeps))
+	beckyio.Logf(verbose, "%s: %d keeps snapped at room %.1f dB", c.Stem, len(keeps), quietDB-6)
 	return out2
+}
+
+// roomTone is the p10 of the 0.1s RMS envelope: the noise floor this clip's
+// zero-crossing snap judges "quiet" against.
+func roomTone(au *sampledecode.Audio) float64 {
+	win := au.SampleRate / 10
+	if win < 1 {
+		win = 1
+	}
+	var env []float64
+	for i := 0; i < len(au.Samples); i += win {
+		end := i + win
+		if end > len(au.Samples) {
+			end = len(au.Samples)
+		}
+		var sum float64
+		for j := i; j < end; j++ {
+			v := float64(au.Samples[j])
+			sum += v * v
+		}
+		env = append(env, dbfs(math.Sqrt(sum/float64(end-i))))
+	}
+	sort.Float64s(env)
+	if len(env) == 0 {
+		return -60
+	}
+	return env[len(env)/10]
 }
 
 func subtract(keeps []span, cut span) []span {

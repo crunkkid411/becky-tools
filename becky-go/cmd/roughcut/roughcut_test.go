@@ -152,7 +152,7 @@ func TestSnapFindsQuietCrossingNearBoundary(t *testing.T) {
 	s := silenceThenTone(1.0, 1.0, rate, 0.3)
 	// ask 5ms INSIDE the tone: the snap must walk back to a crossing in the
 	// quiet part, within the 20ms window.
-	got, ok := snapBoundary(s, rate, 1.005)
+	got, ok := snapBoundary(s, rate, 1.005, -40)
 	if !ok {
 		t.Fatal("expected a quiet crossing within the window")
 	}
@@ -168,7 +168,7 @@ func TestSnapLeavesBoundaryWhenNoQuietNearby(t *testing.T) {
 	for i := range s { // continuous loud tone, no quiet anywhere
 		s[i] = float32(0.5 * math.Sin(2*math.Pi*200*float64(i)/float64(rate)))
 	}
-	got, ok := snapBoundary(s, rate, 1.0)
+	got, ok := snapBoundary(s, rate, 1.0, -40)
 	if ok || got != 1.0 {
 		t.Errorf("loud audio must leave the boundary untouched, got %v,%v", got, ok)
 	}
@@ -187,7 +187,7 @@ func TestSnapExtendsToQuietPocket(t *testing.T) {
 			s[i] = float32(0.4 * math.Sin(2*math.Pi*200*t))
 		}
 	}
-	got, ok := snapBoundary(s, rate, 1.0)
+	got, ok := snapBoundary(s, rate, 1.0, -40)
 	if !ok {
 		t.Fatal("expected extension to the quiet pocket")
 	}

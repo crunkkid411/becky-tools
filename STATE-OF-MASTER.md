@@ -18,8 +18,11 @@ green). Full story at the TOP of `HANDOFF-LOG.md`; canon in `SKILL.md`'s `# ROUG
 - **Vegas seam**: `vegas/BeckyRoughCut.cs` builds the timeline headless via
   `vegas180.exe -SCRIPT:` + env var, saves `rough_cut.veg`, exits; `BeckyVerifyProject.cs`
   audits any `.veg` headless. `-launch-vegas` makes the whole delivery walk-away-able.
-- **Delivered + verified on hj-fbi-recap**: 2:25:25 raw -> 1:56:37, 842 events, 36 quote
-  markers, 16 regions, 36 retake cues cut, 0 dropped cues; `.veg` read back clean.
+- **Delivered + verified on hj-fbi-recap** (iterated after Jordan's too-much-silence round):
+  2:25:25 raw -> 1:40:49, 1767 events, 25 verified quote clips on Quotes tracks, 36 markers,
+  16 regions, 36 retake cues cut, 0 dropped cues, 3.0 s residual silence >=0.5s in the
+  assembled audio; `.veg` read back clean (19 tracks) and Vegas left OPEN on the project.
+  Audible via one audio track per clip at measured gain.
 - `becky-cut --headroom` knob; `import-to-vegas.bat` accepts `vegas_cut.json` drags.
 
 ### PREVIOUS — Becky Review 3: the feedback-11 round (2026-08-21, local)
