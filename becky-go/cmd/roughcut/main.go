@@ -103,6 +103,7 @@ func main() {
 	quotesIn := flag.String("quotes", "", "optional verified quotes json: [{q, source, in, out}] inserted SEQUENTIALLY at their marker (main edit stops, quote plays, main resumes)")
 	vegasScript := flag.String("vegas-script", "", "path to vegas/BeckyRoughCut.cs (default: found next to this exe)")
 	launchVegas := flag.Bool("launch-vegas", false, "after building, launch Vegas Pro headless and populate the timeline (save .veg, exit)")
+	watch := flag.Bool("watch", false, "STANDALONE mode: an LLM (Gemma-4) watches every merged block of an EXISTING vegas_cut.json and writes watch_report.json. Run this once the GPU is free of any other model (LR-ASD sweep, etc) - see watchpass.go.")
 	verbose := flag.Bool("verbose", false, "progress on stderr")
 
 	flag.Usage = func() {
@@ -132,6 +133,13 @@ func main() {
 	}
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		beckyio.Fatalf("create out dir: %v", err)
+	}
+
+	if *watch {
+		if err := runWatchPass(out, *verbose); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		return
 	}
 
 	clips, err := inventory(dir)
@@ -217,14 +225,7 @@ func main() {
 		os.Remove(wav)
 
 		speaking := loadSpeaking(out, c)
-		if len(speaking) > 0 && speaking[0].Speakers == 0 {
-			pendingMarkers = append(pendingMarkers, pendingMarker{
-				source: c.Stem,
-				t:      keeps[0].Start,
-				title:  "CHECK: lip-sync saw no visible speaker at first keep - " + c.Stem,
-				kind:   "review",
-			})
-		}
+		pendingMarkers = append(pendingMarkers, speakingCorroboration(c.Stem, keeps, speaking)...)
 		rcCut, rcMark := 0, 0
 		for _, bt := range takes {
 			if bt.Confident {
@@ -591,11 +592,20 @@ func cueText(cues []quotes.Cue, a, b int) string {
 // mapToTimeline converts a source-file time into assembled-timeline seconds.
 // A time that fell into a cut gap maps to the end of the event before it (the
 // lead-in is where the quote marker belongs).
+//
+// Matches on the STEM (extension stripped from both sides): pendingMarkers
+// for retakes and speaking-corroboration are built from c.Stem ("HJOC7106"),
+// while events[i].Source is the full c.Path ("...\HJOC7106.MP4") - matching
+// on the bare basename compared "hjoc7106" against "hjoc7106.mp4" and NEVER
+// matched, so every retake-marker and corroboration-marker silently vanished
+// before landing on the timeline (measured 2026-08-24 night: `markers` never
+// moved off the count baked into the static markers.json, no matter how many
+// pendingMarkers were generated).
 func mapToTimeline(events []event, source string, t float64) (float64, bool) {
-	base := strings.ToLower(filepath.Base(source))
+	base := stemOf(source)
 	var prevEnd *float64
 	for i := range events {
-		if strings.ToLower(filepath.Base(events[i].Source)) != base {
+		if stemOf(events[i].Source) != base {
 			continue
 		}
 		if t >= events[i].In && t <= events[i].Out {
@@ -611,4 +621,12 @@ func mapToTimeline(events []event, source string, t float64) (float64, bool) {
 		return *prevEnd, true
 	}
 	return 0, false
+}
+
+// stemOf is the lowercased basename with its extension removed, so a marker
+// source built from a bare stem ("HJOC7106") matches an event source built
+// from a full path ("...\HJOC7106.MP4") - see mapToTimeline's doc comment.
+func stemOf(p string) string {
+	b := strings.ToLower(filepath.Base(p))
+	return strings.TrimSuffix(b, filepath.Ext(b))
 }

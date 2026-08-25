@@ -6,7 +6,29 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: recovered from a credit-exhausted CLI, room-noise claim retracted and actually fixed (2026-08-24 night, local)
+### CURRENT — becky-roughcut: becky-clip's corroboration signals actually wired in (2026-08-24, later the same night, local)
+
+**On master, built green** (`go build/vet/test ./...`, `build-all-tools.bat` exit 0). Full story
+at the TOP of `HANDOFF-LOG.md` §"found the feedback the first recovery pass missed" and in
+`HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8; canon in `SKILL.md`'s `# ROUGH CUT` section.
+
+**Read §8 before touching this tool again** — round 1 tonight (below) missed a later, more
+substantive piece of Jordan's feedback because Qoder's CLI queues a mid-background-task prompt
+as a different JSON shape than a normal turn. becky-clip's shorts-pipeline signals (LR-ASD
+speaking detection, Gemma-4 watch/critic) are now wired into becky-roughcut for the first time:
+`speakingCorroboration` flags a kept span when nobody is visibly speaking despite real audio
+content (review-only marker, never auto-cuts); a comprehensive LR-ASD sweep is running detached
+in the background overnight (338 blocks, `%TEMP%\keepspeaking_sweep.log`); a new standalone
+`--watch` mode gets an LLM to actually watch the assembled cut before it ships (built + tested,
+not yet run tonight — VRAM conflicts with the sweep on this machine's 8GB card). Also fixed a
+real bug (`mapToTimeline` comparing bare basenames) that had been silently dropping every
+dynamically-generated marker, including every `RETAKE?` flag, before it ever reached a Vegas
+project — 36 markers -> 71 on a verified re-run. A real, sourced Røde Wireless GO II audio-chain
+research doc was recovered and evaluated but NOT shipped — its recommended compressor measurably
+fights the analysis chain's need for speech/room-tone separation; open question for Jordan
+in the handoff doc §8.5.
+
+### PREVIOUS — becky-roughcut: recovered from a credit-exhausted CLI, room-noise claim retracted and actually fixed (2026-08-24 night, local)
 
 **On master, built green** (`go build/vet/test ./...`, `build-all-tools.bat` exit 0). Full story
 at the TOP of `HANDOFF-LOG.md` and in `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`; canon in

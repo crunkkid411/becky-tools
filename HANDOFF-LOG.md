@@ -10,6 +10,56 @@
 
 ---
 
+## becky-roughcut: found the feedback the first recovery pass missed, wired becky-clip's signals in for real (2026-08-24, later the same night, local, `master`)
+
+**Full story: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8.** Jordan watched the round-1 timeline
+(entry directly below) and called it AI slop — correctly. The round-1 recovery had found and
+answered his 16:17 feedback but missed a LATER, more substantive message (17:57) sent while
+Qoder was mid-background-task: Qoder's CLI queues a prompt sent during a background task as a
+different JSON shape (`type:"attachment"`, not `type:"user"`), and the first transcript search
+only matched normal turns. **Lesson: search an agent's recovered transcript for the human's own
+words as literal text, never just the expected message shape.**
+
+The missed message: becky-short's shorts pipeline already has real multi-signal corroboration
+(LR-ASD speaking detection, MediaPipe, Falcon-Perception, Reka Edge, Gemma-4 as judge+critic)
+and a hard rule ("an LLM must watch the output before it ships") that had never reached
+`becky-roughcut` — every decision there was audio/word-timing only. Qoder had started
+responding (built `dossier.go`, launched an LR-ASD "speaking sweep" that kept running
+independently after Qoder's own process died and finished all 16 clips) but never wired
+anything to actually CONSUME the signal before the credit wall hit.
+
+Shipped: `speakingCorroboration` (`dossier.go`) flags a kept span as review-worthy when LR-ASD
+saw nobody visibly speaking despite real audio/transcript content there — review-only, never
+auto-cuts. A NEW, comprehensive speaking sweep (338 merged blocks, ~93 min of footage) launched
+detached, running independently overnight as Jordan explicitly offered
+(`%TEMP%\keepspeaking_sweep.log`). A NEW standalone `--watch` mode (`watchpass.go`) — the first
+"LLM watches the output" pass this tool has ever had, using the same Gemma-4/`internal/avlm`
+already proven in `becky-short` — built and tested, deliberately NOT run tonight (VRAM
+contention with the speaking sweep on this machine's 8GB card; run once the GPU is free).
+
+**Root-cause bug found and fixed along the way**: `mapToTimeline` compared bare basenames
+(`"hjoc7106"` vs `"hjoc7106.mp4"`) and NEVER matched, so every dynamically-generated marker —
+every `RETAKE?` ambiguous-take flag `badtake.go` has ever produced for this footage, and every
+new corroboration marker — was silently dropped before landing on the timeline. Marker count
+was stuck at exactly 36 (the static `markers.json` baseline) across every run, no matter what
+changed. Fixed to compare stems; verified on a real re-run: 36 -> 71 markers, 3 of them real
+speaking-corroboration flags confirmed present in `vegas_cut.json`.
+
+Also recovered and evaluated (not shipped): a real, sourced Røde Wireless GO II audio-chain
+research doc Qoder had a subagent produce earlier in the session, found via the same "search
+for his literal words" technique. The code only implemented half of it (highpass+gain, no
+compressor, a soft-clipper instead of a true limiter). Tested the research's exact recommended
+chain against real footage before touching code — adding the compressor to the ANALYSIS copy
+measurably narrows the dynamic range `silencedetect` depends on (~20dB level drop on real
+speech), which may fight detection accuracy even though it is the right call for how the
+DELIVERED audio should sound. Not shipped blind this late; open question + the measurement is
+in the handoff doc §8.5 for Jordan's call.
+
+`go build/vet/test ./...` clean, 6 new regression tests (`mapToTimeline`, `speakingCorroboration`
+x3, watch-pass block-merging x2, verdict-parsing x3). `build-all-tools.bat` rerun.
+
+---
+
 ## becky-roughcut: recovered from a credit-exhausted CLI, VAD/tracks/sequencing fixed and re-verified on real footage (2026-08-24 night, local, `master`)
 
 **Full story: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.** Qoder CLI worked the entry below

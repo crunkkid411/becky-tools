@@ -626,6 +626,26 @@ Dragging `vegas_cut.json` onto `import-to-vegas.bat` does the same Vegas step by
 | `-markers` | none | `markers.json` = `[{source, source_time, title, kind}]`; quote lead-ins in SOURCE time, mapped onto the timeline. A lead-in that got cut away lands at the end, suffixed `[lead-in was cut - review]`. |
 | `-launch-vegas` | off | the unattended Vegas build. **One heavy media app at a time** — never with Resolve open. |
 | `-out` | `<dir>\_roughcut` | artifact dir. |
+| `-quotes` | none | `quotes_verified.json` = `[{q, source, in, out}]`; verified quote clips inserted SEQUENTIALLY at their `-markers` marker (main edit stops, quote plays, main resumes) — never simultaneously. |
+| `-watch` | off | **STANDALONE mode, run it separately.** An LLM (Gemma-4) watches every merged block of an EXISTING `vegas_cut.json` and writes `watch_report.json` (PASS/FLAG + reason per block, review-only). Needs the GPU free of any other model — never alongside an LR-ASD speaking sweep on an 8GB card. See `watchpass.go`. |
+
+## Corroboration — becky-clip's signals, actually consumed (2026-08-24 night)
+
+`SKILL.md`'s own VIDEO CLIPPING rules ("an LLM must watch the output before it ships",
+"corroborate then conclude") were built for `becky-short` and had never reached
+`becky-roughcut` — every decision was word-timing/audio only, with real LR-ASD speaking data
+sitting computed and unused. Two additions, both REVIEW-ONLY (a detector is a signal, never a
+verdict — neither of these ever cuts, shortens, or auto-fixes anything):
+
+- **`speakingCorroboration`** (`dossier.go`) cross-checks every kept span with LR-ASD active-
+  speaker data (`%TEMP%\keepspeaking\*.json`, `becky-speaking` output — `loadSpeaking` already
+  globs for it). A span with real audio/transcript content but no confidently-visible speaker
+  raises a `CHECK:` marker on the timeline for Jordan to look at.
+- **`--watch`** (above) is the `becky-short`-style critic pass, ported. Run it once real
+  coverage exists and the GPU is free.
+
+Full story, why it took a second pass to find this gap, and the exact bug that silently ate
+every dynamically-generated marker until tonight: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8.
 
 ## What happens inside the call (the measured recipe)
 

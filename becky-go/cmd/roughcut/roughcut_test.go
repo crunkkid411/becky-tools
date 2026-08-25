@@ -267,6 +267,116 @@ func TestRefineWordEdgesHandlesZeroDurationWords(t *testing.T) {
 	}
 }
 
+// --- speaking corroboration --------------------------------------------------
+
+// Jordan, 2026-08-24 (the "insufficient contextual data" feedback): LR-ASD
+// speaking data must actually corroborate decisions, not just sit in a
+// dossier file. A keep with real content but no visible speaker must be
+// flagged for review - never silently cut (a detector is a signal, never a
+// verdict).
+func TestSpeakingCorroborationFlagsUnspokenKeep(t *testing.T) {
+	keeps := []span{{10.0, 20.0}}
+	speaking := []speakingWindow{{Start: 10.0, End: 20.0, Speakers: 0, BestFrac: 0.05}}
+	got := speakingCorroboration("clip1", keeps, speaking)
+	if len(got) != 1 {
+		t.Fatalf("got %d markers, want 1 (no visible speaker despite kept audio): %+v", len(got), got)
+	}
+	if got[0].kind != "review" {
+		t.Errorf("kind = %q, want \"review\" - never a verdict", got[0].kind)
+	}
+}
+
+func TestSpeakingCorroborationSilentWhenSpeakerConfirmed(t *testing.T) {
+	keeps := []span{{10.0, 20.0}}
+	speaking := []speakingWindow{{Start: 10.0, End: 20.0, Speakers: 1, BestFrac: 0.95}}
+	got := speakingCorroboration("clip1", keeps, speaking)
+	if len(got) != 0 {
+		t.Errorf("got %d markers, want 0 (visual confirms audio): %+v", len(got), got)
+	}
+}
+
+func TestSpeakingCorroborationSkipsWhenNoVisualCoverage(t *testing.T) {
+	keeps := []span{{10.0, 20.0}}
+	// speaking window barely overlaps the keep - nothing to corroborate with
+	speaking := []speakingWindow{{Start: 19.8, End: 21.0, Speakers: 0, BestFrac: 0.0}}
+	got := speakingCorroboration("clip1", keeps, speaking)
+	if len(got) != 0 {
+		t.Errorf("got %d markers, want 0 (insufficient overlap to judge): %+v", len(got), got)
+	}
+}
+
+// Regression for the 2026-08-24 night bug: every retake and speaking-
+// corroboration pendingMarker is built with source=c.Stem ("HJOC7106", no
+// extension), but events carry the full c.Path ("...\HJOC7106.MP4"). Matching
+// on the bare basename never matched, so these markers silently never landed
+// on the timeline, however many were generated.
+func TestMapToTimelineMatchesStemAgainstFullPath(t *testing.T) {
+	events := []event{
+		{Source: `X:\Videos\HJOC7106.MP4`, In: 10, Out: 20, TLStart: 100},
+	}
+	got, ok := mapToTimeline(events, "HJOC7106", 15)
+	if !ok {
+		t.Fatal("mapToTimeline returned ok=false for a stem source against a full-path event - the exact bug")
+	}
+	if got != 105 {
+		t.Errorf("got %v, want 105 (100 + (15-10))", got)
+	}
+}
+
+// --- watch pass ---------------------------------------------------------
+
+func TestMergeWatchBlocksJoinsCloseEventsAcrossSources(t *testing.T) {
+	events := []tlEvent{
+		{Source: "a.mp4", In: 0, Out: 2},
+		{Source: "a.mp4", In: 2.5, Out: 5}, // 0.5s gap - merges
+		{Source: "a.mp4", In: 20, Out: 22}, // far gap - new block
+		{Source: "b.mp4", In: 0, Out: 3},
+	}
+	got := mergeWatchBlocks(events)
+	if len(got) != 3 {
+		t.Fatalf("got %d blocks, want 3: %+v", len(got), got)
+	}
+	if got[0].Source != "a.mp4" || got[0].Start != 0 || got[0].End != 5 {
+		t.Errorf("block 0 = %+v, want a.mp4 [0,5] (joined across the 0.5s gap)", got[0])
+	}
+	if got[1].Start != 20 || got[1].End != 22 {
+		t.Errorf("block 1 = %+v, want [20,22] (separate - gap too large)", got[1])
+	}
+}
+
+func TestMergeWatchBlocksDropsSubMinimumSpans(t *testing.T) {
+	events := []tlEvent{{Source: "a.mp4", In: 0, Out: 0.3}}
+	if got := mergeWatchBlocks(events); len(got) != 0 {
+		t.Errorf("got %d blocks, want 0 (below watchMinBlockSec): %+v", len(got), got)
+	}
+}
+
+func TestParseWatchVerdictPass(t *testing.T) {
+	v, reason := parseWatchVerdict("VERDICT: PASS\nREASON:")
+	if v != "pass" || reason != "" {
+		t.Errorf("got (%q,%q), want (pass, \"\")", v, reason)
+	}
+}
+
+func TestParseWatchVerdictFlagExtractsReason(t *testing.T) {
+	v, reason := parseWatchVerdict("VERDICT: FLAG\nREASON: he is silently reading his phone, no speech at all")
+	if v != "flag" {
+		t.Errorf("verdict = %q, want flag", v)
+	}
+	if reason != "he is silently reading his phone, no speech at all" {
+		t.Errorf("reason = %q", reason)
+	}
+}
+
+// An unparseable/garbled reply must never be treated as a flag - this pass
+// may only ADD a review marker, never invent a false alarm from noise.
+func TestParseWatchVerdictUnparseableDefaultsToPass(t *testing.T) {
+	v, _ := parseWatchVerdict("the model said something unexpected here")
+	if v != "pass" {
+		t.Errorf("verdict = %q, want pass (fail open, not a false flag)", v)
+	}
+}
+
 func TestSnapExtendsToQuietPocket(t *testing.T) {
 	rate := 16000
 	// tone everywhere except a quiet pocket 0.1s after the boundary.

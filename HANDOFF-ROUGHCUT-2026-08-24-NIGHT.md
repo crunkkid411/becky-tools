@@ -263,3 +263,151 @@ recurs.
   a different color on the timeline") is not implemented in `BeckyRoughCut.cs`. Jordan did not
   re-raise this in his final feedback; noting it here since it was in the original brief and
   never addressed by anyone this session.
+
+---
+
+## 8. Round 2 (2026-08-24, later the same night) — the message §1–7 above MISSED
+
+Jordan watched the round-1 timeline and called it "AI slop." He was right, and the reason was a
+real gap in the round-1 recovery, not the room-noise fix itself: **his most detailed feedback
+was not a normal chat turn.** Qoder's CLI has a "queued command" mechanism — if you submit a
+prompt while the agent is mid-background-task, it gets queued and injected as an
+`{"type":"attachment","attachment":{"type":"queued_command",...}}` record instead of a normal
+`{"type":"user"}` turn. Round 1's transcript search only matched normal user turns, so it walked
+straight past Jordan's actual last substantive message (2026-08-24 17:57 local) and treated an
+earlier one (16:17) as "the final feedback." **If you are ever recovering an agent session,
+search for the human's OWN WORDS as literal text across every line of the raw JSONL, not just
+lines matching the expected message shape — a schema assumption is exactly the kind of thing
+that quietly eats a whole message.**
+
+### 8.1 What the missed message actually asked for
+
+> "the lip-sync thing as well all a few other things we have (which buttercut does NOT have)
+> should have been included in each clip's data so that better decisions can be made, as
+> insufficient contextual data is the key bottleneck. specifically, becky-clip integrated
+> several new tools, they are wired up for a different video editing use case, but I wanted
+> them part of our toolset specifically so that becky-roughcut could ALSO use them (such as
+> obtaining an additional data point as to who is speaking, or when speech is occuring at all
+> based on the audio + visual lip sync thing) - not to mention the various means of visual
+> verification (ffmpeg, opencv, mediapipe, various vision models with different strengths, and
+> even gemma4 which has contextual video understanding WITH AUDIO understanding built right
+> in)... expecting you to make good decisions with no visual grounding, no audio analysis, and
+> no contextual understanding is highly unreasonable... I'm willing to let it run overnight
+> while I sleep to get all the data so you can make better decisions."
+
+"becky-clip" here means the shorts/clipping pipeline (`SKILL.md`'s `VIDEO CLIPPING` section:
+LR-ASD speaking detection, MediaPipe Pose, Falcon-Perception, Reka Edge grounding, Gemma-4 as
+both judge and critic) — a real, already-proven multi-signal architecture that had NEVER been
+connected to `becky-roughcut`. Qoder acknowledged the message ("I'll do that now... I'll also do
+a final cut that consumes it"), built half of it (`dossier.go`, real), and hit the credit wall
+before the other half (actually USING the dossier's signals to affect decisions) was even
+started. Round 1 of this recovery inherited `dossier.go`, confirmed it compiled, and moved on —
+without checking whether anything actually READ it. Nothing did.
+
+### 8.2 What was actually sitting there, unused, computed for free
+
+Qoder had launched a background LR-ASD "speaking sweep" (`becky-speaking` over 2 sample windows
+per clip) before hitting the credit wall. **That sweep kept running as an independent OS
+process after Qoder's own CLI died, and had finished all 16 clips by 19:28 local** — real,
+computed, `confidence:"conclusion"`-grade active-speaker data sitting in
+`%TEMP%\keepspeaking\*.json`, completely unused except for one narrow check ("does the very
+first keep have a visible speaker") that has ALSO never worked (see 8.4).
+
+### 8.3 What this round built
+
+- **`speakingCorroboration` (`dossier.go`)** — every kept span with enough LR-ASD coverage
+  (>=50% of its duration) is checked: if nobody is confidently speaking on camera
+  (`speaking_frac < 0.35` or 0 tracked speakers) despite the span having real audio/transcript
+  content, it raises a `CHECK:` review marker. **Never auto-cuts anything** — a detector is a
+  signal, never a verdict (`SKILL.md`'s VIDEO CLIPPING rule #1), the same discipline
+  `becky-short` already lives by. 3 new markers landed on real re-runs tonight (verified in
+  `vegas_cut.json`, see 8.4).
+- **A comprehensive speaking sweep, launched and running** (`speaking_sweep.py`, detached,
+  survives independent of this session the same way Qoder's did): merges adjacent keeps per
+  source into real speaking blocks (338 blocks from 1226 keeps, ~93 minutes of footage to
+  cover), skips anything the original 2-sample sweep already covered well, and runs
+  `becky-speaking.exe` over the rest. Each call pays real model-load cost (~2-4 min/block
+  measured) — this is genuinely an overnight-plus job on this hardware, which is exactly what
+  Jordan said he's fine with. Progress: `%TEMP%\keepspeaking_sweep.log`. `loadSpeaking`'s
+  existing glob picks up new results automatically; no code changes needed for more coverage to
+  start mattering as it lands.
+- **`watchpass.go` — the FIRST "an LLM watches the output" pass becky-roughcut has ever had.**
+  `SKILL.md`'s VIDEO CLIPPING rule #2 is not optional: *"AN LLM MUST WATCH THE OUTPUT BEFORE IT
+  SHIPS."* becky-roughcut had zero model verification of its own decisions before tonight. New
+  standalone mode `becky-roughcut <dir> --watch`: reads an existing `vegas_cut.json`, merges
+  blocks the same way the speaking sweep does, and asks Gemma-4 (`internal/avlm`, the same
+  audio+video-understanding model `SKILL.md` names) to PASS or FLAG each one, writing
+  `watch_report.json`. Also review-only, also never re-cuts. **Deliberately NOT launched
+  tonight** — Gemma-4 via llama-server (~5GB VRAM) cannot run alongside the LR-ASD sweep on this
+  machine's 8GB card (VIDEO CLIPPING rule #5, "ONE MODEL AT A TIME - a hardware fact"). Run
+  `--watch` once the speaking sweep finishes, or whenever the GPU is free.
+- **Root-cause fix: `mapToTimeline` silently dropped every dynamically-generated marker,
+  always, including retake markers from BEFORE tonight.** Every `pendingMarker` (retakes AND
+  the new speaking-corroboration ones) is built with `source: c.Stem` ("HJOC7106", no
+  extension); `mapToTimeline` compared that against `filepath.Base(events[i].Source)`
+  ("HJOC7106.MP4") — never equal, so the marker's timeline lookup always failed and the marker
+  was silently discarded. This is WHY the reported marker count was stuck at exactly 36 (the
+  static `markers.json` count) across every single run tonight, no matter what changed. Fixed by
+  comparing stems on both sides (`stemOf`, strips the extension before comparing) instead of
+  bare basenames. **Verified on the real re-run: marker count went 36 -> 71 (35 real
+  dynamically-generated markers, previously all silently eaten).** This also means every
+  `RETAKE?` ambiguous-take marker `badtake.go` has ever generated for this footage has likely
+  never actually reached a real Vegas project before tonight — worth Jordan spot-checking the
+  timeline for `RETAKE?` labels now that they can land.
+
+### 8.4 Evidence, not a claim
+
+`vegas_cut.json` from tonight's re-run, `markers` array, the 3 new entries beyond the one
+pre-existing static marker:
+
+```
+{"t":671.18,  "title":"CHECK: audio kept here but LR-ASD saw no one visibly speaking (40%) - SNOW_20260823122254"}
+{"t":2633.22, "title":"CHECK: audio kept here but LR-ASD saw no one visibly speaking (33%) - IQQP9972"}
+{"t":2636.85, "title":"CHECK: audio kept here but LR-ASD saw no one visibly speaking (33%) - IQQP9972"}
+```
+
+Only 3 so far because the comprehensive sweep had barely started when this was captured (9 of
+325 blocks); expect more to accumulate as it runs. This is the multi-signal corroboration
+Jordan asked for, actually reaching the timeline, for the first time.
+
+### 8.5 The Rode Wireless GO II audio-chain question — found the research, did NOT ship a fix
+
+Jordan: recorded this footage on a Røde Wireless GO II specifically for its low noise floor
+(lets him film in noisy environments at higher quality), which also means the RAW waveform
+shows little level separation between speech and room tone — the opposite of a typical
+noisier mic. He'd told Qoder his own workflow (compress + EQ to raise level, with a limiter so
+peaks don't clip), was not sure it was ever applied, and remembered Qoder running deep research
+on it.
+
+**The research exists and is real**, recovered from a subagent Qoder ran
+(`Research quiet-dialogue preprocessing`, sourced from Røde's own podcasting guide plus ffmpeg
+docs). Its recommended ANALYSIS chain: `highpass=80Hz -> linear gain -> acompressor
+(threshold above the raised room tone, ratio ~3:1) -> alimiter (true-peak ceiling)`. The
+shipped code (`detect.go`'s `normalize()`) only ever implemented the highpass + linear gain;
+**no compressor was ever added, and `asoftclip=type=tanh` (a saturation/waveshaping clipper) was
+used instead of a real limiter** - not what Jordan asked for.
+
+Tested the research's exact chain against real footage before touching any code (its own
+`makeup=0` parameter is invalid ffmpeg syntax - the source guide's example has a bug, fixed to
+`makeup=1`/unity here). Measured result: adding the compressor to the ANALYSIS copy drops real
+speech level by ~20dB (mean -13dB -> -33dB on a real 10s sample). That is compression doing
+exactly what compression does - narrowing dynamic range - which is correct for how audio should
+SOUND, but is in tension with what the ANALYSIS chain needs (maximum level separation between
+speech and room tone for `silencedetect` to work at all). `detect.go`'s own existing comment
+already states the reasoning for avoiding dynamic gain in the analysis path ("a loudness pump
+raises room tone inside the very pauses we cut") - a compressor is the same category of risk.
+
+**Not shipped tonight, on purpose**, rather than guessing at parameters on Jordan's forensic-
+grade footage this late:
+
+- The clearly-safe application is the DELIVERED audio in Vegas (a real Track
+  Compressor/Wave Hammer FX on the audio track via the Vegas scripting API - the research
+  confirms this is possible and names the exact plugin) - purely how it sounds when Jordan
+  listens/edits, does not touch any cut decision. Not yet wired; would need real trial-and-error
+  against Vegas's COM API to get the FX plugin's exact parameter names right, which is not
+  something to rush blind at this hour on a project he's about to open.
+  - The question OPEN for Jordan: should the ANALYSIS chain also get compression (with a
+  threshold tuned per-clip against the calibrated noise floor, not a fixed -35dB), or does that
+  fight the detector? This needs an actual before/after accuracy comparison across real clips,
+  not a single 10s sample - exactly the kind of test Jordan offered to run himself if research
+  alone couldn't settle it.

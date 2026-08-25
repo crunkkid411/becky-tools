@@ -10,6 +10,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,6 +74,54 @@ func loadSpeaking(out string, c clip) []speakingWindow {
 	}
 	sort.SliceStable(wins, func(i, j int) bool { return wins[i].Start < wins[j].Start })
 	return wins
+}
+
+// speakingCorroborationThreshold is how low a keep's best overlapping
+// speaking_frac may go before it's flagged - Jordan, 2026-08-24: "no visual
+// grounding, no audio analysis, no contextual understanding is highly
+// unreasonable... these are additional data points to help provide more
+// corroborative context so that better video editing decisions can be made."
+const speakingCorroborationThreshold = 0.35
+
+// speakingCorroboration cross-checks every kept span against LR-ASD: a keep
+// that has real audio/transcript content but where nobody is visibly
+// speaking on camera for most of it is exactly the kind of thing a
+// word-timing-only detector cannot see (room noise mis-transcribed,
+// off-camera crosstalk, a false-positive cue). This is a SIGNAL, never a
+// VERDICT (SKILL.md's VIDEO CLIPPING rules, "a detector is a signal never a
+// verdict on the footage") - it never cuts or shortens anything, it raises a
+// review marker so a human decides. Only judges keeps where LR-ASD actually
+// covers most of the span; a keep with no visual data at all has nothing to
+// corroborate against and is left alone rather than guessed at.
+func speakingCorroboration(cStem string, keeps []span, speaking []speakingWindow) []pendingMarker {
+	var out []pendingMarker
+	for _, k := range keeps {
+		if k.End-k.Start < 1.0 {
+			continue // too short for a meaningful visual read
+		}
+		var best *speakingWindow
+		var bestOverlap float64
+		for i := range speaking {
+			w := &speaking[i]
+			lo, hi := maxF(w.Start, k.Start), minF(w.End, k.End)
+			if overlap := hi - lo; overlap > bestOverlap {
+				bestOverlap, best = overlap, w
+			}
+		}
+		if best == nil || bestOverlap < 0.5*(k.End-k.Start) {
+			continue // LR-ASD doesn't cover enough of this keep to corroborate either way
+		}
+		if best.Speakers == 0 || best.BestFrac < speakingCorroborationThreshold {
+			out = append(out, pendingMarker{
+				source: cStem,
+				t:      k.Start,
+				title: fmt.Sprintf("CHECK: audio kept here but LR-ASD saw no one visibly speaking (%.0f%% of the window) - %s",
+					best.BestFrac*100, cStem),
+				kind: "review",
+			})
+		}
+	}
+	return out
 }
 
 // writeDossier emits <stem>.dossier.json and returns the greppable summary
