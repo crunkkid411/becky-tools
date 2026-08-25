@@ -6,24 +6,33 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: raw takes to a populated Vegas Pro timeline (2026-08-24, local)
+### CURRENT — becky-roughcut: recovered from a credit-exhausted CLI, room-noise claim retracted and actually fixed (2026-08-24 night, local)
 
-**On master, pushed, built green** (`build-all-tools.bat`; `go test ./cmd/roughcut/ ./cmd/cut/`
-green). Full story at the TOP of `HANDOFF-LOG.md`; canon in `SKILL.md`'s `# ROUGH CUT` section.
+**On master, built green** (`go build/vet/test ./...`, `build-all-tools.bat` exit 0). Full story
+at the TOP of `HANDOFF-LOG.md` and in `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`; canon in
+`SKILL.md`'s `# ROUGH CUT` section (numbers corrected there).
 
 - **`becky-roughcut <dir>`** = one dumb call: creation_time ordering, duration-based silence
-  jump-cuts on per-clip calibrated audio (clap-proof p90/p10 gain), 0.5s anti-clip margins,
-  transcript rescue, multi-signal re-take cuts (clean alternates -> RETAKE? markers),
-  zero-crossing snap, QA gate (0 dropped cues = ship).
-- **Vegas seam**: `vegas/BeckyRoughCut.cs` builds the timeline headless via
-  `vegas180.exe -SCRIPT:` + env var, saves `rough_cut.veg`, exits; `BeckyVerifyProject.cs`
-  audits any `.veg` headless. `-launch-vegas` makes the whole delivery walk-away-able.
-- **Delivered + verified on hj-fbi-recap** (iterated after Jordan's too-much-silence round):
-  2:25:25 raw -> 1:40:49, 1767 events, 25 verified quote clips on Quotes tracks, 36 markers,
-  16 regions, 36 retake cues cut, 0 dropped cues, 3.0 s residual silence >=0.5s in the
-  assembled audio; `.veg` read back clean (19 tracks) and Vegas left OPEN on the project.
-  Audible via one audio track per clip at measured gain.
-- `becky-cut --headroom` knob; `import-to-vegas.bat` accepts `vegas_cut.json` drags.
+  jump-cuts on per-clip calibrated audio (clap-proof p90/p10 gain), word-anchored edge trim +
+  interior-gap split (NEW — no fixed window/ceiling, inclusive overlap for zero-duration ASR
+  timestamps), transcript rescue (now trims its OWN padding internally), multi-signal re-take
+  cuts (clean alternates -> RETAKE? markers), zero-crossing snap, QA gate.
+- **Vegas seam unchanged, re-verified**: `vegas/BeckyRoughCut.cs` (4 tracks, sequential quote
+  splice — headless-verified `tracks: 4` and math-checked zero timeline overlap) +
+  `BeckyVerifyProject.cs`.
+- **The prior "3.0 s residual silence, 0.0%" claim on this section was WRONG and is retracted**
+  — its self-check threshold was calibrated for zero-crossing-snap tolerance (-77 to -92 dBFS),
+  not for telling room noise from speech, and could not have fired on real room noise. Jordan's
+  follow-up feedback ("littered with clips that are mostly room noise") was correct; the code
+  has now actually been fixed for it (see handoff doc §5).
+- **Re-delivered + re-verified on hj-fbi-recap** (real 16-source footage, run end-to-end 5
+  times while iterating): 2:25:25 raw -> ~81 min, 1226 main events, 25 verified quote clips, 36
+  markers, 16 regions, 36 retake cues cut, 1 dropped cue (a corrupted single-word ASR
+  timestamp, self-documented in `qa.json`, not a cutting bug), **2.5 s total in 2 gaps >=1.0s
+  across the whole assembled cut (0.05%)** — measured against actual transcript word coverage,
+  not a dB threshold. Vegas Pro opened normally and the timeline visually inspected; left OPEN
+  on the project for Jordan.
+- `becky-cut --headroom` knob; `import-to-vegas.bat` accepts `vegas_cut.json` drags (unchanged).
 
 ### PREVIOUS — Becky Review 3: the feedback-11 round (2026-08-21, local)
 

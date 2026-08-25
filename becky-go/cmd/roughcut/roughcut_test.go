@@ -174,6 +174,99 @@ func TestSnapLeavesBoundaryWhenNoQuietNearby(t *testing.T) {
 	}
 }
 
+// --- word-edge refinement ---------------------------------------------------
+
+// Jordan, L2199 2026-08-24: "the timeline is littered with clips that are
+// mostly room noise where I'm just adjusting myself preparing to deliver the
+// line" - a multi-second lead-in must trim to the real first word, not just
+// the old window's 0.8s.
+func TestRefineWordEdgesTrimsLongRoomNoiseLeadIn(t *testing.T) {
+	keeps := []span{{100.0, 105.0}}
+	words := []span{{102.3, 102.6}, {102.7, 103.1}, {104.6, 104.8}}
+	got := refineWordEdges(keeps, words)
+	if len(got) != 1 {
+		t.Fatalf("got %d spans, want 1", len(got))
+	}
+	if math.Abs(got[0].Start-102.24) > 0.01 {
+		t.Errorf("Start = %v, want ~102.24 (2.3s room noise trimmed to the first word)", got[0].Start)
+	}
+	if math.Abs(got[0].End-104.98) > 0.01 {
+		t.Errorf("End = %v, want ~104.98", got[0].End)
+	}
+}
+
+// Regression for the 2026-08-24 live bug: a 0.79s keep whose first word ("You")
+// starts just under the old window's 0.15s floor got skipped, so the window
+// matched a LATER word instead and collapsed the keep to 0.06s. The fix must
+// anchor to the first word overlapping the keep, not a floating window.
+func TestRefineWordEdgesDoesNotDestroyShortKeep(t *testing.T) {
+	keeps := []span{{443.62, 444.41}}
+	words := []span{{443.68, 443.83}, {443.85, 443.95}, {443.97, 444.16}} // "You" "can" "see"
+	got := refineWordEdges(keeps, words)
+	if len(got) != 1 {
+		t.Fatalf("got %d spans, want 1", len(got))
+	}
+	if got[0].End-got[0].Start < 0.6 {
+		t.Fatalf("keep collapsed to %.2fs, want the full \"You can see\" preserved: %+v", got[0].End-got[0].Start, got[0])
+	}
+	if got[0].Start > 443.68 {
+		t.Errorf("Start = %v trims into \"You\" (starts 443.68)", got[0].Start)
+	}
+}
+
+// A word starting right at the keep edge (no real gap) must not trigger a
+// no-op-sized "trim" that jitters the boundary.
+func TestRefineWordEdgesNoOpWhenNoGap(t *testing.T) {
+	keeps := []span{{10.0, 13.0}}
+	words := []span{{10.02, 10.4}, {12.9, 12.98}}
+	got := refineWordEdges(keeps, words)
+	if got[0] != keeps[0] {
+		t.Errorf("got %+v, want unchanged %+v (gaps under minGap)", got[0], keeps[0])
+	}
+}
+
+// A gap between two words INSIDE a cue-merged keep (buttercut_proposal.md,
+// measured: "a '13s cue' that contained a 6s silence") must split into two
+// keeps, not survive as one span with a silent hole in the middle.
+func TestSplitOnWordGapsSplitsInteriorSilence(t *testing.T) {
+	keeps := []span{{0.0, 13.0}}
+	words := []span{{0.1, 0.4}, {0.5, 0.9}, {7.0, 7.3}, {7.4, 7.8}, {7.9, 8.1}}
+	got := splitOnWordGaps(keeps, words, 0.6)
+	if len(got) != 2 {
+		t.Fatalf("got %d spans, want 2 (the 0.9-7.0 gap is a 6.1s silence): %+v", len(got), got)
+	}
+	if got[0].End > 1.15 {
+		t.Errorf("first span end = %v, should stop near word 2's end (0.9) + margin", got[0].End)
+	}
+	if got[1].Start < 6.8 {
+		t.Errorf("second span start = %v, should resume near word 3's start (7.0) - margin", got[1].Start)
+	}
+}
+
+// Gaps shorter than pause (conversational rhythm) must not fragment the keep.
+func TestSplitOnWordGapsLeavesShortGapsAlone(t *testing.T) {
+	keeps := []span{{0.0, 3.0}}
+	words := []span{{0.1, 0.4}, {0.7, 1.0}, {1.3, 1.6}}
+	got := splitOnWordGaps(keeps, words, 0.6)
+	if len(got) != 1 {
+		t.Fatalf("got %d spans, want 1 (all gaps under pause): %+v", len(got), got)
+	}
+}
+
+// Regression for the 2026-08-24 live bug: real Parakeet word JSON contains
+// genuine zero-duration entries ({"word":"And","start":132,"end":132}). A
+// strict w.End>s overlap test excludes a word sitting exactly at the keep's
+// start, so the search locks onto the NEXT word instead and clips the first
+// one - here it dropped the QA gate's coverage for a real cue.
+func TestRefineWordEdgesHandlesZeroDurationWords(t *testing.T) {
+	keeps := []span{{131.4, 136.1}}
+	words := []span{{132.0, 132.0}, {132.32, 132.32}, {132.56, 132.56}, {135.6, 135.6}}
+	got := refineWordEdges(keeps, words)
+	if got[0].Start > 132.0 {
+		t.Errorf("Start = %v trims into the first word (132.0, zero-duration)", got[0].Start)
+	}
+}
+
 func TestSnapExtendsToQuietPocket(t *testing.T) {
 	rate := 16000
 	// tone everywhere except a quiet pocket 0.1s after the boundary.

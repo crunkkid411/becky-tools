@@ -3,12 +3,13 @@
  * ----------------------------------------------------------------------------
  * Assemble the becky-roughcut timeline in VEGAS Pro 18, fully unattended.
  *
- * becky-roughcut (becky-go/cmd/roughcut) does ALL the thinking - silence cuts
- * on zero-crossings, snapped boundaries, re-take chains, quote markers - and
- * writes vegas_cut.json. This script is the dumb assembler: it reads that JSON,
- * builds the timeline through the scripting API (VEGAS 18 cannot import FCPXML
- * or OTIO; its FCP7 importer crashes on hand-rolled XML), saves the .veg and
- * quits. Jordan walks away; when he comes back the rough cut is populated.
+ * becky-roughcut (becky-go/cmd/roughcut) does ALL the thinking - silence
+ * jump-cuts on the transcript, retake chains, quote splices, zero-crossing
+ * snaps - and writes vegas_cut.json with FINAL timeline positions. This
+ * script is the dumb assembler: four tracks exactly (his video, his audio,
+ * quotes video, quotes audio), events placed at their given positions,
+ * markers and regions, save, exit. Quotes play SEQUENTIALLY - the main edit
+ * stops, the quote plays, the main edit resumes - never on top of his voice.
  *
  * HOW TO RUN
  *   Agent / walk-away:  set BECKY_ROUGHCUT_JSON=<path to vegas_cut.json>, then
@@ -16,21 +17,10 @@
  *                       (becky-roughcut --launch-vegas does exactly this)
  *   By hand:            Tools > Scripting > Run Script... ; a picker appears.
  *
- * WHAT IT BUILDS
- *   - project video settings from the JSON (1920x1080x30 for the hj footage);
- *   - one video track + one audio track, "Rough Cut (...)";
- *   - every keep span as a paired video+audio event, butted end to end,
- *     Take.Offset = the span's in-point (sources are only ever READ);
- *   - a named Region per source clip (jump clip-to-clip);
- *   - a Marker per quote lead-in / RETAKE? note;
- *   - saves <save_path> (.veg) and writes <save_path>.buildlog.txt so a
- *     headless run can be audited afterwards.
- *
- * VERIFIED against the official MAGIX scripting docs (VegasProData/):
- *   EntryPoint.FromVegas; AddVideoTrack/AddAudioTrack; AddVideoEvent/
- *   AddAudioEvent(Timecode,Timecode); Take.Offset; Marker(Timecode,label);
- *   Region(Timecode,Timecode,label); Vegas.SaveProject(path); Vegas.Exit().
- *   NOTE for VEGAS Pro 13 and OLDER ONLY: change the using below to Sony.Vegas.
+ * VP18 API gotchas canonized here: Timecode has no .Seconds (use .Nanos*1e-7
+ * in the verify script); AudioTrack.Volume is float; Vegas.ScriptArgs does
+ * not exist (env vars); a compile error pops the same dialog as a bad
+ * project.
  * ----------------------------------------------------------------------------
  */
 
@@ -51,15 +41,14 @@ public class EntryPoint
         public int height;
         public string save_path;
         public List<RCEvent> events;
+        public List<RCEvent> quotes;
         public List<RCMarker> markers;
         public List<RCRegion> regions;
-        public List<RCOverlay> overlays;
-        public Dictionary<string, double> gains;
+        public double audio_gain_db;
     }
-    class RCEvent  { public string source; public double @in; public double @out; }
+    class RCEvent  { public string source; public double @in; public double @out; public double tl; }
     class RCMarker { public double t; public string title; }
     class RCRegion { public double t; public double len; public string label; }
-    class RCOverlay { public string source; public double @in; public double @out; public double at; }
 
     public void FromVegas(Vegas vegas)
     {
@@ -97,80 +86,44 @@ public class EntryPoint
         if (rc == null || rc.events == null || rc.events.Count == 0)
             throw new Exception("vegas_cut.json has no events");
         log.Add("json: " + jsonPath);
-        log.Add("events: " + rc.events.Count + " markers: " +
-                (rc.markers == null ? 0 : rc.markers.Count) + " regions: " +
-                (rc.regions == null ? 0 : rc.regions.Count));
+        log.Add("events: " + rc.events.Count + " quotes: " +
+                (rc.quotes == null ? 0 : rc.quotes.Count) + " markers: " +
+                (rc.markers == null ? 0 : rc.markers.Count));
 
-        // Project settings from the footage, so the ruler reads true.
         if (rc.width > 0)  vegas.Project.Video.Width  = rc.width;
         if (rc.height > 0) vegas.Project.Video.Height = rc.height;
         if (rc.fps > 0)    vegas.Project.Video.FrameRate = rc.fps;
 
         VideoTrack vtrack = vegas.Project.AddVideoTrack();
         vtrack.Name = "Rough Cut (video)";
-        // One audio track per source clip: each carries that clip's measured
-        // gain (quiet Rode mic clips boosted, clap-clipped clips at unity).
-        // Per-event Normalize would also work but makes Vegas scan every
-        // event's audio and hangs the build for tens of minutes.
-        Dictionary<string, AudioTrack> atracks = new Dictionary<string, AudioTrack>(StringComparer.OrdinalIgnoreCase);
+        AudioTrack atrack = vegas.Project.AddAudioTrack();
+        atrack.Name = "Rough Cut (audio)";
+        atrack.Volume = (float)Math.Pow(10.0, rc.audio_gain_db / 20.0);
 
-        // One Media per source file, reused for every event of that file.
         Dictionary<string, Media> media = new Dictionary<string, Media>(StringComparer.OrdinalIgnoreCase);
-        Timecode cursor = Timecode.FromSeconds(0.0);
         int placed = 0;
 
         foreach (RCEvent e in rc.events)
         {
-            if (e.@out <= e.@in) { log.Add("skip (no length): " + e.source); continue; }
-            Media m;
-            if (!media.TryGetValue(e.source, out m))
-            {
-                try { m = new Media(e.source); }
-                catch (Exception ex) { log.Add("skip (unreadable): " + e.source + " (" + ex.Message + ")"); continue; }
-                media[e.source] = m;
-            }
-            Timecode start  = cursor;
-            Timecode length = Timecode.FromSeconds(e.@out - e.@in);
-            Timecode offset = Timecode.FromSeconds(e.@in);
-            bool ok = false;
-            try
-            {
-                VideoStream vs = m.GetVideoStreamByIndex(0);
-                if (vs != null)
-                {
-                    VideoEvent ve = vtrack.AddVideoEvent(start, length);
-                    ve.AddTake(vs).Offset = offset;
-                    ok = true;
-                }
-            }
-            catch { }
-            try
-            {
-                AudioStream au = m.GetAudioStreamByIndex(0);
-                if (au != null)
-                {
-                    AudioTrack atrack;
-                    if (!atracks.TryGetValue(e.source, out atrack))
-                    {
-                        atrack = vegas.Project.AddAudioTrack();
-                        atrack.Name = "Audio " + Path.GetFileName(e.source);
-                        double db = 20.0;
-                        if (rc.gains != null && rc.gains.ContainsKey(Path.GetFileName(e.source)))
-                            db = rc.gains[Path.GetFileName(e.source)];
-                        atrack.Volume = (float)Math.Pow(10.0, db / 20.0);
-                        atracks[e.source] = atrack;
-                    }
-                    AudioEvent ae = atrack.AddAudioEvent(start, length);
-                    ae.AddTake(au).Offset = offset;
-                    ok = true;
-                }
-            }
-            catch { }
-            if (!ok) { log.Add("skip (no streams): " + e.source); continue; }
-            cursor = cursor + length;
-            placed++;
+            if (Place(vegas, media, vtrack, atrack, e.source, e.@in, e.@out, e.tl)) placed++;
+            else log.Add("skip: " + e.source + " @" + e.tl);
         }
         log.Add("placed: " + placed + " of " + rc.events.Count);
+
+        int qplaced = 0;
+        if (rc.quotes != null && rc.quotes.Count > 0)
+        {
+            VideoTrack qv = vegas.Project.AddVideoTrack();
+            qv.Name = "Quotes (video)";
+            AudioTrack qa = vegas.Project.AddAudioTrack();
+            qa.Name = "Quotes (audio)";
+            foreach (RCEvent q in rc.quotes)
+            {
+                if (Place(vegas, media, qv, qa, q.source, q.@in, q.@out, q.tl)) qplaced++;
+                else log.Add("quote skip: " + q.source);
+            }
+        }
+        log.Add("quotes placed: " + qplaced);
 
         if (rc.regions != null)
         {
@@ -189,45 +142,6 @@ public class EntryPoint
             }
         }
 
-        // Verified quote clips (corpus media) land on their own tracks ABOVE
-        // the main edit, at the marker positions.
-        if (rc.overlays != null && rc.overlays.Count > 0)
-        {
-            VideoTrack qv = vegas.Project.AddVideoTrack();
-            qv.Name = "Quotes (video)";
-            AudioTrack qa = vegas.Project.AddAudioTrack();
-            qa.Name = "Quotes (audio)";
-            int qplaced = 0;
-            foreach (RCOverlay o in rc.overlays)
-            {
-                if (o.@out <= o.@in) continue;
-                Media m;
-                if (!media.TryGetValue(o.source, out m))
-                {
-                    try { m = new Media(o.source); }
-                    catch (Exception ex) { log.Add("overlay skip: " + o.source + " (" + ex.Message + ")"); continue; }
-                    media[o.source] = m;
-                }
-                Timecode start  = Timecode.FromSeconds(o.at);
-                Timecode length = Timecode.FromSeconds(o.@out - o.@in);
-                Timecode offset = Timecode.FromSeconds(o.@in);
-                try
-                {
-                    VideoStream vs = m.GetVideoStreamByIndex(0);
-                    if (vs != null) qv.AddVideoEvent(start, length).AddTake(vs).Offset = offset;
-                }
-                catch { }
-                try
-                {
-                    AudioStream au = m.GetAudioStreamByIndex(0);
-                    if (au != null) qa.AddAudioEvent(start, length).AddTake(au).Offset = offset;
-                }
-                catch { }
-                qplaced++;
-            }
-            log.Add("overlays: " + qplaced + " of " + rc.overlays.Count);
-        }
-
         try { vegas.Transport.CursorPosition = Timecode.FromSeconds(0.0); } catch { }
 
         if (!string.IsNullOrEmpty(rc.save_path))
@@ -235,5 +149,44 @@ public class EntryPoint
             vegas.SaveProject(rc.save_path);
             log.Add("saved: " + rc.save_path);
         }
+    }
+
+    static bool Place(Vegas vegas, Dictionary<string, Media> media,
+                      VideoTrack vt, AudioTrack at, string source,
+                      double @in, double @out, double tl)
+    {
+        if (@out <= @in) return false;
+        Media m;
+        if (!media.TryGetValue(source, out m))
+        {
+            try { m = new Media(source); }
+            catch { return false; }
+            media[source] = m;
+        }
+        Timecode start  = Timecode.FromSeconds(tl);
+        Timecode length = Timecode.FromSeconds(@out - @in);
+        Timecode offset = Timecode.FromSeconds(@in);
+        bool ok = false;
+        try
+        {
+            VideoStream vs = m.GetVideoStreamByIndex(0);
+            if (vs != null)
+            {
+                vt.AddVideoEvent(start, length).AddTake(vs).Offset = offset;
+                ok = true;
+            }
+        }
+        catch { }
+        try
+        {
+            AudioStream au = m.GetAudioStreamByIndex(0);
+            if (au != null)
+            {
+                at.AddAudioEvent(start, length).AddTake(au).Offset = offset;
+                ok = true;
+            }
+        }
+        catch { }
+        return ok;
     }
 }

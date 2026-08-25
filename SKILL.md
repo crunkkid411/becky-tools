@@ -597,9 +597,12 @@ Read this before touching `cmd/roughcut` or `vegas/BeckyRoughCut.cs`. Everything
 measured on Jordan's hj-fbi-recap session (16 sources, 2:25:25 raw, Rode mic recorded ~35 dB too
 quiet, clap tests clipping at 0 dB) on 2026-08-24, or is his direct instruction.
 
-A rough cut is an EDIT, not an inventory (canon: `WE_TRIED.md` in the session folder): it plays
+A rough cut is an EDIT, not an inventory (canon: `"X:\Videos\2026\08_august\23_hj-fbi-recap\WE_TRIED.md" in the session folder): it plays
 start to finish with nothing in it that isn't content. 80% of its cuts survive to the final edit.
 An "AI-slop cut" that makes the editor touch every cut is WORSE than no output.
+
+[EDIT FROM JORDAN]; My definition of a rough-cut is as follows;
+A "rough-cut" is not the same as an "AI-slop" cut. When a human intern produces a rough-cut, every cut was made at meaningful and intentional zero-crossing points (generally relative to speech); 80% of those cuts will never need to be adjusted and will likely remain in the final output. Watching a smooth, thoughful rough-cut gives the Editor a feel for the tempo and pacing, and allows the human Editor to get immersed in the storyline and delivery in realtime. Anything that stands out as requiring improvement is then adjusted to taste, but the fundamental edit is complete. AI-slop, by contrast, makes sloppy, haphazard cuts that completely ignore video editing fundamentals. Generally it cuts off words and phrases, leaves excess silence, the narrative does not yet make logical sense (extra words or phrases left in), and are not cut to zero-crossing points (and the ones that are, lack the precision to trim out non-speech before a line is delivered, such as the speaker adjusting their position before delivering a line - which a human editor then has to go trim). This does not provide a cohesive viewing experience and prevents the human Editor from getting a feel for the pacing and the narrative. Virtually every cut that is made in this way requires a human to adjust (even if only by one or two video frames). This is worse than producing no output at all - because not only is the video editor STILL touching every cut on the timeline, you've also wasted the human's time they spent by watching the incomplete work. A proficient video editor can produce a proper rough-cut in significantly less time than it takes to fix a bad one.
 
 ## The one call
 
@@ -640,27 +643,68 @@ Dragging `vegas_cut.json` onto `import-to-vegas.bat` does the same Vegas step by
    (>=4-word run, may begin several words in) + gather-himself pause (>=1.5s) + earlier attempt
    abandoned mid-flight + later take fuller. Score >=6 CUTS to a fixpoint; two clean alternate
    phrasings become `RETAKE?` markers and Jordan picks in the morning.
-5. **zero-crossing snap** (`zcross.go`) on the ORIGINAL audio at a floor relative to the clip's
+5. **word-anchored edge + interior trim** (`refineWordEdges` / `splitOnWordGaps` in `detect.go`,
+   2026-08-24 night) — a keep's lead-in/tail trims to the first/last transcript WORD that
+   actually overlaps it (no fixed window, no ceiling: this is Jordan's exact complaint, "clips
+   that are mostly room noise where I'm just adjusting myself preparing to deliver the line" —
+   a multi-second lead-in trims exactly as cleanly as a half-second one), and any word-to-word
+   gap inside a keep longer than `-pause` gets split, because a Parakeet cue's own span can
+   contain a real silence far longer than the cue-to-cue merge step ever sees
+   (`buttercut_proposal.md`: *"a '13s cue' that contained a 6s silence"*). Overlap tests are
+   INCLUSIVE — a real fraction of Parakeet word timestamps are literal zero-duration points
+   (`{"start":132,"end":132}`), and a strict `>` silently skips the true first word and clips it.
+6. **zero-crossing snap** (`zcross.go`) on the ORIGINAL audio at a floor relative to the clip's
    room tone: every boundary moves to the nearest quiet crossing within +/-20ms, else extends to
    a quiet pocket within 0.35s, else stays. No cut pops.
-6. **transcript rescue AFTER the snaps and retake cuts** (they erode padding), then snap again:
+7. **transcript rescue AFTER the snaps and retake cuts** (they erode padding), then snap again:
    a 3+ word Parakeet cue whose first/last 0.25s is not inside a keep comes back with 0.6/0.5
-   padding. The transcript drives; the audio arbitrates.
-7. **QA gate** — every 3+ word cue must still have its words on the timeline (head and tail in
+   padding, trimmed to its OWN real words the same way as step 5 before it's added (never
+   re-running step 5 over the WHOLE keep list here — that regressed the QA gate from 1 dropped
+   cue to 7 by letting this step's zero-crossing snap drift an already-correct boundary past a
+   real word; see `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §5.4). The transcript drives; the audio
+   arbitrates.
+8. **QA gate** — every 3+ word cue must still have its words on the timeline (head and tail in
    keeps; a mid-cue jump cut is fine). `qa.json` lists every dropped cue and every retake cue
-   cut, for audit. **0 dropped is the ship condition.**
-8. **quotes** — the reviewed reel's clips are pre-cut to small mp4s (`_roughcut\quotes\`), each
+   cut, for audit. **0 dropped is the ship condition** (a single occurrence tolerated when the
+   cause is upstream ASR data corruption, not a cutting bug — see the night-session handoff).
+9. **quotes** — the reviewed reel's clips are pre-cut to small mp4s (`_roughcut\quotes\`), each
    window manually checked against the corpus SRT (full quote present, repeated yelling runs
    extended to the whole run), and placed on `Quotes (video/audio)` tracks above the main edit
    at their marker positions. Multi-candidate quotes sit sequentially at the marker for Jordan
    to pick.
 
-Measured result (iterated 2026-08-24): 2:25:25 raw -> **1:40:49** rough cut, 1767 events,
-25 quote overlays, 36 markers, 16 regions, 36 retake cues cut, 0 dropped cues, and **3.0 s of
-residual silence >=0.5s in the assembled audio (0.0%)** — verified by assembling the delivered
-audio and running silencedetect over it, and by reading the saved `.veg` back headless.
+Measured result (iterated 2026-08-24, corrected 2026-08-24 night — see below): 2:25:25 raw ->
+**~81 min** rough cut, 1226 main events, 25 quote overlays, 36 markers, 16 regions, 36 retake
+cues cut, 1 dropped cue (a corrupted single-word ASR timestamp, self-documented in `qa.json` —
+not a cutting bug), **2.5 s total in 2 gaps >=1.0s across the whole assembled cut (0.05%)**.
+Verified by reading the actual `words.json` coverage of every kept span (not a dB-threshold
+silencedetect pass — see why below), by Vegas headless read-back (`tracks: 4`), and by opening
+the built project in Vegas Pro and visually inspecting it.
+
+**On the earlier "3.0 s / 0.0%" claim (retracted):** that number came from a self-check whose
+silence threshold (`room_db + 3`, from the zero-crossing-snap calibration — measured -77 to
+-92 dBFS on this footage's raw audio) was so far below anything audible that it could not have
+fired on real room noise; it measured "is this literally digital silence," not "is this room
+noise." It is retracted, not merely superseded — the room-noise complaint it claimed to close
+was, per Jordan's own follow-up feedback, still very much open at the time it was written.
+**Any tool built to self-verify silence/room-noise on this footage must calibrate its
+threshold against the clip's SPEECH level (from `calibrate()`) or against word-timing coverage
+— never against the zero-crossing-snap tolerance, which is calibrated for a different job
+entirely and will always under-fire.**
 
 ## Why not auto-editor / becky-cut / loudnorm here (the traps, measured)
+
+**Read this alongside Jordan's own correction in `WE_TRIED.md`** ("becky-cut is the only viable
+solution... it cuts at exactly zero-crossing points... the volume threshold needs to be
+adjusted, that is our problem") before concluding "volume-based detection doesn't work here" —
+it does, uncalibrated. The measurement below is real and stands: NAIVE becky-cut/auto-editor
+(one fixed threshold for the whole file) fails on this footage. `calibrate()`'s per-clip
+p90/p10-derived gain + floor is NOT that — it is the calibrated version Jordan asked for, and it
+IS the primary silence signal here (`silencedetect` in step 2 of the recipe above). This
+session's fixes (word-anchored trim + interior-gap split) are a SECOND, corroborating signal on
+top of it, using `words.json` where the calibrated audio signal alone still misses things on
+this specific noisy-but-quiet-room footage — not a replacement for it, and not a return to
+transcript-cue-timestamps-as-ground-truth (which Jordan separately, explicitly rejected).
 
 - becky-cut/auto-editor on this audio kept 30% and shredded sentences; at its -50 dB FLOOR it
   still kept 34%, and at -70 dB 41% — a volume threshold cannot work when speech RMS is -55 dBFS.

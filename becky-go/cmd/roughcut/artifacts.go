@@ -6,69 +6,55 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/proc"
 )
 
-// writeArtifacts emits the four reviewable files: library.yaml (the manifest),
-// cut.yaml (the edit itself, readable in a text editor), vegas_cut.json (what
-// the Vegas script assembles) and qa.json (the honesty fields).
-func writeArtifacts(out, dir string, clips []clip, events []event, markers []markerOut, dropped, cutAsRetake []qaCue, totalKeep, tl float64) error {
-	// ---- vegas_cut.json ----------------------------------------------------
+// writeArtifacts emits the reviewable files: library.yaml (manifest),
+// cut.yaml (the edit, readable in a text editor), qa.json (the honesty
+// fields) and vegas_cut.json - the four-track layout vegas/BeckyRoughCut.cs
+// assembles: his video+audio, quotes video+audio, quotes inserted
+// sequentially at their markers.
+func writeArtifacts(out, dir string, lay layout, dropped, cutAsRetake []qaCue, totalKeep, tl float64, gains map[string]float64) error {
 	fps, w, h := 30.0, 1920, 1080
-	if len(clips) > 0 {
-		if clips[0].FPS > 0 {
-			fps = clips[0].FPS
+
+	// one audible level for the whole main audio track: the median measured
+	// gain (per-clip values vary only a few dB on this footage).
+	audioGain := 20.0
+	if len(gains) > 0 {
+		var vs []float64
+		for _, v := range gains {
+			vs = append(vs, v)
 		}
-		if clips[0].Width > 0 {
-			w, h = clips[0].Width, clips[0].Height
-		}
+		sort.Float64s(vs)
+		audioGain = vs[len(vs)/2]
 	}
-	type region struct {
-		T     float64 `json:"t"`
-		Len   float64 `json:"len"`
-		Label string  `json:"label"`
-	}
-	var regions []region
-	for _, c := range clips {
-		first, last := -1, -1
-		for i := range events {
-			if !strings.EqualFold(filepath.Base(events[i].Source), filepath.Base(c.Path)) {
-				continue
-			}
-			if first < 0 {
-				first = i
-			}
-			last = i
-		}
-		if first < 0 {
-			continue
-		}
-		end := events[last].TLStart + (events[last].Out - events[last].In)
-		regions = append(regions, region{events[first].TLStart, end - events[first].TLStart, c.Stem})
-	}
+
 	vj, _ := json.MarshalIndent(map[string]any{
-		"version":   "1",
-		"project":   filepath.Base(dir) + " rough cut",
-		"fps":       fps,
-		"width":     w,
-		"height":    h,
-		"save_path": filepath.Join(out, "rough_cut.veg"),
-		"events":    events,
-		"markers":   markers,
-		"regions":   regions,
+		"version":       "1",
+		"project":       filepath.Base(dir) + " rough cut",
+		"fps":           fps,
+		"width":         w,
+		"height":        h,
+		"save_path":     filepath.Join(out, "rough_cut.veg"),
+		"events":        lay.Events,
+		"quotes":        lay.Quotes,
+		"markers":       lay.Markers,
+		"regions":       lay.Regions,
+		"gains":         gains,
+		"audio_gain_db": audioGain,
 	}, "", "  ")
 	if err := os.WriteFile(filepath.Join(out, "vegas_cut.json"), vj, 0o644); err != nil {
 		return err
 	}
 
-	// ---- cut.yaml ----------------------------------------------------------
 	var b strings.Builder
-	fmt.Fprintf(&b, "# rough cut IR - %s\n# %d events, %.1fs of %.1fs timeline. Sources are READ-ONLY.\n", filepath.Base(dir), len(events), totalKeep, tl)
-	for i, e := range events {
-		fmt.Fprintf(&b, "- source: %s\n  in: %.3f\n  out: %.3f\n  timeline: %.3f\n", filepath.Base(e.Source), e.In, e.Out, e.TLStart)
+	fmt.Fprintf(&b, "# rough cut IR - %s\n# %d main events + %d quote inserts, %.1fs timeline. Sources are READ-ONLY.\n", filepath.Base(dir), len(lay.Events), len(lay.Quotes), tl)
+	for _, e := range lay.Events {
+		fmt.Fprintf(&b, "- source: %s\n  in: %.3f\n  out: %.3f\n  timeline: %.3f\n", baseName(e.Source), e.In, e.Out, e.TL)
 		if e.Dialogue != "" {
 			d := e.Dialogue
 			if len(d) > 200 {
@@ -76,31 +62,19 @@ func writeArtifacts(out, dir string, clips []clip, events []event, markers []mar
 			}
 			fmt.Fprintf(&b, "  dialogue: %q\n", d)
 		}
-		_ = i
+	}
+	for _, q := range lay.Quotes {
+		fmt.Fprintf(&b, "- quote: %s\n  in: %.3f\n  out: %.3f\n  timeline: %.3f\n", baseName(q.Source), q.In, q.Out, q.TL)
 	}
 	if err := os.WriteFile(filepath.Join(out, "cut.yaml"), []byte(b.String()), 0o644); err != nil {
 		return err
 	}
 
-	// ---- library.yaml ------------------------------------------------------
-	var lb strings.Builder
-	fmt.Fprintf(&lb, "project: %s\nfootage_summary: \"\"\nuser_context: \"\"\nclips:\n", filepath.Base(dir))
-	for _, c := range clips {
-		fmt.Fprintf(&lb, "  - file: %s\n    creation_time: %q\n    duration: %.1f\n    fps: %.3f\n", c.Path, c.CreationTime, c.Duration, c.FPS)
-		if c.SRT != "" {
-			fmt.Fprintf(&lb, "    srt: %s\n", c.SRT)
-		}
-		fmt.Fprintf(&lb, "    cut_json: %s\n    audio_profile: %s\n", filepath.Join(out, c.Stem+".cut.json"), filepath.Join(out, c.Stem+".audio_profile.json"))
-	}
-	if err := os.WriteFile(filepath.Join(out, "library.yaml"), []byte(lb.String()), 0o644); err != nil {
-		return err
-	}
-
-	// ---- qa.json -----------------------------------------------------------
 	qj, _ := json.MarshalIndent(map[string]any{
 		"timeline_seconds":  tl,
 		"keep_seconds":      totalKeep,
-		"events":            len(events),
+		"events":            len(lay.Events),
+		"quote_inserts":     len(lay.Quotes),
 		"dropped_cues":      dropped,
 		"retake_cues_cut":   cutAsRetake,
 		"dropped_cue_count": len(dropped),
@@ -108,9 +82,25 @@ func writeArtifacts(out, dir string, clips []clip, events []event, markers []mar
 	return os.WriteFile(filepath.Join(out, "qa.json"), qj, 0o644)
 }
 
-// launchVegasPro starts Vegas Pro headless with the timeline-builder script.
-// The script reads BECKY_ROUGHCUT_JSON, builds the timeline, saves the .veg and
-// exits - Jordan walks away and comes back to a populated project.
+// library.yaml is written separately (it needs the clip inventory).
+func writeLibrary(out, dir string, clips []clip, summaries map[string]string) error {
+	var lb strings.Builder
+	fmt.Fprintf(&lb, "project: %s\nfootage_summary: \"\"\nuser_context: \"\"\nclips:\n", filepath.Base(dir))
+	for _, c := range clips {
+		fmt.Fprintf(&lb, "  - file: %s\n    creation_time: %q\n    duration: %.1f\n    fps: %.3f\n", c.Path, c.CreationTime, c.Duration, c.FPS)
+		if c.SRT != "" {
+			fmt.Fprintf(&lb, "    srt: %s\n", c.SRT)
+		}
+		if s := summaries[c.Stem]; s != "" {
+			fmt.Fprintf(&lb, "    summary: %q\n", s)
+		}
+		fmt.Fprintf(&lb, "    dossier: %s\n", filepath.Join(out, c.Stem+".dossier.json"))
+		fmt.Fprintf(&lb, "    cut_json: %s\n    audio_profile: %s\n", filepath.Join(out, c.Stem+".cut.json"), filepath.Join(out, c.Stem+".audio_profile.json"))
+	}
+	return os.WriteFile(filepath.Join(out, "library.yaml"), []byte(lb.String()), 0o644)
+}
+
+// launchVegasPro starts Vegas headless with the timeline-builder script.
 func launchVegasPro(out, scriptOverride string, verbose bool) error {
 	jsonPath, _ := filepath.Abs(filepath.Join(out, "vegas_cut.json"))
 	script := scriptOverride

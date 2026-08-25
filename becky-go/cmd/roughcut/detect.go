@@ -29,6 +29,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -260,12 +261,206 @@ func vadSanity(norm string, keeps []span, vadThreshold, vadPct float64, verbose 
 	return out
 }
 
+// loadWords reads becky-transcribe's word-level timestamps for a clip
+// (buttercut proposal 2.1 - the suite already had them; roughcut was cue-level
+// only). Missing file degrades to nil: cue edges stand.
+func loadWords(out, stem string) []span {
+	b, err := os.ReadFile(filepath.Join(out, stem+".words.json"))
+	if err != nil {
+		return nil
+	}
+	var w struct {
+		Words []struct {
+			Start float64 `json:"start"`
+			End   float64 `json:"end"`
+		} `json:"words"`
+	}
+	if json.Unmarshal(b, &w) != nil {
+		return nil
+	}
+	out2 := make([]span, len(w.Words))
+	for i, x := range w.Words {
+		out2[i] = span{x.Start, x.End}
+	}
+	return out2
+}
+
+// refineWordEdges trims non-speech lead-ins and tails at the WORD: a human
+// editor cuts where the first word starts, not where the transcript cue
+// happened to open (Jordan's WE_TRIED edit: speaker adjusting himself before
+// the line is exactly what must not survive - and L2199, 2026-08-24: "the
+// timeline is littered with clips that are mostly room noise where I'm just
+// adjusting myself preparing to deliver the line").
+//
+// Anchors to the FIRST/LAST word that actually overlaps the keep, not a
+// fixed s+0.15..s+0.8 window: the old window silently gave up on anything
+// longer than 0.8s of lead-in (exactly the multi-second "adjusting myself"
+// case Jordan named), and worse, could skip past the true first word - if it
+// started at s+0.06 (just under the window) - onto a LATER word in the
+// window, deleting real speech (measured 2026-08-24: a 0.79s "You can see"
+// keep collapsed to a 0.06s fragment this way). capSec is a sanity valve
+// against corrupt/misaligned word data, not a real ceiling on how much
+// non-speech is allowed to precede a line.
+//
+// Overlap tests are INCLUSIVE (>=/<=, not >/<): a meaningful fraction of
+// Parakeet's word timestamps are genuine zero-duration points (measured,
+// this session's words.json: {"word":"And","start":132,"end":132}) - a
+// strict `w.End > s` treats a word sitting exactly at the boundary as not
+// touching it, so the search silently skips the true first/last word and
+// locks onto the NEXT one instead, clipping into real speech.
+func refineWordEdges(keeps, words []span) []span {
+	if len(words) == 0 {
+		return keeps
+	}
+	const (
+		minGap = 0.1 // gaps smaller than this are the margins doing their job
+		capSec = 4.0 // never trim more than this off one edge - protects against bad word data
+	)
+	out := make([]span, len(keeps))
+	for i, k := range keeps {
+		s, e := k.Start, k.End
+		for _, w := range words {
+			if w.End < s || w.Start > e {
+				continue // doesn't touch this keep
+			}
+			if gap := w.Start - s; gap >= minGap && gap <= capSec {
+				s = w.Start - 0.06
+			}
+			break // first word overlapping the keep - head trim decided
+		}
+		for j := len(words) - 1; j >= 0; j-- {
+			w := words[j]
+			if w.End < s || w.Start > e {
+				continue // doesn't touch this keep
+			}
+			if gap := e - w.End; gap >= minGap && gap <= capSec {
+				e = w.End + 0.18
+			}
+			break // last word overlapping the keep - tail trim decided
+		}
+		if e-s < minKeepSec {
+			s, e = k.Start, k.End
+		}
+		out[i] = span{s, e}
+	}
+	return out
+}
+
+// splitOnWordGaps further splits a keep wherever two consecutive words that
+// overlap it are more than pause seconds apart - the word-timing equivalent
+// of keepsFromTranscript's own mid-sentence pause split, and one that can
+// catch a long non-speech stretch the dB-threshold silencedetect pass misses
+// (calibrated for zero-crossing-snap tolerance, not for telling room noise
+// from speech). A Parakeet CUE's own [start,end] can span a silence far
+// longer than the cue-to-cue gap the merge step sees (measured,
+// buttercut_proposal.md: "a '13s cue' that contained a 6s silence"). Overlap
+// is inclusive (see refineWordEdges) for the same zero-duration-word reason.
+func splitOnWordGaps(keeps, words []span, pause float64) []span {
+	if len(words) == 0 {
+		return keeps
+	}
+	var out []span
+	for _, k := range keeps {
+		var inside []span
+		for _, w := range words {
+			if w.End < k.Start || w.Start > k.End {
+				continue
+			}
+			inside = append(inside, w)
+		}
+		if len(inside) < 2 {
+			out = append(out, k)
+			continue
+		}
+		start := k.Start
+		for i := 0; i < len(inside)-1; i++ {
+			gapStart, gapEnd := inside[i].End, inside[i+1].Start
+			if gapEnd-gapStart < pause {
+				continue
+			}
+			cutAt := gapStart + marginAfterSec
+			if cutAt-start >= minKeepSec {
+				out = append(out, span{start, cutAt})
+			}
+			start = gapEnd - marginBeforeSec
+		}
+		if k.End-start >= minKeepSec {
+			out = append(out, span{start, k.End})
+		}
+	}
+	return out
+}
+
+// keepsFromTranscript is the PRIMARY detector (WE_TRIED canon: the transcript
+// drives, the audio arbitrates). Keeps are exactly the transcript cue spans -
+// a stretch of room noise where Jordan adjusts himself has no cue and is
+// never kept, which is what an audio-only detector could not manage. Cues
+// closer together than the jump-cut pause bridge into one keep; a silence of
+// >= pause length INSIDE a merged span (measured on the boosted audio) splits
+// it - the excessive mid-sentence pause becomes a jump cut. Zero-crossing
+// snaps later land on the edges of SPEECH, not of random noises, because the
+// boundaries ARE the speech edges.
+func keepsFromTranscript(cues []quotes.Cue, sils []span, pause float64) []span {
+	type pad struct{ lo, hi float64 }
+	pads := make([]pad, len(cues))
+	for i, c := range cues {
+		lo, hi := marginBeforeSec, marginAfterSec
+		if n := len(strings.Fields(c.Text)); n >= 1 && n <= 2 {
+			lo, hi = 0.5, 0.7 // ad-libs: delivered with visual emphasis on purpose
+		}
+		pads[i] = pad{c.Start - lo, c.End + hi}
+	}
+	// bridge cues across conversational gaps
+	var merged []span
+	for i := range cues {
+		s := span{pads[i].lo, pads[i].hi}
+		if len(merged) > 0 && s.Start-merged[len(merged)-1].End < pause {
+			if s.End > merged[len(merged)-1].End {
+				merged[len(merged)-1].End = s.End
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	// split merged spans at measured excessive pauses
+	var keeps []span
+	for _, m := range merged {
+		start := m.Start
+		for _, s := range sils {
+			if s.End-s.Start < pause {
+				continue
+			}
+			if s.Start <= start+0.3 || s.End >= m.End-0.3 {
+				continue // hugging a speech edge: not a mid-sentence pause
+			}
+			if s.Start < start || s.End > m.End {
+				continue
+			}
+			if s.Start-start >= minKeepSec {
+				keeps = append(keeps, span{start, s.Start + marginAfterSec})
+			}
+			start = s.End - marginBeforeSec
+		}
+		if m.End-start >= minKeepSec {
+			keeps = append(keeps, span{start, m.End})
+		}
+	}
+	return keeps
+}
+
 // rescueMissedCues is the transcript-driven layer (WE_TRIED canon: the
 // transcript drives, the audio arbitrates). A 3+ word cue whose words the
 // audio detector left uncovered is a quiet delivery below the floor - Parakeet
 // heard it, a human editor would keep it - so it comes back as a keep with
 // padding. Abandoned retakes are subtracted AFTER this step and stay cut.
-func rescueMissedCues(cues []quotes.Cue, keeps []span) []span {
+// words is used ONLY to tighten a newly-rescued span's own edges (measured
+// 2026-08-24: an untrimmed rescue carried a 4.7s lead-in and 4.2s tail past
+// its actual words on LTXZ8562's opening cue) - it is never re-applied to
+// keeps that already covered their cue, so an already-fine boundary can't be
+// disturbed by a second pass interacting badly with the later zero-crossing
+// snap (regression measured the same day: re-refining the WHOLE keeps list
+// here dropped QA coverage on 6 cues that needed no rescue at all).
+func rescueMissedCues(cues []quotes.Cue, keeps []span, words []span) []span {
 	for _, cue := range cues {
 		if len(strings.Fields(cue.Text)) < 3 {
 			continue
@@ -273,7 +468,11 @@ func rescueMissedCues(cues []quotes.Cue, keeps []span) []span {
 		if wordsCovered(cue, keeps) {
 			continue
 		}
-		keeps = append(keeps, span{cue.Start - rescueBeforeSec, cue.End + rescueAfterSec})
+		rescued := span{cue.Start - rescueBeforeSec, cue.End + rescueAfterSec}
+		if trimmed := refineWordEdges([]span{rescued}, words); len(trimmed) == 1 {
+			rescued = trimmed[0]
+		}
+		keeps = append(keeps, rescued)
 	}
 	sort.SliceStable(keeps, func(i, j int) bool { return keeps[i].Start < keeps[j].Start })
 	var merged []span

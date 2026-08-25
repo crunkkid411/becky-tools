@@ -10,7 +10,15 @@
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,
-  the QA gate, and the headless Vegas seam (FCP7/OTIO import is dead in VP18). New 2026-08-24.
+  the QA gate, and the headless Vegas seam (FCP7/OTIO import is dead in VP18). New 2026-08-24,
+  numbers corrected 2026-08-24 night — see `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
+- `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` — **recovering a credit-exhausted agent CLI's session
+  and finishing its work**: how to pull a Qoder/Claude-Code-style CLI's own on-disk JSONL
+  transcript to find exactly what the human said and what got mid-edited before a credit wall
+  (not a rate limit) killed it, and the roughcut room-noise fix that resulted — including a
+  retracted "verified" claim that was actually a tautological self-check, and a fix attempt
+  that measured well but silently regressed the QA gate before the real one shipped. Read the
+  recovery-pattern section (§1) before assuming any interrupted agent session's work is lost.
 - `MASTER.md` - *current* state of master. STOP updating in CLAUDE.md; it lives here now.
 - `HANDOFF-LOG.md` — the **full branch-by-branch handoff history** (newest-first). `STATE-OF- MASTER.md`
   carries only the current state; the complete log of every cloud/local session lives here. Append

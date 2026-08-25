@@ -100,6 +100,7 @@ func main() {
 	vadSpeechPct := flag.Float64("vad-speech-pct", 0.0, "opt-in Silero junk-keep filter (%% speech); 0 = off - Silero proved untrustworthy on quiet-mic footage")
 	outDir := flag.String("out", "", "artifact dir (default <project-dir>/_roughcut)")
 	markersIn := flag.String("markers", "", "optional markers.json: [{source, source_time, title, kind}] placed on the timeline")
+	quotesIn := flag.String("quotes", "", "optional verified quotes json: [{q, source, in, out}] inserted SEQUENTIALLY at their marker (main edit stops, quote plays, main resumes)")
 	vegasScript := flag.String("vegas-script", "", "path to vegas/BeckyRoughCut.cs (default: found next to this exe)")
 	launchVegas := flag.Bool("launch-vegas", false, "after building, launch Vegas Pro headless and populate the timeline (save .veg, exit)")
 	verbose := flag.Bool("verbose", false, "progress on stderr")
@@ -143,6 +144,8 @@ func main() {
 	var dropped, cutAsRetake []qaCue
 	var markers []markerOut
 	var pendingMarkers []pendingMarker
+	gains := map[string]float64{}
+	summaries := map[string]string{}
 	totalKeep := 0.0
 
 	for _, c := range clips {
@@ -159,6 +162,7 @@ func main() {
 			os.Remove(wav)
 			continue
 		}
+		gains[filepath.Base(c.Path)] = gain
 		norm, err := normalize(wav, gain)
 		if err != nil {
 			beckyio.Logf(true, "clip %s: %v (skipped)", c.Stem, err)
@@ -172,7 +176,15 @@ func main() {
 			os.Remove(norm)
 			continue
 		}
-		keeps := keepsFromSilences(sils, c.Duration)
+		var keeps []span
+		if len(cues) > 0 {
+			keeps = keepsFromTranscript(cues, sils, *pause)
+		} else {
+			keeps = keepsFromSilences(sils, c.Duration)
+		}
+		words := loadWords(out, c.Stem)
+		keeps = refineWordEdges(keeps, words)
+		keeps = splitOnWordGaps(keeps, words, *pause)
 		keeps = adlibRoom(cues, keeps)
 		keeps = vadSanity(norm, keeps, *vadThreshold, *vadSpeechPct, *verbose)
 		os.Remove(norm)
@@ -194,12 +206,34 @@ func main() {
 			}
 		}
 
-		// snap, then rescue whatever the snaps and retake-cuts left uncovered,
-		// then snap again so rescued boundaries also land on quiet crossings.
+		// snap, then rescue whatever the snaps and retake-cuts left uncovered
+		// (rescueMissedCues trims its OWN padding to real words internally -
+		// see its doc comment for why the whole list is never re-refined
+		// here), then snap again so rescued boundaries also land on quiet
+		// crossings.
 		keeps = snapKeeps(wav, c, keeps, out, *verbose)
-		keeps = rescueMissedCues(cues, keeps)
+		keeps = rescueMissedCues(cues, keeps, words)
 		keeps = snapKeeps(wav, c, keeps, out, *verbose)
 		os.Remove(wav)
+
+		speaking := loadSpeaking(out, c)
+		if len(speaking) > 0 && speaking[0].Speakers == 0 {
+			pendingMarkers = append(pendingMarkers, pendingMarker{
+				source: c.Stem,
+				t:      keeps[0].Start,
+				title:  "CHECK: lip-sync saw no visible speaker at first keep - " + c.Stem,
+				kind:   "review",
+			})
+		}
+		rcCut, rcMark := 0, 0
+		for _, bt := range takes {
+			if bt.Confident {
+				rcCut++
+			} else {
+				rcMark++
+			}
+		}
+		summaries[c.Stem] = writeDossier(out, c, gain, cues, keeps, speaking, rcCut, rcMark)
 
 		for _, k := range keeps {
 			events = append(events, event{Source: c.Path, In: k.Start, Out: k.End, Dialogue: dialogueOver(cues, k)})
@@ -257,7 +291,34 @@ func main() {
 	}
 	sort.SliceStable(markers, func(i, j int) bool { return markers[i].T < markers[j].T })
 
-	if err := writeArtifacts(out, dir, clips, events, markers, dropped, cutAsRetake, totalKeep, tl); err != nil {
+	// Sequential quote insertion: the main edit stops, the quote plays on
+	// its own tracks, the main edit resumes - the listener hears one thing at
+	// a time. Without -quotes the layout is the plain four-track-less cut.
+	lay := spliceLayout(events, markers, nil)
+	if *quotesIn != "" {
+		qs, qErr := loadQuotes(*quotesIn)
+		if qErr != nil {
+			beckyio.Fatalf("read quotes: %v", qErr)
+		}
+		lay = spliceLayout(events, markers, qs)
+	}
+
+	finalTL := 0.0
+	for _, e := range lay.Events {
+		if t := e.TL + (e.Out - e.In); t > finalTL {
+			finalTL = t
+		}
+	}
+	for _, q := range lay.Quotes {
+		if t := q.TL + (q.Out - q.In); t > finalTL {
+			finalTL = t
+		}
+	}
+
+	if err := writeArtifacts(out, dir, lay, dropped, cutAsRetake, totalKeep, finalTL, gains); err != nil {
+		beckyio.Fatalf("%v", err)
+	}
+	if err := writeLibrary(out, dir, clips, summaries); err != nil {
 		beckyio.Fatalf("%v", err)
 	}
 
@@ -340,12 +401,18 @@ func wordsCovered(cue quotes.Cue, keeps []span) bool {
 	if tail < head {
 		head, tail = cue.Start, cue.End
 	}
+	// short cues get a tight tolerance: a shaved fraction of a half-second
+	// cue IS a clipped word, not a jump-cut artifact.
+	tol := 0.2
+	if cue.End-cue.Start < 1.2 {
+		tol = 0.05
+	}
 	headIn, tailIn := false, false
 	for _, k := range keeps {
-		if k.Start-0.2 <= cue.Start && head <= k.End+0.2 {
+		if k.Start-tol <= cue.Start && head <= k.End+tol {
 			headIn = true
 		}
-		if k.Start-0.45 <= tail && cue.End <= k.End+0.45 {
+		if k.Start-0.45 <= tail && cue.End <= k.End+tol {
 			tailIn = true
 		}
 	}

@@ -10,6 +10,64 @@
 
 ---
 
+## becky-roughcut: recovered from a credit-exhausted CLI, VAD/tracks/sequencing fixed and re-verified on real footage (2026-08-24 night, local, `master`)
+
+**Full story: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.** Qoder CLI worked the entry below
+(the same `becky-roughcut` build) for ~18 hours and hit a Qoder-platform credit wall
+(`error 112`, not a rate limit) seconds after Jordan's most detailed feedback of the session —
+its terminal could not respond, summarize, or save anything further. Recovered Qoder's own
+on-disk session transcript (`~/.qoder/projects/.../*.jsonl`) byte-exact, found the last
+un-actioned feedback and the mid-edit code, and finished the fix Claude Code (Sonnet 5).
+
+Jordan's feedback (verbatim in the handoff doc) named three problems. **Two were already fixed
+by Qoder** (exactly 4 tracks, quotes play sequentially never simultaneously — `splice.go` +
+`vegas/BeckyRoughCut.cs`, re-verified this session both by headless Vegas read-back and by
+checking exact millisecond timeline boundaries in `vegas_cut.json`). **The third — "littered
+with clips that are mostly room noise" — was claimed fixed on `master` (commit `f4f31f8`,
+"3.0 s residual silence, 0.0%") but the claim was never true**: the self-check's silence
+threshold was inherited from the zero-crossing-snap calibration (-77 to -92 dBFS on this
+footage) and could not have fired on audible room noise. **That claim is retracted** — see the
+handoff doc and the corrected `SKILL.md` `# ROUGH CUT` section.
+
+Root-caused and fixed for real, in `becky-go/cmd/roughcut/detect.go` + `main.go` (8 new
+regression tests, `go test ./cmd/roughcut/...` green):
+
+- `refineWordEdges` only searched a fixed `s+0.15..s+0.8` window for the real first/last word —
+  a lead-in longer than 0.8s (exactly "adjusting myself preparing to deliver the line") trimmed
+  nothing, and a true first word starting just outside the window got skipped in favor of a
+  LATER one, clipping real speech (measured: a 0.79s keep collapsed to 0.06s this way, in
+  Qoder's own final edit before the credit wall). Now anchors to whichever word actually
+  overlaps the keep, no window, generous sanity cap only.
+- Real data surprise: a meaningful fraction of Parakeet word timestamps are zero-duration
+  points (`{"start":132,"end":132}`); strict `>`/`<` overlap tests excluded them and repeated
+  the same skip-the-true-word bug. Fixed to inclusive `>=`/`<=`.
+- New `splitOnWordGaps`: splits a keep wherever two consecutive WORDS (not cues) are more than
+  `-pause` apart — catches silence hiding inside one Parakeet cue's own span, which the
+  dB-threshold `silencedetect` pass (calibrated for a different job) does not reliably catch on
+  this footage. Jordan's own research doc had already named this exact failure mode
+  (`buttercut_proposal.md`: *"a '13s cue' that contained a 6s silence"*).
+- `rescueMissedCues`'s own generous padding (0.6s/0.5s) shipped untrimmed. First fix attempt
+  (re-running the trim pass over the WHOLE keeps list after rescue) measured well but silently
+  regressed the QA gate from 1 dropped cue to 7 — caught by diffing `qa.json` before/after a
+  full real-footage run, not by inspection. Shipped fix instead trims only the newly-rescued
+  span internally; every other keep is untouched, so nothing that already worked can regress.
+- One dropped cue remains, unfixed by design: a genuinely corrupted Parakeet word timestamp
+  (`"for."` reported as 9.36 seconds long) hides a real ~9s pause INSIDE one word's span, where
+  no gap-between-words detector can see it. `qa.json` correctly flags it for Jordan's review —
+  exactly what the QA gate is for. One occurrence out of ~1200 events did not justify a
+  special-case heuristic.
+
+**Verified on the real footage, not a fixture**: hj-fbi-recap, 16 sources, 2:25:25 raw, run
+end-to-end 5 times while iterating. Final: 1226 main events, 25 quotes, 36 markers, 1 dropped
+cue (the corrupted-timestamp case above), **2.5s total in 2 gaps >=1.0s across the whole ~81min
+assembled cut (0.05%)**, measured against actual `words.json` coverage (not a dB threshold).
+Vegas headless verify: `tracks: 4, video_events: 1265, audio_events: 1265`. Vegas Pro opened
+normally and the timeline visually inspected (screenshot) — dense continuous main track, quote
+clips correctly sparse and positioned, real media previewing. Left OPEN on the project for
+Jordan. `go build/vet/test ./...` clean; `build-all-tools.bat` exit 0, vision-smoke-gate PASS.
+
+---
+
 ## becky-roughcut: raw takes to a populated Vegas Pro timeline, one dumb call (2026-08-24, local, `master`)
 
 Jordan's Davinci Resolve MCP experiment failed (he doesn't edit in Resolve; the MCP is a remote

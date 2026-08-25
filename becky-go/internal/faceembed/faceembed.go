@@ -105,6 +105,40 @@ func embed(cfg config.Config, images []string, device string, verbose bool, allF
 		return nil, fmt.Errorf("materialize face helper: %w", err)
 	}
 
+	// A tracking window is hundreds of absolute frame paths; passed in one
+	// exec they blow Windows' ~32k CreateProcess command line ("the filename
+	// or extension is too long" - the same class reel.go's runFFmpegSafe fixes
+	// for ffmpeg). Batch so each helper launch stays comfortably under it.
+	var all []Face
+	for _, chunk := range chunkByChars(images, 20000) {
+		faces, err := runEmbed(cfg, script, chunk, device, verbose, allFaces)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, faces...)
+	}
+	return all, nil
+}
+
+func chunkByChars(images []string, limit int) [][]string {
+	var out [][]string
+	var cur []string
+	n := 0
+	for _, im := range images {
+		if n+len(im) > limit && len(cur) > 0 {
+			out = append(out, cur)
+			cur, n = nil, 0
+		}
+		cur = append(cur, im)
+		n += len(im) + 3 // quotes + space
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+func runEmbed(cfg config.Config, script string, images []string, device string, verbose, allFaces bool) ([]Face, error) {
 	args := append([]string{script}, images...)
 	args = append(args,
 		"--model-root", cfg.FaceModelRoot,
