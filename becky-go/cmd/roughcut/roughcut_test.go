@@ -468,6 +468,87 @@ func TestApplyTriageVerdictsLeavesCallerSuppliedMarkersUntouched(t *testing.T) {
 	}
 }
 
+// --- confident non-speaking cuts (2026-08-25) ---------------------------
+
+func TestSpeakingConfidentCutsRemovesConfirmedDeadAir(t *testing.T) {
+	keeps := []span{{10.0, 30.0}}
+	speaking := []speakingWindow{{Start: 12.0, End: 20.0, BestFrac: 0.02}} // 8s, well over the min overlap, no real speaking
+	words := []span{}                                                     // no transcript content at all in this stretch
+	got := speakingConfidentCuts(keeps, speaking, words)
+	if len(got) != 1 || got[0].Start != 12.0 || got[0].End != 20.0 {
+		t.Fatalf("got %+v, want one cut [12,20] (confirmed by both signals)", got)
+	}
+}
+
+// The safety check this whole feature depends on: real transcript words in
+// the window must block the cut, even when LR-ASD's visual signal is weak -
+// he may have turned away from camera or walked off-frame while still
+// talking.
+func TestSpeakingConfidentCutsNeverCutsRealTranscriptContent(t *testing.T) {
+	keeps := []span{{10.0, 30.0}}
+	speaking := []speakingWindow{{Start: 12.0, End: 20.0, BestFrac: 0.02}}
+	words := []span{{14.0, 16.0}} // 2s of real words inside the candidate window
+	got := speakingConfidentCuts(keeps, speaking, words)
+	if len(got) != 0 {
+		t.Errorf("got %+v, want no cuts - real transcript content must block this", got)
+	}
+}
+
+func TestSpeakingConfidentCutsIgnoresBorderlineFrac(t *testing.T) {
+	keeps := []span{{10.0, 30.0}}
+	// 0.35 would trip the REVIEW marker threshold but must NOT trip a cut -
+	// cutting needs the much stricter 0.10 bar.
+	speaking := []speakingWindow{{Start: 12.0, End: 20.0, BestFrac: 0.35}}
+	got := speakingConfidentCuts(keeps, speaking, nil)
+	if len(got) != 0 {
+		t.Errorf("got %+v, want no cuts - 0.35 is the marker bar, not the cut bar", got)
+	}
+}
+
+func TestSpeakingConfidentCutsIgnoresTinySlivers(t *testing.T) {
+	keeps := []span{{10.0, 30.0}}
+	speaking := []speakingWindow{{Start: 12.0, End: 13.0, BestFrac: 0.0}} // 1s, under the 2s minimum
+	got := speakingConfidentCuts(keeps, speaking, nil)
+	if len(got) != 0 {
+		t.Errorf("got %+v, want no cuts - overlap too short to act on", got)
+	}
+}
+
+// A keep can have one confidently-dead stretch and one confidently-spoken
+// stretch; only the dead part should be cut, never an all-or-nothing verdict
+// on the whole keep (the gap this closes vs speakingCorroboration, which
+// only ever looks at the single best-overlapping window).
+func TestSpeakingConfidentCutsPartialWithinOneKeep(t *testing.T) {
+	keeps := []span{{0.0, 40.0}}
+	speaking := []speakingWindow{
+		{Start: 0.0, End: 10.0, BestFrac: 0.0},  // dead
+		{Start: 10.0, End: 40.0, BestFrac: 0.9}, // clearly speaking
+	}
+	got := speakingConfidentCuts(keeps, speaking, nil)
+	if len(got) != 1 || got[0].Start != 0.0 || got[0].End != 10.0 {
+		t.Fatalf("got %+v, want only the [0,10] dead stretch cut", got)
+	}
+}
+
+// Regression for the 2026-08-25 bug this exact function caused by NOT
+// catching: real footage had a Parakeet word "dude." timestamped
+// {start:125.68, end:136.8} - an 11.12s single word, the same forced-
+// alignment corruption class as HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md 5.6's
+// 9.36s "for.". Uncapped, that one corrupted word's bogus 11s span
+// overlapped a real 6.2s confirmed-dead-air window (LR-ASD frac=0.0) by
+// more than speakingConfidentCutMaxWordSec, silently blocking a cut that
+// should have fired - caught by re-measuring the real footage after
+// shipping, not by unit tests (there wasn't one for this shape yet).
+func TestSpeakingConfidentCutsNotFooledByCorruptedLongWord(t *testing.T) {
+	keeps := []span{{120.0, 140.0}}
+	speaking := []speakingWindow{{Start: 130.754625, End: 136.984, BestFrac: 0.0}}
+	words := []span{{125.68, 136.8}} // corrupted: a real word cannot be 11s long
+	got := speakingConfidentCuts(keeps, speaking, words)
+	if len(got) != 1 {
+		t.Fatalf("got %d cuts, want 1 - a corrupted word timestamp must not block a real confident cut", len(got))
+	}
+}
+
 func TestSnapExtendsToQuietPocket(t *testing.T) {
 	rate := 16000
 	// tone everywhere except a quiet pocket 0.1s after the boundary.

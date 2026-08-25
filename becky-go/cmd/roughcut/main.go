@@ -242,6 +242,9 @@ func main() {
 		os.Remove(wav)
 
 		speaking := loadSpeaking(out, c)
+			for _, cut := range speakingConfidentCuts(keeps, speaking, words) {
+				keeps = subtract(keeps, cut)
+			}
 		pendingMarkers = append(pendingMarkers, speakingCorroboration(c.Stem, keeps, speaking)...)
 		rcCut, rcMark := 0, 0
 		for _, bt := range takes {
