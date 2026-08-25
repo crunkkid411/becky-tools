@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Python              string `json:"python"`                // interpreter with sherpa_onnx + torch
 	DMLTranscribePython string `json:"dml_transcribe_python"` // GPU ASR venv (onnx-asr+DirectML); empty = use sherpa CPU
+	FaceDMLPython       string `json:"face_dml_python"`       // GPU face-detection venv (insightface+DirectML); empty = FacePython's CPU-only onnxruntime
 	ParakeetModelDir    string `json:"parakeet_model_dir"`    // sherpa-onnx Parakeet-TDT-0.6B-v3 dir
 	AutoEditor          string `json:"auto_editor"`           // auto-editor binary
 	FFmpeg              string `json:"ffmpeg"`
@@ -216,6 +217,7 @@ func defaults() Config {
 	return Config{
 		Python:              detectPython(),
 		DMLTranscribePython: detectDMLTranscribePython(),
+		FaceDMLPython:       detectFaceDMLPython(),
 		ParakeetModelDir: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\asr\sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`,
 		),
@@ -406,6 +408,20 @@ func detectDMLTranscribePython() string {
 	return ""
 }
 
+// detectFaceDMLPython returns the same venv-dml interpreter (2026-08-25:
+// insightface + opencv installed alongside its existing onnx-asr+DirectML
+// packages) for becky-speaking's face tracker to use instead of the
+// anaconda-base FacePython, whose onnxruntime install has no GPU execution
+// provider at all - confirmed the night an LR-ASD speaking sweep pinned the
+// CPU with the GPU idle. Empty when the venv isn't there; the caller falls
+// back to FacePython's CPU-only path.
+func detectFaceDMLPython() string {
+	if p := `X:\AI-2\becky-tools\models\asr\venv-dml\Scripts\python.exe`; fileExists(p) {
+		return p
+	}
+	return ""
+}
+
 // resolve prefers a binary on PATH, then a known fallback, then the bare name.
 func resolve(name, fallback string) string {
 	if p, err := exec.LookPath(name); err == nil {
@@ -437,6 +453,9 @@ func fileExists(p string) bool {
 func merge(base, over Config) Config {
 	if over.Python != "" {
 		base.Python = over.Python
+	}
+	if over.FaceDMLPython != "" {
+		base.FaceDMLPython = over.FaceDMLPython
 	}
 	if over.DMLTranscribePython != "" {
 		base.DMLTranscribePython = over.DMLTranscribePython

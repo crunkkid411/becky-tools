@@ -40,7 +40,7 @@ def main():
     ap.add_argument("images", nargs="+", help="image paths (frames or enrollment faces)")
     ap.add_argument("--model-root", required=True, help="insightface root (holds models/<name>/)")
     ap.add_argument("--model-name", default="buffalo_l")
-    ap.add_argument("--device", default="cpu")  # cpu | cuda
+    ap.add_argument("--device", default="cpu")  # cpu | cuda | dml
     ap.add_argument("--det-size", type=int, default=640)
     ap.add_argument("--min-det-score", type=float, default=0.5)
     ap.add_argument("--all-faces", action="store_true",
@@ -70,6 +70,12 @@ def main():
 
     if args.device == "cuda":
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        ctx_id = 0
+    elif args.device == "dml":
+        # DirectML: works on any DirectX 12 GPU, no CUDA/cuDNN version matching
+        # needed (unlike CUDAExecutionProvider) - the same provider already
+        # proven on this machine for Parakeet ASR (transcribe_parakeet_dml.py).
+        providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
         ctx_id = 0
     else:
         providers = ["CPUExecutionProvider"]

@@ -127,8 +127,9 @@ func main() {
 	if dev == "" {
 		dev = cfg.Device
 	}
+	faceForceCPU := *device != "" // an explicit --device means "don't override my choice"
 
-	rep, err := run(cfg, *video, *start, *end, dev, *boxes, *verbose)
+	rep, err := run(cfg, *video, *start, *end, dev, faceForceCPU, *boxes, *verbose)
 	if err != nil {
 		rep = speakingReport{OK: false, Video: *video, Start: *start, End: *end,
 			Confidence: "none", Note: err.Error()}
@@ -147,9 +148,34 @@ func main() {
 	}
 }
 
+// resolveFaceInterpreter picks the interpreter + device for the FACE
+// DETECTION step only. It must never touch the cfg used later for LR-ASD
+// scoring (runASD): that step needs cfg.FacePython's torch+CUDA build, while
+// the SAME interpreter's onnxruntime install (used for face detection) has
+// no GPU execution provider at all - measured 2026-08-24 night, an overnight
+// speaking sweep pinned the CPU with the GPU idle the whole time. Returns a
+// COPY, forced back to CPU when the caller explicitly asked for a device
+// (forceCPU) or no DML venv is configured (FaceDMLPython == "").
+//
+// The DML venv is self-contained (insightface+opencv+onnxruntime-directml
+// installed directly into its own site-packages), so FacePyLib - which
+// points at X:\PythonUserBase, a DIFFERENT, CONFLICTING CPU-only onnxruntime
+// install - must be cleared too; leaving it on PYTHONPATH let that one
+// silently win the import ("Specified provider 'DmlExecutionProvider' is
+// not in available provider names" even after the venv's own onnxruntime
+// was fixed).
+func resolveFaceInterpreter(cfg config.Config, device string, forceCPU bool) (config.Config, string) {
+	if forceCPU || cfg.FaceDMLPython == "" {
+		return cfg, device
+	}
+	cfg.FacePython = cfg.FaceDMLPython
+	cfg.FacePyLib = ""
+	return cfg, "dml"
+}
+
 // run is the whole chain, factored out of main so selftest-adjacent logic (the
 // pure decision functions below) can be exercised without it.
-func run(cfg config.Config, video string, start, end float64, device string, withBoxes, verbose bool) (speakingReport, error) {
+func run(cfg config.Config, video string, start, end float64, device string, faceForceCPU, withBoxes, verbose bool) (speakingReport, error) {
 	if cfg.FaceModelRoot == "" {
 		return speakingReport{}, fmt.Errorf("face model not configured — becky-speaking needs the same face model becky-identify uses")
 	}
@@ -182,7 +208,11 @@ func run(cfg config.Config, video string, start, end float64, device string, wit
 	}
 	defer os.RemoveAll(frameDir)
 
-	faces, err := faceembed.EmbedAll(cfg, paths, device, verbose)
+	// Face detection and LR-ASD scoring need DIFFERENT interpreters - see
+	// resolveFaceInterpreter's doc comment. Scoped to a COPY so runASD's later
+	// call still gets the original, torch-capable cfg.
+	faceCfg, faceDev := resolveFaceInterpreter(cfg, device, faceForceCPU)
+	faces, err := faceembed.EmbedAll(faceCfg, paths, faceDev, verbose)
 	if err != nil {
 		return speakingReport{}, fmt.Errorf("face detection failed: %w", err)
 	}

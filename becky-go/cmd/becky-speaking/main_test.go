@@ -5,7 +5,64 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"becky-go/internal/config"
 )
+
+// --- resolveFaceInterpreter ---------------------------------------------
+//
+// Regression for the 2026-08-24 night bug: the first fix pointed cfg.FacePython
+// at the DML venv directly and threaded that SAME cfg into runASD too, which
+// then failed with "No module named 'torch'" (the DML venv has no torch - it
+// is not needed there, LR-ASD scoring uses a different interpreter). The
+// second bug, caught by live testing not by reasoning: leaving FacePyLib set
+// let its OWN conflicting CPU-only onnxruntime silently win the import over
+// the DML venv's own, correctly-installed one.
+
+func TestResolveFaceInterpreterUsesDMLWhenAvailable(t *testing.T) {
+	cfg := config.Config{FacePython: "anaconda.exe", FacePyLib: `X:\PythonUserBase`, FaceDMLPython: "dml.exe"}
+	got, dev := resolveFaceInterpreter(cfg, "", false)
+	if got.FacePython != "dml.exe" {
+		t.Errorf("FacePython = %q, want dml.exe", got.FacePython)
+	}
+	if got.FacePyLib != "" {
+		t.Errorf("FacePyLib = %q, want cleared - the DML venv is self-contained and FacePyLib's onnxruntime conflicts with it", got.FacePyLib)
+	}
+	if dev != "dml" {
+		t.Errorf("device = %q, want dml", dev)
+	}
+}
+
+func TestResolveFaceInterpreterRespectsExplicitDevice(t *testing.T) {
+	cfg := config.Config{FacePython: "anaconda.exe", FaceDMLPython: "dml.exe"}
+	got, dev := resolveFaceInterpreter(cfg, "cpu", true)
+	if got.FacePython != "anaconda.exe" {
+		t.Errorf("FacePython = %q, want unchanged - caller passed an explicit --device", got.FacePython)
+	}
+	if dev != "cpu" {
+		t.Errorf("device = %q, want cpu unchanged", dev)
+	}
+}
+
+func TestResolveFaceInterpreterFallsBackWhenNoDMLVenv(t *testing.T) {
+	cfg := config.Config{FacePython: "anaconda.exe"}
+	got, dev := resolveFaceInterpreter(cfg, "", false)
+	if got.FacePython != "anaconda.exe" || dev != "" {
+		t.Errorf("got (%q,%q), want unchanged when FaceDMLPython is not configured", got.FacePython, dev)
+	}
+}
+
+// The bug that shipped once already: overriding cfg.FacePython in place and
+// threading the SAME cfg into runASD. resolveFaceInterpreter must return a
+// COPY so the caller's original cfg (used for LR-ASD's torch interpreter)
+// is provably untouched.
+func TestResolveFaceInterpreterNeverMutatesCallersCfg(t *testing.T) {
+	cfg := config.Config{FacePython: "anaconda.exe", FaceDMLPython: "dml.exe"}
+	_, _ = resolveFaceInterpreter(cfg, "", false)
+	if cfg.FacePython != "anaconda.exe" {
+		t.Errorf("caller's cfg.FacePython = %q, want unchanged (anaconda.exe) - runASD needs this interpreter later", cfg.FacePython)
+	}
+}
 
 // --- The asd.py / face_embed.py SEAMS ---------------------------------------
 //
