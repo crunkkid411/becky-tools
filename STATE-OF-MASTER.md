@@ -6,7 +6,33 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: becky-clip's corroboration signals actually wired in (2026-08-24, later the same night, local)
+### CURRENT — becky-roughcut: marker triage, audio gain+limiter tested and rejected, Vegas quirks consolidated (2026-08-24, still later that night, local)
+
+**On master, built green** (`go build/vet/test ./...` — 33/33 roughcut tests, same 2
+pre-existing unrelated failures as every prior entry (`cmd/tts`, `internal/assistant`,
+environment-dependent) — `gofmt -l` clean). Full story at the TOP of `HANDOFF-LOG.md`; canon in
+`SKILL.md`'s `# ROUGH CUT` section and `vegas/README.md`.
+
+- **`becky-roughcut --triage-markers`** (new, `triage.go`): Gemma-4 reviews every pending
+  `CHECK:`/`RETAKE?` marker — with context before/after — and either resolves it (dropped before
+  Jordan sees it) or keeps it annotated with the model's own read. Direct fix for Jordan's
+  correction that `--watch`'s blanket-everything approach is a `becky-clip` rule that doesn't
+  transfer here; this is narrower and answers each marker's own specific question instead.
+  Standalone, same GPU reason as `--watch` — **not yet run against real markers tonight**, the
+  LR-ASD speaking sweep below is still on the GPU.
+- **Audio gain+limiter tested on real footage, rejected**: Jordan's "crank +12dB with a limiter
+  instead of a compressor" suggestion measurably narrows the speech/room separation the detector
+  needs rather than widening it (a limiter compresses the loud end more than the already-quiet
+  room tone) — his instinct is right for his own manual DELIVERED-audio mixing, doesn't transfer
+  to the unattended analysis chain. `scripts/audio_gain_limiter_test.py`, numbers in `SKILL.md`.
+- **Directly answered, not deferred**: whether the "auto-editor shreds 30%" measurement was ever
+  human-verified (it wasn't — but it and the 0.05%-gaps result are both deterministic word-count
+  measurements, not a model grading itself; the real open gap is that nobody has watched/listened
+  to the current build with human ears yet, which is waiting on Jordan, not more engineering).
+- **`vegas/README.md`** gained a consolidated gotchas section (§0) and full usage docs for
+  `BeckyRoughCut.cs`/`BeckyVerifyProject.cs` (§3/§4, previously undocumented beyond one table row).
+
+### PREVIOUS — becky-roughcut: becky-clip's corroboration signals actually wired in (2026-08-24, later the same night, local)
 
 **On master, built green** (`go build/vet/test ./...`, `build-all-tools.bat` exit 0). Full story
 at the TOP of `HANDOFF-LOG.md` §"found the feedback the first recovery pass missed" and in

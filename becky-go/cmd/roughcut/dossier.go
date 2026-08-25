@@ -113,11 +113,12 @@ func speakingCorroboration(cStem string, keeps []span, speaking []speakingWindow
 		}
 		if best.Speakers == 0 || best.BestFrac < speakingCorroborationThreshold {
 			out = append(out, pendingMarker{
-				source: cStem,
-				t:      k.Start,
-				title: fmt.Sprintf("CHECK: audio kept here but LR-ASD saw no one visibly speaking (%.0f%% of the window) - %s",
+				Source: cStem,
+				T:      k.Start,
+				TEnd:   k.End,
+				Title: fmt.Sprintf("CHECK: audio kept here but LR-ASD saw no one visibly speaking (%.0f%% of the window) - %s",
 					best.BestFrac*100, cStem),
-				kind: "review",
+				Kind: "review",
 			})
 		}
 	}

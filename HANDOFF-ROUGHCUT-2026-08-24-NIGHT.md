@@ -76,7 +76,7 @@ uses. For Qoder specifically:
    of a rough cut vs. AI-slop (now quoted verbatim in `SKILL.md`'s `# ROUGH CUT` section — read
    it there, not paraphrased here) and corrected `buttercut_proposal.md` in several places,
    most importantly rejecting "word-level ASR timing (WhisperX) fixes cut boundaries" in favor
-   of his own repeated point: a *calibrated* volume threshold is what a human editor's
+   of his own repeated point: a *calibrated* volume threshold relative to speech is what a human editor's
    zero-crossing cut actually corresponds to, not a transcript timestamp.
 5. **[18:28] Credit wall hit** mid-edit to `detect.go`'s `refineWordEdges` (see §3below);
    Qoder's session ends there, unresolved.
@@ -259,6 +259,7 @@ recurs.
   second, corroborating signal rather than switching the primary detector. Worth a sentence of
   clarification in `SKILL.md` (added) so a future agent doesn't read the old "why not
   auto-editor" section as license to re-litigate the whole architecture.
+  [EDIT FROM JORDAN]; I am re-litigating this; the measurement was never confirmed by a human, which is a huge red flag because it seems like the AI who can't accurately tell the difference between actual dialogue is also the one judging the test?? I cannot confirm if the sentences were genuinely shredded or not, and I don't trust this conclusion. Here's why - Human editor's choose zero crossing points based on volume, on a clip-by-clip basis, typically buy visually LOOKING at the waveform on a timeline, then snapping the cut point to the nearest video frame past the threshold, ensuring no speech is cut off. Auto-editor chooses cut points based on volume as well - I MANUALLY dialed in the -27db rule as it tends to work for 80% of the footage from my iphone mic when I'm in the same controlled environment...running a deterministic script to determine zero-crossing cut points is an extremely unrealistic expectation. Auto-editor is not perfect, but it's the closest thing we've come up with that's actually useful in any meaningful way (80% correct means 80% of the cuts are done for me correctly, which objectively saves time). Adjusting the volume threshold and padding is something I experimented with manually in this controlled environment for months. Using the Rode Mics or filming outside the studio with anything other than my iphone 13 microphone throws that deterministic conclusion out the window. A more robust approach would be to still use auto-editor for cut points (because it WORKS when callibrated properly), but you have to use it INTELLIGENTLY - we have enough data points that using it per cut is not unreasonable, or at the very least, using it when confidence is not high. It should not be the ONLY deciding factor for rough-cuts, but it is still useful if used in an adaptive way. With these rode-mics, I have accepted (and already communicated) that I have been UNABLE to find any deterministic way to work with the audio - it simply requires a human editor to make every cuts manually and intelligently...which is what becky-roughcut is now attempting to do. You may need to genuinely process each clip in a way that makes it friendly to auto-editor. If "detect.go" actually works, why have we not been using it? If we HAVE been using it, then it simply does not work. My conclusion; becky-cut's architecture needs to be used in a truly adaptive way, OR detect.go needs to be dialed in. I do not know what detect.go is or how it's wired up, so you choose, but please be aware of what I just said and try to fix the root problem and not a symptom
 - Per-source clip coloring (`INSTRUCTIONS.md`: "If possible, ensure each source video is set to
   a different color on the timeline") is not implemented in `BeckyRoughCut.cs`. Jordan did not
   re-raise this in his final feedback; noting it here since it was in the original brief and
@@ -411,3 +412,60 @@ grade footage this late:
   fight the detector? This needs an actual before/after accuracy comparison across real clips,
   not a single 10s sample - exactly the kind of test Jordan offered to run himself if research
   alone couldn't settle it.
+  
+## Jordan's response
+I agree, using a compressor here is likely not the solution. Have you tried simply cranking the volume by ~12db with a clipper or limiter?? One of the benefits of using the rode mics is the rediculously low noise floor - you can crank the volume to a usable level and the background noise is still generally much lower than using a lower quality, but louder mic (like my iphone 13). if some louder words occasionally get "smashed" because of the limiter, that's not a huge concern to me...it's not really noticable if a quality limiter is used, and is actually a common way I work with these mics, but again, this needs dialed in "manually" or on a "per clip" basis
+
+One important distinction; the rule implemented in becky-clip; "AN LLM MUST WATCH THE OUTPUT BEFORE IT
+  SHIPS." does NOT apply to becky-roughcut. becky-clip handles SHORT video edits, with LOTS of camera angles, jump cuts, motion, and something changes ever 3-4 video frames. The final output is generally under 3 minutes in length. That is a completely different use case than becky-roughcut, and our expected output is intended to be a long-form video essay / factual documentary style video where the cohesive flow the narrative is the main focus; it's a wildly different type of video but still utilizes the same tools.
+
+THIS is how we should be using vision in the context of becky-roughcut - video UNDERSTANDING. All those flags on the timeline asking for human review need to be reviewed by at least one VISION model first (depending on the question). Gemma4 can watch and understand 30 seconds of video + audio. There is no reason to ask me to watch the timeline choice if gemma4 has not already done so. The vast majority of time wasted in the last 2 days would have been fully resolved by simply asking gemma 4 to watch 15 or 30 seconds of a video clip and asking it the question you asked me. OR, by validating low confidence scores - it KNOWS the difference between a human getting ready to speak, and a human actually speaking. Yet this is STILL not being utilized. Expecting it to watch all 2+ hours of raw footage is unnecessary, but it ABSOLUTELY can watch up to 30 seconds at a time (because it will likely need to know what comes before and after the marker with the question). 
+
+## 9. Round 3 (2026-08-24, still later the same night) — marker triage, the audio answer, Vegas docs
+
+Picked up this handoff cold (fresh session, no memory of rounds 1-2 beyond this document) while
+the round-2 speaking sweep was still running in the background (38/325 blocks done by 22:38
+local, ~3min/block — genuinely the overnight-plus job it always was; never touched, never
+interrupted). Full technical detail lives in `SKILL.md`'s `# ROUGH CUT` section and
+`vegas/README.md`, not duplicated here — this is the pointer.
+
+**§8's `-triage-markers` gap, closed.** Jordan's "gemma4 needs to review every flag first, with
+context before/after" ask (quoted above) is a different, narrower thing than `watchpass.go`'s
+`--watch` (which blankets every kept block — a `becky-clip` rule Jordan explicitly says does not
+transfer to roughcut). New `triage.go` + `becky-roughcut --triage-markers`: re-examines only
+spans someone already flagged, with padding, answers that marker's own specific question,
+resolves (drops) a confident answer or annotates a kept one with the model's read. Never cuts —
+same "signal, not verdict" discipline as every other detector here. Reads a new
+`pending_markers.json` artifact so a later triage run doesn't need to redo detection. 9 new
+tests, whole-module `go build/vet/test` clean (same 2 pre-existing unrelated environment
+failures as every round before this one). **Not yet run against real markers** — GPU still on
+the speaking sweep at time of writing; code path is unit-tested only until it's free.
+
+**The audio-chain question (§8.5, Jordan's "have you tried cranking +12dB with a limiter"),
+answered with real measurement, not guessed at.** No — measured on two independent real clips
+(`scripts/audio_gain_limiter_test.py`): a limiter engaging on loud peaks pulls speech down more
+than the already-quiet room tone (which stays under its threshold, scales linearly with the
+extra gain) — pushing gain further through a limiter NARROWS the speech/room separation the
+detector needs (50.9dB->45.4dB and 44.9dB->42.0dB measured), it does not widen it. 15 real
+word-boundary onsets tested, current chain equal-or-better on every one. Jordan's instinct is
+right for its actual home (his own manual DELIVERED-audio mixing by ear); it doesn't transfer to
+an unattended analysis pass whose only job is maximizing that specific gap. Left alone,
+deliberately: wiring gain+limiter onto the delivered Vegas track stays a manual per-clip step,
+per Jordan's own framing of it.
+
+**The re-litigation (§7's edit) answered directly, not deferred a third time.** Jordan is right
+that a claim graded only by the pipeline itself is the wrong kind of evidence — but the specific
+numbers in question (the 30%-kept auto-editor measurement, and the 0.05%-gaps result) are both
+plain deterministic word-count/coverage counts, not a model's self-grade, so that particular
+concern doesn't land on those two numbers. What genuinely is still open: nobody has watched or
+listened to the current build with human ears — only a screenshot exists. That's the one honest
+gap left, and it's waiting on Jordan (the build is already open in Vegas from round 2), not on
+more engineering. His actual ask underneath the re-litigation — per-clip adaptive threshold, not
+one dumb global number — is what `calibrate()` already does; no architecture change made.
+
+**`vegas/README.md`** gained a §0 gotchas section (API traps, the force-kill/VegasAIBridge trap,
+the OTIO/FCPXML dead end, caption-preset ownership — consolidated from a memory file and
+scattered handoff entries into the one place a future agent editing a `.cs` here will actually
+look) and full usage sections for `BeckyRoughCut.cs`/`BeckyVerifyProject.cs` (previously only a
+one-line table mention, despite being the two scripts this entire multi-round effort revolves
+around).

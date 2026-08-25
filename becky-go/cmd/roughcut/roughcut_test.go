@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"becky-go/internal/quotes"
@@ -281,8 +282,8 @@ func TestSpeakingCorroborationFlagsUnspokenKeep(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d markers, want 1 (no visible speaker despite kept audio): %+v", len(got), got)
 	}
-	if got[0].kind != "review" {
-		t.Errorf("kind = %q, want \"review\" - never a verdict", got[0].kind)
+	if got[0].Kind != "review" {
+		t.Errorf("kind = %q, want \"review\" - never a verdict", got[0].Kind)
 	}
 }
 
@@ -374,6 +375,96 @@ func TestParseWatchVerdictUnparseableDefaultsToPass(t *testing.T) {
 	v, _ := parseWatchVerdict("the model said something unexpected here")
 	if v != "pass" {
 		t.Errorf("verdict = %q, want pass (fail open, not a false flag)", v)
+	}
+}
+
+// --- marker triage -------------------------------------------------------
+
+func TestTriageWindowPadsBothSides(t *testing.T) {
+	pm := pendingMarker{T: 100.0, TEnd: 104.0}
+	start, end := triageWindow(pm)
+	if start != 94.0 || end != 110.0 {
+		t.Errorf("window = [%v,%v], want [94,110] (span + 6s pad each side)", start, end)
+	}
+}
+
+func TestTriageWindowClampsAtZero(t *testing.T) {
+	pm := pendingMarker{T: 2.0, TEnd: 3.0}
+	start, _ := triageWindow(pm)
+	if start != 0 {
+		t.Errorf("start = %v, want 0 (never watch before the file starts)", start)
+	}
+}
+
+func TestTriageWindowCapsTotalLength(t *testing.T) {
+	pm := pendingMarker{T: 100.0, TEnd: 140.0} // 40s span alone exceeds the cap
+	start, end := triageWindow(pm)
+	if got := end - start; got > triageWindowCap+0.01 {
+		t.Errorf("window length = %v, want <= %v", got, triageWindowCap)
+	}
+}
+
+func TestTriageWindowHandlesInstantMarker(t *testing.T) {
+	pm := pendingMarker{T: 50.0} // TEnd unset (0), older-artifact shape
+	start, end := triageWindow(pm)
+	if start != 44.0 || end != 56.0 {
+		t.Errorf("window = [%v,%v], want [44,56] (treated as a single instant at T)", start, end)
+	}
+}
+
+func TestParseTriageVerdictResolved(t *testing.T) {
+	v, reason := parseTriageVerdict("VERDICT: RESOLVED\nREASON: clearly him talking, real content")
+	if v != "resolved" {
+		t.Errorf("verdict = %q, want resolved", v)
+	}
+	if reason != "clearly him talking, real content" {
+		t.Errorf("reason = %q", reason)
+	}
+}
+
+func TestParseTriageVerdictNeedsReview(t *testing.T) {
+	v, _ := parseTriageVerdict("VERDICT: NEEDS_REVIEW\nREASON: hard to tell if he's speaking off-camera")
+	if v != "needs_review" {
+		t.Errorf("verdict = %q, want needs_review", v)
+	}
+}
+
+// Fails CLOSED: an unparseable reply must never resolve (silently drop) a
+// marker that already exists - the opposite failure direction from
+// parseWatchVerdict, which fails OPEN because it only ever adds a flag.
+func TestParseTriageVerdictUnparseableDefaultsToNeedsReview(t *testing.T) {
+	v, _ := parseTriageVerdict("the model said something unexpected here")
+	if v != "needs_review" {
+		t.Errorf("verdict = %q, want needs_review (fail closed, never silently resolve)", v)
+	}
+}
+
+func TestApplyTriageVerdictsDropsOnlyResolvedMarker(t *testing.T) {
+	existing := []markerOut{
+		{T: 10, Title: "CHECK: audio kept here but LR-ASD saw no one visibly speaking (33%) - IQQP9972"},
+		{T: 20, Title: "CHECK: audio kept here but LR-ASD saw no one visibly speaking (33%) - IQQP9972"}, // same title, different T - real observed shape
+	}
+	verdicts := []triageVerdict{
+		{Marker: pendingMarker{TL: 10, Title: existing[0].Title}, Verdict: "resolved", Reason: "clearly speaking"},
+		{Marker: pendingMarker{TL: 20, Title: existing[1].Title}, Verdict: "needs_review", Reason: "hard to tell"},
+	}
+	kept, resolved := applyTriageVerdicts(existing, verdicts)
+	if resolved != 1 {
+		t.Fatalf("resolved = %d, want 1", resolved)
+	}
+	if len(kept) != 1 || kept[0].T != 20 {
+		t.Fatalf("kept = %+v, want only the T=20 marker (identical title must not cause a mismatch)", kept)
+	}
+	if !strings.Contains(kept[0].Title, "gemma4: hard to tell") {
+		t.Errorf("kept title = %q, want it annotated with the model's reason", kept[0].Title)
+	}
+}
+
+func TestApplyTriageVerdictsLeavesCallerSuppliedMarkersUntouched(t *testing.T) {
+	existing := []markerOut{{T: 5, Title: "quote: he said X"}} // never in pendingMarkers/verdicts at all
+	kept, resolved := applyTriageVerdicts(existing, nil)
+	if resolved != 0 || len(kept) != 1 || kept[0] != existing[0] {
+		t.Errorf("got kept=%+v resolved=%d, want the marker passed through unchanged", kept, resolved)
 	}
 }
 

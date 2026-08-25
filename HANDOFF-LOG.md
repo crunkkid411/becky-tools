@@ -10,6 +10,72 @@
 
 ---
 
+## becky-roughcut: marker triage (Gemma-4 reviews flags before Jordan does), audio gain+limiter tested and rejected, Vegas quirks consolidated (2026-08-24, still later that night, local, `master`)
+
+Picked up from the entry directly below via `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8's tail
+(Jordan's two follow-up messages, added after that entry was written: the audio-chain answer,
+and a direct correction of `watchpass.go`'s design). Full technical detail lives in `SKILL.md`'s
+`# ROUGH CUT` section (updated) and `vegas/README.md` (new §0/§3/§4) — this entry is the
+pointer, not a duplicate.
+
+**Shipped: `triage.go` + `becky-roughcut --triage-markers`.** Jordan's correction: *"There is no
+reason to ask me to watch the timeline choice if gemma4 has not already done so... it ABSOLUTELY
+can watch up to 30 seconds at a time... it will likely need to know what comes before and after
+the marker."* `--watch` (previous entry) blankets every kept block indiscriminately — the
+`becky-clip` rule it was ported from, which Jordan explicitly said does NOT transfer to
+roughcut's long-form use case. `--triage-markers` is narrower and more directly what he asked
+for: only re-examines spans someone ALREADY flagged (`CHECK:`/`RETAKE?`), with context padding
+before/after, and answers that marker's own specific question. A confidently-resolved marker is
+dropped from `vegas_cut.json` before it ever reaches Jordan; one the model can't resolve stays,
+annotated with the model's own read (`[gemma4: ...]`) so he isn't asked a question already
+partly answered. Never cuts anything — a model is a signal, never a verdict, same as every other
+detector in this pipeline. Standalone (same GPU-contention reason as `--watch`) — reads a new
+`pending_markers.json` artifact (`writePendingMarkers`, `artifacts.go`) written by the normal
+run, so a later triage pass doesn't need to re-run the whole detection pipeline just to recover
+which marker sits where. 9 new regression tests, `go test ./cmd/roughcut/...` 33/33 green,
+`go build/vet ./...` + `gofmt -l` clean across the whole module. **Not yet run against real
+markers** — the LR-ASD speaking sweep from the entry below is still using the GPU (see below);
+code path is exercised by unit tests only until the sweep finishes.
+
+**Tested and rejected, with real measurement**: Jordan's audio-chain follow-up — "have you tried
+cranking the volume ~12dB with a clipper or limiter instead of a compressor" — answered by
+actually running both chains against two real clips (`scripts/audio_gain_limiter_test.py`, kept
+in-repo). Result: no, it doesn't help. A limiter engaging on loud peaks pulls the loud end
+(speech) down more than the already-quiet room tone (which stays under its threshold and scales
+linearly with the extra gain) — so more gain through a limiter NARROWS the speech/room gap the
+detector needs (measured 50.9dB->45.4dB and 44.9dB->42.0dB separation on the two clips), it
+doesn't widen it. Word-boundary onset jumps (the actually-relevant measure) told the same story
+on all 15 real onsets tested. Full mechanism + numbers: `SKILL.md`. Jordan's instinct is correct
+for its real home — his own manual mixing of DELIVERED audio by ear — it just doesn't transfer
+to an unattended analysis pass whose only job is maximizing that gap. Left alone deliberately:
+wiring gain+limiter onto the delivered Vegas audio track is still open, but Jordan described that
+as a manual, per-clip judgment call, not something to automate.
+
+**Directly addressed, not deferred again**: Jordan's re-litigation of the "auto-editor shreds
+30%" claim (`HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §7's edit — he's right that a claim graded
+only by the pipeline itself is the wrong kind of evidence). Clarified in `SKILL.md`: that 30%
+number and the 0.05%-gaps result are BOTH deterministic word-count/coverage measurements, not a
+model's self-grade — that part of his concern doesn't apply to those specific numbers. What
+genuinely IS still open: nobody has watched or listened to the current build with human ears —
+only Claude's screenshot inspection exists. That is the one honest gap left and it is waiting on
+Jordan (the build is already open in Vegas), not on more engineering. His actual ask — per-clip
+adaptive threshold, not one dumb global number — is what `calibrate()` already does; no
+architecture change made or needed unless his own review of the current build says otherwise.
+
+**`vegas/README.md` gained a §0 "gotchas" section** (compile-check-first, the `Tracks.Insert`/
+`SaveSnapshot`/`Timecode.Seconds`/`ScriptArgs` API traps, the force-kill/port-2015/VegasAIBridge
+trap, the OTIO/FCPXML import limitation, the caption-preset-ownership rule — all previously
+scattered across a memory file and old handoff entries, now consolidated where the next agent
+editing a `.cs` will actually see it) plus new §3/§4 usage docs for `BeckyRoughCut.cs` and
+`BeckyVerifyProject.cs`, which had never had their own sections (only a one-line table mention).
+
+**Background, unaffected by any of the above**: the comprehensive LR-ASD speaking sweep launched
+in the entry below was still running throughout this session (checked periodically, never
+touched) — 38/325 merged blocks done as of 22:38 local, ~3min/block, genuinely the overnight-
+plus job it was always going to be. `%TEMP%\keepspeaking_sweep.log`.
+
+---
+
 ## becky-roughcut: found the feedback the first recovery pass missed, wired becky-clip's signals in for real (2026-08-24, later the same night, local, `master`)
 
 **Full story: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8.** Jordan watched the round-1 timeline

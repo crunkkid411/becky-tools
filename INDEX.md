@@ -10,8 +10,14 @@
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,
-  the QA gate, and the headless Vegas seam (FCP7/OTIO import is dead in VP18). New 2026-08-24,
-  numbers corrected 2026-08-24 night — see `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
+  the QA gate, `--watch`/`--triage-markers` (Gemma-4 review passes, standalone/GPU-gated), and
+  the headless Vegas seam (FCP7/OTIO import is dead in VP18). New 2026-08-24, numbers corrected
+  2026-08-24 night, marker triage + the audio gain/limiter measurement added still later that
+  same night — see `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
+- `vegas/README.md` §0 — **VEGAS Pro 18 scripting gotchas, read before touching any `.cs` in
+  `vegas/`**: the `Tracks.Insert`/`SaveSnapshot`/`Timecode.Seconds`/`ScriptArgs` API traps, the
+  force-kill/port-2015/VegasAIBridge trap, why OTIO/FCPXML import is a dead end here. New
+  2026-08-24 night, consolidated from a memory file + scattered handoff entries.
 - `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` — **recovering a credit-exhausted agent CLI's session
   and finishing its work**: how to pull a Qoder/Claude-Code-style CLI's own on-disk JSONL
   transcript to find exactly what the human said and what got mid-edited before a credit wall

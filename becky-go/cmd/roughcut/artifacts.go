@@ -82,6 +82,19 @@ func writeArtifacts(out, dir string, lay layout, dropped, cutAsRetake []qaCue, t
 	return os.WriteFile(filepath.Join(out, "qa.json"), qj, 0o644)
 }
 
+// writePendingMarkers persists the placed subset of pendingMarkers (each
+// already carrying its resolved timeline position, TL) so the standalone
+// --triage-markers pass can run later - possibly hours later, once the GPU
+// is free of the LR-ASD sweep - without re-running the whole detection
+// pipeline just to recover which review/retake marker sits where.
+func writePendingMarkers(out string, pm []pendingMarker) error {
+	b, err := json.MarshalIndent(pm, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(out, "pending_markers.json"), b, 0o644)
+}
+
 // library.yaml is written separately (it needs the clip inventory).
 func writeLibrary(out, dir string, clips []clip, summaries map[string]string) error {
 	var lb strings.Builder

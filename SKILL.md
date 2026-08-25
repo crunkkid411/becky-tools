@@ -601,7 +601,7 @@ A rough cut is an EDIT, not an inventory (canon: `"X:\Videos\2026\08_august\23_h
 start to finish with nothing in it that isn't content. 80% of its cuts survive to the final edit.
 An "AI-slop cut" that makes the editor touch every cut is WORSE than no output.
 
-[EDIT FROM JORDAN]; My definition of a rough-cut is as follows;
+[EDIT FROM JORDAN]; My definition of a rough-cut is as follows (because the nuances and logic MATTERS in a way that the above summary failed to communicate, repeatedly);
 A "rough-cut" is not the same as an "AI-slop" cut. When a human intern produces a rough-cut, every cut was made at meaningful and intentional zero-crossing points (generally relative to speech); 80% of those cuts will never need to be adjusted and will likely remain in the final output. Watching a smooth, thoughful rough-cut gives the Editor a feel for the tempo and pacing, and allows the human Editor to get immersed in the storyline and delivery in realtime. Anything that stands out as requiring improvement is then adjusted to taste, but the fundamental edit is complete. AI-slop, by contrast, makes sloppy, haphazard cuts that completely ignore video editing fundamentals. Generally it cuts off words and phrases, leaves excess silence, the narrative does not yet make logical sense (extra words or phrases left in), and are not cut to zero-crossing points (and the ones that are, lack the precision to trim out non-speech before a line is delivered, such as the speaker adjusting their position before delivering a line - which a human editor then has to go trim). This does not provide a cohesive viewing experience and prevents the human Editor from getting a feel for the pacing and the narrative. Virtually every cut that is made in this way requires a human to adjust (even if only by one or two video frames). This is worse than producing no output at all - because not only is the video editor STILL touching every cut on the timeline, you've also wasted the human's time they spent by watching the incomplete work. A proficient video editor can produce a proper rough-cut in significantly less time than it takes to fix a bad one.
 
 ## The one call
@@ -627,7 +627,8 @@ Dragging `vegas_cut.json` onto `import-to-vegas.bat` does the same Vegas step by
 | `-launch-vegas` | off | the unattended Vegas build. **One heavy media app at a time** — never with Resolve open. |
 | `-out` | `<dir>\_roughcut` | artifact dir. |
 | `-quotes` | none | `quotes_verified.json` = `[{q, source, in, out}]`; verified quote clips inserted SEQUENTIALLY at their `-markers` marker (main edit stops, quote plays, main resumes) — never simultaneously. |
-| `-watch` | off | **STANDALONE mode, run it separately.** An LLM (Gemma-4) watches every merged block of an EXISTING `vegas_cut.json` and writes `watch_report.json` (PASS/FLAG + reason per block, review-only). Needs the GPU free of any other model — never alongside an LR-ASD speaking sweep on an 8GB card. See `watchpass.go`. |
+| `-watch` | off | **STANDALONE mode, run it separately.** An LLM (Gemma-4) watches every merged block of an EXISTING `vegas_cut.json` and writes `watch_report.json` (PASS/FLAG + reason per block, review-only). Needs the GPU free of any other model — never alongside an LR-ASD speaking sweep on an 8GB card. See `watchpass.go`. Jordan, 2026-08-24: this "watch everything" rule is a `becky-clip` (short-form, jump-cut-heavy) rule that does **not** transfer to roughcut's long-form documentary use case — prefer `-triage-markers` below for roughcut's actual review flags. |
+| `-triage-markers` | off | **STANDALONE mode, run it separately.** An LLM (Gemma-4) reviews every pending `CHECK:`/`RETAKE?` marker from an EXISTING run (`pending_markers.json`), watching a window around each one (padding before/after — Jordan: "it will likely need to know what comes before and after the marker with the question"), and answers the SPECIFIC concern already written into that marker. A confidently-resolved marker is dropped from `vegas_cut.json` before Jordan ever sees it; one the model can't resolve stays, annotated with its own read (`[gemma4: ...]`). Never cuts anything — same GPU constraint as `-watch`. See `triage.go`. |
 
 ## Corroboration — becky-clip's signals, actually consumed (2026-08-24 night)
 
@@ -643,6 +644,14 @@ verdict — neither of these ever cuts, shortens, or auto-fixes anything):
   raises a `CHECK:` marker on the timeline for Jordan to look at.
 - **`--watch`** (above) is the `becky-short`-style critic pass, ported. Run it once real
   coverage exists and the GPU is free.
+- **`--triage-markers`** (`triage.go`, 2026-08-24 later that night) is the direct fix for
+  Jordan's follow-up correction: *"There is no reason to ask me to watch the timeline choice
+  if gemma4 has not already done so... it ABSOLUTELY can watch up to 30 seconds at a time."*
+  Unlike `--watch`'s blanket pass over every kept block, this only re-examines spans someone
+  ALREADY flagged (with context padding before/after), and answers that marker's own specific
+  question. Still review-only: a marker is only ever dropped on a confident model answer, never
+  auto-cut, and a marker the model can't resolve is kept, annotated with the model's own read
+  so Jordan sees it already reviewed rather than a blank question.
 
 Full story, why it took a second pass to find this gap, and the exact bug that silently ate
 every dynamically-generated marker until tonight: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8.
@@ -725,6 +734,47 @@ session's fixes (word-anchored trim + interior-gap split) are a SECOND, corrobor
 top of it, using `words.json` where the calibrated audio signal alone still misses things on
 this specific noisy-but-quiet-room footage — not a replacement for it, and not a return to
 transcript-cue-timestamps-as-ground-truth (which Jordan separately, explicitly rejected).
+
+**Jordan re-litigated this 2026-08-24 night** (`HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §7's
+edit): the "30% kept / shredded sentences" number was never confirmed by his own eyes, and he's
+right that a claim graded only by the pipeline itself is exactly the failure mode to distrust.
+Worth being precise about which parts of this ARE and are NOT that failure mode: the "30%
+kept, shredded" number is a plain word-count comparison against `becky-cut`'s OWN naive output
+(deterministic, not a model's opinion) — that measurement stands. The **2:2:5:25 -> 81min /
+0.05%-gaps** result reported above is likewise a deterministic `words.json`-coverage count, not
+an AI's self-grade. What is still **only Claude's read, not Jordan's**: the visual screenshot
+inspection of the Vegas timeline. **Nobody has watched or listened to the current build with
+human ears yet** — that is the one honest gap left, and it is waiting on Jordan, not on more
+engineering. His actual ask — "use auto-editor per-clip / adaptively, not one dumb global
+threshold" — is what `calibrate()` already does (a fresh p90/p10 threshold computed per CLIP,
+not one number for the whole session); the naive-global-threshold measurement above describes
+`becky-cut` run WITHOUT that calibration, a different configuration from what ships. This is a
+terminology gap, not an unresolved architecture fork — no rip-and-replace is needed unless
+Jordan's own review of the current (already-open) build says otherwise.
+
+**Also tested, also grounded in real measurement, not guessed at:** Jordan's follow-up
+suggestion — push the ANALYSIS gain further (~12dB) with a real limiter instead of a compressor
+(compressor already measured, separately, to crush ~20dB of dynamic range and was rejected) —
+does **not** improve speech/room separation here. Measured on two independent real clips
+(`HJOC7106`, `SNOW_20260823122254`; script: `audio_gain_limiter_test.py`, kept for reference):
+whole-window p90/p10 separation went from 50.9dB (current gain+softclip) to 45.4dB (current+12dB
+via `alimiter`) on clip 1, and 44.9dB to 42.0dB on clip 2 — a real limiter engaging on louder
+peaks pulls the loud end down MORE than the already-quiet room tone (which stays under the
+limiter's threshold and just scales linearly with the extra gain), so pushing gain further
+narrows the gap the detector needs, it does not widen it. Word-boundary onset jumps (the
+detection-relevant measure, not just overall stats) told the same story across 15 real onsets
+tested: current was equal-or-better on every one, clearly better on the ones with a real jump
+(12.3dB->10.5dB, 7.5dB->3.6dB, 19.0dB->19.0dB, 9.2dB->9.2dB). **The mechanism, not just the
+number:** pure linear gain cannot change the RELATIVE dB gap between speech and room tone at
+all (it shifts both together) — only a nonlinearity can, and a limiter's nonlinearity acts on
+the LOUD end, which is the wrong end to compress for this purpose. Jordan's instinct is correct
+for its actual home — his own manual mixing of the DELIVERED audio in Vegas, where a human
+picks the threshold by ear and a few smashed peaks are an acceptable, deliberate trade — it just
+doesn't transfer to the unattended ANALYSIS chain, whose only job is maximizing that gap.
+**Left alone, deliberately:** wiring this gain+limiter treatment onto the DELIVERED Vegas audio
+track (as an actual FX plugin, separate from the analysis chain) is still open — Jordan
+described it as something he dials in "manually... on a per clip basis," so it stays a manual
+mixing step in Vegas rather than something this tool should auto-apply.
 
 - becky-cut/auto-editor on this audio kept 30% and shredded sentences; at its -50 dB FLOOR it
   still kept 34%, and at -70 dB 41% — a volume threshold cannot work when speech RMS is -55 dBFS.

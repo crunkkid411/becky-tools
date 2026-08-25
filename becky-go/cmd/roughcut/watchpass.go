@@ -169,19 +169,29 @@ func parseWatchVerdict(raw string) (verdict, reason string) {
 	if !strings.Contains(up, "FLAG") {
 		return "pass", ""
 	}
+	return "flag", extractReasonField(raw, up)
+}
+
+// extractReasonField pulls the text after a "REASON:" label (case-
+// insensitive, stops at the line break); falls back to the whole trimmed
+// reply, capped, when the model didn't use the label. Shared by every pass
+// that asks Gemma-4 for a one-line VERDICT/REASON answer (watchpass.go,
+// triage.go).
+func extractReasonField(raw, up string) string {
 	if idx := strings.Index(up, "REASON:"); idx >= 0 {
-		reason = strings.TrimSpace(raw[idx+len("REASON:"):])
+		reason := strings.TrimSpace(raw[idx+len("REASON:"):])
 		if nl := strings.IndexAny(reason, "\r\n"); nl >= 0 {
 			reason = reason[:nl]
 		}
-	}
-	if reason == "" {
-		reason = strings.TrimSpace(raw)
-		if len(reason) > 200 {
-			reason = reason[:200]
+		if reason != "" {
+			return reason
 		}
 	}
-	return "flag", reason
+	reason := strings.TrimSpace(raw)
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	return reason
 }
 
 // runWatchPass is becky-roughcut's --watch entry point: reads an existing

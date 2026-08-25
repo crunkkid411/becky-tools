@@ -89,9 +89,18 @@ type qaCue struct {
 	Text   string  `json:"text"`
 }
 
+// pendingMarker is a review flag not yet placed on the timeline. T/TEnd are
+// SOURCE time (the flagged span); TL is filled in once mapToTimeline places
+// it (0 until then). Exported + json-tagged so a run can persist the placed
+// subset to pending_markers.json for the standalone --triage-markers pass
+// (triage.go) to pick up later, once the GPU is free of the LR-ASD sweep.
 type pendingMarker struct {
-	source, title, kind string
-	t                   float64
+	Source string  `json:"source"`
+	Title  string  `json:"title"`
+	Kind   string  `json:"kind"`
+	T      float64 `json:"t"`
+	TEnd   float64 `json:"t_end"`
+	TL     float64 `json:"tl"`
 }
 
 func main() {
@@ -104,6 +113,7 @@ func main() {
 	vegasScript := flag.String("vegas-script", "", "path to vegas/BeckyRoughCut.cs (default: found next to this exe)")
 	launchVegas := flag.Bool("launch-vegas", false, "after building, launch Vegas Pro headless and populate the timeline (save .veg, exit)")
 	watch := flag.Bool("watch", false, "STANDALONE mode: an LLM (Gemma-4) watches every merged block of an EXISTING vegas_cut.json and writes watch_report.json. Run this once the GPU is free of any other model (LR-ASD sweep, etc) - see watchpass.go.")
+	triage := flag.Bool("triage-markers", false, "STANDALONE mode: an LLM (Gemma-4) reviews every pending review/retake marker from an EXISTING run (pending_markers.json), with context before and after, and either resolves it (drops it from vegas_cut.json) or keeps it annotated with the model's own read. Run once the GPU is free - see triage.go.")
 	verbose := flag.Bool("verbose", false, "progress on stderr")
 
 	flag.Usage = func() {
@@ -137,6 +147,12 @@ func main() {
 
 	if *watch {
 		if err := runWatchPass(out, *verbose); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		return
+	}
+	if *triage {
+		if err := runTriagePass(out, *verbose); err != nil {
 			beckyio.Fatalf("%v", err)
 		}
 		return
@@ -206,10 +222,11 @@ func main() {
 				}
 			} else {
 				pendingMarkers = append(pendingMarkers, pendingMarker{
-					source: c.Stem,
-					t:      bt.Start,
-					title:  fmt.Sprintf("RETAKE? %s: %s", c.Stem, cueText(cues, bt.FirstCue, bt.LastCue)),
-					kind:   "retake",
+					Source: c.Stem,
+					T:      bt.Start,
+					TEnd:   bt.End,
+					Title:  fmt.Sprintf("RETAKE? %s: %s", c.Stem, cueText(cues, bt.FirstCue, bt.LastCue)),
+					Kind:   "retake",
 				})
 			}
 		}
@@ -285,9 +302,12 @@ func main() {
 			}
 		}
 	}
+	var placedPending []pendingMarker
 	for _, pm := range pendingMarkers {
-		if t, ok := mapToTimeline(events, pm.source, pm.t); ok {
-			markers = append(markers, markerOut{t, pm.title})
+		if t, ok := mapToTimeline(events, pm.Source, pm.T); ok {
+			markers = append(markers, markerOut{t, pm.Title})
+			pm.TL = t
+			placedPending = append(placedPending, pm)
 		}
 	}
 	sort.SliceStable(markers, func(i, j int) bool { return markers[i].T < markers[j].T })
@@ -320,6 +340,9 @@ func main() {
 		beckyio.Fatalf("%v", err)
 	}
 	if err := writeLibrary(out, dir, clips, summaries); err != nil {
+		beckyio.Fatalf("%v", err)
+	}
+	if err := writePendingMarkers(out, placedPending); err != nil {
 		beckyio.Fatalf("%v", err)
 	}
 
