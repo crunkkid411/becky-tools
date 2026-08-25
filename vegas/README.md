@@ -48,8 +48,21 @@ start HTTP server" dialog that has to be dismissed before anything else can run.
 was only a headless throwaway.
 
 **A third-party "VegasAIBridge" plugin is installed on this machine** and throws its own
-port-conflict error dialog on startup sometimes. It is unrelated to any becky script — dismiss
-it and move on, don't debug becky's code because of it (confirmed harmless, 2026-08-24).
+port-conflict error dialog on startup. Measured 2026-08-25: on a machine with any earlier VEGAS
+session still around, this fires on EVERY fresh `vegas180.exe -SCRIPT:` launch, not just
+"sometimes" - and it is a REAL modal dialog, not suppressed by launching from Go with
+`proc.NoWindow(cmd)` (that flag only affects console-window allocation; it does nothing for a
+GUI app's own windows). A `-SCRIPT` launch is therefore never actually invisible - it always has
+a normal window, and if this dialog is sitting on top of it unattended, the script never gets to
+run: no buildlog.txt, no .veg write, and the calling process may exit "successfully" anyway
+because `launchVegasPro`/`cmd.Start()` returns as soon as the process SPAWNS, not when it
+finishes (see `-vegas-only`/`-narrative-trim` below) - this produced a silent, no-error failure
+that looked identical to success in the calling tool's exit code. It is unrelated to any becky
+script - dismiss it and move on, don't debug becky's code because of it. To dismiss
+programmatically instead of by hand: `EnumWindows` for a visible window on the target PID whose
+title contains "VegasAIBridge", `PostMessage(hWnd, 0x0010 /*WM_CLOSE*/, 0, 0)`. After a headless
+launch, always confirm the actual work happened (buildlog.txt / verify.txt mtime, not just the
+launcher's exit code) before trusting it - the launch call finishing is not the build finishing.
 
 **Scripts only appear in the Tools ▸ Scripting menu from VEGAS's own Script Menu folder**
 (`C:\Program Files\VEGAS\VEGAS Pro <ver>\Script Menu`) — a `.cs` sitting in this repo is
@@ -336,6 +349,28 @@ before `BeckyRoughCut.cs` ever runs; one it can't gets annotated with the model'
 (`[gemma4: ...]` appended to the title) so you see its take right on the timeline marker
 instead of having to ask the same question yourself. This script itself needs no changes for
 this — it only ever reads whatever `markers[]` is in the JSON at launch time.
+
+## The cut is finished but still too long — `--narrative-trim`
+
+Jordan, 2026-08-25, after a finished 86-minute cut: "86 minutes is too long - i REFUSE to
+human review that until it's less than an hour. build whatever the fuck you need." Dead-air
+removal (`speakingConfidentCuts`, `confidentcuts.go`) only removes spans where nothing is
+there at all - it cannot shorten a cut that is simply full of genuine but REDUNDANT talking.
+`becky-roughcut <dir> --narrative-trim --target-minutes 58` (standalone, run after
+`--triage-markers`, GPU free) has Gemma-4 read the whole remaining narration in ~30s beats and
+mark ONLY the beats it is confident are a repeated point, a tangent, or filler - never a new
+fact, name, date, or accusation - then removes just those, closes the gap, and reflows the
+quote clips and surviving markers onto the shorter timeline (`narrativetrim.go`). Every cut is
+logged to `narrative_trim.json` (text + reason) so nothing is silent.
+
+**This WILL over-cut if you trust the prompt alone - it needs a hard code-level ceiling.**
+Measured on the real footage: with the model told the running total and asked to stay
+conservative but never told to STOP, it cut 167 of 191 beats anyway - 86.1min down to 15.5min,
+over 3x more than the ~23min actually needed, because nothing forced it to stop once the
+target was already long satisfied. `judgeNarrativeBeats` now hard-stops calling the model the
+moment `cutSoFar` meets `totalSec-targetSec` - every beat after that point is left at
+`cut:false`, untouched, by construction. Don't relax that stop condition to "let the model
+decide when it's done."
 
 ---
 

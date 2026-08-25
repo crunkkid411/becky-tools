@@ -197,6 +197,32 @@ func applyTriageVerdicts(existing []markerOut, verdicts []triageVerdict) (kept [
 	return kept, resolved
 }
 
+// reshiftPendingTL corrects TL on each pendingMarker to the position it
+// ACTUALLY lands at once quotes are spliced in. spliceLayout shifts every
+// marker to make room for inserted quotes (splice.go: out.Markers[i] =
+// preSplice[i].T + shiftAt(...), same index, same order - a straight
+// positional map) - preSplice must be the exact slice passed into
+// spliceLayout, and postSplice its returned lay.Markers, so index i means
+// the same marker in both. placedPending's TL was captured BEFORE that
+// shift, so a later triage pass matching on TL would silently miss every
+// marker after the first quote insertion (measured 2026-08-25: only 8 of
+// 180 pending markers matched a real quoted 81-minute cut - the rest never
+// got a chance to be dropped or annotated, no matter what Gemma-4 said).
+func reshiftPendingTL(pending []pendingMarker, preSplice, postSplice []markerOut) []pendingMarker {
+	shifted := map[[2]any]float64{}
+	for i, m := range preSplice {
+		if i < len(postSplice) {
+			shifted[[2]any{m.T, m.Title}] = postSplice[i].T
+		}
+	}
+	for i := range pending {
+		if t, ok := shifted[[2]any{pending[i].TL, pending[i].Title}]; ok {
+			pending[i].TL = t
+		}
+	}
+	return pending
+}
+
 // loadPendingMarkers reads pending_markers.json; a missing file (an older
 // run, or a run with nothing pending) is zero markers, not an error.
 func loadPendingMarkers(out string) ([]pendingMarker, error) {

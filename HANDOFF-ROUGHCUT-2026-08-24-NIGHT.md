@@ -469,3 +469,72 @@ scattered handoff entries into the one place a future agent editing a `.cs` here
 look) and full usage sections for `BeckyRoughCut.cs`/`BeckyVerifyProject.cs` (previously only a
 one-line table mention, despite being the two scripts this entire multi-round effort revolves
 around).
+
+## 10. Round 4 (2026-08-25 afternoon) — the cut was still 86 minutes; the fix was a real narrative pass, and it over-cut on the first try
+
+Jordan, having watched the round-3 triaged result: "86 minutes is too long - i REFUSE to human
+review that until it's less than an hour. build whatever the fuck you need, STOP GIVING ME
+SLOP" — then, minutes later, "you were supposed to implement gemma4 8 FUCKING HOURS AGO." §9's
+`--triage-markers` only ever drops or annotates a REVIEW marker; it cannot shorten the cut
+itself. `confidentcuts.go`'s dead-air removal only touches spans where NOTHING is there. Neither
+tool can address 86 minutes of genuine, on-topic, but repetitive talking — that needed an actual
+editorial read of the narrative, which nothing in the pipeline did yet.
+
+**Built `narrativetrim.go` + `becky-roughcut --narrative-trim --target-minutes 58`.** Collapses
+`tlEvent.Dialogue`'s rolling caption window (measured: the same sentence repeated with one more
+word appended per event, not one clean phrase per event) into deduped chunks
+(`dedupeCaptionChunks`), groups those into ~30s beats (`groupChunksIntoBeats`), and sends them to
+the same local Gemma-4 text-chat plumbing `becky-moment/local.go` already proved
+(`internal/llmlocal`, warm client, batched JSON-line verdicts) — a NEW prompt/rubric though, not
+a reuse of `internal/moment`'s package, because its rubric is "will a scrolling viewer stay for
+this" (Berger & Milkman virality dimensions), which is actively the wrong test for what to keep
+in a criminal-case narrative. `applyNarrativeCuts` removes only cut beats' events, re-lays events
++ quotes on one shared cursor (quotes are NEVER a cut candidate — the verified on-camera clips
+stay untouched), reflows markers by containment (drop one anchored inside a cut, shift one after
+it) — same shift-or-drop shape `reshiftPendingTL` (§8/§9) proved correct for an insertion, here
+for a removal — and rebuilds regions fresh rather than trying to shift them. 6 new tests,
+including the load-bearing one that pins the ripple-delete (cut a middle beat, assert the tail
+event/quote/marker all land at the exact right shifted position, assert the marker inside the
+cut is dropped, assert quotes never appear as a cut candidate).
+
+**First real run over-cut badly: 86.1min -> 15.5min (167 of 191 beats cut), over 3x more than
+needed.** The prompt was told the running total, asked to stay conservative, and told
+"cut:false when unsure" — none of that stopped it once it had already cut far past the target,
+because nothing in the LOOP told it to stop. On a stalking/harassment case narrative in
+particular, a small model asked "is this redundant" will readily rationalize almost anything as
+"repetitive statements about X" or "repetitive framing" — and in this genre repeated claims are
+very often the actual evidence of a pattern/escalation, not filler. Caught before it ever
+touched Vegas: the run's own log + `narrative_trim.json` + a duration recompute made the 15.5min
+number obvious, `vegas_cut.json` was restored from a pre-run backup, `rough_cut.veg` was never
+rebuilt from the bad data so nothing Jordan could see was ever wrong.
+
+**Fix: a hard, code-level ceiling, not a better-worded prompt.** `judgeNarrativeBeats` now stops
+calling the model the instant `cutSoFar >= totalSec-targetSec` — every beat after that point
+is left `cut:false` by construction, regardless of what the model would have said. Also
+tightened the system prompt to name the stalking/harassment-repetition trap explicitly. Rerun
+on the same real footage: **86.1min -> 57.2min (69 of 191 beats cut, 1736.8s removed), stopped
+itself with 103 beats never even sent to the model.** All 25 quotes preserved exactly (quotes
+are structurally never a candidate). Rebuilt with `-vegas-only` and independently reverified
+headless (`BeckyVerifyProject.cs`, fresh `verify.txt`, stale copy deleted first):
+`tracks:4 video_events:832 audio_events:832 markers:29 regions:14 length_seconds:3429.7` — 832 =
+807 kept main events + 25 quotes exactly, nothing silently dropped between the JSON and the
+actual `.veg`. `rough_cut.veg` mtime/size both changed (confirmed a real rewrite, not a stale
+report) and `vegas_cut.json.buildlog.txt` is fresh and says `placed: 807 of 807`.
+
+**Root-caused a class of "silent failure" that goes back multiple rounds this session:
+`launchVegasPro` (`artifacts.go`) is `cmd.Start()`, not `cmd.Wait()` — it returns the instant
+Vegas SPAWNS, not when the script finishes.** Combined with the VegasAIBridge third-party
+plugin's port-conflict dialog (§0 of `vegas/README.md`, previously logged as "sometimes") firing
+on every fresh launch on this machine tonight, a headless run could sit blocked behind an
+un-dismissed dialog forever while the CALLING process had already exited 0 and logged "vegas
+launched" — indistinguishable from success by exit code alone. `vegas/README.md` §0 now documents
+the concrete `EnumWindows`/`PostMessage(WM_CLOSE)` dismiss recipe and states plainly: after any
+headless launch, confirm the real artifact (`buildlog.txt`/`verify.txt` mtime) before trusting
+the launcher's exit code. This likely explains some of the earlier rounds' "manual PowerShell
+headless launches failed silently for reasons never fully diagnosed."
+
+**Left open:** no escalation to the 12B model on a disputed narrative-trim verdict (unlike
+`becky-moment`'s `escalateDisputed`) — the hard budget ceiling was judged the higher-priority
+safety mechanism given the time available, and E4B-only matches `--triage-markers`'s existing
+precedent for this class of task. If a future cut still reads wrong to Jordan on a human watch,
+that's the next thing to add, not a re-litigation of the ceiling.

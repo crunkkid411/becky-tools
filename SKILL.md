@@ -652,9 +652,17 @@ verdict — neither of these ever cuts, shortens, or auto-fixes anything):
   question. Still review-only: a marker is only ever dropped on a confident model answer, never
   auto-cut, and a marker the model can't resolve is kept, annotated with the model's own read
   so Jordan sees it already reviewed rather than a blank question.
+- **`--narrative-trim --target-minutes N`** (`narrativetrim.go`, 2026-08-25) is for a cut that's
+  finished and triaged but still too long to review — dead-air removal can't touch that, it only
+  removes spans with nothing in them. Gemma-4 reads the whole remaining narration in ~30s beats
+  and cuts only the ones it's confident are redundant/tangential (never a new fact), with a
+  HARD code-level stop once the removed total meets the actual deficit — measured proof this
+  matters: a prompt-only version with no stop cut 167 of 191 beats (86.1min -> 15.5min, 3x more
+  than needed) before the stop was added. Never touches quote clips. Every cut logged to
+  `narrative_trim.json` with its reason.
 
 Full story, why it took a second pass to find this gap, and the exact bug that silently ate
-every dynamically-generated marker until tonight: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8.
+every dynamically-generated marker until tonight: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8-10.
 
 ## What happens inside the call (the measured recipe)
 

@@ -112,8 +112,11 @@ func main() {
 	quotesIn := flag.String("quotes", "", "optional verified quotes json: [{q, source, in, out}] inserted SEQUENTIALLY at their marker (main edit stops, quote plays, main resumes)")
 	vegasScript := flag.String("vegas-script", "", "path to vegas/BeckyRoughCut.cs (default: found next to this exe)")
 	launchVegas := flag.Bool("launch-vegas", false, "after building, launch Vegas Pro headless and populate the timeline (save .veg, exit)")
+	vegasOnly := flag.Bool("vegas-only", false, "STANDALONE mode: launch Vegas headless on the EXISTING vegas_cut.json and exit - no detection, no re-run. Use after --triage-markers (or any other vegas_cut.json edit) so the .veg actually reflects it, without redoing full detection and overwriting that edit.")
 	watch := flag.Bool("watch", false, "STANDALONE mode: an LLM (Gemma-4) watches every merged block of an EXISTING vegas_cut.json and writes watch_report.json. Run this once the GPU is free of any other model (LR-ASD sweep, etc) - see watchpass.go.")
 	triage := flag.Bool("triage-markers", false, "STANDALONE mode: an LLM (Gemma-4) reviews every pending review/retake marker from an EXISTING run (pending_markers.json), with context before and after, and either resolves it (drops it from vegas_cut.json) or keeps it annotated with the model's own read. Run once the GPU is free - see triage.go.")
+	narrativeTrim := flag.Bool("narrative-trim", false, "STANDALONE mode: an LLM (Gemma-4) judges every remaining beat of narration in an EXISTING vegas_cut.json against -target-minutes and removes only the beats it is confident are redundant/tangential (never a unique fact). Run after --triage-markers when the cut is still too long. See narrativetrim.go.")
+	targetMinutes := flag.Float64("target-minutes", 58.0, "used with -narrative-trim: the length to cut toward")
 	verbose := flag.Bool("verbose", false, "progress on stderr")
 
 	flag.Usage = func() {
@@ -151,8 +154,20 @@ func main() {
 		}
 		return
 	}
+	if *vegasOnly {
+		if err := launchVegasPro(out, *vegasScript, *verbose); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		return
+	}
 	if *triage {
 		if err := runTriagePass(out, *verbose); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		return
+	}
+	if *narrativeTrim {
+		if err := runNarrativeTrimPass(out, *targetMinutes, *verbose); err != nil {
 			beckyio.Fatalf("%v", err)
 		}
 		return
@@ -326,6 +341,8 @@ func main() {
 		}
 		lay = spliceLayout(events, markers, qs)
 	}
+
+	placedPending = reshiftPendingTL(placedPending, markers, lay.Markers)
 
 	finalTL := 0.0
 	for _, e := range lay.Events {

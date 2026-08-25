@@ -549,6 +549,38 @@ func TestSpeakingConfidentCutsNotFooledByCorruptedLongWord(t *testing.T) {
 	}
 }
 
+// Regression for the 2026-08-25 bug found live: a triage pass matching on
+// TL silently found almost nothing to resolve on the real 81-minute quoted
+// cut (216->208 markers, when 179/180 markers had a "resolved" verdict from
+// Gemma-4) because placedPending's TL was captured BEFORE spliceLayout
+// shifts markers to make room for inserted quotes - only markers before the
+// FIRST quote insertion happened to still match afterward.
+func TestReshiftPendingTLMatchesPostSpliceShift(t *testing.T) {
+	preSplice := []markerOut{{T: 10.0, Title: "A"}, {T: 50.0, Title: "B"}}
+	postSplice := []markerOut{{T: 10.0, Title: "A"}, {T: 62.0, Title: "B"}} // B shifted +12s by a quote inserted before it
+	pending := []pendingMarker{
+		{TL: 10.0, Title: "A"},
+		{TL: 50.0, Title: "B"},
+	}
+	got := reshiftPendingTL(pending, preSplice, postSplice)
+	if got[0].TL != 10.0 {
+		t.Errorf("marker A TL = %v, want 10.0 unchanged (before any quote)", got[0].TL)
+	}
+	if got[1].TL != 62.0 {
+		t.Errorf("marker B TL = %v, want 62.0 (shifted to match its real timeline position)", got[1].TL)
+	}
+}
+
+func TestReshiftPendingTLLeavesUnmatchedMarkersAlone(t *testing.T) {
+	preSplice := []markerOut{{T: 10.0, Title: "A"}}
+	postSplice := []markerOut{{T: 10.0, Title: "A"}}
+	pending := []pendingMarker{{TL: 999.0, Title: "not in preSplice at all"}}
+	got := reshiftPendingTL(pending, preSplice, postSplice)
+	if got[0].TL != 999.0 {
+		t.Errorf("TL = %v, want unchanged 999.0 when no match exists (fail safe, not silently wrong)", got[0].TL)
+	}
+}
+
 func TestSnapExtendsToQuietPocket(t *testing.T) {
 	rate := 16000
 	// tone everywhere except a quiet pocket 0.1s after the boundary.

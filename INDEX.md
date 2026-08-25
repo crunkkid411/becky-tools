@@ -10,10 +10,12 @@
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,
-  the QA gate, `--watch`/`--triage-markers` (Gemma-4 review passes, standalone/GPU-gated), and
-  the headless Vegas seam (FCP7/OTIO import is dead in VP18). New 2026-08-24, numbers corrected
-  2026-08-24 night, marker triage + the audio gain/limiter measurement added still later that
-  same night — see `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
+  the QA gate, `--watch`/`--triage-markers`/`--narrative-trim` (Gemma-4 review + narrative-length
+  passes, standalone/GPU-gated), and the headless Vegas seam (FCP7/OTIO import is dead in VP18).
+  New 2026-08-24, numbers corrected 2026-08-24 night, marker triage + the audio gain/limiter
+  measurement added still later that same night, `--narrative-trim` (86.1min -> 57.2min,
+  Gemma-4-judged, hard-capped so it can't over-cut) added 2026-08-25 afternoon — see
+  `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
 - `vegas/README.md` §0 — **VEGAS Pro 18 scripting gotchas, read before touching any `.cs` in
   `vegas/`**: the `Tracks.Insert`/`SaveSnapshot`/`Timecode.Seconds`/`ScriptArgs` API traps, the
   force-kill/port-2015/VegasAIBridge trap, why OTIO/FCPXML import is a dead end here. New

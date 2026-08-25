@@ -6,7 +6,33 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: marker triage, audio gain+limiter tested and rejected, Vegas quirks consolidated (2026-08-24, still later that night, local)
+### CURRENT — becky-roughcut: narrative-trim gets the cut under an hour, 86.1min -> 57.2min, Gemma-4-judged (2026-08-25 afternoon, local)
+
+**On master, built green** (`go build/vet/test ./...` — 39/39 roughcut tests, `gofmt -l` clean,
+`build-all-tools.bat` exit 0). Full story in `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §10; canon
+in `vegas/README.md`'s `--narrative-trim` section.
+
+- **`becky-roughcut --narrative-trim --target-minutes 58`** (new, `narrativetrim.go`): the
+  triaged-but-still-86.1-minute cut needed an actual editorial judgment pass, not more dead-air
+  removal (`confidentcuts.go` already only removes spans with nothing in them at all). Gemma-4
+  reads the whole remaining narration in ~30s beats and marks only the ones it's confident are
+  redundant/tangential/filler — never a new fact — using the same local-LLM plumbing
+  `becky-moment/local.go` proved, with its own rubric (NOT `internal/moment`'s virality rubric,
+  which is the wrong test for a case narrative).
+- **First real run over-cut to 15.5min (167/191 beats) before it ever touched Vegas** — caught
+  by the run's own numbers, `vegas_cut.json` restored from a pre-run backup, nothing bad ever
+  reached `rough_cut.veg`. Root cause: the prompt alone doesn't self-limit. Fixed with a
+  hard, code-level stop once the cut total meets the actual deficit — rerun landed at
+  **57.2 minutes**, independently confirmed via a fresh headless `BeckyVerifyProject.cs` read
+  (`tracks:4 video_events:832 audio_events:832 markers:29 regions:14 length_seconds:3429.7`,
+  832 = 807 kept events + all 25 quotes, nothing silently dropped).
+- **Root-caused a "silent failure" pattern spanning multiple rounds tonight**: `launchVegasPro`
+  returns as soon as Vegas SPAWNS, not when the script finishes, and a third-party
+  "VegasAIBridge" plugin dialog blocks every fresh headless launch on this machine until
+  dismissed — the two together produced "exit code 0" with no actual build happening. Documented
+  with a concrete dismiss recipe in `vegas/README.md` §0.
+
+### PREVIOUS — becky-roughcut: marker triage, audio gain+limiter tested and rejected, Vegas quirks consolidated (2026-08-24, still later that night, local)
 
 **On master, built green** (`go build/vet/test ./...` — 33/33 roughcut tests, same 2
 pre-existing unrelated failures as every prior entry (`cmd/tts`, `internal/assistant`,
