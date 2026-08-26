@@ -80,6 +80,19 @@ func sameTitle(a, b string) bool {
 // spliceLayout inserts the quotes sequentially at their markers and returns
 // the final four-track layout. events/markers carry the no-insertion timeline
 // positions; the result carries final ones.
+//
+// BUG FIXED 2026-08-25 (Jordan: "the clips are out of fucking order"): place()
+// used to clip against e.In/e.Out directly - SOURCE-clip-relative seconds,
+// restarting near 0 for every clip - as if they were timeline positions. Two
+// different clips very commonly have overlapping source-relative ranges (clip
+// 2 and clip 9 both have SOME content at source-second ~45), so a splice
+// window bounded in real timeline coordinates would silently admit whichever
+// clip's OWN early seconds happened to undercut the bound, not whichever
+// event actually belonged there - scattering every clip's later material
+// across later windows instead of keeping it contiguous. e.TLStart (set by
+// main.go right before this call: `events[i].TLStart = tl; tl += out-in`) is
+// already each event's correct pre-splice timeline position - the same axis
+// markers' m.T lives on - and is what place() must clip against instead.
 func spliceLayout(events []event, markers []markerOut, quotes []quoteIn) layout {
 	type splicePt struct {
 		orig float64
@@ -115,7 +128,11 @@ func spliceLayout(events []event, markers []markerOut, quotes []quoteIn) layout 
 		return s
 	}
 
-	// place main content [a,b) onto the cursor
+	// place main content whose PRE-SPLICE TIMELINE position (e.TLStart) falls
+	// in [a,b) onto the cursor - never e.In/e.Out, see the func doc comment.
+	// A window that lands mid-event clips it at the edge and offsets the
+	// SOURCE in/out by the same amount, so the emitted sub-event still points
+	// at the right seconds of the right clip.
 	var out layout
 	cursor := 0.0
 	place := func(a, b float64) {
@@ -123,7 +140,8 @@ func spliceLayout(events []event, markers []markerOut, quotes []quoteIn) layout 
 			return
 		}
 		for _, e := range events {
-			lo, hi := e.In, e.Out
+			eLo, eHi := e.TLStart, e.TLStart+(e.Out-e.In)
+			lo, hi := eLo, eHi
 			if lo < a {
 				lo = a
 			}
@@ -133,7 +151,9 @@ func spliceLayout(events []event, markers []markerOut, quotes []quoteIn) layout 
 			if hi <= lo {
 				continue
 			}
-			out.Events = append(out.Events, tlEvent{e.Source, lo, hi, cursor, e.Dialogue})
+			srcLo := e.In + (lo - eLo)
+			srcHi := e.In + (hi - eLo)
+			out.Events = append(out.Events, tlEvent{e.Source, srcLo, srcHi, cursor, e.Dialogue})
 			cursor += hi - lo
 		}
 	}
@@ -141,8 +161,8 @@ func spliceLayout(events []event, markers []markerOut, quotes []quoteIn) layout 
 	pos := 0.0
 	total := 0.0
 	for _, e := range events {
-		if e.Out > total {
-			total = e.Out
+		if end := e.TLStart + (e.Out - e.In); end > total {
+			total = end
 		}
 	}
 	for _, p := range pts {

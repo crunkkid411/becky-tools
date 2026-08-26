@@ -117,6 +117,7 @@ func main() {
 	triage := flag.Bool("triage-markers", false, "STANDALONE mode: an LLM (Gemma-4) reviews every pending review/retake marker from an EXISTING run (pending_markers.json), with context before and after, and either resolves it (drops it from vegas_cut.json) or keeps it annotated with the model's own read. Run once the GPU is free - see triage.go.")
 	narrativeTrim := flag.Bool("narrative-trim", false, "STANDALONE mode: an LLM (Gemma-4) judges every remaining beat of narration in an EXISTING vegas_cut.json against -target-minutes and removes only the beats it is confident are redundant/tangential (never a unique fact). Run after --triage-markers when the cut is still too long. See narrativetrim.go.")
 	targetMinutes := flag.Float64("target-minutes", 58.0, "used with -narrative-trim: the length to cut toward")
+	burnOverlays := flag.Bool("burn-quote-overlays", false, "STANDALONE mode: burns becky-review-3's forensic lower-third overlay (no filename/name, no captions) into every already-placed quote clip in an EXISTING vegas_cut.json, in place. Safe to run before or after --triage-markers. See overlay.go.")
 	verbose := flag.Bool("verbose", false, "progress on stderr")
 
 	flag.Usage = func() {
@@ -168,6 +169,12 @@ func main() {
 	}
 	if *narrativeTrim {
 		if err := runNarrativeTrimPass(out, *targetMinutes, *verbose); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		return
+	}
+	if *burnOverlays {
+		if err := runBurnOverlaysPass(out, *verbose); err != nil {
 			beckyio.Fatalf("%v", err)
 		}
 		return
@@ -339,6 +346,7 @@ func main() {
 		if qErr != nil {
 			beckyio.Fatalf("read quotes: %v", qErr)
 		}
+		qs = burnQuoteOverlays(qs, out, *verbose)
 		lay = spliceLayout(events, markers, qs)
 	}
 
