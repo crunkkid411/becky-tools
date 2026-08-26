@@ -73,6 +73,49 @@ def frame_db_fine(x):
     return 20.0 * np.log10(rms + EPS)
 
 
+def vad_speech_spans(x, model, threshold=0.5, min_silence=0.10, min_speech=0.10):
+    """Silero VAD (via sherpa-onnx) over the WHOLE file -> speech spans.
+
+    Run on the whole recording ONCE, never per segment: sherpa's VAD is
+    STREAMING and cannot latch onto speech that is already running at sample 0,
+    so feeding it a keep-segment that starts on a word scores that word 0% and
+    deletes it. becky-cut learned this the hard way; segments are scored by
+    OVERLAP with this whole-file result instead.
+    """
+    import sherpa_onnx
+    cfg = sherpa_onnx.VadModelConfig()
+    cfg.silero_vad.model = model
+    cfg.silero_vad.threshold = threshold
+    cfg.silero_vad.min_silence_duration = min_silence
+    cfg.silero_vad.min_speech_duration = min_speech
+    cfg.sample_rate = SR
+    vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=60)
+    spans = []
+
+    def drain():
+        while not vad.empty():
+            seg = vad.front
+            spans.append((seg.start / SR, (seg.start + len(seg.samples)) / SR))
+            vad.pop()
+
+    W = 512
+    for i in range(0, len(x), W):
+        vad.accept_waveform(x[i:i + W])
+        drain()
+    vad.flush()
+    drain()
+    return spans
+
+
+def overlap_pct(span, spans):
+    """% of `span` covered by any of `spans`."""
+    s, e = span
+    if e <= s:
+        return 0.0
+    cov = sum(max(0.0, min(e, b) - max(s, a)) for a, b in spans)
+    return 100.0 * cov / (e - s)
+
+
 def otsu_db(db, lo=-90.0, hi=0.0, bins=180):
     """Otsu's threshold over the dB histogram.
 
@@ -136,8 +179,9 @@ def spans_from_mask(mask, hop_s):
 
 
 def detect(path, fps=30.0, min_gap=0.30, min_speech=0.20,
-           pad_pre=0.04, pad_post=0.25, hysteresis_db=8.0, max_internal=1.0,
-           reach=0.30, ffmpeg="ffmpeg"):
+           pad_pre=0.0, pad_post=0.08, hysteresis_db=8.0, max_internal=1.0,
+           reach=0.30, vad_model=None, vad_pct=20.0, words=None,
+           ffmpeg="ffmpeg"):
     x = decode_mono(path, ffmpeg)
     dur = len(x) / SR
     db = frame_db(x)
@@ -223,8 +267,12 @@ def detect(path, fps=30.0, min_gap=0.30, min_speech=0.20,
         else:
             refined.append([rs, re_])
 
-    # 4. snap to the frame grid - start DOWN, end UP, so a cut never lands mid
-    #    speech. With the edges refined this costs at most one frame each side.
+    # 4. snap to the frame grid. START snaps DOWN to the frame boundary at or
+    #    immediately before the onset, with NO pre-pad: that frame IS "the
+    #    nearest frame to where speech begins", so head slack is under one frame
+    #    by construction and can never clip the onset. Jordan has to touch a cut
+    #    only when it is off by a frame or more, so the whole budget goes here -
+    #    starting tight matters monumentally more than ending tight.
     out = []
     for s, e in refined:
         fs = int(np.floor(s * fps)) / fps
@@ -232,6 +280,37 @@ def detect(path, fps=30.0, min_gap=0.30, min_speech=0.20,
         fe = min(fe, dur)
         if fe > fs:
             out.append([round(fs, 6), round(fe, 6)])
+
+    # 5. VAD PASS - drop the spans that are confidently NOT speech.
+    #
+    # Level detection cannot tell a cough, a chair scrape, a lip smack or the
+    # speaker repositioning from a word: all of them are "loud enough". Silero
+    # VAD can. becky-cut's rule is used verbatim: a segment with less than
+    # vad_pct% speech is not speech.
+    #
+    # CONFIDENT means two independent signals agree. A span is dropped only when
+    # the VAD says it is not speech AND Parakeet transcribed no word starting
+    # inside it. Either one alone leaves the span on the timeline - a false drop
+    # deletes something Jordan said, which is far worse than a stray noise clip
+    # he can delete in one keystroke.
+    dropped = []
+    if vad_model and os.path.exists(vad_model):
+        vspans = vad_speech_spans(x, vad_model)
+        keep2 = []
+        for s_, e_ in out:
+            pct = overlap_pct((s_, e_), vspans)
+            has_word = any(s_ <= w < e_ for w in (words or []))
+            if pct < vad_pct and not has_word:
+                dropped.append([round(s_, 3), round(e_, 3), round(pct, 1)])
+            else:
+                keep2.append([s_, e_])
+        out = keep2
+        diag["vad_speech_pct_whole_file"] = round(
+            sum(b - a for a, b in vspans) / dur * 100.0, 1)
+
+    diag["dropped_nonspeech"] = len(dropped)
+    diag["dropped_nonspeech_s"] = round(sum(e - s for s, e, _ in dropped), 2)
+    diag["dropped_spans"] = dropped
 
     kept = sum(e - s for s, e in out)
 
@@ -289,25 +368,41 @@ def main():
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--min-gap", type=float, default=0.30,
                     help="silence shorter than this is a pause inside a sentence, not a cut")
-    ap.add_argument("--pad-pre", type=float, default=0.04)
-    ap.add_argument("--pad-post", type=float, default=0.25)
+    ap.add_argument("--pad-pre", type=float, default=0.0)
+    ap.add_argument("--pad-post", type=float, default=0.08)
     ap.add_argument("--reach", type=float, default=0.30,
                     help="how far an edge may walk out from confident speech to catch a soft onset")
     ap.add_argument("--max-internal", type=float, default=1.0,
                     help="no kept span may contain a sub-threshold run longer than this")
+    ap.add_argument("--vad-model", default="X:/AI-2/becky-tools/models/silero_vad.onnx",
+                    help="silero_vad.onnx; the VAD pass is skipped if absent")
+    ap.add_argument("--vad-pct", type=float, default=20.0,
+                    help="becky-cut's bar: under this percent speech, a span is not speech")
+    ap.add_argument("--no-vad", action="store_true")
+    ap.add_argument("--words-dir", default=None,
+                    help="folder of <stem>.words.json, the second opinion that makes a drop confident")
     ap.add_argument("--ffmpeg", default="ffmpeg")
     a = ap.parse_args()
 
     results = []
     for v in a.videos:
+        wstarts = None
+        if a.words_dir:
+            wj = os.path.join(a.words_dir,
+                              os.path.splitext(os.path.basename(v))[0] + ".words.json")
+            if os.path.exists(wj):
+                wstarts = [w["start"] for w in
+                           json.load(open(wj, encoding="utf-8"))["words"]]
         r = detect(v, fps=a.fps, min_gap=a.min_gap, pad_pre=a.pad_pre,
                    pad_post=a.pad_post, max_internal=a.max_internal,
-                   reach=a.reach, ffmpeg=a.ffmpeg)
+                   reach=a.reach, vad_model=None if a.no_vad else a.vad_model,
+                   vad_pct=a.vad_pct, words=wstarts, ffmpeg=a.ffmpeg)
         results.append(r)
         print(f"{os.path.basename(v):32s} thr={r['threshold_db']:7.2f} "
               f"| {r['duration_s']:7.1f}s -> {r['kept_s']:7.1f}s ({r['segments']:4d} spans) "
               f"| head p50/p95/max {r['head_frames_p50']:4.1f}/{r['head_frames_p95']:4.1f}/{r['head_frames_max']:5.1f}f "
-              f"tail {r['tail_frames_p50']:4.1f}/{r['tail_frames_p95']:4.1f}/{r['tail_frames_max']:5.1f}f", flush=True)
+              f"tail {r['tail_frames_p50']:4.1f}/{r['tail_frames_p95']:4.1f}/{r['tail_frames_max']:5.1f}f"
+              f" | vad dropped {r.get('dropped_nonspeech', 0):3d} ({r.get('dropped_nonspeech_s', 0):5.1f}s)", flush=True)
 
     tot = sum(r["duration_s"] for r in results)
     kept = sum(r["kept_s"] for r in results)
