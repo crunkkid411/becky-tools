@@ -6,7 +6,55 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: Jordan's verdict — NOT usable yet, he is editing this project by hand (2026-08-25 night, local)
+### CURRENT — rough cut rebuilt from the AUDIO, not the transcript: 145.4 min -> 67.7 min, dead air gone (2026-08-25 night, local)
+
+Jordan's verdict below ("littered with excessive dead air") was correct, and the cause is now
+measured, not argued. Two separate bugs, both fixed by NOT using the old path:
+
+1. **The cut was transcript-driven.** `vegas_cut.json` events were keyed on `dialogue`, i.e. on
+   Parakeet cue boundaries. Parakeet's cue ENDS run long - measured on `SNOW_20260823114143.mp4`,
+   cue 2 (`00:00:25,440 --> 00:00:38,720`, "The FBI sent someone here to investigate a whole list
+   of very serious Federal crimes") is stamped 13.28s for a ~5s sentence: **6.85s of dead air
+   inside one cue**. Every over-long cue dragged its silence onto the timeline.
+2. **The threshold was absolute.** becky-cut/auto-editor use a fixed amplitude bar Jordan dialled
+   in for an iPhone 13. This footage is a Rode Wireless GO II: room tone -78 to -93 dBFS, speech
+   only -30 to -42 dBFS. A bar picked for one mic means nothing on the other.
+
+**Fix: `scripts/speechcut.py` decides from the waveform, per file, with no dial.** Otsu's method
+on that recording's own dB histogram puts the threshold in the valley between its silence mode
+and its speech mode - Jordan's own suggested approach ("calibrate becky-cut based on the actual
+volume of the speech relative to the silence"). Bidirectional hysteresis keeps quiet unvoiced
+onsets ("Th-", "Qu-") attached to their word; spans are padded and snapped OUTWARD to whole
+frames so no syllable is clipped; any sub-threshold run >= 1.0s force-breaks the mask so a long
+silence can never hide inside a kept span (that guarantee is what killed a 7.85s hole).
+
+**Measured on the 23_hj-fbi-recap footage (16 clips, 145.4 min):**
+
+| | before | now |
+|---|---|---|
+| timeline length | 86 min (then 57 min after LLM narrative-trim, rejected as slop) | **67.7 min** |
+| dead air >= 1s | Jordan: "20+ minutes", "26+ minutes" | **0.78 min total, 34 stretches** |
+| dead air >= 3s | - | **0** |
+| longest single stretch | 7.85s (in an earlier build of this same fix) | **2.15s** |
+| gaps/overlaps between events | - | **0** |
+
+Verified three ways, not asserted: word-coverage against Parakeet's own word timings (93%, and
+every "miss" is within 0.267s of a kept span - Parakeet stamps cue starts early, the detector is
+not eating words); waveform PNGs with the keep-spans shaded (`scripts/speechcut_plot.py`); and
+`scripts/verify_timeline.py`, which reassembles the ACTUAL timeline audio from `vegas_cut.json`
+and measures what a human scrubbing it would hit. Screenshotted in Vegas at three zoom levels.
+
+**No LLM anywhere in this path.** Nothing was removed for being "redundant" or "filler" - only
+audio that is below the recording's own speech threshold. Retakes are all still on the timeline.
+
+Also fixed: **clip ordering must come from the camera's embedded `creation_time`, never the
+filesystem.** Every file's Windows `CreationTime` here is the moment it was copied to X: (all 16
+within 40 minutes), which orders the timeline almost backwards.
+
+Built by `scripts/speechcut.py` -> `scripts/build_roughcut.py` -> `vegas/BeckyRoughCut.cs`
+(unchanged, still the dumb assembler). 1391 events, 65 quote markers, 17 regions.
+
+### PREVIOUS — becky-roughcut: Jordan's verdict — NOT usable yet, he is editing this project by hand (2026-08-25 night, local)
 
 **Jordan's own words, after human-watching the corrected-order timeline**: "the timeline
 footage... is littered with excessive dead air. You, and the tools failing to recognize that is

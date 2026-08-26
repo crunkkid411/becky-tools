@@ -16,6 +16,14 @@
   measurement added still later that same night, `--narrative-trim` (86.1min -> 57.2min,
   Gemma-4-judged, hard-capped so it can't over-cut) added 2026-08-25 afternoon — see
   `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
+- `scripts/speechcut.py` + `scripts/build_roughcut.py` + `scripts/verify_timeline.py` +
+  `scripts/speechcut_plot.py` — **the working silence cut: decided from the AUDIO, per file, no
+  model, no dial.** Otsu threshold on each recording's own dB histogram (handles a quiet Rode and
+  a loud iPhone with identical code), bidirectional hysteresis, outward frame-snap, and a hard
+  "no kept span may hide a >=1.0s silence" break. Replaces the transcript-cue-driven cut that
+  produced 20+ minutes of dead air. See `SKILL.md` `# ROUGH CUT` for the numbers and the two
+  structural traps (never cut on Parakeet cues; never use an absolute amplitude threshold).
+  New 2026-08-25 night.
 - `vegas/README.md` §0 — **VEGAS Pro 18 scripting gotchas, read before touching any `.cs` in
   `vegas/`**: the `Tracks.Insert`/`SaveSnapshot`/`Timecode.Seconds`/`ScriptArgs` API traps, the
   force-kill/port-2015/VegasAIBridge trap, why OTIO/FCPXML import is a dead end here. New

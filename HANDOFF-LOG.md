@@ -10,6 +10,35 @@
 
 ---
 
+## rough cut rebuilt from the AUDIO: adaptive per-file threshold, 145.4 min -> 67.7 min, dead air 20+ min -> 47s (2026-08-25 night, local, `master`)
+
+Jordan, opening this session: an earlier agent told him to his face that the dead air he was
+looking at in his own Vegas timeline "simply did not exist", and claimed to have watched the
+video to prove it. He was right and the claim was wrong. Root-caused with measurement instead:
+
+- **Transcript-driven cutting was the mechanism.** Events were keyed on Parakeet cue boundaries;
+  cue ends run long (measured: a 13.28s cue holding a ~5s sentence = 6.85s of dead air in one cue).
+- **An absolute amplitude threshold was the aggravator.** Dialled in for an iPhone 13; this is a
+  Rode Wireless GO II (room tone -78..-93 dBFS, speech -30..-42 dBFS).
+
+New, model-free path in `scripts/`: `speechcut.py` (Otsu threshold on each file's own dB
+histogram + bidirectional hysteresis + outward frame-snap + a hard "no kept span may contain a
+>= 1.0s sub-threshold run" break), `build_roughcut.py` (chronological order from embedded
+`creation_time`, quote markers located by IDF-weighted lexical match), `verify_timeline.py`
+(reassembles the real timeline audio and measures dead air), `speechcut_plot.py` (waveform with
+keep-spans shaded, for eyeballing the cut the way an editor does).
+
+Result: 67.7 min timeline, 1391 events, 0 gaps, dead air >=1s totalling 47 seconds, none >= 3s,
+longest 2.15s. Sources untouched. 57/65 outline quotes placed as verbatim markers, 8 parked in a
+labelled block past the end with `quote_markers.json` carrying the per-quote match strength.
+
+Traps worth keeping: Windows `CreationTime` on this footage is the COPY time and orders the
+timeline backwards - use ffprobe's `format_tags=creation_time`. `Counter(set(doc))` for document
+frequency gives every token identical IDF (it cost a wrong "nothing matches" result before it was
+caught). matplotlib is broken in this machine's anaconda env - PIL works, use it.
+
+---
+
 ## becky-roughcut: marker triage (Gemma-4 reviews flags before Jordan does), audio gain+limiter tested and rejected, Vegas quirks consolidated (2026-08-24, still later that night, local, `master`)
 
 Picked up from the entry directly below via `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8's tail
