@@ -36,6 +36,8 @@ import numpy as np
 SR = 16000            # analysis rate; speech energy lives well below 8 kHz
 FRAME = 320           # 20 ms
 HOP = 160             # 10 ms  -> 100 frames/sec
+FINE_FRAME = 96       # 6 ms  - edge refinement needs sub-video-frame resolution
+FINE_HOP = 32         # 2 ms  -> a video frame at 30fps is ~16 fine hops
 EPS = 1e-10
 
 
@@ -56,6 +58,17 @@ def frame_db(x):
     if n <= 0:
         return np.zeros(0, dtype=np.float32)
     idx = np.arange(FRAME)[None, :] + HOP * np.arange(n)[:, None]
+    rms = np.sqrt(np.mean(np.square(x[idx]), axis=1))
+    return 20.0 * np.log10(rms + EPS)
+
+
+def frame_db_fine(x):
+    """Same as frame_db but at 2 ms resolution, for locating an edge to the
+    nearest video frame rather than to the nearest 10 ms analysis hop."""
+    n = 1 + max(0, (len(x) - FINE_FRAME) // FINE_HOP)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    idx = np.arange(FINE_FRAME)[None, :] + FINE_HOP * np.arange(n)[:, None]
     rms = np.sqrt(np.mean(np.square(x[idx]), axis=1))
     return 20.0 * np.log10(rms + EPS)
 
@@ -122,9 +135,9 @@ def spans_from_mask(mask, hop_s):
     return [(s * hop_s, e * hop_s) for s, e in zip(starts, ends)]
 
 
-def detect(path, fps=30.0, min_gap=0.35, min_speech=0.20,
-           pad_pre=0.30, pad_post=0.28, hysteresis_db=8.0, max_internal=1.0,
-           ffmpeg="ffmpeg"):
+def detect(path, fps=30.0, min_gap=0.30, min_speech=0.20,
+           pad_pre=0.04, pad_post=0.25, hysteresis_db=8.0, max_internal=1.0,
+           reach=0.30, ffmpeg="ffmpeg"):
     x = decode_mono(path, ffmpeg)
     dur = len(x) / SR
     db = frame_db(x)
@@ -163,19 +176,57 @@ def detect(path, fps=30.0, min_gap=0.35, min_speech=0.20,
             merged.append([s, e])
     # 2. drop clicks / lip noise that never became a word
     merged = [sp for sp in merged if sp[1] - sp[0] >= min_speech]
-    # 3. pad so no syllable is clipped, then re-merge anything that now touches
-    padded = []
+
+    # 3. REFINE EACH EDGE AT FINE RESOLUTION.
+    #
+    # Jordan's rough-cut standard: a cut lands on "the nearest frame to where
+    # speech begins", and non-speech before a line is delivered (the speaker
+    # settling into position) is trimmed out. Blanket padding cannot do that -
+    # a fixed 0.30s pre-pad IS 9 frames of silence on every single event, which
+    # is what he measured at 13 frames and rejected.
+    #
+    # So instead of padding, find the real edge: from the first sample that is
+    # confidently speech (>= thr), walk back only while the signal is still
+    # audibly above room tone (>= onset_bar), and stop. A plosive stops the walk
+    # immediately; a fricative ramp is picked up in full. Same, mirrored, for the
+    # tail. The walk is bounded so a noisy room cannot drag an edge outward.
+    fdb = frame_db_fine(x)
+    fhop = FINE_HOP / SR
+    onset_bar = max(diag["noise_floor_db"] + 10.0, thr - 14.0)
+    diag["onset_bar_db"] = round(onset_bar, 2)
+
+    def refine(s, e):
+        a, b = int(s / fhop), min(int(e / fhop), len(fdb) - 1)
+        if b <= a:
+            return s, e
+        seg = fdb[a:b + 1]
+        loud = np.flatnonzero(seg >= thr)
+        if loud.size == 0:
+            return s, e
+        i, j = a + int(loud[0]), a + int(loud[-1])
+        lim = int(reach / fhop)
+        k = i
+        while k > max(0, i - lim) and fdb[k - 1] >= onset_bar:
+            k -= 1
+        m = j
+        while m < min(len(fdb) - 1, j + lim) and fdb[m + 1] >= onset_bar:
+            m += 1
+        return k * fhop, m * fhop
+
+    refined = []
     for s, e in merged:
-        s = max(0.0, s - pad_pre)
-        e = min(dur, e + pad_post)
-        if padded and s <= padded[-1][1]:
-            padded[-1][1] = max(padded[-1][1], e)
+        rs, re_ = refine(s, e)
+        rs = max(0.0, rs - pad_pre)
+        re_ = min(dur, re_ + pad_post)
+        if refined and rs <= refined[-1][1]:
+            refined[-1][1] = max(refined[-1][1], re_)
         else:
-            padded.append([s, e])
-    # 4. snap outward to whole video frames (a cut lands on a frame boundary or
-    #    Vegas resamples it; outward means we never eat into speech)
+            refined.append([rs, re_])
+
+    # 4. snap to the frame grid - start DOWN, end UP, so a cut never lands mid
+    #    speech. With the edges refined this costs at most one frame each side.
     out = []
-    for s, e in padded:
+    for s, e in refined:
         fs = int(np.floor(s * fps)) / fps
         fe = int(np.ceil(e * fps)) / fps
         fe = min(fe, dur)
@@ -196,7 +247,28 @@ def detect(path, fps=30.0, min_gap=0.35, min_speech=0.20,
         for qs, qe in spans_from_mask(seg, hop_s):
             worst = max(worst, qe - qs)
 
+    # HEAD/TAIL SLACK IN VIDEO FRAMES - the exact thing Jordan measures with a
+    # loop region on the Vegas timeline ("13 frames is WAY too long"). Counted as
+    # frames from the cut until the audio first rises above room tone.
+    heads, tails = [], []
+    for s_, e_ in out:
+        a_, b_ = int(s_ / fhop), min(int(e_ / fhop), len(fdb) - 1)
+        seg = fdb[a_:b_ + 1]
+        aud = np.flatnonzero(seg >= onset_bar)
+        if aud.size == 0:
+            continue
+        heads.append(int(aud[0]) * fhop * fps)
+        tails.append((len(seg) - 1 - int(aud[-1])) * fhop * fps)
+    hp = np.array(heads) if heads else np.zeros(1)
+    tp = np.array(tails) if tails else np.zeros(1)
+
     diag.update({
+        "head_frames_p50": round(float(np.percentile(hp, 50)), 1),
+        "head_frames_p95": round(float(np.percentile(hp, 95)), 1),
+        "head_frames_max": round(float(hp.max()), 1),
+        "tail_frames_p50": round(float(np.percentile(tp, 50)), 1),
+        "tail_frames_p95": round(float(np.percentile(tp, 95)), 1),
+        "tail_frames_max": round(float(tp.max()), 1),
         "residual_silence_s": round(held, 2),
         "worst_dead_air_s": round(worst, 2),
         "source": os.path.abspath(path),
@@ -215,10 +287,12 @@ def main():
     ap.add_argument("videos", nargs="+")
     ap.add_argument("--out", required=True)
     ap.add_argument("--fps", type=float, default=30.0)
-    ap.add_argument("--min-gap", type=float, default=0.35,
+    ap.add_argument("--min-gap", type=float, default=0.30,
                     help="silence shorter than this is a pause inside a sentence, not a cut")
-    ap.add_argument("--pad-pre", type=float, default=0.30)
-    ap.add_argument("--pad-post", type=float, default=0.28)
+    ap.add_argument("--pad-pre", type=float, default=0.04)
+    ap.add_argument("--pad-post", type=float, default=0.25)
+    ap.add_argument("--reach", type=float, default=0.30,
+                    help="how far an edge may walk out from confident speech to catch a soft onset")
     ap.add_argument("--max-internal", type=float, default=1.0,
                     help="no kept span may contain a sub-threshold run longer than this")
     ap.add_argument("--ffmpeg", default="ffmpeg")
@@ -227,12 +301,13 @@ def main():
     results = []
     for v in a.videos:
         r = detect(v, fps=a.fps, min_gap=a.min_gap, pad_pre=a.pad_pre,
-                   pad_post=a.pad_post, max_internal=a.max_internal, ffmpeg=a.ffmpeg)
+                   pad_post=a.pad_post, max_internal=a.max_internal,
+                   reach=a.reach, ffmpeg=a.ffmpeg)
         results.append(r)
-        print(f"{os.path.basename(v):34s} thr={r['threshold_db']:7.2f}dB "
-              f"floor={r['noise_floor_db']:7.2f} speech={r['speech_level_db']:7.2f} "
-              f"| {r['duration_s']:8.1f}s -> {r['kept_s']:8.1f}s "
-              f"(cut {r['removed_pct']:4.1f}%, {r['segments']} spans)", flush=True)
+        print(f"{os.path.basename(v):32s} thr={r['threshold_db']:7.2f} "
+              f"| {r['duration_s']:7.1f}s -> {r['kept_s']:7.1f}s ({r['segments']:4d} spans) "
+              f"| head p50/p95/max {r['head_frames_p50']:4.1f}/{r['head_frames_p95']:4.1f}/{r['head_frames_max']:5.1f}f "
+              f"tail {r['tail_frames_p50']:4.1f}/{r['tail_frames_p95']:4.1f}/{r['tail_frames_max']:5.1f}f", flush=True)
 
     tot = sum(r["duration_s"] for r in results)
     kept = sum(r["kept_s"] for r in results)
