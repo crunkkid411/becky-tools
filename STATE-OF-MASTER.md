@@ -6,7 +6,44 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — rough cut rebuilt from the AUDIO, not the transcript: 145.4 min -> 67.7 min, dead air gone (2026-08-25 night, local)
+### CURRENT — the silence cut WORKS and is a one-click tool; Jordan accepted it (2026-08-26, local)
+
+Jordan's verdict after human review: *"a far-cry from what the rough-cut vision entails, but it's
+the first iteration of something genuinely useful... this is a GENUINE BIG DEAL."* He is editing
+the hj-fbi-recap project from it now.
+
+**Ship: `Build Rough Cut.bat` -> `scripts/roughcut.py`.** Folder of raw takes in, populated VEGAS
+Pro 18 timeline out. Sources never written to. The full recipe, every measured number, and the
+traps live in `SKILL.md` `# ROUGH CUT` — read that before touching any of it.
+
+**Final measured result, 23_hj-fbi-recap (16 clips, 145.4 min, Rode Wireless GO II):**
+
+| | first attempt | delivered |
+|---|---|---|
+| timeline | 86 min | **54.2 min** |
+| dead air >= 1s | 20-26 min (his measurement, by eye) | **19 seconds** |
+| head slack at a cut | ~13 frames | **p50 0.1-0.6, max 1.0 frame** |
+| tail slack | - | p50 0.0-2.4, max 3.4 frames |
+| non-speech clips (coughs, repositioning) | left in | **110 dropped, all 0.0% speech** |
+| gaps/overlaps | - | **0** |
+
+Four things had to be true at once, and each was a separate round of his feedback:
+
+1. **Cut from the AUDIO, not transcript cues.** Parakeet cue ends run long (13.28s stamped for a
+   ~5s sentence = 6.85s of dead air in one cue).
+2. **Threshold adaptive per file, never absolute.** This is a **RODE WIRELESS GO II**: room tone
+   -75 to -93 dBFS, speech -30 to -42. `becky-cut`'s bar was dialled in on an iPhone 13. Otsu on
+   each file's own dB histogram means no mic profile exists to pick wrong.
+3. **Head slack under one frame.** 2 frames means he re-touches every cut, which his own rough-cut
+   definition calls worse than shipping nothing. Blanket padding cannot do this - edges are refined
+   at 2ms resolution and the start snaps DOWN to the frame with zero pre-pad.
+4. **A VAD second pass**, Silero whole-file, `becky-cut`'s <20%-speech bar, and a drop requires
+   Parakeet to agree there is no word inside.
+
+**Still open — this is NOT yet his full rough-cut definition.** It does not judge takes, remove
+retakes, or shape narrative/pacing. No LLM is in this path by design.
+
+### PREVIOUS — rough cut rebuilt from the AUDIO, not the transcript: 145.4 min -> 67.7 min, dead air gone (2026-08-25 night, local)
 
 Jordan's verdict below ("littered with excessive dead air") was correct, and the cause is now
 measured, not argued. Two separate bugs, both fixed by NOT using the old path:

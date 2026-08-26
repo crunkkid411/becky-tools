@@ -81,6 +81,45 @@ See `SPEC-BECKY-CHROME.md` for why and the fix.
 
 ---
 
+## Cutting the silence out of a shoot (rough cut)
+
+You filmed a bunch of takes. You want them on a VEGAS Pro timeline, in the order you
+shot them, with all the dead air gone, so you can start editing instead of scrubbing.
+
+**Double-click `Build Rough Cut.bat`** and pick the folder your clips are in. (You can
+also drag the folder onto the .bat.) When it finishes, open:
+
+```
+<your folder>\_roughcut\rough_cut.veg
+```
+
+What you get:
+
+- Clips in the order you shot them (read from the camera's own timestamp, not the file
+  date - the file date is when it got copied and would put them nearly backwards).
+- The non-speaking parts cut out. The cut lands within **one video frame** of where each
+  line starts, so you should not have to nudge the front of every clip.
+- Coughs, chair noise and repositioning removed - but only where two separate detectors
+  agree there is no speech in there, so it will not delete something you said.
+- A marker for every quote in your outline .md, titled with the quote word-for-word.
+- Each source clip gets its own named region so you can see where each one starts.
+
+**Your original footage is never touched.** Everything it writes goes in the `_roughcut`
+folder next to your clips.
+
+**It works better if you transcribe first** (`becky-transcribe` on the folder). With
+transcripts it can put the quote markers where you actually talk about them, and it is
+allowed to remove noise-only clips. Without them it still cuts the silence, it is just
+more careful.
+
+It does not care what mic you used - it measures each recording's own levels and works
+out the threshold from those. A quiet lav and a loud phone both work.
+
+**What it does NOT do yet:** it does not pick between your takes, remove retakes, or
+shape the pacing. Every retake is still on the timeline for you to choose from.
+
+---
+
 ## Making vertical shorts from a finished video (clipping)
 
 **Drag a video, or a folder of videos, onto `Make Shorts.bat`.** That is the whole thing. Shorts land

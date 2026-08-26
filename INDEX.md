@@ -16,14 +16,17 @@
   measurement added still later that same night, `--narrative-trim` (86.1min -> 57.2min,
   Gemma-4-judged, hard-capped so it can't over-cut) added 2026-08-25 afternoon — see
   `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
-- `scripts/speechcut.py` + `scripts/build_roughcut.py` + `scripts/verify_timeline.py` +
-  `scripts/speechcut_plot.py` — **the working silence cut: decided from the AUDIO, per file, no
-  model, no dial.** Otsu threshold on each recording's own dB histogram (handles a quiet Rode and
-  a loud iPhone with identical code), bidirectional hysteresis, outward frame-snap, and a hard
-  "no kept span may hide a >=1.0s silence" break. Replaces the transcript-cue-driven cut that
-  produced 20+ minutes of dead air. See `SKILL.md` `# ROUGH CUT` for the numbers and the two
-  structural traps (never cut on Parakeet cues; never use an absolute amplitude threshold).
-  New 2026-08-25 night.
+- **`Build Rough Cut.bat`** + `scripts/roughcut.py` — **THE ONE CALL: a folder of raw takes ->
+  a populated VEGAS Pro 18 timeline**, clips in chronological order, non-speaking parts cut out,
+  a marker for every quote in the outline. Double-click the .bat and pick a folder, or drag a
+  folder onto it. Sources are never written to; everything lands in `<folder>\_roughcut\`.
+  Chains `scripts/speechcut.py` (measure + cut) -> `scripts/build_roughcut.py` (order + markers)
+  -> `scripts/verify_timeline.py` (acceptance test) -> `vegas/BeckyRoughCut.cs` (headless build).
+  **Read `SKILL.md` `# ROUGH CUT` before changing any of it** — the mic-adaptive threshold, the
+  <=1-frame head slack, and the two-signal drop rule are each a measured requirement of Jordan's,
+  not a preference. New 2026-08-26.
+- `scripts/speechcut_plot.py` — waveform PNG with the kept spans shaded, for eyeballing a cut the
+  way an editor does. matplotlib is broken in this machine's anaconda env; this uses PIL.
 - `vegas/README.md` §0 — **VEGAS Pro 18 scripting gotchas, read before touching any `.cs` in
   `vegas/`**: the `Tracks.Insert`/`SaveSnapshot`/`Timecode.Seconds`/`ScriptArgs` API traps, the
   force-kill/port-2015/VegasAIBridge trap, why OTIO/FCPXML import is a dead end here. New

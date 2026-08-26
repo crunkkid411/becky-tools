@@ -593,50 +593,126 @@ instead of crashing. After any change: `go build ./... && go test ./... && go ru
 
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
-## THE SILENCE CUT IS SOLVED — cut from the AUDIO, never from the transcript (2026-08-25 night)
+## THE SILENCE CUT WORKS — ONE CALL, cut from the AUDIO (2026-08-26)
 
-**Use `scripts/speechcut.py` -> `scripts/build_roughcut.py` -> `vegas/BeckyRoughCut.cs`.** Do not
-route a silence cut through `becky-cut`, `auto-editor`, or transcript cues; both of those failed
-on Jordan's hj-fbi-recap footage and the reasons are structural, not tuning:
+Jordan, after human-reviewing the result: *"a far-cry from what the rough-cut vision entails, but
+it's the first iteration of something genuinely useful."* This section is the recipe so nobody
+re-derives it. It cost 48 hours of compute and four rounds of his feedback to get here.
 
-- **Never cut on transcript cues.** Parakeet cue ENDS run long. Measured on
-  `SNOW_20260823114143.mp4`: cue 2 is stamped `00:00:25,440 --> 00:00:38,720` (13.28s) for a ~5s
-  sentence — **6.85s of dead air inside a single cue**. Cue-driven events drag that silence onto
-  the timeline. Use the transcript for WORDS (markers, matching), never for CUT POINTS.
-- **Never use an absolute amplitude threshold.** becky-cut's bar was dialled in on an iPhone 13.
-  A Rode Wireless GO II reads room tone at -78..-93 dBFS and speech at only -30..-42 dBFS. Same
-  bar, opposite meaning.
+### The tool call
 
-**What works:** Otsu's method on that one recording's own dB histogram, which puts the threshold
-in the valley between its silence mode and its speech mode. No dial, no per-mic profile, quiet
-and loud footage handled by identical code. Then:
+```bat
+REM double-click, or drag a folder onto it
+"Build Rough Cut.bat"
+```
+```bash
+python scripts/roughcut.py --folder "X:\Videos\2026\08_august\23_hj-fbi-recap" --launch-vegas
+```
 
-- bidirectional hysteresis (keep every run above `thr-8dB` that touches one frame above `thr`) so
-  a quiet unvoiced onset — "Th-", "Qu-", "s-" — stays attached to its word;
-- pad 0.30s before / 0.28s after and snap OUTWARD to whole frames — that is the zero-crossing
-  behaviour Jordan means: closest to the speech without clipping a syllable, on a frame boundary;
-- bridge gaps < 0.35s (a pause inside a sentence is not a cut);
-- **force-break any sub-threshold run >= 1.0s**, so "no kept span hides a long silence" is a
-  guarantee of the algorithm rather than luck. This is what killed a surviving 7.85s hole.
+Folder of raw takes in -> `<folder>\_roughcut\rough_cut.veg` out, clips in chronological order,
+non-speaking parts removed, a marker for every quote. **Sources are never written to.** It chains
+`speechcut.py` -> `build_roughcut.py` -> `verify_timeline.py` -> `vegas/BeckyRoughCut.cs`.
 
-**Measured, 16 clips / 145.4 min of hj-fbi-recap:** 67.7 min timeline, 1391 events, 0 gaps,
-dead air >=1s totals 47 seconds, **none >= 3s**, longest 2.15s. Analysis of all 16 clips: 15s.
+Word timings in `_roughcut\*.words.json` (from `becky-transcribe`) are OPTIONAL but make it
+better: they position the quote markers, and they are the second opinion that lets a noise-only
+clip be deleted. Without them it still cuts silence, it just never drops a clip.
 
-**Verify, don't assert** (all three were used before claiming this works):
-- `scripts/verify_timeline.py vegas_cut.json` — reassembles the ACTUAL timeline audio from the
-  events and reports dead-air stretches by length. This is the acceptance test.
-- `scripts/speechcut_plot.py` — waveform PNG with the keep-spans shaded; look at it.
-- word coverage against `*.words.json` (93%; every miss within 0.267s of a kept span, i.e.
-  Parakeet stamping cue starts early, not the detector eating words).
+### READ THIS FIRST: the mic changes everything, which is why nothing is a constant
 
-**Ordering: use ffprobe `format_tags=creation_time`, NEVER the filesystem.** On this footage every
-file's Windows `CreationTime` is the moment it was copied to X: — ordering by it puts the timeline
-almost backwards.
+This footage is a **RODE WIRELESS GO II**. Measured across the 16 clips: **room tone -75 to -93
+dBFS, speech only -30 to -42 dBFS**. An **iPhone 13** in the same room reads completely
+differently — that is the mic `becky-cut`'s threshold was dialled in on, and it is the reason
+`becky-cut` shredded/under-cut this footage. There is **deliberately no mic profile to select**:
+the threshold is derived per file from that recording's own dB histogram, so a quiet lav and a
+loud phone go through identical code. **Do not re-introduce a fixed threshold.** Every attempt to
+do so has failed on one mic or the other.
 
-**No LLM in this path, by design.** Nothing is removed for being "redundant" or "filler" — only
-audio below the recording's own speech threshold. Retakes stay on the timeline; Jordan cuts them.
+### The two structural traps (both cost days)
+
+1. **NEVER cut on transcript cues.** Parakeet cue ENDS run long. Measured on
+   `SNOW_20260823114143.mp4`: cue 2 is stamped `00:00:25,440 --> 00:00:38,720` (13.28s) for a ~5
+   second sentence — **6.85s of dead air inside a single cue**. `becky-roughcut` keyed its events
+   on `dialogue`, so every over-long cue dragged its silence onto the timeline. Jordan measured
+   20+ then 26+ minutes of dead air by eye and an agent told him it did not exist. He was right.
+   Use the transcript for WORDS (markers, corroboration), never for CUT POINTS.
+2. **NEVER use an absolute amplitude threshold.** See the mic section above.
+
+### The recipe (`scripts/speechcut.py`)
+
+1. **Threshold** — Otsu's method on that file's own dB histogram puts the bar in the valley
+   between its silence mode and its speech mode. Clamped to stay between the 5th and 90th
+   percentile so a nearly-all-speech clip cannot collapse it.
+2. **Hysteresis, bidirectional** — keep every run above `thr-8dB` that touches one frame above
+   `thr`. A one-way scan clips quiet unvoiced onsets ("Th-", "Qu-", "s-") off the front of a word.
+3. **Force-break any sub-threshold run >= 1.0s** so a long silence can never hide inside a kept
+   span held open by a chair creak. This killed a surviving 7.85s hole.
+4. **Bridge gaps < 0.30s** — a pause inside a sentence is not a cut.
+5. **Refine every edge at 2ms resolution** — from the first confidently-speech sample, walk back
+   only while still audibly above room tone, then stop. A plosive stops the walk at once; a
+   fricative ramp is captured in full. **This replaced blanket padding**, which is what put 13
+   frames of silence on the front of every clip.
+6. **Snap: start DOWN to the frame boundary, zero pre-pad; end UP, `pad_post` 0.08s.** That start
+   frame IS "the nearest frame to where speech begins", so head slack is under one frame by
+   construction and can never clip the onset.
+7. **VAD pass** — Silero (`models/silero_vad.onnx` via sherpa-onnx) over the **WHOLE FILE ONCE**,
+   spans scored by OVERLAP. `becky-cut`'s bar verbatim: **under 20% speech is not speech.**
+
+### Jordan's calibration targets, in his units
+
+He measures head slack with a loop region on the Vegas timeline. These are the numbers he accepted:
+
+| | target | achieved |
+|---|---|---|
+| **head slack (start of clip)** | **<= 1 frame** — 2 frames means he re-touches every cut | p50 0.1-0.6, **max 1.0** |
+| tail slack (end of clip) | a few frames; drags if larger | p50 0.0-2.4, max 3.4 |
+| dead air >= 1s | near zero | 19s across 54 min |
+
+**Starting tight matters monumentally more than ending tight** — his words, "a basic fundamental
+every human knows from intuition, but rarely puts into writing". Spend the precision budget there.
+`becky-cut`'s own margins are `0.04s,0.25s` (`cmd/cut/main.go`); the head was tightened past that
+to 0 because 0.04s + a `floor()` snap lands at 2.2 frames, and he rejected 2.
+
+### Two rules that keep it safe
+
+- **A drop needs TWO signals.** A span is deleted only when Silero says non-speech AND Parakeet
+  transcribed no word starting inside it. A false drop deletes something he said; a stray noise
+  clip costs him one keystroke. On this footage: 110 clips / 83.6s removed, **every one scored
+  0.0% speech**.
+- **Never run the streaming VAD on a buffer that starts mid-speech.** sherpa's VAD cannot latch
+  onto speech already running at sample 0 — it scores that word 0% and deletes it. `becky-cut`
+  already paid for this. Run whole-file, score by overlap.
+
+### Verify, do not assert
+
+- `python scripts/verify_timeline.py <vegas_cut.json>` — **the acceptance test.** Reassembles the
+  ACTUAL timeline audio from the events and reports dead-air stretches by length and gaps/overlaps.
+- `python scripts/speechcut_plot.py <spans.json> <clip> --out x.png` — waveform with the kept spans
+  shaded. Look at it.
+- `speechcut.py` prints head/tail slack **in video frames** per clip — check that before claiming
+  the cut is tight.
+- `python scripts/speechcut.py --selftest` — synthetic quiet-mic case, asserts the spans.
+
+### Measured on 23_hj-fbi-recap (16 clips, 145.4 min, Rode Wireless GO II)
+
+**54.2 min timeline, 1690 events, 0 gaps/overlaps, dead air >=1s totalling 19 seconds, none >= 5s,
+110 non-speech clips dropped.** Whole run including VAD: **65 seconds.**
+
+### Ordering: use ffprobe, NEVER the filesystem
+
+Clip order comes from `ffprobe -show_entries format_tags=creation_time`. On this footage every
+file's Windows `CreationTime` is the moment it was copied to X: (all 16 within 40 minutes) and
+ordering by it puts the timeline almost backwards.
+
+### What this is NOT yet
+
+This is silence removal plus noise removal, ordered, with markers. It is **not** Jordan's full
+rough-cut definition (below): it does not judge takes, does not remove retakes, does not shape
+narrative or pacing. Nothing is removed for being "redundant" or "filler" — only audio below the
+recording's own speech threshold, and clips two independent detectors agree contain no speech.
+Retakes are all still on the timeline for him to choose between. **No LLM anywhere in this path.**
 
 ---
+
 
 **STATUS of the older `becky-roughcut` Go path (2026-08-25 night): NOT usable yet — Jordan's own verdict after human-watching the
 corrected-order hj-fbi-recap timeline: "littered with excessive dead air. You, and the tools

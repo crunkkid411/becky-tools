@@ -10,6 +10,45 @@
 
 ---
 
+## the silence cut SHIPS as one click: `Build Rough Cut.bat`, head slack <1 frame, VAD drops noise (2026-08-26, local, `master`)
+
+Jordan accepted it: *"a far-cry from what the rough-cut vision entails, but it's the first
+iteration of something genuinely useful... this is a GENUINE BIG DEAL."* Packaged so the next
+agent does not re-derive 48 hours of compute plus four rounds of his feedback. **The recipe,
+every number, and every trap now live in `SKILL.md` `# ROUGH CUT` — that is the canonical copy.**
+
+**Ship:** `Build Rough Cut.bat` (double-click or drag a folder on) -> `scripts/roughcut.py`
+-> `speechcut.py` -> `build_roughcut.py` -> `verify_timeline.py` -> `vegas/BeckyRoughCut.cs`.
+Output in `<folder>\_roughcut\`; sources never written to. Transcripts optional (they position
+quote markers and act as the second opinion for a drop); without them it still cuts silence.
+
+**23_hj-fbi-recap, 16 clips, 145.4 min, Rode Wireless GO II -> 54.2 min, 1690 events, 0 gaps,
+dead air >=1s totalling 19s, head slack max 1.0 frame, 110 non-speech clips dropped. 65s runtime.**
+
+The four requirements, each a separate round of his feedback:
+
+1. Cut from the AUDIO. Parakeet cue ends run long - 13.28s stamped for a ~5s sentence.
+2. Threshold adaptive per file (Otsu on its own dB histogram). **The mic is load-bearing**: a Rode
+   Wireless GO II reads room tone -75..-93 dBFS and speech -30..-42; becky-cut's bar was set on an
+   iPhone 13. There is deliberately no mic profile to select.
+3. Head slack < 1 frame. His rough-cut definition: if he has to nudge the start of every clip, the
+   output is worse than no output. Blanket padding cannot do it (0.04s pad + floor snap = 2.2
+   frames); edges are refined at 2ms and the start snaps DOWN with zero pre-pad. "Starting tight
+   matters monumentally more than ending tight" - his words.
+4. Silero VAD second pass, whole-file (never per segment - the streaming trap becky-cut already
+   paid for), becky-cut's <20%-speech bar, and a drop needs Parakeet to agree there is no word
+   inside it. 110 clips removed, every one 0.0% speech.
+
+Traps banked this round: Windows `CreationTime` on this footage is the COPY time and orders the
+timeline backwards - use ffprobe `format_tags=creation_time`. `Counter(set(doc))` gives every token
+identical IDF. matplotlib is broken in this box's anaconda env; PIL works. Writing Windows paths
+through a non-raw Python string mangles them (`` became a real CR inside SKILL.md).
+
+Not done: this is silence + noise removal, ordered, with markers - NOT his full rough-cut
+definition (no take judging, no retake removal, no narrative/pacing). No LLM in this path.
+
+---
+
 ## rough cut rebuilt from the AUDIO: adaptive per-file threshold, 145.4 min -> 67.7 min, dead air 20+ min -> 47s (2026-08-25 night, local, `master`)
 
 Jordan, opening this session: an earlier agent told him to his face that the dead air he was

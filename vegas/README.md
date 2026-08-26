@@ -6,7 +6,7 @@ Two scripts live here. They do different jobs:
 |---|---|
 | **`BeckyCaptions.cs`** | Captions the edit you already have open — transcribes with becky and lays one text event per caption on a "Becky Captions" track. **Start here for captions.** |
 | `BeckyReviewTimeline.cs` | Builds a *review* timeline from a list of forensic hits (path + in/out), each as a named Region. Nothing to do with captions. |
-| **`BeckyRoughCut.cs`** | The unattended rough-cut assembler: reads `BECKY_ROUGHCUT_JSON` (written by `becky-roughcut`), builds video+audio tracks with paired events, markers and regions, saves the `.veg`, exits. `vegas180.exe -SCRIPT:<path>` + the env var = fully headless. |
+| **`BeckyRoughCut.cs`** | The unattended rough-cut assembler: reads `BECKY_ROUGHCUT_JSON`, builds video+audio tracks with paired events, markers and regions, saves the `.veg`, exits. `vegas180.exe -SCRIPT:<path>` + the env var = fully headless. It does NO thinking - all of it happens upstream. **Do not drive it by hand: run `Build Rough Cut.bat` (or `scripts/roughcut.py --launch-vegas`), which writes the JSON and launches this.** The JSON now comes from `scripts/build_roughcut.py`, not the older `becky-roughcut` Go path. Recipe and calibration targets: `SKILL.md` `# ROUGH CUT`. |
 | `BeckyVerifyProject.cs` | Reads a `.veg` back headless (`BECKY_VERIFY_VEG=<path>`) and writes `<path>.verify.txt` with track/event/marker/region counts and length — the proof a delivery actually landed. |
 
 ---
