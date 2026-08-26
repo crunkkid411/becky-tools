@@ -6,7 +6,33 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: narrative-trim gets the cut under an hour, 86.1min -> 57.2min, Gemma-4-judged (2026-08-25 afternoon, local)
+### CURRENT — becky-roughcut: clip-order bug fixed, lead-in trim built + measured (2026-08-25 evening, local)
+
+**On master, built green** (`go build/vet/test ./...` — roughcut package all green, `gofmt -l`
+clean modulo known CRLF noise). Full story in `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §11.
+
+- **Real bug fixed**: `spliceLayout`'s `place()` was comparing SOURCE-clip-relative seconds
+  against TIMELINE-position window bounds, scattering every clip's content out of order once
+  quotes were spliced in. Fixed to use each event's real pre-splice timeline position
+  (`splice_test.go`, 2 new tests). Verified on the real project: all 16 clips now play as one
+  contiguous block each, in the correct creation-time order.
+- **`--trim-lead-in`** (new, `leadtrim.go`): Jordan's direct ask ("use gemma4 to judge when i
+  start talking") to trim non-speech lead-in off fresh speaking spans. LR-ASD answers the
+  confident cases free; Gemma-4 only judges the genuinely uncertain rest, forced to describe
+  what it sees before answering (a bare "just the number" prompt made it default to "0" on
+  every candidate regardless of content - fixed). Structurally can only shrink a span's front,
+  never touches content. 5 new tests.
+- **Measured, not applied**: a direct LR-ASD-confidence pass over the whole 80.66-minute main
+  track shows 87.2% is already confidently on-camera speech; only ~7% sits in real uncertainty.
+  The extra length vs. what Jordan saw before is mostly real content (his own narrative-trim
+  reversion + the ordering fix likely restoring content the coordinate bug had been silently
+  dropping), not dead air — reported to him plainly rather than forcing another automated cut.
+- **Open**: quote overlay only reliably shows timecode; Date/YouTube-URL need tracing each
+  quote back to its original `E:\TakingBack2007` forensic-corpus file (different naming
+  convention than the existing yt-dlp parser expects) — deliberately not guessed at given the
+  accuracy stakes on a real evidentiary quote.
+
+### PREVIOUS — becky-roughcut: narrative-trim gets the cut under an hour, 86.1min -> 57.2min, Gemma-4-judged (2026-08-25 afternoon, local) — REVERTED, see CURRENT
 
 **On master, built green** (`go build/vet/test ./...` — 39/39 roughcut tests, `gofmt -l` clean,
 `build-all-tools.bat` exit 0). Full story in `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §10; canon

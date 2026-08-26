@@ -538,3 +538,63 @@ headless launches failed silently for reasons never fully diagnosed."
 safety mechanism given the time available, and E4B-only matches `--triage-markers`'s existing
 precedent for this class of task. If a future cut still reads wrong to Jordan on a human watch,
 that's the next thing to add, not a re-litigation of the ceiling.
+
+## 11. Round 5 (2026-08-25 evening) — clips out of order (real bug, fixed), lead-in trim built and measured NOT to be the answer
+
+Jordan, watching the round-4 delivery: "the clips are out of fucking order...the time of file
+creation is the order they belong in" and "the timeline is now 26+ minutes LONGER now - almost
+all of it is dead air... did we ever get the lip-sync thing working on gpu?? if not, then just
+use fucking gemma4 to judge when i start talking."
+
+**Ordering bug, root-caused and fixed.** `spliceLayout`'s `place()` (`splice.go`) filtered
+events by comparing their SOURCE-clip-relative `In`/`Out` directly against TIMELINE-position
+window bounds - two different clips very commonly have overlapping source-relative ranges
+(every clip's own clock restarts near 0), so a splice window bounded in real timeline
+coordinates silently admitted whichever clip's OWN early seconds happened to undercut the
+bound, not whichever event actually belonged there. Fixed to clip against `event.TLStart`
+(already computed by `main.go`, the same axis markers' `T` lives on) instead. Verified on the
+real 16-clip project: every source now plays as one contiguous block, in the correct
+creation-time order. 2 new tests pin it (`splice_test.go`).
+
+**The "26 minutes longer" is the direct, unavoidable consequence of two things Jordan himself
+asked for, not a regression** - restoring the content narrative-trim had wrongly removed (§10,
+reverted per his correction) plus the ordering-bug fix likely also restoring content the bug's
+coordinate-mismatch had been silently, unreliably dropping (a plausible but not fully confirmed
+mechanism - see `vegas/README.md`). Re-running the full pipeline landed at 86.1 minutes, not
+80.66 - a number that turned out, on closer inspection, to have been an apples-to-oranges
+comparison the whole time (that earlier figure only ever summed the MAIN events, never the
+quotes' ~5.4 minutes - the two numbers were never actually measuring the same thing, so there
+was no real "confidentcuts stopped working" mystery to chase, despite it looking like one for a
+while this session).
+
+**Built `--trim-lead-in` (`leadtrim.go`) directly per Jordan's ask**, and it is real, tested,
+safe code: for every genuine cut point (never a mere word-split boundary), LR-ASD answers the
+confident cases for free, Gemma-4 only gets asked about the genuinely uncertain rest, watching a
+small window and describing what it sees before giving a number (a bare "just the number" prompt
+measured to make the model default to the same lazy "0" on every candidate regardless of content
+- fixed the same way triage.go's REASON field already sidesteps that failure mode). It can only
+ever shrink a span from the front, never touch its end or judge content, never drops anything.
+
+**Measured, not applied - the data does not support "almost all dead air."** A direct
+LR-ASD-confidence measurement across the whole 80.66-minute main track: 87.2% is already
+confidently on-camera speech, only 7.4% sits in the genuinely uncertain 0.10-0.50 band
+(`confidentcuts.go`'s own cut threshold is 0.10 - anything already below that is already gone),
+and 1.8%/3.6% split between confidently-silent-but-protected-by-real-words and no-LR-ASD-
+coverage. The lead-trim pass's own ~40 real Gemma-4 calls against genuine candidates agreed with
+this picture, finding essentially nothing to trim. **This is not "the fix didn't work" - it is
+the honest answer that the extra length is mostly real, on-camera spoken content, not silence**,
+which is exactly the kind of thing Jordan has separately, explicitly ruled out any tool from
+judging the value of (§10's reversion). Reported to him plainly rather than either hiding this
+or inventing another automated pass to force a number down. `vegas_cut.json` was NOT modified by
+this round - the delivered project is still the round-4 state (86.1min, correct order, 38
+triaged markers, 25/25 quote overlays burned).
+
+**Still open**: the overlay burn-in only reliably shows the timecode line; Jordan named Date and
+the YouTube URL specifically. The quote-search pipeline (`_work/search_quotes.py`) pulls from
+`E:\TakingBack2007` (the forensic corpus, `CLAUDE.md`'s "forensic-vs-content-footage" distinction
+- handle with care), whose filenames carry a DIFFERENT date/ID convention
+(`MM-DD-YYYY_Title_Media_<id>...`) than the `footage.DateFromName`/`LinkFromName` parsers
+(`internal/reel/drawtext.go`) already handle (yt-dlp's `[VIDEO_ID]` bracket convention) - wiring
+this up correctly means tracing each burned quote back to its ORIGINAL corpus file and either
+teaching the parser the corpus's own naming convention or populating `edl.ClipMeta` directly from
+it, not guessing. Deliberately not rushed given the accuracy stakes on a real evidentiary quote.

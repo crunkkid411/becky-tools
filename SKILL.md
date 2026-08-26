@@ -659,7 +659,18 @@ verdict — neither of these ever cuts, shortens, or auto-fixes anything):
   HARD code-level stop once the removed total meets the actual deficit — measured proof this
   matters: a prompt-only version with no stop cut 167 of 191 beats (86.1min -> 15.5min, 3x more
   than needed) before the stop was added. Never touches quote clips. Every cut logged to
-  `narrative_trim.json` with its reason.
+  `narrative_trim.json` with its reason. **REVERTED per Jordan's direct correction (2026-08-25):
+  "I NEVER said for AI to determine what is filler - there is no filler. do not remove anything I
+  said - RETAKES are to be removed, not actual content." Never run this again** - see
+  `feedback-roughcut-never-cut-content-only-retakes` in memory. Left in the tree as tested code,
+  not as a sanctioned tool.
+- **`--trim-lead-in`** (`leadtrim.go`, 2026-08-25) trims non-speech lead-in time (settling in,
+  adjusting position) off the START of a fresh speaking span - the exact "AI-slop" gap this
+  file's own rough-cut definition names. LR-ASD answers confident cases free; Gemma-4 only
+  judges the genuinely uncertain rest, forced to describe what it sees before answering (a bare
+  "just the number" prompt made it default to "0" regardless of content). Can only shrink a
+  span's front, never its end or content. Measured on the real project: 87.2% of the current cut
+  is already confidently on-camera speech - there wasn't much lead-in dead air left to find.
 
 Full story, why it took a second pass to find this gap, and the exact bug that silently ate
 every dynamically-generated marker until tonight: `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §8-10.
