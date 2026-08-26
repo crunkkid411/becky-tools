@@ -229,6 +229,28 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   on this machine (2026-08-21): anaconda's warns and continues, that one hard-crashes.
   It silently killed the whole Gemma watch pass, which then reported "the model watched
   this but its answer was unusable" about a clip no model had ever seen.
+- **USE THE SPECIALIST'S TOOL FOR THE MECHANICS; WRITE ONLY THE CALIBRATION.** Jordan, 2026-08-26:
+  *"most of the tools we need already exist - generally created by specialists who solve their own
+  niche problems, and we just need to wire them up and calibrate accordingly."* He is right, and
+  this rule exists because an agent ignored it and shipped a bug the specialist tool had already
+  solved. The rough cut was written as a from-scratch detector emitting SECONDS; `auto-editor`
+  (already installed, already wrapped by `becky-cut`) emits INTEGER FRAME chunks
+  `[start, end, speed]` and therefore cannot produce the off-grid cut points that put random
+  one-frame gaps on Jordan's timeline. A year of his field use had never produced that bug.
+  **The boundary: the existing tool owns the mechanics (frame grid, chunking, margins, export);
+  we own ONLY the thin layer it genuinely lacks.** Concretely here, `becky-cut` already had the
+  right SHAPE (measure level -> threshold -> auto-editor cuts -> Silero VAD post-pass) and only
+  its ESTIMATOR was wrong: `cmd/cut/level.go` derives the threshold from `mean_volume` and clamps
+  it at `minThresholdDB = -50.0`, so on Rode Wireless GO II footage it picks ~-41 dB where ~-62 dB
+  is needed - **+20 dB wrong, and unreachable at ANY `--headroom` because of the clamp.** The
+  correct fix was ~40 lines (swap in an Otsu threshold, drop the clamp), not a new detector.
+  **Two failure mechanisms to watch for in yourself:** (1) a DIAGNOSTIC quietly grows into the
+  PRODUCT - you write measurement code to prove a bug exists, then start emitting results from it
+  without ever deciding to; (2) you blame the ENGINE for the WRAPPER's error - "becky-cut failed"
+  is evidence about becky-cut's calibration, not about auto-editor. And note the converse trap:
+  wiring up a tool silently inherits its assumptions (becky-cut inherited "the threshold is
+  absolute"), so wire it up, then find the ONE assumption your input violates and put your new
+  code exactly there.
 - **Recall is for DETECTION, not NAMING.** Surface every face/voice; attach a NAME
   only when corroborated.
 - **Offline + deterministic.** No network at runtime; same input → same output

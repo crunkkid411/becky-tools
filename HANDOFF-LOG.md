@@ -10,6 +10,62 @@
 
 ---
 
+## Jordan was right: we hand-rolled a cut that auto-editor had already solved. Reuse boundary now an invariant (2026-08-26, local, `master`)
+
+Jordan, asking for genuine pushback: *"you seem to avoid using libraries and tools I provide and
+instead generally prefer to create them from scratch (which almost always leads to issues like
+this gap issue - which the auto-editor tool has already solved). Why are we not using auto-editor
+as the default to make cuts in the first place?"*
+
+**There is no good reason. He is right.** Assessed with measurement, not opinion:
+
+- `auto-editor` **29.8.1 is installed** (`C:\Users\only1\bin\auto-editor`) and `becky-cut` already
+  wraps it. Its chunks are INTEGER FRAMES `[start, end, speed]`, so the one-frame timeline gaps
+  logged in the entry below **cannot occur** in that representation. A year of his field use never
+  produced that bug.
+- `becky-cut` already had the RIGHT SHAPE: measure level -> pick threshold -> auto-editor cuts
+  (frames + margins) -> Silero VAD post-pass. **Only the ESTIMATOR was wrong.**
+  `cmd/cut/level.go` derives the threshold from ffmpeg `mean_volume` and clamps it at
+  `minThresholdDB = -50.0`. Measured on this Rode footage:
+
+  | file | mean_volume | becky-cut picks | needs | error |
+  |---|---|---|---|---|
+  | SNOW_20260823114143.mp4 | -38.7 | -37.7 | -58.25 | **+20.5 dB** |
+  | VTNZ3433.MP4 | -44.4 | -43.4 | -63.25 | **+19.9 dB** |
+  | LZTE3925.MP4 | -42.3 | -41.3 | -62.75 | **+21.5 dB** |
+
+  Every file needs -53..-64 dB; the clamp floors at -50. **becky-cut could not reach the right
+  answer at ANY `--headroom` - structural, not tuning.** The correct fix was ~40 lines (Otsu
+  threshold in, clamp out), NOT a from-scratch detector.
+
+**How the reinvention actually happened** (named so it can be caught next time, both mechanisms
+are now invariants in `CLAUDE.md`):
+
+1. **A DIAGNOSTIC grew into the PRODUCT.** The previous agent had denied the dead air existed, so
+   this session opened by writing decode -> RMS -> dB-histogram code to PROVE it. With frame-level
+   dB already in hand, emitting spans was ten more lines. There was never a decision point where
+   "should this feed auto-editor or replace it?" was asked. Reinvention by omission, not by choice.
+2. **The ENGINE was blamed for the WRAPPER's error.** becky-cut wraps auto-editor and becky-cut
+   failed here, and that got attributed to the cutting engine. `level.go` was actually READ early
+   in the session - the `-50` clamp was on screen and the connection was not made.
+3. Deadline lock-in: by the 30-minute round the hand-rolled detector's parameters were being
+   tuned, so switching engines felt like a rewrite. An unexamined hour-one choice became
+   load-bearing.
+
+**Converse trap, worth keeping:** wiring up a specialist tool silently inherits its assumptions.
+becky-cut inherited auto-editor's "the threshold is absolute", and that is exactly what broke on a
+different mic. Wire it up, then find the ONE assumption your input violates and put the new code
+precisely there - that is the calibration layer, and it is the only place new code belongs.
+
+**Migration plan is in `SKILL.md` `# ROUGH CUT`** and supersedes the hand-rolled-frames fix in the
+entry below (integer frames come free from auto-editor). One item is explicitly UNTESTED and must
+be measured rather than assumed: whether `speechcut.py`'s 2ms edge refinement is still needed once
+on auto-editor's frame grid, or whether `--margin` alone hits the <=1-frame head slack.
+
+No code changed in this entry - assessment and docs only, Jordan was mid-edit.
+
+---
+
 ## ASSESSMENT ONLY - one-frame gaps on the rough-cut timeline, root-caused, not yet fixed (2026-08-26, local, `master`)
 
 Jordan spotted random single-frame gaps between events while editing the delivered timeline -

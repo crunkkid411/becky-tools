@@ -40,6 +40,15 @@ Four things had to be true at once, and each was a separate round of his feedbac
 4. **A VAD second pass**, Silero whole-file, `becky-cut`'s <20%-speech bar, and a drop requires
    Parakeet to agree there is no word inside.
 
+**ARCHITECTURE CORRECTION (2026-08-26): the cut should be made by `auto-editor`, not by our own
+detector.** Jordan challenged the from-scratch approach and he was right. auto-editor 29.8.1 is
+installed, `becky-cut` already wraps it, and its INTEGER FRAME chunks make the gap bug below
+impossible. becky-cut's SHAPE was already correct; only its ESTIMATOR was wrong - `level.go` uses
+`mean_volume` and clamps at `minThresholdDB = -50.0`, so on this Rode footage it picks ~-41 dB
+where ~-62 dB is needed (+20 dB, and unreachable at any `--headroom`). A ~40-line fix, not a new
+detector. **New standing invariant in `CLAUDE.md`: the specialist tool owns the mechanics, we
+write only the calibration.** Migration plan in `SKILL.md` `# ROUGH CUT`.
+
 **OPEN BUG, FOUND WHILE HE EDITS (2026-08-26): random ONE-FRAME GAPS between events.** Three in
 under a minute of editing; screenshot `vegas/roughcut-workflow/gaps.JPG` (local only - `*.JPG` is gitignored; the numbers below are the real evidence). Measured on the shipped
 `vegas_cut.json`: the pipeline carries SECONDS and rounds them (`round(x, 6)`), and at 30fps a

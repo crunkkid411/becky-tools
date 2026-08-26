@@ -750,6 +750,42 @@ Jordan is pointing at.
    "0 gaps/overlaps" on a timeline that has them. **Re-do that check in integer frames**, and add
    an assertion that every length and every position is exactly on the frame grid.
 
+**THE REAL FIX IS TO STOP HAND-ROLLING THE CUT: hand the mechanics to `auto-editor`.**
+Jordan called this out directly and he is right. `auto-editor` 29.8.1 is installed
+(`C:\Users\only1\bin\auto-editor`), `becky-cut` already wraps it, and its chunks are INTEGER
+FRAMES `[start, end, speed]` - so the one-frame gap bug above **cannot happen** in that
+representation. `becky-cut` already has the correct SHAPE:
+
+    measure level -> pick threshold -> auto-editor cuts (frames, margins) -> Silero VAD post-pass
+
+Only its ESTIMATOR is wrong. `becky-go/cmd/cut/level.go` derives the threshold from ffmpeg
+`mean_volume` and clamps it with `minThresholdDB = -50.0`. Measured on this footage:
+
+| file | mean_volume | becky-cut picks | actually needs | error |
+|---|---|---|---|---|
+| SNOW_20260823114143.mp4 | -38.7 | **-37.7** | -58.25 | **+20.5 dB** |
+| VTNZ3433.MP4 | -44.4 | **-43.4** | -63.25 | **+19.9 dB** |
+| LZTE3925.MP4 | -42.3 | **-41.3** | -62.75 | **+21.5 dB** |
+
+Every file needs -53 to -64 dB and the clamp floors out at -50, so **becky-cut cannot reach the
+right answer at ANY `--headroom`** - structural, not tuning. That is the whole reason it failed
+here, and it is a ~40-line fix, not a reason to write a new detector.
+
+**Migration plan (this supersedes items 1-3 above; do this instead of hand-rolling frames):**
+
+1. Move `speechcut.py`'s Otsu threshold into `becky-cut` (or have `roughcut.py` compute it and
+   pass `--threshold "<n>dB"`, which `cmd/cut/main.go` already accepts verbatim).
+2. **Drop or drastically lower `minThresholdDB`** in `cmd/cut/level.go`. Keep the `-28` ceiling.
+3. Let `auto-editor` produce the cut with `--margin 0.04s,0.25s`; take its INTEGER FRAME chunks
+   (becky-cut already parses the Premiere XML) and build `vegas_cut.json` from frames.
+4. Keep becky-cut's existing Silero VAD post-pass rather than the reimplementation in
+   `speechcut.py`, and keep the two-signal corroboration rule (VAD AND Parakeet must agree).
+5. **Then MEASURE whether the 2ms edge refinement is still needed.** It is the one piece
+   `auto-editor` does not do (it thresholds per frame). It may be genuinely additive for the
+   <=1-frame head slack, or redundant once on auto-editor's grid. **Untested - do not assume
+   either way.** If it is needed it belongs as a post-step on auto-editor's frames, never as a
+   replacement for them.
+
 Non-negotiable when fixing: this must not loosen the head-slack calibration above. The start of
 each clip must stay within one frame of the speech onset.
 
