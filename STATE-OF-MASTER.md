@@ -40,6 +40,15 @@ Four things had to be true at once, and each was a separate round of his feedbac
 4. **A VAD second pass**, Silero whole-file, `becky-cut`'s <20%-speech bar, and a drop requires
    Parakeet to agree there is no word inside.
 
+**NEXT JOB IS SPECIFIED AND READY: `HANDOFF-BECKY-CUT-ADAPTIVE.md`.** Jordan asked whether to go
+adaptive or ship a few fixed per-mic profiles. Measured answer: **adaptive, via a two-percentile
+valley-fraction rule (`p5 + 0.52 * (p90 - p5)`), not Otsu.** Otsu always landed at ~0.52 of each
+file's valley anyway (spread 0.455-0.570 over 16 clips), so the simpler rule matches it to 1.2 dB
+mean / 3.6 dB worst in a 48 dB valley AND drops Otsu's bimodality assumption. Fixed profiles are
+rejected on operational cost - every new mic would need another human dial-in, which is the exact
+two-day failure being fixed - but stay as an `--profile` escape hatch. The work order is ordered
+and checkboxed with VERIFY commands and expected values.
+
 **ARCHITECTURE CORRECTION (2026-08-26): the cut should be made by `auto-editor`, not by our own
 detector.** Jordan challenged the from-scratch approach and he was right. auto-editor 29.8.1 is
 installed, `becky-cut` already wraps it, and its INTEGER FRAME chunks make the gap bug below

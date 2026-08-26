@@ -16,6 +16,13 @@
   measurement added still later that same night, `--narrative-trim` (86.1min -> 57.2min,
   Gemma-4-judged, hard-capped so it can't over-cut) added 2026-08-25 afternoon — see
   `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md`.
+- **`HANDOFF-BECKY-CUT-ADAPTIVE.md`** - **the NEXT job, specified and ready to implement.** Kill
+  the per-mic dial-in: `becky-cut` keeps auto-editor for the cutting mechanics and we replace only
+  the ~40 lines that pick the threshold. Settles "adaptive vs fixed profiles" with measurement
+  (adaptive, via a two-percentile valley-fraction rule, NOT Otsu), deletes `level.go`'s
+  `minThresholdDB = -50` clamp that made the right answer unreachable on a Rode mic, and points
+  `roughcut.py` at auto-editor's INTEGER FRAMES so the one-frame timeline gaps become impossible.
+  Ordered, checkboxed, with VERIFY commands and expected numbers. New 2026-08-26.
 - **`Build Rough Cut.bat`** + `scripts/roughcut.py` — **THE ONE CALL: a folder of raw takes ->
   a populated VEGAS Pro 18 timeline**, clips in chronological order, non-speaking parts cut out,
   a marker for every quote in the outline. Double-click the .bat and pick a folder, or drag a

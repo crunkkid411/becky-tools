@@ -771,6 +771,15 @@ Every file needs -53 to -64 dB and the clamp floors out at -50, so **becky-cut c
 right answer at ANY `--headroom`** - structural, not tuning. That is the whole reason it failed
 here, and it is a ~40-line fix, not a reason to write a new detector.
 
+**The full ordered work order is `HANDOFF-BECKY-CUT-ADAPTIVE.md`** - read that, not this
+summary, before starting. It also settles Jordan's follow-up question (adaptive threshold vs a few
+fixed per-mic profiles) with measurement: **adaptive wins, but NOT via Otsu.** Across the 16 Rode
+clips Otsu always landed at ~0.52 of the way up each file's own valley (spread 0.455-0.570), so a
+two-percentile rule `threshold = p5 + 0.52 * (p90 - p5)` reproduces it to within 1.2 dB mean /
+3.6 dB worst inside a 48 dB valley - with no bimodality assumption to break on an all-speech clip.
+Fixed profiles are rejected on operational cost: every new mic would need another human dial-in
+session, which is the exact two-day failure being fixed.
+
 **Migration plan (this supersedes items 1-3 above; do this instead of hand-rolling frames):**
 
 1. Move `speechcut.py`'s Otsu threshold into `becky-cut` (or have `roughcut.py` compute it and
