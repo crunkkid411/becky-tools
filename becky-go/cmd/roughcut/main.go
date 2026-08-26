@@ -118,6 +118,7 @@ func main() {
 	narrativeTrim := flag.Bool("narrative-trim", false, "STANDALONE mode: an LLM (Gemma-4) judges every remaining beat of narration in an EXISTING vegas_cut.json against -target-minutes and removes only the beats it is confident are redundant/tangential (never a unique fact). Run after --triage-markers when the cut is still too long. See narrativetrim.go.")
 	targetMinutes := flag.Float64("target-minutes", 58.0, "used with -narrative-trim: the length to cut toward")
 	burnOverlays := flag.Bool("burn-quote-overlays", false, "STANDALONE mode: burns becky-review-3's forensic lower-third overlay (no filename/name, no captions) into every already-placed quote clip in an EXISTING vegas_cut.json, in place. Safe to run before or after --triage-markers. See overlay.go.")
+	leadTrim := flag.Bool("trim-lead-in", false, "STANDALONE mode: trims non-speech lead-in time (adjusting position, settling in) off the START of every fresh speaking span in an EXISTING vegas_cut.json - LR-ASD answers the confident cases for free, Gemma-4 is only asked about the rest. Never touches a span's end or content, never drops anything - fails closed to no trim. See leadtrim.go.")
 	verbose := flag.Bool("verbose", false, "progress on stderr")
 
 	flag.Usage = func() {
@@ -175,6 +176,12 @@ func main() {
 	}
 	if *burnOverlays {
 		if err := runBurnOverlaysPass(out, *verbose); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		return
+	}
+	if *leadTrim {
+		if err := runLeadTrimPass(out, *verbose); err != nil {
 			beckyio.Fatalf("%v", err)
 		}
 		return
