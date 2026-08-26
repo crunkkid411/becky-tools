@@ -598,3 +598,16 @@ the YouTube URL specifically. The quote-search pipeline (`_work/search_quotes.py
 this up correctly means tracing each burned quote back to its ORIGINAL corpus file and either
 teaching the parser the corpus's own naming convention or populating `edl.ClipMeta` directly from
 it, not guessing. Deliberately not rushed given the accuracy stakes on a real evidentiary quote.
+
+**Jordan's verdict, same night, after human-watching the round-5 (corrected-order) timeline**:
+"the timeline footage... is littered with excessive dead air. You, and the tools failing to
+recognize that is the exact thing we are attempting to calibrate. If you don't trust the human
+feedback that I'm giving you then just pull up becky-review-3." His direct review overrides
+§11's LR-ASD-confidence measurement (87% confident speech) — the measurement was real and
+honestly reported, but it is evidently not measuring what actually makes footage feel dead to a
+human editor watching it. That gap is UNSOLVED, not resolved by this session's work. He is now
+editing hj-fbi-recap by hand in Becky Review 3 (launched pointed at the raw footage folder).
+**becky-roughcut stays real, working code for what it verified (clip order, content
+preservation, marker triage, quote overlays) but is NOT currently a usable end-to-end rough-cut
+delivery** until a real idea for closing the dead-air-calibration gap shows up — not another
+LR-ASD/Gemma-4 confidence measurement restating the same signal.

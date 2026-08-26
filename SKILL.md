@@ -593,6 +593,16 @@ instead of crashing. After any change: `go build ./... && go test ./... && go ru
 
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
+**STATUS (2026-08-25 night): NOT usable yet — Jordan's own verdict after human-watching the
+corrected-order hj-fbi-recap timeline: "littered with excessive dead air. You, and the tools
+failing to recognize that is the exact thing we are attempting to calibrate."** A direct
+LR-ASD-confidence measurement said 87% confident on-camera speech; his own eyes disagreed, and
+his eyes win. The gap is between "LR-ASD calls this confident speech" and "this actually holds a
+viewer's attention" — that calibration is unsolved, not solved. He is editing hj-fbi-recap by
+hand in Becky Review 3 now. Don't re-open this by adding another measurement pass without a new
+idea for closing that specific gap; see `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §11 for what was
+actually tried (splice-order bug fix - real, verified; lead-in trim - built, found nothing).
+
 Read this before touching `cmd/roughcut` or `vegas/BeckyRoughCut.cs`. Everything below was
 measured on Jordan's hj-fbi-recap session (16 sources, 2:25:25 raw, Rode mic recorded ~35 dB too
 quiet, clap tests clipping at 0 dB) on 2026-08-24, or is his direct instruction.

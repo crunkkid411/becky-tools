@@ -6,7 +6,22 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### CURRENT — becky-roughcut: clip-order bug fixed, lead-in trim built + measured (2026-08-25 evening, local)
+### CURRENT — becky-roughcut: Jordan's verdict — NOT usable yet, he is editing this project by hand (2026-08-25 night, local)
+
+**Jordan's own words, after human-watching the corrected-order timeline**: "the timeline
+footage... is littered with excessive dead air. You, and the tools failing to recognize that is
+the exact thing we are attempting to calibrate." His direct human review overrides the
+LR-ASD-confidence measurement below — the measurement said 87% confident on-camera speech, his
+own eyes said too much dead air survived. **Do not re-litigate this with more measurement; the
+gap is between what LR-ASD calls "confident speech" and what actually holds a viewer's
+attention, and closing it is unfinished, real work, not a solved problem.** He is now editing
+the hj-fbi-recap project by hand in Becky Review 3 (pointed at the raw footage folder) rather
+than waiting on becky-roughcut. **becky-roughcut is not the front door for this project anymore
+until the dead-air calibration gap above is actually closed** — treat the round-5 work below as
+real, verified progress on ORDERING and CONTENT-PRESERVATION (both confirmed correct), not as a
+finished dead-air solution.
+
+### PREVIOUS — becky-roughcut: clip-order bug fixed, lead-in trim built + measured (2026-08-25 evening, local)
 
 **On master, built green** (`go build/vet/test ./...` — roughcut package all green, `gofmt -l`
 clean modulo known CRLF noise). Full story in `HANDOFF-ROUGHCUT-2026-08-24-NIGHT.md` §11.
