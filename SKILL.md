@@ -798,6 +798,50 @@ session, which is the exact two-day failure being fixed.
 Non-negotiable when fixing: this must not loosen the head-slack calibration above. The start of
 each clip must stay within one frame of the speech onset.
 
+### QUOTES AND MULTI-FOLDER PROJECTS - read this before touching marker placement
+
+A video project is normally spread across several folders. That is not an edge case, it is the
+default shape of the work, and handling it fluently is baseline competence. For
+`23_hj-fbi-recap` the layout is:
+
+```
+X:\Videos\2026\08_august\23_hj-fbi-recap\     <- PROJECT ROOT: the raw takes + the outline .md
+                        \_roughcut\           <- tool outputs (spans, vegas_cut.json, the .veg)
+                        \_work\  \render\     <- scratch / renders (render\ is lowercase, his choice)
+E:\TakingBack2007\                            <- the EXTERNAL evidence library the quotes come from
+```
+
+Rules that follow from that:
+
+- **Anything meant for a HUMAN goes at the PROJECT ROOT**, never buried in a tool subfolder.
+  `_roughcut\` is for machine artifacts. A quote list, a report, a summary is a root-level file.
+- **And then you OPEN it for him.** See `ACCESSIBILITY.md` - a deliverable he still has to go and
+  find is not delivered, and there is no default `.md` handler on this PC so it must be launched
+  explicitly via MarkText.
+- Source footage is never written to. The evidence library on `E:` is read-only.
+
+**QUOTE EXTRACTION - take everything, filter nothing.** Jordan writes his quotes in the outline
+`.md` inside quotation marks and expects all of them back. The 2026-08-26 extractor silently
+applied a 12-character minimum, skipped markdown heading lines, and matched only straight `"`,
+which dropped 8 of his real quotes (`"Elkhart"`, `"vote"`, `"wait, what?"`, `"let you"`...). So:
+
+- No minimum length. No heading-line skipping. Match straight `"..."` AND curly quotes.
+- Scan LINE BY LINE. Sequential pairing across the whole document breaks: this file has **4 lines
+  with an unclosed `"`** (lines 96, 413, 415, 445), and one unbalanced mark mis-pairs every quote
+  after it.
+- **Report anomalies, never drop them.** List the unbalanced lines so he can see what happened.
+- Backtick-wrapped passages are HIS OWN script lines, not quotations - list them separately, never
+  as markers.
+
+**MARKER PLACEMENT IS OFF BY DEFAULT, AND THAT IS DELIBERATE.** Placing 56 of 73 quote markers by
+fuzzy lexical match was rejected outright: *"worse than un-helpful; they genuinely are dishonest in
+a way that cost me time and brain capacity."* A marker at 00:17:30 reads as a claim that the quote
+belongs there. Lexical similarity against narration he is PARAPHRASING cannot earn that claim, and
+a confidence score in a sidecar does not help because he sees the timeline, not the sidecar. The
+deliverable is `QUOTES.md` at the project root - every quote verbatim, numbered, with any timeline
+position clearly marked as a suggestion. `--place-quote-markers` exists as an explicit opt-in.
+Full reasoning: the "A MARKER IS AN ASSERTION" invariant in `CLAUDE.md`.
+
 ### What this is NOT yet
 
 This is silence removal plus noise removal, ordered, with markers. It is **not** Jordan's full

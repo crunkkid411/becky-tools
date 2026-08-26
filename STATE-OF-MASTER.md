@@ -40,6 +40,15 @@ Four things had to be true at once, and each was a separate round of his feedbac
 4. **A VAD second pass**, Silero whole-file, `becky-cut`'s <20%-speech bar, and a drop requires
    Parakeet to agree there is no word inside.
 
+**QUOTE MARKERS ARE NOW OFF BY DEFAULT (2026-08-26).** Jordan deleted all 65: placing them by
+fuzzy text match put a guess in the visual form of a fact - *"worse than un-helpful; they genuinely
+are dishonest."* The deliverable is now **`QUOTES.md` at the PROJECT ROOT** (every quote verbatim,
+no filters - the old extractor silently dropped 8 of his real quotes on a 12-char minimum), and
+`roughcut.py` **OPENS it** rather than handing over a path. Two new invariants in `CLAUDE.md`
+("A MARKER IS AN ASSERTION, NOT A GUESS"; "EXTRACT WHAT THE HUMAN WROTE, NOT WHAT YOUR FILTER
+LIKES") and a new `ACCESSIBILITY.md` rule ("DELIVER THE DOCUMENT. NEVER POINT AT A PATH.").
+Multi-folder project layout is written down in `SKILL.md`.
+
 **NEXT JOB IS SPECIFIED AND READY: `HANDOFF-BECKY-CUT-ADAPTIVE.md`.** Jordan asked whether to go
 adaptive or ship a few fixed per-mic profiles. Measured answer: **adaptive, via a two-percentile
 valley-fraction rule (`p5 + 0.52 * (p90 - p5)`), not Otsu.** Otsu always landed at ~0.52 of each

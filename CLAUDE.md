@@ -229,6 +229,24 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   on this machine (2026-08-21): anaconda's warns and continues, that one hard-crashes.
   It silently killed the whole Gemma watch pass, which then reported "the model watched
   this but its answer was unusable" about a clip no model had ever seen.
+- **A MARKER (OR ANY PLACED ARTIFACT) IS AN ASSERTION, NOT A GUESS. NEVER SHIP A GUESS IN THE
+  VISUAL FORM OF A FACT.** 2026-08-26: 56 of 73 quote markers were positioned on Jordan's timeline
+  by fuzzy lexical match against his narration. A marker sitting at 00:17:30 *reads* as "this quote
+  belongs here" - it does not read as "a text-similarity score put this here". He called them
+  **"worse than un-helpful; they genuinely are dishonest in a way that cost me time and brain
+  capacity"** and deleted all of them. He is right: the dishonesty is structural, not a matter of
+  intent, because the FORM of the output claims more confidence than the METHOD earned. A
+  `confidence` field in a sidecar JSON does not fix it - he sees the timeline, not the sidecar.
+  **The rule: if you cannot place it with real confidence, do not place it.** Hand over the list
+  instead, or park every item in one clearly-labelled block. Distributing guesses across a timeline
+  where each one looks authoritative is worse than delivering nothing, because now he has to verify
+  all of them. Same applies to regions, chapter marks, auto-generated captions and detected labels.
+- **EXTRACT WHAT THE HUMAN WROTE, NOT WHAT YOUR FILTER LIKES.** Same incident: the quote extractor
+  silently applied a 12-character minimum, skipped markdown heading lines, and only matched
+  straight `"` - dropping 8 of Jordan's own quotes (`"Elkhart"`, `"vote"`, `"wait, what?"`). He had
+  literally put them in quotation marks and reasonably expected all of them back. **Filters the
+  human did not ask for are data loss.** Take everything, verbatim; if something is malformed
+  (this file had 4 lines with an unclosed `"`), REPORT the anomaly, never silently drop it.
 - **USE THE SPECIALIST'S TOOL FOR THE MECHANICS; WRITE ONLY THE CALIBRATION.** Jordan, 2026-08-26:
   *"most of the tools we need already exist - generally created by specialists who solve their own
   niche problems, and we just need to wire them up and calibrate accordingly."* He is right, and

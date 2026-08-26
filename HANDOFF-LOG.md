@@ -10,6 +10,53 @@
 
 ---
 
+## Quote markers deleted as dishonest; QUOTES.md is the deliverable; DELIVER, never point at a path (2026-08-26, local, `master`)
+
+Two separate failures in one exchange, both now invariants.
+
+**1. Markers that were guesses, shipped in the form of facts.** 56 of 73 quote markers were placed
+on Jordan's timeline by fuzzy IDF-weighted lexical match against narration he was PARAPHRASING.
+His verdict: *"worse than un-helpful; they genuinely are dishonest in a way that cost me time and
+brain capacity"* - and he deleted all of them. He is right, and the dishonesty is STRUCTURAL, not
+intentional: a marker at 00:17:30 reads as "this quote belongs here", which is a claim the method
+never earned. A `match_strength` in a sidecar JSON does not repair it, because he looks at the
+timeline, not the sidecar. **Fix: `--place-quote-markers` is now OFF BY DEFAULT.** The deliverable
+is `QUOTES.md` at the PROJECT ROOT - every quote verbatim, numbered, with any timeline position
+clearly labelled a suggestion.
+
+**2. The extractor silently dropped 8 of his real quotes.** It applied a 12-character minimum,
+skipped markdown heading lines, and matched only straight `"` - so `"Elkhart"`, `"vote"`,
+`"wait, what?"`, `"let you"` and others vanished. He had put them in quotation marks and expected
+them back. **Filters the human did not ask for are data loss.** Now: no length filter, headings
+included, straight AND curly quotes, scanned LINE BY LINE (whole-document quote pairing breaks -
+his outline has 4 lines with an unclosed `"`, and one unbalanced mark mis-pairs every quote after
+it). Unbalanced lines are REPORTED in QUOTES.md and as a console warning, never silently dropped.
+Count went 65 -> 74.
+
+**3. And then the deliverable was buried and he was told to go find it.** `QUOTES.md` was written
+into a subfolder and he was handed the path. His reply: *"you're asking me to navigate to a
+subfolder and open a .md file - which explicitly violates so many fucking rules... fucking open the
+markdown file for me or else your job is not done yet."* Correct. He has impaired vision and
+reading is physically costly; "go here, find this, open it" is a stack of barriers on someone who
+asked for a list. **A deliverable a human still has to go and find is not delivered.**
+
+Machine fact banked: **there is NO default handler registered for `.md` on this PC**, so
+`Start-Process file.md` fails silently. MarkText lives at
+`%LOCALAPPDATA%\Programs\MarkText\MarkText.exe` and must be launched explicitly. `roughcut.py`
+now opens `QUOTES.md` itself when it finishes (`--no-open` to suppress).
+
+**Multi-folder project layout, now written down** (`SKILL.md`): the footage folder is the PROJECT
+ROOT and holds the raw takes plus the outline; `_roughcut\` is machine artifacts only; `render\` is
+renders (lowercase, his choice); the evidence library on `E:` is read-only. **Anything meant for a
+human goes at the project root and gets OPENED** - never buried in a tool subfolder.
+
+Docs: `CLAUDE.md` (two new invariants), `ACCESSIBILITY.md` ("DELIVER THE DOCUMENT. NEVER POINT AT A
+PATH."), `SKILL.md` ("QUOTES AND MULTI-FOLDER PROJECTS"). Code: `scripts/build_roughcut.py`,
+`scripts/roughcut.py`. Verified end to end on a scratch folder - 74 quotes, QUOTES.md at the root,
+0 markers by default, the 4 unbalanced lines reported.
+
+---
+
 ## Jordan was right: we hand-rolled a cut that auto-editor had already solved. Reuse boundary now an invariant (2026-08-26, local, `master`)
 
 Jordan, asking for genuine pushback: *"you seem to avoid using libraries and tools I provide and

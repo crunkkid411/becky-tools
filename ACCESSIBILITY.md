@@ -36,6 +36,35 @@ Audio/voice is a channel he values, and his reading has limits — but the answe
 that removes his color cues or speaks in a voice he hates is a regression, even if it
 "adds accessibility." Match the real human, not an assumed one.
 
+## DELIVER THE DOCUMENT. NEVER POINT AT A PATH. (2026-08-26)
+
+Violated badly on 2026-08-26. A list Jordan urgently needed was written to
+`X:\Videos\...\23_hj-fbi-recap\QUOTES.md` and he was told where to find it. His reply:
+*"you're asking me to navigate to a subfolder and open a .md file - which explicitly violates so
+many fucking rules... fucking open the markdown file for me or else your job is not done yet."*
+
+He is right, and it is not a small thing: he has impaired vision, reading is physically costly,
+and "go to this folder, find this file, open it" is several barriers stacked on someone who asked
+for a list. **A deliverable that a human still has to go and find is not delivered.**
+
+The rule:
+
+- **If you produce a document for Jordan, OPEN IT ON HIS SCREEN.** Then verify with a screenshot
+  that it actually rendered - do not assume the launch worked.
+- **If it is short, put it in the chat instead.** A list of 20 things is a chat message, not a file.
+- Only mention a path as a footnote *after* the thing is already open or already in the message.
+
+**Machine fact, do not relearn it:** there is **NO default handler registered for `.md`** on this
+PC, so `Start-Process file.md` fails silently. MarkText is installed at
+`C:\Users\only1\AppData\Local\Programs\MarkText\MarkText.exe` - launch it explicitly:
+
+```powershell
+Start-Process 'C:\Users\only1\AppData\Local\Programs\MarkText\MarkText.exe' -ArgumentList '"<file.md>"'
+```
+
+Same principle for any artifact: a `.veg` gets opened in VEGAS, a render gets opened, a report gets
+opened or pasted. The end of the job is the human LOOKING at the result, not a path in a sentence.
+
 ## Interaction
 
 If you have a question about video footage, **PULL IT UP** in the becky review gui

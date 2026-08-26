@@ -55,23 +55,72 @@ def tokens(text: str) -> list[str]:
             if len(w) >= 3 and w not in STOP]
 
 
-def extract_quotes(md_path: str) -> list[str]:
-    """Every double-quoted run in the outline body, in document order.
+def extract_quotes(md_path: str):
+    """EVERY quoted string in the outline, verbatim, in document order.
 
-    Skips the instruction header and markdown headings - the legend calls the
-    bracketed notes on CAPS headers scaffolding, not content.
+    NO FILTERS. An earlier version applied a 12-character minimum, skipped
+    markdown heading lines and matched only straight quotes; that silently
+    dropped 8 of Jordan's real quotes ("Elkhart", "vote", "wait, what?"). He
+    puts his quotes in quotation marks and expects all of them back - a filter
+    he did not ask for is data loss.
+
+    Scans LINE BY LINE on purpose. Pairing quote marks across the whole document
+    breaks on a single unclosed one, and this outline has four of them; those
+    lines are returned so they can be reported rather than silently mangled.
+
+    Returns (quotes, backticked, unbalanced_lines).
     """
     lines = open(md_path, encoding="utf-8").read().split("\n")
-    seen, out = set(), []
-    for ln in lines[20:]:
-        if ln.lstrip().startswith("#"):
-            continue
-        for q in re.findall(r'"([^"\n]{12,})"', ln):
-            q = q.strip()
-            if q and q not in seen:
-                seen.add(q)
-                out.append(q)
-    return out
+    seen, quotes, ticks, odd = set(), [], [], []
+    for n, ln in enumerate(lines, 1):
+        for q in re.findall(r'"([^"\n]*)"', ln) + re.findall(r"“([^”\n]*)”", ln):
+            if q.strip() and q.strip() not in seen:
+                seen.add(q.strip())
+                quotes.append((n, q))
+        if ln.count('"') % 2:
+            odd.append((n, ln.strip()))
+        for b in re.findall(r"`([^`\n]+)`", ln):
+            if b.strip() and not b.startswith(("http", "X:", "E:", "C:")):
+                ticks.append((n, b))
+    return quotes, ticks, odd
+
+
+def write_quotes_doc(path, quotes, ticks, odd, placed_by_text, src_name):
+    """The HUMAN deliverable: every quote, verbatim, at the PROJECT ROOT.
+
+    This - not the markers - is the answer to "where are my quotes". Markers are
+    a suggestion and are off by default; see CLAUDE.md's "A MARKER IS AN
+    ASSERTION" invariant.
+    """
+    w = []
+    w.append(f"# Every quote in {src_name}\n")
+    w.append("Verbatim, in the order they appear. No filtering: no minimum length, "
+             "headings included,\nstraight and curly quotes both.\n")
+    w.append(f"- **{len(quotes)} quotes**")
+    if placed_by_text:
+        w.append(f"- **{sum(1 for _, q in quotes if q.strip() in placed_by_text)}** have a "
+                 "SUGGESTED timeline position (a text match, not a verified one - treat it as a hint)")
+    w.append(f"- **{len(ticks)} backticked passages** are your own script lines, not quotations - "
+             "listed separately at the bottom\n")
+    w.append("\n---\n\n## Quotes\n")
+    w.append("| # | suggested time | line | quote (verbatim) |")
+    w.append("|---:|---|---:|---|")
+    for i, (n, q) in enumerate(quotes, 1):
+        tc = placed_by_text.get(q.strip()) if placed_by_text else None
+        w.append(f"| {i} | {tc or '-'} | {n} | {q.replace('|', chr(92) + '|')} |")
+    w.append("\n---\n\n## Plain list (easier to copy)\n")
+    for i, (n, q) in enumerate(quotes, 1):
+        w.append(f'{i}. "{q}"')
+    w.append("\n---\n\n## Backticked passages (your own script lines, NOT quotations)\n")
+    for i, (n, b) in enumerate(ticks, 1):
+        w.append(f"{i}. (line {n}) {b}")
+    if odd:
+        w.append("\n---\n\n## Lines with an UNCLOSED quote mark\n")
+        w.append("These have an odd number of `\"`, so a quote opens and never closes. "
+                 "Reported, not dropped.\n")
+        for n, ln in odd:
+            w.append(f"- **line {n}:** {ln[:200]}")
+    open(path, "w", encoding="utf-8").write("\n".join(w) + "\n")
 
 
 def load_timeline_words(clips, spans_by_src, work):
@@ -143,6 +192,10 @@ def main() -> None:
                     help="track gain so a quiet Rode recording is visible/audible; "
                          "12 dB is the value Jordan set by hand in his own screenshot")
     ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--place-quote-markers", action="store_true",
+                    help="ALSO drop a marker per quote at its best text match. OFF by default: "
+                         "the match is a guess and a marker looks like a fact. QUOTES.md is "
+                         "always written either way.")
     a = ap.parse_args()
 
     spans = json.load(open(a.spans, encoding="utf-8"))
@@ -165,20 +218,36 @@ def main() -> None:
             tl += e - s
 
     tl_words, total_tl, per_clip = load_timeline_words(order, spans_by_src, work)
-    quotes = extract_quotes(a.outline)
+    quote_rows, ticks, odd = extract_quotes(a.outline)
+    quotes = [q for _, q in quote_rows]
     placed, unplaced = locate_quotes(quotes, tl_words)
+    placed_by_text = {q.strip(): f"{int(t//3600):02d}:{int(t//60)%60:02d}:{int(t%60):02d}"
+                      for q, t, _ in placed}
 
-    markers = [{"t": round(t, 3), "title": q} for q, t, _ in placed]
-    # Quotes the narration never touches still get a marker, verbatim, parked in
-    # a labelled block past the end of the cut - never guessed onto a position.
+    # THE HUMAN DELIVERABLE, at the PROJECT ROOT (not the tool subfolder), always.
+    quotes_doc = os.path.join(os.path.abspath(a.folder), "QUOTES.md")
+    write_quotes_doc(quotes_doc, quote_rows, ticks, odd, placed_by_text,
+                     os.path.basename(a.outline))
+
     regions = [{"t": round(s, 3), "len": round(e - s, 3), "label": name}
                for name, s, e in per_clip]
-    if unplaced:
-        base = total_tl + 5.0
-        for i, (q, _) in enumerate(unplaced):
-            markers.append({"t": round(base + i * 2.0, 3), "title": q})
-        regions.append({"t": round(base - 2.0, 3), "len": round(len(unplaced) * 2.0 + 4.0, 3),
-                        "label": "UNPLACED QUOTES - not found in the narration"})
+
+    # MARKERS ARE OFF BY DEFAULT AND THAT IS DELIBERATE. Placing a quote by fuzzy
+    # lexical match against narration Jordan is PARAPHRASING cannot earn the claim
+    # a marker makes ("this quote belongs at 00:17:30"). He deleted all 65 of them:
+    # "worse than un-helpful; they genuinely are dishonest in a way that cost me
+    # time and brain capacity." QUOTES.md is the honest deliverable. See CLAUDE.md,
+    # "A MARKER IS AN ASSERTION, NOT A GUESS".
+    markers = []
+    if a.place_quote_markers:
+        markers = [{"t": round(t, 3), "title": q} for q, t, _ in placed]
+        if unplaced:
+            base = total_tl + 5.0
+            for i, (q, _) in enumerate(unplaced):
+                markers.append({"t": round(base + i * 2.0, 3), "title": q})
+            regions.append({"t": round(base - 2.0, 3),
+                            "len": round(len(unplaced) * 2.0 + 4.0, 3),
+                            "label": "UNPLACED QUOTES - not found in the narration"})
 
     cut = {
         "version": "2",
@@ -204,9 +273,14 @@ def main() -> None:
 
     src = sum(recs[p]["duration_s"] for p in order)
     print(f"\nevents      : {len(events)}  ({src/60:.1f} min source -> {tl/60:.1f} min timeline)")
-    print(f"quotes      : {len(quotes)} found in outline")
-    print(f"  placed    : {len(placed)}")
-    print(f"  unplaced  : {len(unplaced)} (parked after the end, titles verbatim)")
+    print(f"quotes      : {len(quotes)} found in outline -> {quotes_doc}")
+    if a.place_quote_markers:
+        print(f"  markers   : {len(placed)} placed by text match, {len(unplaced)} parked at the end")
+    else:
+        print("  markers   : NONE (placement is a guess; use --place-quote-markers to opt in)")
+    if odd:
+        print(f"  WARNING   : {len(odd)} line(s) in the outline have an unclosed quote mark "
+              f"(listed in QUOTES.md): {[n for n, _ in odd]}")
     print(f"regions     : {len(regions)}  (one per source clip + the unplaced block)")
     print(f"wrote {a.out}")
     if unplaced:

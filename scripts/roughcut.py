@@ -58,6 +58,10 @@ def main() -> None:
     ap.add_argument("--no-vad", action="store_true",
                     help="skip the Silero pass that drops confident non-speech clips")
     ap.add_argument("--audio-gain-db", type=float, default=12.0)
+    ap.add_argument("--place-quote-markers", action="store_true",
+                    help="also drop a marker per quote at its best text match (a GUESS - off by default)")
+    ap.add_argument("--no-open", action="store_true",
+                    help="do not open QUOTES.md when finished")
     ap.add_argument("--pad-post", type=float, default=0.08)
     ap.add_argument("--vad-pct", type=float, default=20.0)
     a = ap.parse_args()
@@ -110,7 +114,8 @@ def main() -> None:
     run([sys.executable, os.path.join(HERE, "build_roughcut.py"),
          "--folder", folder, "--spans", spans, "--outline", outline,
          "--out", cut, "--save-veg", os.path.join(work, a.veg_name),
-         "--audio-gain-db", str(a.audio_gain_db), "--fps", str(a.fps)])
+         "--audio-gain-db", str(a.audio_gain_db), "--fps", str(a.fps)]
+        + (["--place-quote-markers"] if a.place_quote_markers else []))
 
     run([sys.executable, os.path.join(HERE, "verify_timeline.py"), cut])
 
@@ -129,6 +134,23 @@ def main() -> None:
         print(f"\nvegas_cut.json ready: {cut}\n"
               f"re-run with --launch-vegas to build the .veg")
 
+
+
+    # DELIVER, DO NOT POINT. A document Jordan still has to go and find is not
+    # delivered - see ACCESSIBILITY.md. There is no default .md handler on this
+    # PC, so Start-Process on the file silently does nothing; launch MarkText.
+    quotes_doc = os.path.join(folder, "QUOTES.md")
+    if not a.no_open and os.path.exists(quotes_doc):
+        opened = False
+        for mt in (os.path.expandvars(r"%LOCALAPPDATA%\Programs\MarkText\MarkText.exe"),
+                   r"C:\Program Files\MarkText\MarkText.exe"):
+            if os.path.exists(mt):
+                subprocess.Popen([mt, quotes_doc])
+                opened = True
+                break
+        print(f"\nyour quote list: {quotes_doc}"
+              + ("  (opened for you)" if opened else
+                 "  (could not find MarkText - open it yourself)"))
 
 if __name__ == "__main__":
     main()
