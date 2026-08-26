@@ -10,6 +10,43 @@
 
 ---
 
+## ASSESSMENT ONLY - one-frame gaps on the rough-cut timeline, root-caused, not yet fixed (2026-08-26, local, `master`)
+
+Jordan spotted random single-frame gaps between events while editing the delivered timeline -
+three inside one minute (`vegas/roughcut-workflow/gaps.JPG` (local only - `*.JPG` is gitignored; the numbers below are the real evidence)). He asked for an assessment and docs
+only, explicitly NOT a fix, because he was mid-edit. Nothing in the pipeline, the footage folder
+or VEGAS was touched; this is a read-only analysis of the shipped `vegas_cut.json`.
+
+His first-look diagnosis was correct: *"auto-editor uses true video frames... if your method is
+not using auto-editor's cut times, that's almost certainly the smoking gun."*
+
+**Root cause: the pipeline carries SECONDS and rounds them.** At 30fps a frame is 1/30 =
+0.0333..., which has no exact decimal or binary form. `speechcut.py` writes span endpoints as
+`round(x, 6)`; `build_roughcut.py` writes `tl` the same way. Rounding the two endpoints
+INDEPENDENTLY and then subtracting loses the alignment:
+
+    in=39.166667 (x30=1175.00001), out=40.500000 (x30=1215.00000)
+      -> length 1.333333, x30 = 39.99999 frames, should be exactly 40
+
+- **567 of 1690 events (33.6%)** have a length landing just BELOW an integer frame. Under a
+  truncating seconds->frames conversion each becomes an event one frame short = a one-frame hole.
+- `tl` accumulates the shortfall: positions are ~0.0195 frames off-grid by the last event.
+- auto-editor is immune because its chunks are integer frames `[start, end, speed]` end to end and
+  never round-trip through decimal seconds.
+
+**Also found: our own acceptance test has a blind spot.** `verify_timeline.py` compares
+`prev.tl + length` vs `next.tl` in seconds with a 1e-6 tolerance, so it happily reported
+"0 gaps/overlaps" on a timeline that visibly has them. A tolerance wider than the defect cannot
+detect the defect. That check must be redone in integer frames, plus an assertion that every
+length and position is exactly on the grid.
+
+**Ordered fix for the next agent is in `SKILL.md` `# ROUGH CUT` -> "KNOWN BUG - NEXT JOB":**
+integer frames end-to-end, frames in `vegas_cut.json`, `Timecode.FromFrames` in
+`BeckyRoughCut.cs` (check the VP18 API against `vegas/README.md` section 0 first), frame-based
+verification. Constraint: must not loosen the <=1-frame head-slack calibration.
+
+---
+
 ## the silence cut SHIPS as one click: `Build Rough Cut.bat`, head slack <1 frame, VAD drops noise (2026-08-26, local, `master`)
 
 Jordan accepted it: *"a far-cry from what the rough-cut vision entails, but it's the first

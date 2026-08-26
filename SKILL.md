@@ -703,6 +703,56 @@ Clip order comes from `ffprobe -show_entries format_tags=creation_time`. On this
 file's Windows `CreationTime` is the moment it was copied to X: (all 16 within 40 minutes) and
 ordering by it puts the timeline almost backwards.
 
+### KNOWN BUG - NEXT JOB: one-frame gaps on the timeline (found by Jordan 2026-08-26)
+
+**Symptom:** random single-frame gaps between events on the VEGAS timeline - Jordan hit three in
+under a minute of editing. Screenshot: `vegas/roughcut-workflow/gaps.JPG` (local only - `*.JPG` is gitignored; the numbers below are the real evidence). His read was right on
+first look: *"auto-editor uses true video frames, and for the past year I've never seen this
+happen. If your method is not using auto-editor's cut times, that's almost certainly the smoking
+gun."*
+
+**Root cause (measured on the shipped `vegas_cut.json`, 1690 events): the pipeline carries
+SECONDS, and rounds them.** At 30fps a frame is 1/30 = 0.0333... which has no exact decimal or
+binary representation. `speechcut.py` writes each span endpoint as `round(x, 6)` and
+`build_roughcut.py` writes `tl` as `round(tl, 6)`. Rounding the two ENDPOINTS independently and
+then subtracting destroys the frame alignment:
+
+```
+in = 39.166667  (x30 = 1175.00001)
+out= 40.500000  (x30 = 1215.00000)
+   -> length 1.333333, x30 = 39.99999 frames   ... should be exactly 40
+```
+
+- **567 of 1690 events (33.6%)** have a length that lands JUST BELOW an integer frame.
+  Any truncating (or floor-based) seconds->frames conversion inside VEGAS turns each of those into
+  an event one frame short - i.e. a one-frame hole before the next event. 33.6% is entirely
+  consistent with "three in under a minute".
+- **Timeline positions drift too.** `tl` accumulates those slightly-short lengths, so by the last
+  event the start positions sit ~0.0195 frames off the frame grid (`tl*30 = 97595.01948`).
+
+**Why auto-editor never does this:** its chunks are INTEGER FRAME NUMBERS end to end -
+`[[0,26,99999],[26,37,99999],...]` (start frame, end frame, speed). It never round-trips a cut
+point through decimal seconds, so it cannot drift off the grid. This is the "nuanced reliability"
+Jordan is pointing at.
+
+**Fix direction (do this, do not paper over it):**
+
+1. **Carry integer frame numbers end-to-end.** `speechcut.py` should emit `[start_frame,
+   end_frame]` ints, not rounded seconds; `build_roughcut.py` should accumulate `tl` as an
+   INTEGER frame count. Convert to seconds only at the very last moment, or not at all.
+2. **`vegas_cut.json` should carry frames.** Add integer `in_f`/`out_f`/`tl_f` alongside (or
+   instead of) the seconds fields.
+3. **`vegas/BeckyRoughCut.cs` should use `Timecode.FromFrames(...)`, not `Timecode.FromSeconds`.**
+   Verify the VP18 API surface first - `vegas/README.md` section 0 lists the Timecode traps
+   already found (there is no `.Seconds`; use `.Nanos * 1e-7` to read one back).
+4. **The acceptance test is currently BLIND to this.** `verify_timeline.py` compares
+   `prev.tl + length` against `next.tl` in SECONDS with a 1e-6 tolerance, so it reported
+   "0 gaps/overlaps" on a timeline that has them. **Re-do that check in integer frames**, and add
+   an assertion that every length and every position is exactly on the frame grid.
+
+Non-negotiable when fixing: this must not loosen the head-slack calibration above. The start of
+each clip must stay within one frame of the speech onset.
+
 ### What this is NOT yet
 
 This is silence removal plus noise removal, ordered, with markers. It is **not** Jordan's full

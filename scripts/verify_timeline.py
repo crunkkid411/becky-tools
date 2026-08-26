@@ -58,6 +58,12 @@ def main() -> None:
     print(f"events: {len(cut['events'])}  markers: {len(cut.get('markers', []))}")
 
     # events must tile the timeline with no gap and no overlap
+    #
+    # KNOWN BLIND SPOT (2026-08-26, unfixed): this compares SECONDS with a 1e-6
+    # tolerance, and the defect it needs to catch is ~2e-5 of a frame (7e-7 s).
+    # A tolerance wider than the defect cannot see the defect - this reported
+    # "0 gaps" on a timeline where Jordan found three one-frame gaps in a minute.
+    # REDO THIS IN INTEGER FRAMES. See SKILL.md # ROUGH CUT -> "KNOWN BUG".
     gaps = 0
     for prev, nxt in zip(cut["events"], cut["events"][1:]):
         if abs((prev["tl"] + (prev["out"] - prev["in"])) - nxt["tl"]) > 1e-6:

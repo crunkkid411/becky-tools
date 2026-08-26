@@ -40,6 +40,18 @@ Four things had to be true at once, and each was a separate round of his feedbac
 4. **A VAD second pass**, Silero whole-file, `becky-cut`'s <20%-speech bar, and a drop requires
    Parakeet to agree there is no word inside.
 
+**OPEN BUG, FOUND WHILE HE EDITS (2026-08-26): random ONE-FRAME GAPS between events.** Three in
+under a minute of editing; screenshot `vegas/roughcut-workflow/gaps.JPG` (local only - `*.JPG` is gitignored; the numbers below are the real evidence). Measured on the shipped
+`vegas_cut.json`: the pipeline carries SECONDS and rounds them (`round(x, 6)`), and at 30fps a
+frame is 1/30 = 0.0333... Rounding the two span ENDPOINTS independently then subtracting yields
+lengths like `x30 = 39.99999` frames instead of 40 - **567 of 1690 events (33.6%) sit just below
+an integer frame**, and accumulated `tl` drifts ~0.0195 frames off-grid by the end. auto-editor
+never does this because its chunks are integer frame numbers end to end. **Fix = carry integer
+frames through speechcut -> build_roughcut -> vegas_cut.json and use `Timecode.FromFrames` in
+BeckyRoughCut.cs.** Note `verify_timeline.py` is BLIND to it (it compares seconds at 1e-6) and
+reported "0 gaps" on a timeline that has them - that check must move to integer frames too.
+Full write-up and the ordered fix: `SKILL.md` `# ROUGH CUT` -> "KNOWN BUG - NEXT JOB".
+
 **Still open — this is NOT yet his full rough-cut definition.** It does not judge takes, remove
 retakes, or shape narrative/pacing. No LLM is in this path by design.
 

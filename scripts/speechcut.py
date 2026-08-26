@@ -273,6 +273,12 @@ def detect(path, fps=30.0, min_gap=0.30, min_speech=0.20,
     #    by construction and can never clip the onset. Jordan has to touch a cut
     #    only when it is off by a frame or more, so the whole budget goes here -
     #    starting tight matters monumentally more than ending tight.
+    # KNOWN BUG (2026-08-26, unfixed): these spans leave here as ROUNDED SECONDS.
+    # round(x, 6) on a 30fps frame boundary (1/30 = 0.0333...) puts 33.6% of the
+    # resulting event LENGTHS just below an integer frame, which shows up as
+    # random one-frame gaps on the VEGAS timeline. auto-editor avoids this by
+    # carrying integer frame numbers end to end. Emit frames, not seconds.
+    # See SKILL.md # ROUGH CUT -> "KNOWN BUG - NEXT JOB".
     out = []
     for s, e in refined:
         fs = int(np.floor(s * fps)) / fps
