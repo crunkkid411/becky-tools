@@ -57,7 +57,8 @@ func main() {
 	codec := flag.String("codec", "", "video codec (default from config: h264_nvenc)")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD post-pass")
 	threshold := flag.String("threshold", "auto", "audio detection threshold: \"auto\" (from the file's own level), or an auto-editor value like -27dB / 4%")
-	headroom := flag.Float64("headroom", defaultHeadroomDB, "with --threshold auto: dB above the file's mean volume the cut threshold sits; negative keeps more (quiet-mic footage), positive cuts harder")
+	headroom := flag.Float64("headroom", defaultHeadroomDB, "with --threshold auto: dB nudge added to the adaptive threshold; negative keeps more, positive cuts harder")
+	valleyFraction := flag.Float64("valley-fraction", defaultValleyFraction, "with --threshold auto: how far up the file's own silence->speech valley the threshold sits (0..1)")
 	dryRun := flag.Bool("dry-run", false, "print edit decisions without encoding")
 	emitTimeline := flag.String("emit-timeline", "", "write the v1 timeline JSON to <path> as a first-class artifact (works in dry-run too)")
 	keepTemp := flag.Bool("keep-temp", false, "keep temp XML/timeline/segment files")
@@ -97,21 +98,51 @@ func main() {
 	// has the measurement and the reasoning). "auto" is the default; anything
 	// else is passed to auto-editor as-is, so `--threshold -27dB` or
 	// `--threshold 4%` still work by hand.
+	//
+	// An adaptive number nobody can see is an adaptive number nobody can debug,
+	// so every input to the decision goes into the report as well as the log.
 	editArg := "audio"
 	thresholdNote := "auto-editor default"
+	levelReport := map[string]any{}
 	switch strings.TrimSpace(strings.ToLower(*threshold)) {
 	case "auto", "":
-		if meanDB, mErr := measureMeanVolumeDB(cfg.FFmpeg, input); mErr != nil {
-			beckyio.Logf(*verbose, "level measure failed (%v); using auto-editor's default threshold", mErr)
-		} else {
-			t := detectThresholdDB(meanDB, *headroom)
+		lv, lErr := measureLevels(cfg.FFmpeg, input)
+		switch {
+		case lErr != nil:
+			// Degrade, never crash: an unmeasurable file falls back to
+			// auto-editor's own default rather than guessing.
+			thresholdNote = "auto-editor default (level measure failed)"
+			levelReport["threshold_source"] = fmt.Sprintf("fallback: %v", lErr)
+			beckyio.Logf(true, "warning: level measure failed (%v); using auto-editor's default threshold", lErr)
+		case lv.ValleyDB < minValleyDB:
+			// The gate. Two percentiles measuring the same material cannot
+			// produce a meaningful threshold — say so instead of shipping a
+			// confident wrong number.
+			editArg = editExpr(defaultThresholdDB)
+			thresholdNote = fmt.Sprintf("%.1fdB (fallback: valley %.1fdB < %.1fdB)", defaultThresholdDB, lv.ValleyDB, minValleyDB)
+			levelReport["threshold_db"] = round3(defaultThresholdDB)
+			levelReport["threshold_source"] = fmt.Sprintf("fallback: valley %.1fdB < %.1fdB", lv.ValleyDB, minValleyDB)
+			beckyio.Logf(true, "warning: floor %.1f / speech %.1f dBFS is only a %.1f dB valley; using auto-editor's default %.1f dB",
+				lv.FloorDB, lv.SpeechDB, lv.ValleyDB, defaultThresholdDB)
+		default:
+			t := detectThresholdDB(lv.FloorDB, lv.SpeechDB, *valleyFraction, *headroom)
 			editArg = editExpr(t)
-			thresholdNote = fmt.Sprintf("%.1fdB (file mean %.1fdB, headroom %+.1fdB)", t, meanDB, *headroom)
-			beckyio.Logf(*verbose, "level: mean %.1f dBFS + headroom %+.1f -> threshold %.1f dB", meanDB, *headroom, t)
+			thresholdNote = fmt.Sprintf("%.1fdB (floor %.1fdB, speech %.1fdB, valley %.1fdB x %.2f)",
+				t, lv.FloorDB, lv.SpeechDB, lv.ValleyDB, *valleyFraction)
+			levelReport["threshold_db"] = round3(t)
+			levelReport["threshold_source"] = "adaptive"
+			beckyio.Logf(*verbose, "level: floor %.1f / speech %.1f dBFS (valley %.1f dB) x %.2f %+.1f -> threshold %.1f dB",
+				lv.FloorDB, lv.SpeechDB, lv.ValleyDB, *valleyFraction, *headroom, t)
+		}
+		if lErr == nil {
+			levelReport["floor_db"] = round3(lv.FloorDB)
+			levelReport["speech_db"] = round3(lv.SpeechDB)
+			levelReport["valley_db"] = round3(lv.ValleyDB)
 		}
 	default:
 		editArg = fmt.Sprintf("audio:%s,stream=all", strings.TrimSpace(*threshold))
 		thresholdNote = strings.TrimSpace(*threshold) + " (--threshold)"
+		levelReport["threshold_source"] = "--threshold"
 	}
 
 	// Kdenlive export: hand off to auto-editor's own exporter (VAD post-pass is
@@ -123,10 +154,14 @@ func main() {
 			"-o", outputPath, "--progress", "none"); err != nil {
 			beckyio.Fatalf("kdenlive export failed: %v", err)
 		}
-		beckyio.PrintJSON(map[string]any{
+		kdReport := map[string]any{
 			"input": input, "output": outputPath, "export": "kdenlive",
 			"vad_applied": false, "rendered": true, "threshold": thresholdNote,
-		})
+		}
+		for k, v := range levelReport {
+			kdReport[k] = v
+		}
+		beckyio.PrintJSON(kdReport)
 		return
 	}
 
@@ -195,6 +230,9 @@ func main() {
 		"removed_by_vad": removed,
 		"vad_applied":    vadApplied,
 		"threshold":      thresholdNote,
+	}
+	for k, v := range levelReport {
+		report[k] = v
 	}
 
 	// --emit-timeline: write the v1 timeline JSON to a caller-chosen path as a

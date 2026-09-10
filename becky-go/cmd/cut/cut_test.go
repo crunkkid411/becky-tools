@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 	"testing"
 )
@@ -9,56 +11,109 @@ import (
 // (2026-08-16, IMG_9624.MP4). Both are asserted on the real measured numbers
 // from that clip, not on invented ones.
 
-// TestDetectThresholdDBFollowsTheFileLevel: a quiet recording must get a quiet
-// threshold, and normal/loud footage must keep the behaviour it always had
-// (auto-editor's own default) so this can only ever keep MORE, never less.
-func TestDetectThresholdDBFollowsTheFileLevel(t *testing.T) {
+// TestDetectThresholdDBSitsInsideTheFileOwnValley: the threshold must follow
+// the recording DOWN without limit (that clamp is what made the Rode shoot
+// unreachable), and normal-level footage must keep the behaviour it always had
+// -- auto-editor's own default -- so this can only ever keep MORE, never less.
+func TestDetectThresholdDBSitsInsideTheFileOwnValley(t *testing.T) {
 	cases := []struct {
-		name   string
-		meanDB float64
-		want   float64
+		name              string
+		floorDB, speechDB float64
+		want              float64
 	}{
-		// Jordan's IMG_9624.MP4 — the clip that came out shredded.
-		{"quiet phone clip", -42.2, -41.2},
-		// His polished reference audio measures -27.8: already loud enough, so the
-		// clamp hands it auto-editor's default (within ~1dB of the -27dB he types).
-		{"his polished audio", -27.8, -28.0},
-		// cli-cut's own test_VAD.mp4 — normal level, must not change.
-		{"normal level", -17.8, -28.0},
-		{"loud", -8.0, -28.0},
-		// Near-silent: the floor stops us chasing room tone.
-		{"near silent", -70.0, -50.0},
+		// The 16-clip Rode Wireless GO II shoot, 2026-08-26. Each "want" is
+		// floor + 0.52*valley; the OLD estimator picked ~-43 for these and
+		// shredded every one of them.
+		{"rode VTNZ3433", -88.0, -37.0, -61.48},
+		{"rode SNOW_...143", -83.0, -35.0, -58.04},
+		{"rode LZTE3925", -85.0, -36.0, -59.52},
+		// Normal-level footage: a high floor plus a loud programme level puts the
+		// adaptive answer above auto-editor's default, so the ceiling wins and
+		// nothing about his already-working iPhone edits changes.
+		{"normal level", -40.0, -10.0, -28.0},
+		{"loud and compressed", -35.0, -6.0, -28.0},
 	}
 	for _, c := range cases {
-		got := detectThresholdDB(c.meanDB, defaultHeadroomDB)
+		got := detectThresholdDB(c.floorDB, c.speechDB, defaultValleyFraction, defaultHeadroomDB)
 		if math.Abs(got-c.want) > 0.05 {
-			t.Errorf("%s: detectThresholdDB(%.1f) = %.2f, want %.2f", c.name, c.meanDB, got, c.want)
+			t.Errorf("%s: detectThresholdDB(%.1f, %.1f) = %.2f, want %.2f",
+				c.name, c.floorDB, c.speechDB, got, c.want)
 		}
 	}
-	// The --headroom knob (2026-08-24, hj-fbi-recap): quiet-mic footage whose
-	// in-sentence pauses read as silence at +1dB headroom dials DOWN with a
-	// negative one; the clamps still hold at both ends.
-	if got := detectThresholdDB(-42.2, -6.0); math.Abs(got-(-48.2)) > 0.05 {
-		t.Errorf("negative headroom: got %.2f, want -48.2", got)
+	// --headroom is an additive nudge on top, with no floor under it: a shoot
+	// that needs to keep even more is reachable, which it was not before.
+	if got := detectThresholdDB(-88.0, -37.0, defaultValleyFraction, -6.0); math.Abs(got-(-67.48)) > 0.05 {
+		t.Errorf("negative headroom: got %.2f, want -67.48", got)
 	}
-	if got := detectThresholdDB(-42.2, -20.0); math.Abs(got-minThresholdDB) > 0.05 {
-		t.Errorf("headroom must not break the floor: got %.2f, want %.1f", got, minThresholdDB)
-	}
-	if got := detectThresholdDB(-20.0, 5.0); math.Abs(got-defaultThresholdDB) > 0.05 {
+	// The ceiling still holds against a positive nudge.
+	if got := detectThresholdDB(-40.0, -10.0, defaultValleyFraction, 12.0); math.Abs(got-defaultThresholdDB) > 0.05 {
 		t.Errorf("headroom must not break the ceiling: got %.2f, want %.1f", got, defaultThresholdDB)
+	}
+	// --valley-fraction reaches the one magic number from the CLI.
+	if got := detectThresholdDB(-88.0, -38.0, 0.20, 0.0); math.Abs(got-(-78.0)) > 0.05 {
+		t.Errorf("valley fraction 0.20: got %.2f, want -78.0", got)
 	}
 }
 
-func TestParseMeanVolumeDB(t *testing.T) {
-	const real = `[Parsed_volumedetect_0 @ 0000022b] n_samples: 7864320
-[Parsed_volumedetect_0 @ 0000022b] mean_volume: -42.2 dB
-[Parsed_volumedetect_0 @ 0000022b] max_volume: -9.6 dB`
-	v, ok := parseMeanVolumeDB(real)
-	if !ok || math.Abs(v-(-42.2)) > 0.001 {
-		t.Fatalf("parseMeanVolumeDB = %v, %v; want -42.2, true", v, ok)
+// TestPercentileMatchesNumpyLinearInterpolation keeps becky's floor/speech
+// numbers identical to scripts/speechcut.py's, which reports the same two
+// percentiles with numpy's default (linear) interpolation.
+func TestPercentileMatchesNumpyLinearInterpolation(t *testing.T) {
+	sorted := []float64{-90, -80, -70, -60, -50, -40, -30, -20, -10, 0}
+	// numpy.percentile(x, 5) = -85.5, numpy.percentile(x, 90) = -9.0
+	if got := percentile(sorted, 5); math.Abs(got-(-85.5)) > 1e-9 {
+		t.Errorf("percentile 5 = %v, want -85.5", got)
 	}
-	if _, ok := parseMeanVolumeDB("no audio stream here"); ok {
-		t.Error("parseMeanVolumeDB should report ok=false when the line is absent")
+	if got := percentile(sorted, 90); math.Abs(got-(-9.0)) > 1e-9 {
+		t.Errorf("percentile 90 = %v, want -9.0", got)
+	}
+	if got := percentile([]float64{-42.0}, 50); got != -42.0 {
+		t.Errorf("single sample = %v, want -42.0", got)
+	}
+	if got := percentile(nil, 50); got != 0 {
+		t.Errorf("empty = %v, want 0", got)
+	}
+}
+
+// TestFrameDBEnvelopeAndStats: a synthetic recording of loud tone and true
+// silence must measure a wide valley with the floor at the silence and the
+// speech level at the tone, and produce speechcut.py's frame count.
+func TestFrameDBEnvelopeAndStats(t *testing.T) {
+	// 1 second: 0.5 s of half-scale square wave, 0.5 s of digital silence.
+	samples := make([]int16, levelSampleRate)
+	for i := 0; i < levelSampleRate/2; i++ {
+		if i%2 == 0 {
+			samples[i] = 16384
+		} else {
+			samples[i] = -16384
+		}
+	}
+	buf := make([]byte, 2*len(samples))
+	for i, s := range samples {
+		binary.LittleEndian.PutUint16(buf[2*i:], uint16(s))
+	}
+
+	db := frameDB(bytes.NewReader(buf))
+	wantFrames := 1 + (len(samples)-levelFrame)/levelHop
+	if len(db) != wantFrames {
+		t.Fatalf("frameDB returned %d frames, want %d", len(db), wantFrames)
+	}
+
+	st := statsFromFrameDB(db)
+	// Half scale is -6.02 dBFS; digital silence is 20*log10(1e-10) = -200.
+	if math.Abs(st.SpeechDB-(-6.02)) > 0.1 {
+		t.Errorf("speech level = %.2f dBFS, want -6.02", st.SpeechDB)
+	}
+	if st.FloorDB > -199.0 {
+		t.Errorf("floor = %.2f dBFS, want about -200 on digital silence", st.FloorDB)
+	}
+	if st.ValleyDB < minValleyDB {
+		t.Errorf("valley = %.1f dB, want well above the %.1f dB gate", st.ValleyDB, minValleyDB)
+	}
+	// Under one analysis window there is nothing to measure, and that must not
+	// be an error -- the caller falls back to auto-editor's default.
+	if got := frameDB(bytes.NewReader(buf[:10])); got != nil {
+		t.Errorf("frameDB on a too-short input = %v, want nil", got)
 	}
 }
 
