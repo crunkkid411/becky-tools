@@ -1,27 +1,53 @@
-// BeckyCut.cs - cut the dead air out of the clips you have SELECTED, in place.
+// BeckyCut.cs - cut the dead air out of the events you have SELECTED, in place.
 //
-// WHAT IT DOES
+// ONE CLICK. NO QUESTIONS. THE SAME ANSWER EVERY TIME.
 //
-// Select some events on the VEGAS timeline, run this, and the silent parts of
-// those events are split out and deleted. Nothing else on the timeline moves,
-// nothing is re-encoded, and the source files on disk are only ever READ.
+// Select events, run this, done. There is deliberately NO dialog and NO knob.
+// The numbers were dialled in over nine months and they live inside becky-cut,
+// which is the thing that actually works. A knob here would let a number drift
+// away from the tested one, and would make the result depend on what got typed.
+// If a number ever needs changing it changes in becky-cut, once, for every
+// caller. Do not add a dialog back.
 //
-// WHERE THE DECISIONS COME FROM
+// WHERE THE DECISIONS COME FROM - becky-cut, and nothing else
 //
-// becky-cut, run with --dry-run: auto-editor does the audio detection on the
-// file's own level (see becky-go/cmd/cut/level.go - the threshold is measured
-// from the gap between THIS recording's room tone and THIS recording's speech,
-// so a quiet Rode lav and a loud phone both work with no dial to turn), then a
-// Silero VAD post-pass flips coughs, chair squeaks and door thuds to cuts.
-// --dry-run means it computes the edit and renders nothing, so this is fast
-// and completely non-destructive - the only thing that changes is your
-// timeline, and one Ctrl+Z puts it back.
+// "becky-cut <file> --dry-run" measures THIS recording's own room tone against
+// THIS recording's own speech to pick its threshold (becky-go/cmd/cut/level.go),
+// cuts the silence with auto-editor, then makes a second pass with a Silero VAD
+// so noise with nobody actually talking in it is cut too. It returns keep/cut
+// spans and renders nothing. That is the entire edit. This script invents no
+// threshold, no padding and no minimum gap - it applies what becky-cut returned,
+// verbatim. It is an applicator, not a second opinion.
 //
-// WHY IT SPLITS RATHER THAN RENDERS
+// THE RULE THAT KEEPS PICTURE AND SOUND TOGETHER
 //
-// becky-cut on its own writes a new _edited.mp4. That is the wrong shape for an
-// editor: it throws away your timeline and hands you a flat file. This keeps
-// the edit ON the timeline where you can still move, trim and undo it.
+// The cut points are decided ONCE, from the AUDIO, and then applied to every
+// selected event at the same ruler positions.
+//
+// That rule is the whole fix for the 2026-09-10 failure. Jordan's timeline pairs
+// camera video (IURJ0280) with separately recorded sound (a different file
+// entirely). The old version analysed each event's OWN source, so the picture
+// was cut where the camera's mic was quiet and the sound was cut where the
+// recorder was quiet - two different edits on two grouped tracks. What came out
+// was video with no sound and sound with no picture. Per-event decisions can
+// never be safe on a dual-system timeline; one decision applied to everything
+// always is.
+//
+// AUTO-RIPPLE, ALWAYS
+//
+// Removing a span closes it. Everything to the right on the affected tracks
+// moves left by exactly the span's length, so no gaps are left behind - that is
+// what VEGAS's own auto-ripple does and it is what an editor expects. Spans are
+// applied last-first so the ones still to come keep the ruler positions they
+// were measured at, and every affected track is moved by the SAME delta, which
+// is what keeps grouped picture and sound locked (the scripting object model
+// moves one event at a time - group-follow is a UI behaviour, so both halves
+// have to be moved, and are).
+//
+// "Affected tracks" means the tracks the selection lives on. A music bed or a
+// title track you did not select is never touched.
+//
+// All of it is one UndoBlock. One Ctrl+Z puts the timeline back.
 //
 // REQUIREMENTS: becky-cut.exe built by build-all-tools.bat. Point BECKY_CUT at
 // it, or put becky-go\bin on PATH.
@@ -42,21 +68,12 @@ using ScriptPortal.Vegas;
 
 public class EntryPoint
 {
-    // A gap shorter than this is left alone. becky-cut's own margin already
-    // pads every keep by 0.04s in front and 0.25s behind, so what survives as a
-    // 0.1s "cut" is the space between two words in one breath - removing it
-    // makes the speech sound clipped. This is the one knob an editor actually
-    // turns, so it is on the dialog.
-    private const double DefaultMinGapSeconds = 0.25;
-
     public void FromVegas(Vegas vegas)
     {
         // BECKY_CUT_SELFTEST=<media file> is the headless proof: VEGAS builds a
         // throwaway one-clip project from that file, selects it, runs this
         // script's real code path, writes what changed to
         // <media>.becky-cut-selftest.txt and exits WITHOUT saving anything.
-        //   set BECKY_CUT_SELFTEST=C:\clip.mp4
-        //   vegas180.exe -SCRIPT:"...\vegas\BeckyCut.cs"
         string selftest = Environment.GetEnvironmentVariable("BECKY_CUT_SELFTEST");
         if (!string.IsNullOrEmpty(selftest))
         {
@@ -75,19 +92,14 @@ public class EntryPoint
                 );
             }
 
-            Options opts = AskOptions(clips.Count);
-            if (opts == null)
-            {
-                return; // cancelled
-            }
-
             string beckyExe = ResolveBeckyCut();
             EnsureBeckyExecutable(beckyExe);
 
-            // One becky-cut run per distinct SOURCE FILE, not per event: two
-            // events off the same clip share one analysis.
+            // Only the DECIDING events are listened to - see DecidingClips.
+            // One becky-cut run per distinct source file, not per event.
+            List<Clip> deciders = DecidingClips(clips);
             Dictionary<string, CutReport> bySource = new Dictionary<string, CutReport>(StringComparer.OrdinalIgnoreCase);
-            foreach (Clip c in clips)
+            foreach (Clip c in deciders)
             {
                 if (!bySource.ContainsKey(c.Source))
                 {
@@ -100,20 +112,20 @@ public class EntryPoint
 
             AnalyseWithProgress(beckyExe, bySource, workDir);
 
-            int removed = ApplyToTimeline(vegas, clips, bySource, opts);
+            List<Span> spans = SpansToRemove(deciders, bySource);
+            int removed = ApplyToTimeline(clips, spans);
+
             if (removed == 0)
             {
                 MessageBox.Show(
-                    "becky found nothing to cut in the selection.\n\n" +
-                    "Either there is no dead air in it, or every gap is shorter than the " +
-                    opts.MinGapSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s you allowed.",
+                    "becky found nothing to cut in the selection.",
                     "Becky Cut",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information
                 );
             }
 
-            // No "done" box when it worked. The shorter clips ARE the
+            // No "done" box when it worked. The shorter, gapless clips ARE the
             // confirmation - they are on the timeline in front of you.
         }
         catch (Exception ex)
@@ -130,8 +142,8 @@ public class EntryPoint
     // ------------------------------------------------------------ the shapes
 
     // Clip is one selected event, frozen at its pre-edit geometry. Start/End
-    // are captured BEFORE anything is split, because they are the footprint we
-    // are allowed to touch.
+    // are captured BEFORE anything is split, because that is the stretch of
+    // ruler this event is allowed to contribute cut spans for.
     private class Clip
     {
         public TrackEvent Event;
@@ -144,15 +156,7 @@ public class EntryPoint
         public Timecode End;    // ruler position, before the edit
     }
 
-    private class Options
-    {
-        public double MinGapSeconds;
-        public bool CloseGaps;
-    }
-
-    // The becky-cut --dry-run report. Field names match its JSON exactly
-    // (becky-go/cmd/cut/main.go). Only the fields used here are declared;
-    // JavaScriptSerializer ignores the rest.
+    // The becky-cut --dry-run report. Field names match its JSON exactly.
     private class CutReport
     {
         public double fps;
@@ -168,7 +172,8 @@ public class EntryPoint
         public double end;
     }
 
-    // A span of the RULER to delete, already mapped through one event's trim.
+    // Span is a stretch of RULER to remove. Ruler, not source - that is the
+    // whole point: one span list gets applied to every affected track.
     private class Span
     {
         public Timecode Start;
@@ -179,178 +184,177 @@ public class EntryPoint
 
     private static List<Clip> CollectSelected(Vegas vegas)
     {
-        List<Clip> clips = new List<Clip>();
+        List<TrackEvent> chosen = new List<TrackEvent>();
         foreach (Track track in vegas.Project.Tracks)
         {
             foreach (TrackEvent ev in track.Events)
             {
-                if (!ev.Selected)
+                if (ev.Selected && !chosen.Contains(ev))
                 {
-                    continue;
+                    chosen.Add(ev);
                 }
-                if (ev.ActiveTake == null || ev.ActiveTake.Media == null)
-                {
-                    continue;
-                }
-
-                string path = ev.ActiveTake.Media.FilePath;
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
-                {
-                    continue;
-                }
-
-                double lengthSec = ev.Length.ToMilliseconds() / 1000.0;
-                if (lengthSec <= 0)
-                {
-                    continue;
-                }
-
-                double rate = PlaybackRateOf(ev);
-                double srcIn = ev.ActiveTake.Offset.ToMilliseconds() / 1000.0;
-
-                clips.Add(new Clip
-                {
-                    Event = ev,
-                    Track = track,
-                    Source = path,
-                    SrcIn = srcIn,
-                    SrcOut = srcIn + lengthSec * rate,
-                    Rate = rate,
-                    Start = ev.Start,
-                    End = ev.End
-                });
             }
+        }
+
+        // Grouped partners come along whether they were clicked or not.
+        // Jordan's picture and sound are grouped and "a cut needs to affect
+        // both of them the same", so selecting either half puts both into the
+        // edit. Without this, selecting only the audio would shorten the sound
+        // and leave the picture at full length - the same desync by another
+        // route. TrackEventGroup is a BaseList<TrackEvent>, so it enumerates.
+        List<TrackEvent> withPartners = new List<TrackEvent>(chosen);
+        foreach (TrackEvent selected in chosen)
+        {
+            if (!selected.IsGrouped)
+            {
+                continue;
+            }
+            TrackEventGroup group = selected.Group;
+            if (group == null)
+            {
+                continue;
+            }
+            foreach (TrackEvent partner in group)
+            {
+                if (partner != null && !withPartners.Contains(partner))
+                {
+                    withPartners.Add(partner);
+                }
+            }
+        }
+
+        List<Clip> clips = new List<Clip>();
+        foreach (TrackEvent ev in withPartners)
+        {
+            Track track = ev.Track;
+            if (track == null)
+            {
+                continue;
+            }
+            if (ev.ActiveTake == null || ev.ActiveTake.Media == null)
+            {
+                continue;
+            }
+
+            string path = ev.ActiveTake.Media.FilePath;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                continue;
+            }
+
+            double lengthSec = ev.Length.ToMilliseconds() / 1000.0;
+            if (lengthSec <= 0)
+            {
+                continue;
+            }
+
+            double rate = PlaybackRateOf(ev);
+            double srcIn = ev.ActiveTake.Offset.ToMilliseconds() / 1000.0;
+
+            clips.Add(new Clip
+            {
+                Event = ev,
+                Track = track,
+                Source = path,
+                SrcIn = srcIn,
+                SrcOut = srcIn + lengthSec * rate,
+                Rate = rate,
+                Start = ev.Start,
+                End = ev.End
+            });
         }
         return clips;
     }
 
-    // PlaybackRateOf returns the event's speed multiplier, or 1.0 when the
-    // event type doesn't expose one. A stretched event consumes more (or less)
-    // source than its timeline length.
+    // DecidingClips picks which of the selected events becky is allowed to
+    // LISTEN to. Two rules, each there because breaking it desyncs the edit.
+    //
+    // 1. AUDIO WINS. On a dual-system timeline the picture file and the sound
+    //    file are different files, and only the sound file is the one the edit
+    //    should follow. Letting a camera clip vote as well is exactly how
+    //    picture and sound ended up cut differently on 2026-09-10.
+    //
+    // 2. ONE DECIDER PER MOMENT. Two audio events covering the same stretch of
+    //    ruler - say a camera scratch mic and the real recorder, both grouped to
+    //    the same picture - have different noise floors, so becky returns two
+    //    different cut lists for them. Merging those would mean "cut wherever
+    //    EITHER was quiet", which lets the wrong list delete speech. So when
+    //    deciders overlap, only the best one survives.
+    //
+    // The ranking is deterministic and never depends on track order: an audio
+    // file that is NOT also a picture source in this selection wins first (that
+    // is the dual-system signal - the separate recorder has no video on the
+    // timeline), then the longer event, then the earlier one, then the path.
+    //
+    // With no audio event selected at all, fall back to what there is; a camera
+    // clip still carries its own audio.
+    private static List<Clip> DecidingClips(List<Clip> clips)
+    {
+        List<Clip> audio = new List<Clip>();
+        List<string> pictureSources = new List<string>();
+        foreach (Clip c in clips)
+        {
+            if (c.Event is AudioEvent)
+            {
+                audio.Add(c);
+            }
+            if (c.Event is VideoEvent && !pictureSources.Contains(c.Source))
+            {
+                pictureSources.Add(c.Source);
+            }
+        }
+
+        List<Clip> ranked = new List<Clip>(audio.Count > 0 ? audio : clips);
+        ranked.Sort(delegate (Clip a, Clip b)
+        {
+            bool aIsCamera = pictureSources.Contains(a.Source);
+            bool bIsCamera = pictureSources.Contains(b.Source);
+            if (aIsCamera != bIsCamera)
+            {
+                return aIsCamera ? 1 : -1;
+            }
+            int byLength = (b.End - b.Start).CompareTo(a.End - a.Start);
+            if (byLength != 0)
+            {
+                return byLength;
+            }
+            int byStart = a.Start.CompareTo(b.Start);
+            if (byStart != 0)
+            {
+                return byStart;
+            }
+            return string.Compare(a.Source, b.Source, StringComparison.OrdinalIgnoreCase);
+        });
+
+        List<Clip> deciders = new List<Clip>();
+        foreach (Clip candidate in ranked)
+        {
+            bool overlapsOne = false;
+            foreach (Clip kept in deciders)
+            {
+                if (candidate.Start < kept.End && kept.Start < candidate.End)
+                {
+                    overlapsOne = true;
+                    break;
+                }
+            }
+            if (!overlapsOne)
+            {
+                deciders.Add(candidate);
+            }
+        }
+        return deciders;
+    }
+
+    // PlaybackRateOf returns the event's speed multiplier. A stretched event
+    // consumes more (or less) source than its timeline length.
+    //
+    // PlaybackRate is declared on TrackEvent itself, so neither the VideoEvent
+    // nor the AudioEvent cast this used to do was ever needed.
     private static double PlaybackRateOf(TrackEvent ev)
     {
-        VideoEvent vev = ev as VideoEvent;
-        if (vev != null && vev.PlaybackRate > 0)
-        {
-            return vev.PlaybackRate;
-        }
-
-        AudioEvent aev = ev as AudioEvent;
-        if (aev != null && aev.PlaybackRate > 0)
-        {
-            return aev.PlaybackRate;
-        }
-
-        return 1.0;
-    }
-
-    // ------------------------------------------------------------ the dialog
-
-    private static Options AskOptions(int clipCount)
-    {
-        // An agent (or a batch run) sets these and never sees the dialog. This
-        // is the same env-var pattern the other becky VEGAS scripts use, because
-        // Vegas.ScriptArgs does not exist in this API surface.
-        Options fromEnv = OptionsFromEnvironment();
-        if (fromEnv != null)
-        {
-            return fromEnv;
-        }
-
-        using (Form form = new Form())
-        using (Label heading = new Label())
-        using (Label gapLabel = new Label())
-        using (NumericUpDown gap = new NumericUpDown())
-        using (CheckBox closeGaps = new CheckBox())
-        using (Button ok = new Button())
-        using (Button cancel = new Button())
-        {
-            form.Text = "Becky Cut";
-            form.ClientSize = new System.Drawing.Size(430, 178);
-            form.StartPosition = FormStartPosition.CenterScreen;
-            form.FormBorderStyle = FormBorderStyle.FixedDialog;
-            form.MaximizeBox = false;
-            form.MinimizeBox = false;
-
-            heading.SetBounds(14, 14, 400, 34);
-            heading.Text = clipCount + (clipCount == 1 ? " event selected." : " events selected.") +
-                           "\nbecky will cut the dead air out of them and leave everything else alone.";
-
-            gapLabel.SetBounds(14, 60, 250, 20);
-            gapLabel.Text = "Leave gaps shorter than this alone (seconds):";
-
-            gap.SetBounds(276, 57, 70, 22);
-            gap.DecimalPlaces = 2;
-            gap.Increment = 0.05M;
-            gap.Minimum = 0.00M;
-            gap.Maximum = 10.00M;
-            gap.Value = (decimal)DefaultMinGapSeconds;
-
-            closeGaps.SetBounds(14, 90, 400, 22);
-            closeGaps.Text = "Close the gaps inside each clip (the clip gets shorter)";
-            closeGaps.Checked = false;
-
-            ok.SetBounds(240, 130, 84, 28);
-            ok.Text = "Cut";
-            ok.DialogResult = DialogResult.OK;
-
-            cancel.SetBounds(332, 130, 84, 28);
-            cancel.Text = "Cancel";
-            cancel.DialogResult = DialogResult.Cancel;
-
-            form.Controls.Add(heading);
-            form.Controls.Add(gapLabel);
-            form.Controls.Add(gap);
-            form.Controls.Add(closeGaps);
-            form.Controls.Add(ok);
-            form.Controls.Add(cancel);
-            form.AcceptButton = ok;
-            form.CancelButton = cancel;
-
-            if (form.ShowDialog() != DialogResult.OK)
-            {
-                return null;
-            }
-
-            return new Options
-            {
-                MinGapSeconds = (double)gap.Value,
-                CloseGaps = closeGaps.Checked
-            };
-        }
-    }
-
-    // OptionsFromEnvironment returns null unless at least one of
-    // BECKY_CUT_MIN_GAP / BECKY_CUT_CLOSE_GAPS is set, in which case the dialog
-    // is skipped entirely and the unset one keeps its default.
-    private static Options OptionsFromEnvironment()
-    {
-        string minGap = Environment.GetEnvironmentVariable("BECKY_CUT_MIN_GAP");
-        string close = Environment.GetEnvironmentVariable("BECKY_CUT_CLOSE_GAPS");
-        if (string.IsNullOrEmpty(minGap) && string.IsNullOrEmpty(close))
-        {
-            return null;
-        }
-
-        Options opts = new Options
-        {
-            MinGapSeconds = DefaultMinGapSeconds,
-            CloseGaps = false
-        };
-
-        double parsed;
-        if (!string.IsNullOrEmpty(minGap) &&
-            double.TryParse(minGap.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) &&
-            parsed >= 0)
-        {
-            opts.MinGapSeconds = parsed;
-        }
-        if (!string.IsNullOrEmpty(close))
-        {
-            string c = close.Trim().ToLowerInvariant();
-            opts.CloseGaps = (c == "1" || c == "true" || c == "yes");
-        }
-        return opts;
+        double rate = ev.PlaybackRate;
+        return rate > 0 ? rate : 1.0;
     }
 
     // ------------------------------------------------------- talking to becky
@@ -467,9 +471,26 @@ public class EntryPoint
             {
                 throw new ApplicationException("Failed to start becky-cut.");
             }
+            // stderr is drained on the child's own callback rather than with a
+            // second blocking ReadToEnd. Sequential reads deadlock if the child
+            // fills the stderr pipe while we are still draining stdout - and the
+            // symptom here would be VEGAS hung behind a progress window with no
+            // cancel button, which README section 0 says must never be
+            // force-killed. becky-cut only writes stderr with --verbose today,
+            // so this is cheap insurance, not a fix for a seen bug.
+            StringBuilder errBuf = new StringBuilder();
+            process.ErrorDataReceived += delegate (object sender, DataReceivedEventArgs e)
+            {
+                if (e.Data != null)
+                {
+                    errBuf.AppendLine(e.Data);
+                }
+            };
+            process.BeginErrorReadLine();
+
             stdout = process.StandardOutput.ReadToEnd();
-            stderr = process.StandardError.ReadToEnd();
             process.WaitForExit();
+            stderr = errBuf.ToString();
             exitCode = process.ExitCode;
         }
 
@@ -648,81 +669,99 @@ public class EntryPoint
         }
         return null;
     }
-
     // ----------------------------------------------------------- the edit
 
-    // ApplyToTimeline splits every selected event at becky's cut points and
-    // deletes the silent pieces. Returns how many pieces were removed.
+    // SpansToRemove turns becky's cut decisions into ONE list of ruler spans.
     //
-    // The whole thing is one UndoBlock, so Ctrl+Z puts the timeline back
-    // exactly as it was - that is what makes this safe to try.
-    private static int ApplyToTimeline(Vegas vegas, List<Clip> clips,
-                                       Dictionary<string, CutReport> bySource, Options opts)
+    // Each decision is mapped through the event it came from (that event's take
+    // offset and playback rate), clipped to that event's own footprint, snapped
+    // to the project frame grid, and then merged with all the others. The result
+    // is a single list that every affected track is cut by - which is what keeps
+    // grouped picture and sound identical. See the header.
+    private static List<Span> SpansToRemove(List<Clip> deciders,
+                                            Dictionary<string, CutReport> bySource)
     {
-        int removed = 0;
-        using (UndoBlock undo = new UndoBlock("Becky Cut"))
+        long perFrame = NanosPerFrame();
+        List<Span> raw = new List<Span>();
+
+        foreach (Clip clip in deciders)
         {
-            foreach (Clip clip in clips)
+            CutReport report;
+            if (!bySource.TryGetValue(clip.Source, out report))
             {
-                CutReport report = bySource[clip.Source];
-                List<Span> spans = SpansToRemove(clip, report, opts.MinGapSeconds);
-                if (spans.Count == 0)
+                continue;
+            }
+            if (report == null || report.decisions == null)
+            {
+                continue;
+            }
+
+            foreach (Decision d in report.decisions)
+            {
+                if (d == null || d.status != "cut")
                 {
                     continue;
                 }
 
-                foreach (Span span in spans)
+                // becky's spans are seconds into the SOURCE file. Only the part
+                // of one that this event actually shows can be removed.
+                double cs = Math.Max(d.start, clip.SrcIn);
+                double ce = Math.Min(d.end, clip.SrcOut);
+                if (ce <= cs)
                 {
-                    removed += RemoveSpan(clip.Track, span, clip.Start, clip.End);
+                    continue;
                 }
 
-                if (opts.CloseGaps)
+                Timecode start = SnapToFrame(RulerAt(clip, cs), perFrame);
+                Timecode end = SnapToFrame(RulerAt(clip, ce), perFrame);
+                if (end <= start)
                 {
-                    CloseGapsInFootprint(clip.Track, clip.Start, clip.End);
+                    continue; // shorter than one frame once snapped - nothing to remove
                 }
+
+                raw.Add(new Span { Start = start, End = end });
             }
         }
-        return removed;
+
+        return MergeSpans(raw);
     }
 
-    // SpansToRemove maps becky's "cut" decisions (seconds into the SOURCE FILE)
-    // onto this event's slice of the ruler, dropping anything outside the
-    // event's trim and anything shorter than the allowed gap.
-    private static List<Span> SpansToRemove(Clip clip, CutReport report, double minGapSeconds)
+    // MergeSpans sorts and unions overlapping or touching spans, so the same
+    // stretch of ruler is never removed twice - which is what would happen with
+    // two selected events off one source, or with picture and sound agreeing.
+    private static List<Span> MergeSpans(List<Span> spans)
     {
-        List<Span> spans = new List<Span>();
-        double fps = report.fps > 0 ? report.fps : 30.0;
-        // One video frame is the smallest thing worth removing no matter what
-        // the dialog says - below that there is nothing to delete.
-        double minSeconds = Math.Max(minGapSeconds, 1.0 / fps);
-
-        foreach (Decision d in report.decisions)
+        List<Span> merged = new List<Span>();
+        if (spans.Count == 0)
         {
-            if (d == null || d.status != "cut")
-            {
-                continue;
-            }
-
-            double cs = Math.Max(d.start, clip.SrcIn);
-            double ce = Math.Min(d.end, clip.SrcOut);
-            if (ce - cs < minSeconds)
-            {
-                continue;
-            }
-
-            Timecode start = RulerAt(clip, cs);
-            Timecode end = RulerAt(clip, ce);
-            if (end <= start)
-            {
-                continue;
-            }
-            spans.Add(new Span { Start = start, End = end });
+            return merged;
         }
-        return spans;
+
+        spans.Sort(delegate (Span a, Span b) { return a.Start.CompareTo(b.Start); });
+
+        Span current = new Span { Start = spans[0].Start, End = spans[0].End };
+        for (int i = 1; i < spans.Count; i++)
+        {
+            if (spans[i].Start <= current.End)
+            {
+                if (spans[i].End > current.End)
+                {
+                    current.End = spans[i].End;
+                }
+            }
+            else
+            {
+                merged.Add(current);
+                current = new Span { Start = spans[i].Start, End = spans[i].End };
+            }
+        }
+        merged.Add(current);
+        return merged;
     }
 
     // RulerAt converts a position in the source file to a position on the
-    // ruler, through this event's in-point and playback rate.
+    // ruler, through this event's own in-point and playback rate. That is what
+    // makes this correct on a clip you have already trimmed or speed-changed.
     private static Timecode RulerAt(Clip clip, double sourceSeconds)
     {
         double intoEvent = (sourceSeconds - clip.SrcIn) / clip.Rate;
@@ -738,37 +777,154 @@ public class EntryPoint
         return at;
     }
 
-    // RemoveSpan splits at both edges of [start,end) and deletes whatever now
-    // sits inside it, restricted to the selected event's own footprint.
+    // SnapToFrame puts a cut on a real frame boundary.
     //
-    // Split points are found by RULER POSITION on a fresh snapshot each time,
-    // never by holding a reference across a split. VEGAS splits grouped events
-    // together, so a held reference can silently become the wrong half.
-    private static int RemoveSpan(Track track, Span span, Timecode footStart, Timecode footEnd)
+    // The grid comes from VEGAS itself: Timecode.FromFrames(1).Nanos IS one
+    // frame, whatever the project's ruler format says a frame is. That beats
+    // arithmetic on a frame rate we looked up, which lands NEAR a frame edge
+    // rather than on it - and off-grid cut points are what leave one-frame
+    // slivers behind. Picture and sound must be cut at the SAME instant or they
+    // drift, so both go through this.
+    private static Timecode SnapToFrame(Timecode t, long nanosPerFrame)
     {
-        SplitAt(track, span.Start);
-        SplitAt(track, span.End);
-
-        int removed = 0;
-        List<TrackEvent> doomed = new List<TrackEvent>();
-        foreach (TrackEvent ev in track.Events)
+        if (nanosPerFrame <= 0)
         {
-            if (ev.Start >= span.Start && ev.End <= span.End &&
-                ev.Start >= footStart && ev.End <= footEnd)
-            {
-                doomed.Add(ev);
-            }
+            return t; // no grid to snap to: leave the position alone rather than invent one
         }
-        foreach (TrackEvent ev in doomed)
+        // Timecode.FrameCount is VEGAS's own "which frame is this", so there is
+        // no dividing of nanoseconds by an integer frame length and no rounding
+        // error that grows with position on the ruler. Adding half a frame first
+        // turns FrameCount's floor into round-to-nearest.
+        Timecode half = Timecode.FromNanos(nanosPerFrame / 2);
+        long frame = (t + half).FrameCount;
+        if (frame < 0)
         {
-            track.Events.Remove(ev);
-            removed++;
+            frame = 0;
+        }
+        return Timecode.FromFrames(frame);
+    }
+
+    // NanosPerFrame asks VEGAS how long one frame is. 0 means "do not snap".
+    private static long NanosPerFrame()
+    {
+        try
+        {
+            long n = Timecode.FromFrames(1).Nanos;
+            return n > 0 ? n : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    // ApplyToTimeline removes every span and closes the hole behind it.
+    //
+    // Order matters three times over:
+    //   1. Spans are applied LAST FIRST, so the ones still to come keep the
+    //      ruler positions they were measured at.
+    //   2. Within a span, every affected track is split at BOTH edges before
+    //      anything is deleted, so the tracks stay in step with each other.
+    //   3. The ripple moves every affected track by the SAME delta. Grouped
+    //      picture and sound are separate objects to the scripting API
+    //      (group-follow is a UI behaviour), so both halves must be moved
+    //      explicitly - moving one and hoping the other follows is what pulled
+    //      them apart before.
+    //
+    // One UndoBlock wraps the lot, so one Ctrl+Z puts the timeline back.
+    private static int ApplyToTimeline(List<Clip> clips, List<Span> spans)
+    {
+        List<Track> tracks = AffectedTracks(clips);
+        if (tracks.Count == 0 || spans.Count == 0)
+        {
+            return 0;
+        }
+
+        EnsureNothingLocked(tracks, spans);
+
+        Timecode zero = Timecode.FromFrames(0);
+        int removed = 0;
+
+        using (UndoBlock undo = new UndoBlock("Becky Cut"))
+        {
+            for (int i = spans.Count - 1; i >= 0; i--)
+            {
+                Span span = spans[i];
+                Timecode length = span.End - span.Start;
+                if (length <= zero)
+                {
+                    continue;
+                }
+
+                foreach (Track track in tracks)
+                {
+                    SplitAt(track, span.Start);
+                    SplitAt(track, span.End);
+                }
+                foreach (Track track in tracks)
+                {
+                    removed += DeleteInside(track, span);
+                }
+                foreach (Track track in tracks)
+                {
+                    RippleLeft(track, span.End, length);
+                }
+            }
         }
         return removed;
     }
 
-    // SplitAt cuts whichever event on the track straddles this ruler position.
-    // Iterating a snapshot matters: Split adds to track.Events while we look.
+    // EnsureNothingLocked refuses the whole edit BEFORE anything is changed if a
+    // locked event sits in the way of a cut.
+    //
+    // Split throws on a locked event, and UndoBlock has no Commit - Dispose
+    // commits whatever happened, including a half-finished edit. Failing part
+    // way through would leave the tracks out of step until Jordan noticed and
+    // pressed Ctrl+Z. Checking first turns that into a clean refusal that
+    // changed nothing at all.
+    private static void EnsureNothingLocked(List<Track> tracks, List<Span> spans)
+    {
+        foreach (Track track in tracks)
+        {
+            foreach (TrackEvent ev in track.Events)
+            {
+                if (!ev.Locked)
+                {
+                    continue;
+                }
+                foreach (Span span in spans)
+                {
+                    if (ev.Start < span.End && span.Start < ev.End)
+                    {
+                        throw new ApplicationException(
+                            "A locked event is in the way, so nothing was changed.\n\n" +
+                            "It is on track " + (track.Index + 1) + ".\n\n" +
+                            "Unlock it, or leave it out of the selection, and run this again."
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // AffectedTracks is every track the selection lives on - and only those. A
+    // music bed or a title track you did not select is never cut and never
+    // rippled.
+    private static List<Track> AffectedTracks(List<Clip> clips)
+    {
+        List<Track> tracks = new List<Track>();
+        foreach (Clip c in clips)
+        {
+            if (c.Track != null && !tracks.Contains(c.Track))
+            {
+                tracks.Add(c.Track);
+            }
+        }
+        return tracks;
+    }
+
+    // SplitAt cuts whichever events on the track straddle this ruler position.
+    // Iterating a SNAPSHOT matters: Split adds to track.Events while we look.
     private static void SplitAt(Track track, Timecode at)
     {
         List<TrackEvent> snapshot = new List<TrackEvent>();
@@ -780,44 +936,91 @@ public class EntryPoint
         {
             if (ev.Start < at && ev.End > at)
             {
+                // Deliberately NOT wrapped in try/catch. If a split fails on
+                // one track and succeeds on another the tracks are already out
+                // of step, and every later ripple makes it worse - a silent
+                // half-done edit is the worst outcome available here. Let it
+                // surface as an error instead; the UndoBlock means one Ctrl+Z
+                // puts the timeline back.
                 ev.Split(at - ev.Start);
             }
         }
     }
 
-    // CloseGapsInFootprint butts the surviving pieces of one clip back together
-    // from where the clip started. Only pieces inside that clip's own footprint
-    // are touched, and every piece is given an ABSOLUTE position, so nothing
-    // else on the timeline moves and doing it twice changes nothing.
-    private static void CloseGapsInFootprint(Track track, Timecode footStart, Timecode footEnd)
+    // DeleteInside removes whatever is now wholly inside the span.
+    //
+    // Snapshot first, like every other loop in this file. Whether Remove
+    // cascades to a group partner on the same track is NOT documented; if it
+    // ever does, walking live indices would skip an event or run off the end
+    // half way through the edit. Remove returns false for something already
+    // gone, so a cascade just means it is not counted twice.
+    private static int DeleteInside(Track track, Span span)
     {
-        List<TrackEvent> pieces = new List<TrackEvent>();
+        List<TrackEvent> snapshot = new List<TrackEvent>();
         foreach (TrackEvent ev in track.Events)
         {
-            if (ev.Start >= footStart && ev.End <= footEnd)
+            snapshot.Add(ev);
+        }
+
+        int removed = 0;
+        foreach (TrackEvent ev in snapshot)
+        {
+            if (ev.Start >= span.Start && ev.End <= span.End)
             {
-                pieces.Add(ev);
+                if (track.Events.Remove(ev))
+                {
+                    removed++;
+                }
             }
         }
-        pieces.Sort(delegate (TrackEvent a, TrackEvent b) { return a.Start.CompareTo(b.Start); });
+        return removed;
+    }
 
-        Timecode cursor = footStart;
-        foreach (TrackEvent ev in pieces)
+    // RippleLeft closes the hole: everything at or after "from" moves back by
+    // "by". This is the auto-ripple. Without it the cut leaves a gap, which is
+    // not an edit anyone can use.
+    //
+    // It assigns ABSOLUTE positions - every original Start is read first, then
+    // each event is put at (its own original - by). It does NOT do the obvious
+    // "ev.Start = ev.Start - by".
+    //
+    // That matters because whether setting TrackEvent.Start drags a grouped
+    // partner along with it is NOT documented anywhere in the VEGAS API
+    // reference. If it does, a relative subtraction moves some events twice -
+    // which is exactly the picture/sound desync this script exists to prevent.
+    // Reading the originals first makes the question irrelevant: an event that
+    // something else already nudged still lands on its own target, and running
+    // the whole thing twice changes nothing.
+    private static void RippleLeft(Track track, Timecode from, Timecode by)
+    {
+        List<TrackEvent> events = new List<TrackEvent>();
+        List<Timecode> origins = new List<Timecode>();
+        foreach (TrackEvent ev in track.Events)
         {
-            if (ev.Start != cursor)
+            events.Add(ev);
+            origins.Add(ev.Start);
+        }
+
+        for (int i = 0; i < events.Count; i++)
+        {
+            if (origins[i] >= from)
             {
-                ev.Start = cursor;
+                events[i].Start = origins[i] - by;
             }
-            cursor = cursor + ev.Length;
         }
     }
 
     // ------------------------------------------------------- the headless proof
 
     // SelfTest builds a throwaway project from one media file, selects the
-    // whole clip, runs the SAME code path a human click runs, and writes the
-    // before/after geometry to a text file. It never saves the project and
-    // never touches an existing one.
+    // whole clip on both a video and an audio track, runs the SAME code path a
+    // human click runs, and writes the before/after geometry to a text file. It
+    // never saves the project and never touches an existing one.
+    //
+    // The line worth reading in the output is the pair of track lines: the
+    // video and audio tracks must end up with the SAME event count and the SAME
+    // kept seconds. If they differ, picture and sound have come apart, which is
+    // the exact failure this script exists to avoid.
     private static void SelfTest(Vegas vegas, string mediaPath)
     {
         string reportPath = mediaPath + ".becky-cut-selftest.txt";
@@ -881,8 +1084,11 @@ public class EntryPoint
             EnsureBeckyExecutable(beckyExe);
             log.Add("becky_cut_exe: " + beckyExe);
 
+            List<Clip> deciders = DecidingClips(clips);
+            log.Add("deciding_events: " + deciders.Count + " (audio wins when there is any)");
+
             Dictionary<string, CutReport> bySource = new Dictionary<string, CutReport>(StringComparer.OrdinalIgnoreCase);
-            foreach (Clip c in clips)
+            foreach (Clip c in deciders)
             {
                 if (!bySource.ContainsKey(c.Source))
                 {
@@ -896,28 +1102,36 @@ public class EntryPoint
                 bySource[src] = RunBeckyCut(beckyExe, src, workDir);
             }
 
-            CutReport first = bySource[clips[0].Source];
+            CutReport first = bySource[deciders[0].Source];
             log.Add("becky_threshold: " + (first.threshold ?? "(none)"));
             log.Add("becky_decisions: " + first.decisions.Count);
 
-            Options opts = OptionsFromEnvironment();
-            if (opts == null)
-            {
-                opts = new Options { MinGapSeconds = DefaultMinGapSeconds, CloseGaps = false };
-            }
-            log.Add("min_gap_seconds: " + opts.MinGapSeconds.ToString("0.###", CultureInfo.InvariantCulture));
-            log.Add("close_gaps: " + opts.CloseGaps);
+            log.Add("nanos_per_frame: " + NanosPerFrame());
 
-            int removed = ApplyToTimeline(vegas, clips, bySource, opts);
+            List<Span> spans = SpansToRemove(deciders, bySource);
+            log.Add("spans_to_remove: " + spans.Count);
+
+            double spanSeconds = 0.0;
+            foreach (Span s in spans)
+            {
+                spanSeconds += (s.End - s.Start).Nanos * 1e-7;
+            }
+            log.Add("spans_total_seconds: " + spanSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+
+            int removed = ApplyToTimeline(clips, spans);
             log.Add("pieces_removed: " + removed);
 
-            // What the timeline looks like now - the actual proof.
+            // What the timeline looks like now - the actual proof. Video and
+            // audio must match each other, and nothing should start after the
+            // last end (no gaps left behind by the ripple).
             foreach (Track track in vegas.Project.Tracks)
             {
                 int n = 0;
                 double occupied = 0.0;
                 double firstStart = -1.0;
                 double lastEnd = 0.0;
+                double gaps = 0.0;
+                double cursor = -1.0;
                 foreach (TrackEvent ev in track.Events)
                 {
                     n++;
@@ -926,14 +1140,21 @@ public class EntryPoint
                     if (firstStart < 0)
                     {
                         firstStart = s;
+                        cursor = s;
                     }
+                    if (s > cursor)
+                    {
+                        gaps += s - cursor;
+                    }
+                    cursor = Math.Max(cursor, e);
                     lastEnd = Math.Max(lastEnd, e);
                     occupied += e - s;
                 }
                 log.Add("track " + track.Index + " (" + track.Name + "): events=" + n +
                         " kept_seconds=" + occupied.ToString("0.###", CultureInfo.InvariantCulture) +
                         " first_start=" + Math.Max(firstStart, 0).ToString("0.###", CultureInfo.InvariantCulture) +
-                        " last_end=" + lastEnd.ToString("0.###", CultureInfo.InvariantCulture));
+                        " last_end=" + lastEnd.ToString("0.###", CultureInfo.InvariantCulture) +
+                        " gap_seconds=" + gaps.ToString("0.###", CultureInfo.InvariantCulture));
             }
             log.Add("RESULT: OK");
         }

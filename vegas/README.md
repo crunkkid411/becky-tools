@@ -5,7 +5,7 @@ Two scripts live here. They do different jobs:
 | Script | What it does |
 |---|---|
 | **`BeckyCaptions.cs`** | Captions the edit you already have open — transcribes with becky and lays one text event per caption on a "Becky Captions" track. **Start here for captions.** |
-| **`BeckyCut.cs`** | Cuts the dead air out of the events you have **selected**, in place, on the timeline you already have open. becky-cut decides where; this splits and deletes. One Ctrl+Z puts it back. **Start here for jump-cutting a selection.** |
+| **`BeckyCut.cs`** | Cuts the dead air out of the events you have **selected**, in place, on the timeline you already have open. becky-cut decides where; this splits, deletes and ripples the gap closed. **One click - no dialog, no knobs, same answer every time.** One Ctrl+Z puts it back. **Start here for jump-cutting a selection.** |
 | `BeckyReviewTimeline.cs` | Builds a *review* timeline from a list of forensic hits (path + in/out), each as a named Region. Nothing to do with captions. |
 | **`BeckyRoughCut.cs`** | The unattended rough-cut assembler: reads `BECKY_ROUGHCUT_JSON`, builds video+audio tracks with paired events, markers and regions, saves the `.veg`, exits. `vegas180.exe -SCRIPT:<path>` + the env var = fully headless. It does NO thinking - all of it happens upstream. **Do not drive it by hand: run `Build Rough Cut.bat` (or `scripts/roughcut.py --launch-vegas`), which writes the JSON and launches this.** The JSON now comes from `scripts/build_roughcut.py`, not the older `becky-roughcut` Go path. Recipe and calibration targets: `SKILL.md` `# ROUGH CUT`. |
 | `BeckyVerifyProject.cs` | Reads a `.veg` back headless (`BECKY_VERIFY_VEG=<path>`) and writes `<path>.verify.txt` with track/event/marker/region counts and length — the proof a delivery actually landed. |
@@ -468,50 +468,81 @@ generated marker silently vanished and the count never moved off a stale baselin
 
 # 5. `BeckyCut.cs` — cut the dead air out of what you have SELECTED
 
-This is the jump-cut tool. It works on the edit you already have open, in place: the source files
-are only ever READ, nothing is re-encoded, and nothing outside the events you selected moves.
+The jump-cut tool. It works on the edit you already have open, in place: the source files are only
+ever READ, nothing is re-encoded, nothing outside the tracks you selected moves.
 
 ## Run it
 
-1. Open your edit in VEGAS.
-2. **Select the events you want cut** (click one, Ctrl+click for more). Video+audio events that are
-   grouped are selected together, which is what you want.
+1. Open your edit.
+2. **Select the events you want cut.**
 3. **Tools > Scripting > BeckyCut**.
-4. A small dialog appears:
-   - **Leave gaps shorter than this alone (seconds)** — default `0.25`. becky-cut already pads every
-     keep by 0.04s in front and 0.25s behind, so a surviving 0.1s "cut" is the space between two
-     words in one breath; removing it makes speech sound clipped. This is the one knob worth turning.
-   - **Close the gaps inside each clip** — off by default. Off, the silent pieces are deleted and
-     holes are left where they were (the clip keeps its original footprint). On, the surviving
-     pieces are butted back together from where the clip started, so the clip gets shorter and
-     nothing else on the timeline moves.
-5. Click **Cut**.
 
-There is no "done" box — the shorter clips on the timeline are the confirmation. **One Ctrl+Z puts
-the whole thing back**; the entire edit is a single UndoBlock.
+That is the whole interaction. **There is no dialog and no knob, on purpose.** One click, the same
+answer every time. The thresholds were dialled in over nine months and they live inside `becky-cut`;
+a number asked for here could drift away from the tested one and would make the result depend on
+what got typed. If a number needs changing it changes in `becky-cut`, once, for every caller.
+**Do not add a dialog back.**
 
-Select nothing and it says so rather than guessing at a whole track.
+There is no "done" box either — the shorter, gapless clips on the timeline are the confirmation.
+**One Ctrl+Z puts the whole thing back.** Select nothing and it says so rather than guessing at a
+track.
 
-## Where the decisions come from
+## What it does, exactly
 
-`becky-cut <source> --dry-run`, once per distinct source file (two events off the same clip share
-one analysis). `--dry-run` computes the edit and renders nothing. The threshold is measured from the
-gap between *this* recording's room tone and *this* recording's speech
-(`becky-go/cmd/cut/level.go`), so a quiet Rode lav and a loud phone both work with no dial to turn,
-and a Silero VAD post-pass flips coughs, chair squeaks and door thuds to cuts.
+1. `becky-cut <file> --dry-run` on each distinct source file — silence cut against a threshold
+   measured from *that* recording's own room tone versus its own speech
+   (`becky-go/cmd/cut/level.go`), then a second pass with a Silero VAD so noise with nobody
+   actually talking in it is cut too. Nothing is rendered. **That is the entire edit** — this script
+   invents no threshold, no padding and no minimum gap. It is an applicator, not a second opinion.
+2. Every cut span is mapped from source seconds onto the ruler through the event's own in-point and
+   playback rate, snapped to the frame grid, and merged into **one** span list.
+3. Each span is removed and the hole is **closed** — auto-ripple, always.
 
-becky's cut spans are in **seconds into the source file**; the script maps each one through that
-event's own in-point and playback rate onto the ruler, so it is correct on a clip you have already
-trimmed or speed-changed.
+## The two rules that make it correct
+
+**The cut points are decided ONCE, from the AUDIO, and applied to every selected event at the same
+ruler positions.** On Jordan's timeline the picture is a camera file (`IURJ0280`) and the sound is a
+*different* file from a separate recorder. An earlier version analysed each event's own source, so
+the picture got cut where the camera mic was quiet and the sound got cut where the recorder was
+quiet — two different edits on two grouped tracks, producing video with no sound and sound with no
+picture. Per-event decisions can never be safe on a dual-system timeline. If any audio event is in
+the selection, the audio decides; with no audio selected it falls back to what there is.
+
+**Grouped partners come along whether you clicked them or not.** Selecting one half of a grouped
+video+audio pair puts the other half in the edit too, because "a cut needs to affect both of them
+the same".
+
+**Only one microphone gets a vote on any given moment.** If two audio events cover the same stretch
+of ruler — a camera scratch mic and the real recorder, both grouped to the same picture — their
+noise floors differ, so becky returns two different cut lists. Merging them would mean "cut wherever
+*either* was quiet", which lets the wrong list delete speech. The ranking is deterministic: an audio
+file that is not also a picture source wins (that is the dual-system signal), then the longer event,
+then the earlier one, then the path.
+
+## Auto-ripple
+
+Removing a span closes it: everything to the right on the affected tracks moves left by exactly the
+span's length. Three ordering rules make that safe, and each one is load-bearing:
+
+- Spans are applied **last first**, so the ones still to come keep the ruler positions they were
+  measured at.
+- Within a span, every affected track is split at **both edges before anything is deleted**, so the
+  tracks stay in step.
+- The ripple moves every affected track by the **same delta**. Grouped picture and sound are
+  separate objects to the scripting API — group-follow is a UI behaviour, `TrackEvent.Start` moves
+  one event only — so both halves must be moved explicitly. Moving one and hoping the other follows
+  is exactly what pulled them apart before.
+
+"Affected tracks" are the tracks the selection lives on. A music bed or a title track you did not
+select is never cut and never rippled. **Markers and regions are not moved** — the ripple shortens
+the timeline under them.
 
 ## Before you run it
 
 `becky-cut.exe` must exist (`build-all-tools.bat`). The script finds it via `BECKY_CUT`, then
 `..\becky-go\bin\` relative to the script, then `PATH`.
 
-## Verifying it without clicking anything
-
-Two checks, both runnable:
+## Verifying it
 
 ```bat
 REM 1. Does the JSON reader still agree with becky-cut? (~5s, no VEGAS)
@@ -524,22 +555,39 @@ set BECKY_CUT=X:\AI-2\becky-tools\becky-go\bin\becky-cut.exe
 ```
 
 (1) compiles the real `BeckyCut.cs` and calls its real private `ParseCutReport` by reflection, then
-checks the decision counts against becky-cut's own JSON counted a different way — so it fails if the
-reader ever silently reads zero decisions, or reads them off by one key.
+checks the decision counts against becky-cut's own JSON counted a different way.
 
-(2) builds a throwaway one-clip project, selects it, runs the same code a human click runs, writes
-`<media>.becky-cut-selftest.txt` and exits **without saving**. Look for `RESULT: OK`. VEGAS will ask
-"Do you want to save changes to Untitled?" on the way out — answer **No**.
+(2) builds a throwaway one-clip project on a video track and an audio track, selects both, runs the
+same code a human click runs, writes `<media>.becky-cut-selftest.txt` and exits **without saving**.
+Look for `RESULT: OK` — and then look at the two track lines. **The video and audio tracks must have
+the same `events=` count and the same `kept_seconds=`**; if they differ, picture and sound have come
+apart, which is the failure this script exists to prevent. `gap_seconds=` must be `0` — anything
+else means the ripple did not close a hole.
 
 **After any `-SCRIPT:` launch, screenshot within 30 seconds and keep screenshotting.** A `-SCRIPT`
-run is never invisible, and a modal dialog sitting on top of it looks exactly like success from the
-outside (see the gotchas at the top of this file). Never poll a file blind.
+run is never invisible, and a modal dialog on top of it looks exactly like success from the outside
+(see the gotchas at the top of this file). Never poll a file blind.
 
 ## Design notes worth keeping
 
-- **Splits are found by ruler position on a fresh snapshot of `track.Events` each time**, never by
-  holding a reference across a split. VEGAS splits grouped events together, so a held reference can
+- **Every loop works on a fresh snapshot of `track.Events`** — `Split` adds to the collection while
+  you walk it, and whether `Remove` cascades to a group partner is not documented. Never hold an
+  event reference across a split: VEGAS can split grouped events together, so a held reference can
   silently become the wrong half.
-- **Gap-closing assigns ABSOLUTE positions**, so running it twice changes nothing.
+- **The ripple assigns ABSOLUTE positions** — it reads every original `Start` first, then puts each
+  event at `original - by`. It deliberately does not do `ev.Start = ev.Start - by`. Whether setting
+  `Start` drags a grouped partner along is **not documented anywhere in the VEGAS API reference**;
+  an absolute assignment makes the question irrelevant and is idempotent if something else already
+  nudged the event. Do not "simplify" it back.
+- **A locked event in the path of a cut refuses the whole edit before anything changes.** `Split`
+  throws on a locked event, and `UndoBlock` has no Commit — `Dispose` commits whatever happened,
+  including a half-finished edit. Checking first turns that into a clean refusal.
+- **`becky-cut`'s stderr is drained on a callback, not a second blocking `ReadToEnd`** — sequential
+  pipe reads deadlock, and the symptom would be VEGAS hung behind a progress window with no cancel
+  button.
+- **The frame grid comes from VEGAS, not from arithmetic on the project frame rate.** One frame is
+  `Timecode.FromFrames(1).Nanos`, so a snapped cut is exactly a frame edge rather than a rounded
+  number of nanoseconds near one, whatever the ruler format is. Off-grid cut points are what leave
+  one-frame slivers behind.
 - **It reads becky's JSON with a `Regex`, not `JavaScriptSerializer`** — see the assembly-set gotcha
   at the top. Keep it that way; it is what makes this a single file with no sidecar to lose.
