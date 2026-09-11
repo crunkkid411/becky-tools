@@ -1,4 +1,4 @@
-# BeckyCut.cs — STATUS: the cut WORKS (Jordan confirmed); the regrouping is UNTESTED
+# BeckyCut.cs — STATUS: the cut WORKS (Jordan confirmed); the regrouping threw E_FAIL and is now FIXED but UNTESTED
 
 **Round 1 (the cut itself) is confirmed working on his real project** — 2026-09-11: *"I tested the
 script, and it does work ... It actually DOES WORK!!! WELL DONE!!"*
@@ -161,12 +161,42 @@ genuinely de-duplicates, which matters, because rippling one track twice would d
 clips and reasoned it is because he was loud before those statements. Nothing in the script filters
 becky-cut's answer, so if that needs changing it changes in becky-cut's VAD settings, not here.
 
+## Round 3 — the regrouping threw E_FAIL, fixed (2026-09-11)
+
+Jordan ran round 2 and got:
+
+> "Error HRESULT E_FAIL has been returned from a call to a COM component."
+
+That is VEGAS's COM layer refusing a grouping call. The round-2 code had three things in it that
+VEGAS's own stock script does not do — any one of them could be the culprit, and all three are gone:
+
+| Round 2 did | VEGAS's stock `Group Video and Audio Events.cs` does | Now |
+|---|---|---|
+| `new TrackEventGroup(project)` | `new TrackEventGroup()` — parameterless | parameterless |
+| `group.Remove(event)` per event | never removes anything | **dissolves** the old group instead |
+| `TrackEventGroups.RemoveAt(i)` sweep for empties | no sweep | removed entirely |
+
+The stock script lives in this very Script Menu folder and has shipped with VEGAS since 2016 — it is
+the authority on this API, and it should have been read before the first attempt rather than after
+the error. (Same lesson as always: use the specialist's tool for the mechanics.)
+
+Detaching now dissolves the old group, which is also the closer match to the "remove from group"
+button Jordan actually presses — an event cannot be in two groups at once, so nothing can join a new
+group until the old one lets go. A group is dissolved **only if every member is one of our
+fragments**; if it also holds something he did not select it is left completely alone.
+
+**And the grouping can no longer cost him the cut.** The cut is the product; the regrouping is a
+tidy-up. `Regroup` is now best-effort: every step guarded, and a failure returns a message instead of
+throwing. The cut still applies and he gets a warning telling him to use his Make Groups button.
+Round 2's version let a COM refusal escape into the top-level handler, which is why he saw a bare
+`E_FAIL` box rather than something he could act on.
+
 ## NOT verified — what could still be wrong
 
 The cut itself is confirmed. Everything below is round 2 or an untested edge of it.
 
-1. **Everything added in round 2 is untested** — the regrouping and the VAD warning have never run.
-   He asked again: "do not test. I'll keep editing and test when i'm ready for a break."
+1. **The round-3 regrouping has never run.** Round 2's version was tested by Jordan and threw
+   E_FAIL; this is the fix for that, and it is again untested — he is still editing.
 2. Whether the rebuilt groups are the shape he wants on a timeline where an audio event spans more
    than one video event — overlapping fragments become one group, which is correct but bigger than a
    pair.

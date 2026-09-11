@@ -113,9 +113,25 @@ public class EntryPoint
             AnalyseWithProgress(beckyExe, bySource, workDir);
 
             List<Span> spans = SpansToRemove(deciders, bySource);
-            int removed = ApplyToTimeline(vegas.Project, clips, spans);
+            string regroupWarning;
+            int removed = ApplyToTimeline(vegas.Project, clips, spans, out regroupWarning);
 
             WarnIfVADSkipped(bySource);
+
+            if (regroupWarning != null)
+            {
+                // The cut stands - only the tidy-up fell short - so this says
+                // what to do about it instead of throwing the edit away.
+                MessageBox.Show(
+                    "The cut worked, but rebuilding the clip grouping did not:\n\n" +
+                    regroupWarning + "\n\n" +
+                    "The affected clips may still behave as one group, so deleting one\n" +
+                    "could delete them all. Select them and use your Make Groups button.",
+                    "Becky Cut",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+            }
 
             if (removed == 0)
             {
@@ -900,8 +916,10 @@ public class EntryPoint
     //      them apart before.
     //
     // One UndoBlock wraps the lot, so one Ctrl+Z puts the timeline back.
-    private static int ApplyToTimeline(Project project, List<Clip> clips, List<Span> spans)
+    private static int ApplyToTimeline(Project project, List<Clip> clips, List<Span> spans,
+                                       out string regroupWarning)
     {
+        regroupWarning = null;
         List<Track> tracks = AffectedTracks(clips);
         if (tracks.Count == 0 || spans.Count == 0)
         {
@@ -951,7 +969,7 @@ public class EntryPoint
 
             // Inside the same UndoBlock on purpose: one Ctrl+Z has to put the
             // grouping back exactly as well as the cuts.
-            Regroup(project, scope);
+            regroupWarning = Regroup(project, scope);
         }
         return removed;
     }
@@ -1105,7 +1123,7 @@ public class EntryPoint
 
     // Regroup rebuilds one group per clip after the cut.
     //
-    // WHY THIS EXISTS. Jordan, 2026-09-10, after the cut finally worked:
+    // WHY THIS EXISTS. Jordan, 2026-09-10, after the cut itself finally worked:
     //
     //   "After running becky-cut, all events that were affected are now grouped
     //    together in a DIFFERENT way ... if I try to delete a clip, it deletes
@@ -1115,20 +1133,48 @@ public class EntryPoint
     //
     // That is VEGAS's own behaviour, not a bug in the cut: splitting a grouped
     // event leaves BOTH halves in the ORIGINAL group, so fourteen cuts turn one
-    // video+audio pair into a single group of thirty events. Deleting any one of
-    // them takes the whole edit with it.
+    // video+audio pair into a single group of thirty events.
     //
-    // His manual workaround is exactly the two steps this does, and he spelled
-    // them out: "if I highlight all the clips which were affected by becky-cut
-    // and use the 'remove from group' feature, it ungroups them as a single
-    // event, then allows me to use my 'Make Groups' script." So: strip the old
-    // membership first, then build a fresh group per column. Done natively here,
-    // so no third-party extension has to be installed or called.
+    // His manual workaround is the two steps this copies, in his words: "if I
+    // highlight all the clips which were affected by becky-cut and use the
+    // 'remove from group' feature, it ungroups them as a single event, then
+    // allows me to use my 'Make Groups' script."
     //
-    // Scope is the lineage list, which is only ever the fragments of what he
-    // selected - "just make sure it only applies to the clips I had selected on
-    // the timeline - not the entire timeline".
-    private static void Regroup(Project project, List<Piece> pieces)
+    // HOW, AND WHY IT IS SHAPED LIKE THIS (2026-09-11). The first attempt threw
+    // "Error HRESULT E_FAIL has been returned from a call to a COM component".
+    // It used `new TrackEventGroup(project)`, detached events one at a time with
+    // group.Remove(event), and swept up empty groups with RemoveAt. VEGAS's own
+    // stock script - "Group Video and Audio Events.cs", shipped in this very
+    // Script Menu folder - does none of those things. It uses the PARAMETERLESS
+    // constructor, adds the group to Project.TrackEventGroups BEFORE putting any
+    // event in it, and never removes anything. This now follows that idiom
+    // exactly, and detaches by DISSOLVING the old group (removing it from the
+    // project) instead of picking events out of it - which is also the closer
+    // match to the "remove from group" button Jordan actually presses.
+    //
+    // The whole thing is best-effort on purpose. The cut is the product; the
+    // grouping is a convenience. If VEGAS refuses a grouping call, the edit must
+    // still stand - so every step is guarded and the caller is told, rather than
+    // a good cut being thrown away over the tidy-up.
+    //
+    // Scope is the lineage list, only ever fragments of what he selected: "just
+    // make sure it only applies to the clips I had selected on the timeline -
+    // not the entire timeline".
+    //
+    // Returns null on success, or a short message describing what went wrong.
+    private static string Regroup(Project project, List<Piece> pieces)
+    {
+        try
+        {
+            return RegroupCore(project, pieces);
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    private static string RegroupCore(Project project, List<Piece> pieces)
     {
         List<Piece> live = new List<Piece>();
         foreach (Piece p in pieces)
@@ -1140,7 +1186,42 @@ public class EntryPoint
         }
         if (live.Count < 2)
         {
-            return;
+            return null;
+        }
+
+        // Step 1 - "remove from group", by dissolving the groups our fragments
+        // are in. An event cannot be in two groups at once, so nothing can join
+        // a new group until the old one lets go.
+        //
+        // A group is only dissolved when EVERY one of its members is one of our
+        // fragments. If it also holds something the user did not select, it is
+        // left completely alone - breaking up someone else's grouping to tidy up
+        // ours would be a much worse bug than the one being fixed.
+        List<TrackEventGroup> ours = new List<TrackEventGroup>();
+        foreach (Piece p in live)
+        {
+            TrackEventGroup g = p.Event.Group;
+            if (g == null || ours.Contains(g))
+            {
+                continue;
+            }
+            bool allFragments = true;
+            foreach (TrackEvent member in g)
+            {
+                if (FindPiece(live, member) == null)
+                {
+                    allFragments = false;
+                    break;
+                }
+            }
+            if (allFragments)
+            {
+                ours.Add(g);
+            }
+        }
+        foreach (TrackEventGroup g in ours)
+        {
+            project.TrackEventGroups.Remove(g);
         }
 
         // Which fragments belong together: those that overlap in time on
@@ -1180,6 +1261,10 @@ public class EntryPoint
             columns[root].Add(live[i]);
         }
 
+        // Step 2 - "Make Groups", in VEGAS's own stock idiom: new group, add it
+        // to the project, then put the events in it.
+        int rebuilt = 0;
+        int skipped = 0;
         foreach (KeyValuePair<int, List<Piece>> column in columns)
         {
             List<Piece> members = column.Value;
@@ -1188,49 +1273,52 @@ public class EntryPoint
                 continue;
             }
 
-            // Only rebuild what was grouped to begin with.
+            // Only rebuild what was grouped to begin with. Inventing groups
+            // nobody asked for would be its own nasty surprise.
             bool wasGrouped = false;
-            foreach (Piece p in members)
+            bool stillAttached = false;
+            foreach (Piece m in members)
             {
-                if (p.WasGrouped)
+                if (m.WasGrouped)
                 {
                     wasGrouped = true;
-                    break;
+                }
+                if (m.Event.IsGrouped)
+                {
+                    stillAttached = true;
                 }
             }
             if (!wasGrouped)
             {
                 continue;
             }
-
-            // Step 1 - "remove from group".
-            foreach (Piece p in members)
+            if (stillAttached)
             {
-                TrackEventGroup old = p.Event.Group;
-                if (old != null)
-                {
-                    old.Remove(p.Event);
-                }
+                // Its old group could not be dissolved (it holds something the
+                // user did not select). Adding to a second group would be the
+                // E_FAIL again, so leave this column as it is.
+                skipped++;
+                continue;
             }
 
-            // Step 2 - "Make Groups".
-            TrackEventGroup fresh = new TrackEventGroup(project);
+            TrackEventGroup fresh = new TrackEventGroup();
             project.TrackEventGroups.Add(fresh);
-            foreach (Piece p in members)
+            foreach (Piece m in members)
             {
-                fresh.Add(p.Event);
+                fresh.Add(m.Event);
             }
+            rebuilt++;
         }
 
-        // The old whole-selection group is empty now. Drop any group the rebuild
-        // emptied out, backwards so the indices stay valid.
-        for (int i = project.TrackEventGroups.Count - 1; i >= 0; i--)
+        if (rebuilt == 0 && skipped > 0)
         {
-            if (project.TrackEventGroups[i].Count == 0)
-            {
-                project.TrackEventGroups.RemoveAt(i);
-            }
+            return "the affected clips are still in their original group";
         }
+        if (skipped > 0)
+        {
+            return skipped + " clip(s) kept their original grouping";
+        }
+        return null;
     }
 
     private static int Find(int[] owner, int i)
@@ -1389,8 +1477,10 @@ public class EntryPoint
             }
             log.Add("spans_total_seconds: " + spanSeconds.ToString("0.###", CultureInfo.InvariantCulture));
 
-            int removed = ApplyToTimeline(vegas.Project, clips, spans);
+            string regroupWarning;
+            int removed = ApplyToTimeline(vegas.Project, clips, spans, out regroupWarning);
             log.Add("pieces_removed: " + removed);
+            log.Add("regroup: " + (regroupWarning ?? "ok"));
 
             // What the timeline looks like now - the actual proof. Video and
             // audio must match each other, and nothing should start after the

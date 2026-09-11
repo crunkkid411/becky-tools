@@ -540,6 +540,31 @@ through every split. And a clip that was **not** grouped before is left ungroupe
 nobody asked for would be its own surprise. The regrouping is inside the same undo block as the
 cuts, so one Ctrl+Z restores both.
 
+**Use VEGAS's own grouping idiom, exactly.** A first attempt threw
+`Error HRESULT E_FAIL has been returned from a call to a COM component`. It used
+`new TrackEventGroup(project)`, detached events one at a time with `group.Remove(event)`, and swept
+up empty groups with `RemoveAt`. VEGAS's stock **`Group Video and Audio Events.cs`** — shipped in
+this same Script Menu folder — does none of those things:
+
+```csharp
+TrackEventGroup grp = new TrackEventGroup();        // PARAMETERLESS
+vegas.Project.TrackEventGroups.Add(grp);            // add to the project FIRST
+grp.Add(videoEvent);                                // then put events in it
+grp.Add(audioEvent);
+```
+
+Follow that. To detach, **dissolve the old group** (`Project.TrackEventGroups.Remove(group)`) rather
+than picking events out of it — that is also the closer match to the "remove from group" button. An
+event cannot be in two groups at once, so nothing can join a new group until the old one lets go.
+
+A group is dissolved **only when every one of its members is one of your fragments**; if it also
+holds something you did not select, it is left completely alone. Breaking up someone else's grouping
+to tidy up ours would be a worse bug than the one being fixed.
+
+**The grouping is best-effort and can never cost you the cut.** The cut is the product; the
+regrouping is a convenience. Every grouping step is guarded, and if VEGAS refuses one you get a
+warning telling you to use your Make Groups button — not a lost edit.
+
 ## Auto-ripple
 
 Removing a span closes it: everything to the right on the affected tracks moves left by exactly the
