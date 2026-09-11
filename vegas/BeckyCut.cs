@@ -113,7 +113,9 @@ public class EntryPoint
             AnalyseWithProgress(beckyExe, bySource, workDir);
 
             List<Span> spans = SpansToRemove(deciders, bySource);
-            int removed = ApplyToTimeline(clips, spans);
+            int removed = ApplyToTimeline(vegas.Project, clips, spans);
+
+            WarnIfVADSkipped(bySource);
 
             if (removed == 0)
             {
@@ -162,6 +164,7 @@ public class EntryPoint
         public double fps;
         public double duration;
         public string threshold;
+        public bool vadApplied;
         public List<Decision> decisions;
     }
 
@@ -178,6 +181,19 @@ public class EntryPoint
     {
         public Timecode Start;
         public Timecode End;
+    }
+
+    // Piece is one surviving fragment of the selection, tracked through the
+    // splits so the regrouping at the end knows exactly which events came from
+    // what Jordan selected - and touches nothing else on the timeline.
+    //
+    // WasGrouped is read BEFORE the edit starts. A piece whose original event
+    // was not grouped is left ungrouped afterwards; inventing groups nobody
+    // asked for would be its own nasty surprise.
+    private class Piece
+    {
+        public TrackEvent Event;
+        public bool WasGrouped;
     }
 
     // ------------------------------------------------------- reading the edit
@@ -580,6 +596,13 @@ public class EntryPoint
         }
         report.threshold = StringField(json, "threshold");
 
+        // becky-cut's second pass is the VAD filter that cuts noise with nobody
+        // talking in it. It SKIPS ITSELF with only a stderr warning when
+        // silero_vad.onnx is missing, which would quietly turn this into a
+        // silence-only edit - so the flag is read and reported rather than
+        // assumed.
+        report.vadApplied = Regex.IsMatch(json, "\"vad_applied\"\\s*:\\s*true");
+
         string array = ExtractArray(json, "decisions");
         if (array == null)
         {
@@ -669,6 +692,51 @@ public class EntryPoint
         }
         return null;
     }
+    // WarnIfVADSkipped says so when becky-cut's second pass did not run.
+    //
+    // This is not a question and not a setting - it is the one thing that can
+    // silently make the cut disobey becky-cut's own rules, and Jordan asked
+    // specifically whether "becky-cut's second pass VAD rules are being
+    // followed". A run where they were not has to say so out loud.
+    private static void WarnIfVADSkipped(Dictionary<string, CutReport> bySource)
+    {
+        List<string> skipped = new List<string>();
+        foreach (KeyValuePair<string, CutReport> entry in bySource)
+        {
+            if (entry.Value != null && !entry.Value.vadApplied)
+            {
+                skipped.Add(PathTail(entry.Key));
+            }
+        }
+        if (skipped.Count == 0)
+        {
+            return;
+        }
+
+        MessageBox.Show(
+            "becky-cut's second pass did not run, so this cut removed silence only -\n" +
+            "noise with nobody talking in it was NOT cut.\n\n" +
+            "Usually that means silero_vad.onnx is missing.\n\n" +
+            string.Join("\n", skipped.ToArray()) + "\n\n" +
+            "Press Ctrl+Z if you would rather undo it.",
+            "Becky Cut",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning
+        );
+    }
+
+    private static string PathTail(string path)
+    {
+        try
+        {
+            return Path.GetFileName(path);
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
     // ----------------------------------------------------------- the edit
 
     // SpansToRemove turns becky's cut decisions into ONE list of ruler spans.
@@ -832,7 +900,7 @@ public class EntryPoint
     //      them apart before.
     //
     // One UndoBlock wraps the lot, so one Ctrl+Z puts the timeline back.
-    private static int ApplyToTimeline(List<Clip> clips, List<Span> spans)
+    private static int ApplyToTimeline(Project project, List<Clip> clips, List<Span> spans)
     {
         List<Track> tracks = AffectedTracks(clips);
         if (tracks.Count == 0 || spans.Count == 0)
@@ -841,6 +909,16 @@ public class EntryPoint
         }
 
         EnsureNothingLocked(tracks, spans);
+
+        // Lineage. Every fragment the edit produces from the selection is
+        // tracked here, so Regroup at the end knows precisely which events are
+        // Jordan's and never reaches the rest of the timeline. IsGrouped is
+        // sampled now, before anything is touched.
+        List<Piece> scope = new List<Piece>();
+        foreach (Clip c in clips)
+        {
+            scope.Add(new Piece { Event = c.Event, WasGrouped = c.Event.IsGrouped });
+        }
 
         Timecode zero = Timecode.FromFrames(0);
         int removed = 0;
@@ -858,18 +936,22 @@ public class EntryPoint
 
                 foreach (Track track in tracks)
                 {
-                    SplitAt(track, span.Start);
-                    SplitAt(track, span.End);
+                    SplitAt(track, span.Start, scope);
+                    SplitAt(track, span.End, scope);
                 }
                 foreach (Track track in tracks)
                 {
-                    removed += DeleteInside(track, span);
+                    removed += DeleteInside(track, span, scope);
                 }
                 foreach (Track track in tracks)
                 {
                     RippleLeft(track, span.End, length);
                 }
             }
+
+            // Inside the same UndoBlock on purpose: one Ctrl+Z has to put the
+            // grouping back exactly as well as the cuts.
+            Regroup(project, scope);
         }
         return removed;
     }
@@ -925,7 +1007,7 @@ public class EntryPoint
 
     // SplitAt cuts whichever events on the track straddle this ruler position.
     // Iterating a SNAPSHOT matters: Split adds to track.Events while we look.
-    private static void SplitAt(Track track, Timecode at)
+    private static void SplitAt(Track track, Timecode at, List<Piece> scope)
     {
         List<TrackEvent> snapshot = new List<TrackEvent>();
         foreach (TrackEvent ev in track.Events)
@@ -936,13 +1018,21 @@ public class EntryPoint
         {
             if (ev.Start < at && ev.End > at)
             {
+                Piece parent = FindPiece(scope, ev);
                 // Deliberately NOT wrapped in try/catch. If a split fails on
                 // one track and succeeds on another the tracks are already out
                 // of step, and every later ripple makes it worse - a silent
                 // half-done edit is the worst outcome available here. Let it
                 // surface as an error instead; the UndoBlock means one Ctrl+Z
                 // puts the timeline back.
-                ev.Split(at - ev.Start);
+                TrackEvent half = ev.Split(at - ev.Start);
+
+                // The new half inherits the parent's lineage, so the regrouping
+                // at the end sees every fragment of Jordan's selection.
+                if (parent != null && half != null)
+                {
+                    scope.Add(new Piece { Event = half, WasGrouped = parent.WasGrouped });
+                }
             }
         }
     }
@@ -954,7 +1044,7 @@ public class EntryPoint
     // ever does, walking live indices would skip an event or run off the end
     // half way through the edit. Remove returns false for something already
     // gone, so a cascade just means it is not counted twice.
-    private static int DeleteInside(Track track, Span span)
+    private static int DeleteInside(Track track, Span span, List<Piece> scope)
     {
         List<TrackEvent> snapshot = new List<TrackEvent>();
         foreach (TrackEvent ev in track.Events)
@@ -970,6 +1060,7 @@ public class EntryPoint
                 if (track.Events.Remove(ev))
                 {
                     removed++;
+                    RemovePiece(scope, ev);
                 }
             }
         }
@@ -1006,6 +1097,185 @@ public class EntryPoint
             if (origins[i] >= from)
             {
                 events[i].Start = origins[i] - by;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- regrouping
+
+    // Regroup rebuilds one group per clip after the cut.
+    //
+    // WHY THIS EXISTS. Jordan, 2026-09-10, after the cut finally worked:
+    //
+    //   "After running becky-cut, all events that were affected are now grouped
+    //    together in a DIFFERENT way ... if I try to delete a clip, it deletes
+    //    ALL the clips because, even though they are separate events on the
+    //    timeline, they are grouped as a single group, which is meaningfully
+    //    different than grouping each clips audio to the corresponding video."
+    //
+    // That is VEGAS's own behaviour, not a bug in the cut: splitting a grouped
+    // event leaves BOTH halves in the ORIGINAL group, so fourteen cuts turn one
+    // video+audio pair into a single group of thirty events. Deleting any one of
+    // them takes the whole edit with it.
+    //
+    // His manual workaround is exactly the two steps this does, and he spelled
+    // them out: "if I highlight all the clips which were affected by becky-cut
+    // and use the 'remove from group' feature, it ungroups them as a single
+    // event, then allows me to use my 'Make Groups' script." So: strip the old
+    // membership first, then build a fresh group per column. Done natively here,
+    // so no third-party extension has to be installed or called.
+    //
+    // Scope is the lineage list, which is only ever the fragments of what he
+    // selected - "just make sure it only applies to the clips I had selected on
+    // the timeline - not the entire timeline".
+    private static void Regroup(Project project, List<Piece> pieces)
+    {
+        List<Piece> live = new List<Piece>();
+        foreach (Piece p in pieces)
+        {
+            if (p != null && p.Event != null && p.Event.Track != null)
+            {
+                live.Add(p);
+            }
+        }
+        if (live.Count < 2)
+        {
+            return;
+        }
+
+        // Which fragments belong together: those that overlap in time on
+        // DIFFERENT tracks. Butt-joined neighbours (one ends exactly where the
+        // next starts) do not overlap, and that is precisely what keeps every
+        // cut its own group instead of one long chain.
+        int[] owner = new int[live.Count];
+        for (int i = 0; i < live.Count; i++)
+        {
+            owner[i] = i;
+        }
+        for (int i = 0; i < live.Count; i++)
+        {
+            for (int j = i + 1; j < live.Count; j++)
+            {
+                TrackEvent a = live[i].Event;
+                TrackEvent b = live[j].Event;
+                if (a.Track == b.Track)
+                {
+                    continue;
+                }
+                if (a.Start < b.End && b.Start < a.End)
+                {
+                    Union(owner, i, j);
+                }
+            }
+        }
+
+        Dictionary<int, List<Piece>> columns = new Dictionary<int, List<Piece>>();
+        for (int i = 0; i < live.Count; i++)
+        {
+            int root = Find(owner, i);
+            if (!columns.ContainsKey(root))
+            {
+                columns[root] = new List<Piece>();
+            }
+            columns[root].Add(live[i]);
+        }
+
+        foreach (KeyValuePair<int, List<Piece>> column in columns)
+        {
+            List<Piece> members = column.Value;
+            if (members.Count < 2)
+            {
+                continue;
+            }
+
+            // Only rebuild what was grouped to begin with.
+            bool wasGrouped = false;
+            foreach (Piece p in members)
+            {
+                if (p.WasGrouped)
+                {
+                    wasGrouped = true;
+                    break;
+                }
+            }
+            if (!wasGrouped)
+            {
+                continue;
+            }
+
+            // Step 1 - "remove from group".
+            foreach (Piece p in members)
+            {
+                TrackEventGroup old = p.Event.Group;
+                if (old != null)
+                {
+                    old.Remove(p.Event);
+                }
+            }
+
+            // Step 2 - "Make Groups".
+            TrackEventGroup fresh = new TrackEventGroup(project);
+            project.TrackEventGroups.Add(fresh);
+            foreach (Piece p in members)
+            {
+                fresh.Add(p.Event);
+            }
+        }
+
+        // The old whole-selection group is empty now. Drop any group the rebuild
+        // emptied out, backwards so the indices stay valid.
+        for (int i = project.TrackEventGroups.Count - 1; i >= 0; i--)
+        {
+            if (project.TrackEventGroups[i].Count == 0)
+            {
+                project.TrackEventGroups.RemoveAt(i);
+            }
+        }
+    }
+
+    private static int Find(int[] owner, int i)
+    {
+        while (owner[i] != i)
+        {
+            owner[i] = owner[owner[i]];
+            i = owner[i];
+        }
+        return i;
+    }
+
+    private static void Union(int[] owner, int a, int b)
+    {
+        int rootA = Find(owner, a);
+        int rootB = Find(owner, b);
+        if (rootA != rootB)
+        {
+            owner[rootB] = rootA;
+        }
+    }
+
+    // FindPiece / RemovePiece match on TrackEvent.Equals, NOT reference
+    // identity. The VEGAS wrappers override Equals and op_Equality, so two
+    // different wrapper objects can point at the same timeline event - matching
+    // by reference would miss those and silently drop a fragment's lineage.
+    private static Piece FindPiece(List<Piece> scope, TrackEvent ev)
+    {
+        foreach (Piece p in scope)
+        {
+            if (p.Event != null && p.Event.Equals(ev))
+            {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    private static void RemovePiece(List<Piece> scope, TrackEvent ev)
+    {
+        for (int i = scope.Count - 1; i >= 0; i--)
+        {
+            if (scope[i].Event != null && scope[i].Event.Equals(ev))
+            {
+                scope.RemoveAt(i);
             }
         }
     }
@@ -1110,6 +1380,7 @@ public class EntryPoint
 
             List<Span> spans = SpansToRemove(deciders, bySource);
             log.Add("spans_to_remove: " + spans.Count);
+            log.Add("vad_applied: " + first.vadApplied);
 
             double spanSeconds = 0.0;
             foreach (Span s in spans)
@@ -1118,7 +1389,7 @@ public class EntryPoint
             }
             log.Add("spans_total_seconds: " + spanSeconds.ToString("0.###", CultureInfo.InvariantCulture));
 
-            int removed = ApplyToTimeline(clips, spans);
+            int removed = ApplyToTimeline(vegas.Project, clips, spans);
             log.Add("pieces_removed: " + removed);
 
             // What the timeline looks like now - the actual proof. Video and

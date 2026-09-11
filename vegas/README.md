@@ -497,6 +497,7 @@ track.
 2. Every cut span is mapped from source seconds onto the ruler through the event's own in-point and
    playback rate, snapped to the frame grid, and merged into **one** span list.
 3. Each span is removed and the hole is **closed** — auto-ripple, always.
+4. Grouping is rebuilt, one group per clip, over just the fragments of your selection.
 
 ## The two rules that make it correct
 
@@ -518,6 +519,26 @@ noise floors differ, so becky returns two different cut lists. Merging them woul
 *either* was quiet", which lets the wrong list delete speech. The ranking is deterministic: an audio
 file that is not also a picture source wins (that is the dual-system signal), then the longer event,
 then the earlier one, then the path.
+
+## Grouping — why the cut rebuilds it
+
+**VEGAS leaves every fragment of a cut clip in one giant group, and that is not what you want.**
+Splitting a grouped event leaves *both* halves in the *original* group, so fourteen cuts turn one
+video+audio pair into a single group of thirty events — delete any one of them and the whole edit
+goes with it. Jordan, after the first working run:
+
+> "if I try to delete a clip, it deletes ALL the clips because, even though they are separate events
+> on the timeline, they are grouped as a single group, which is meaningfully different than grouping
+> each clips audio to the corresponding video."
+
+His manual fix was two steps — "remove from group", then Vegasaur's **Make Groups** button — and the
+script now does exactly those two steps natively at the end of the cut, so no third-party extension
+is needed. Old membership is stripped first, then one fresh group is built per column.
+
+Scope is strict: only fragments descended from **what you selected** are touched, tracked by lineage
+through every split. And a clip that was **not** grouped before is left ungrouped — inventing groups
+nobody asked for would be its own surprise. The regrouping is inside the same undo block as the
+cuts, so one Ctrl+Z restores both.
 
 ## Auto-ripple
 
@@ -585,6 +606,15 @@ run is never invisible, and a modal dialog on top of it looks exactly like succe
 - **`becky-cut`'s stderr is drained on a callback, not a second blocking `ReadToEnd`** — sequential
   pipe reads deadlock, and the symptom would be VEGAS hung behind a progress window with no cancel
   button.
+- **Fragments are matched with `Equals`, never reference identity.** `TrackEvent` and `Track` both
+  override `Equals`/`op_Equality`, so two different wrapper objects can point at the same timeline
+  event; matching by reference would silently lose a fragment's lineage. (It also means
+  `AffectedTracks` really does de-duplicate, which matters — rippling one track twice would
+  double-shift it.)
+- **If becky-cut's VAD second pass did not run, the script says so.** becky-cut skips it with only a
+  stderr warning when `silero_vad.onnx` is missing, which would quietly turn this into a
+  silence-only edit. That is the one thing that can make the cut disobey becky-cut's own rules, so
+  it is reported rather than assumed. It is a warning, not a question.
 - **The frame grid comes from VEGAS, not from arithmetic on the project frame rate.** One frame is
   `Timecode.FromFrames(1).Nanos`, so a snapped cut is exactly a frame edge rather than a rounded
   number of nanoseconds near one, whatever the ruler format is. Off-grid cut points are what leave

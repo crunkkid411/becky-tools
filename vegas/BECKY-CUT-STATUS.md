@@ -1,13 +1,13 @@
-# BeckyCut.cs — STATUS: REWRITTEN, COMPILES, **NOT TESTED IN VEGAS**
+# BeckyCut.cs — STATUS: the cut WORKS (Jordan confirmed); the regrouping is UNTESTED
 
-2026-09-10, late evening. Jordan was editing in VEGAS and said, verbatim:
+**Round 1 (the cut itself) is confirmed working on his real project** — 2026-09-11: *"I tested the
+script, and it does work ... It actually DOES WORK!!! WELL DONE!!"*
 
-> "please do so now but DO NOT test it; I need to actually use Vegas Pro for editing right now and I
-> do not want you interfering."
-
-So this was **not run**. It compiles against VEGAS's real assembly set and it was reviewed against
-the official scripting docs and the VEGAS assembly itself — that is the whole of the evidence. Read
-"How to verify it" at the bottom before trusting any of it.
+**Round 2 (rebuilding the clip grouping, plus a VAD-skipped warning) has never been run.** He asked
+twice not to test while he was editing — *"do not test. I'll keep editing and test when i'm ready
+for a break."* — so the only evidence for round 2 is a clean compile against VEGAS's real assembly
+set and members confirmed by reflecting over `ScriptPortal.Vegas.dll`. Read "How to verify it" at
+the bottom before trusting it.
 
 ## What Jordan reported, in his words
 
@@ -114,17 +114,67 @@ complete (no event is both deleted and moved, none is neither); `MergeSpans` is 
 union; and no gap can survive, because the event after a cut was split exactly at the span end and
 the ripple butt-joins it at the span start.
 
+## Round 2 — Jordan tested it, it worked, two follow-ups (2026-09-11)
+
+> "I tested the script, and it does work ... It actually DOES WORK!!! WELL DONE!!"
+
+**1. "No padding" — clarified, and verified in becky-cut's source.** It means the VEGAS script adds
+none of its own. becky-cut's margins are untouched and still apply: `cmd/cut/main.go:53` declares
+`--margin "0.04s,0.25s"` as the flag default (0.04s before, 0.25s after) and passes it straight to
+auto-editor. The script runs `becky-cut <file> --dry-run` with **no other flags**, so every default
+holds. And `--dry-run` is not a shortcut path — `main.go` runs step 1 (auto-editor detection) and
+step 2 (the Silero VAD post-pass) exactly as a real render does, and only skips step 3, the encode.
+`report["decisions"]` is built from the same `chunks` the render would use, *after* the VAD pass has
+flipped its segments. So the dry-run answer is byte-for-byte the edit becky-cut would have rendered.
+**Answer to his question: yes, it follows becky-cut's rules.**
+
+One hole that was closed rather than assumed: becky-cut **skips the VAD pass with only a stderr
+warning** if `silero_vad.onnx` is missing (`main.go:204-207`). That would silently produce a
+silence-only edit. The script now reads `vad_applied` out of the JSON and puts a warning on screen
+if it is false. It is a warning, not a question — the one-click rule stands.
+
+**2. The grouping quirk — fixed natively.** Jordan:
+
+> "After running becky-cut, all events that were affected are now grouped together in a DIFFERENT
+> way ... if I try to delete a clip, it deletes ALL the clips."
+
+> "if I highlight all the clips which were affected by becky-cut and use the 'remove from group'
+> feature, it ungroups them as a single event, then allows me to use my 'Make Groups' script."
+
+Root cause: VEGAS keeps **both halves of a split in the original group**, so N cuts turn one
+video+audio pair into one group of 2N+2 events. The fix does his two manual steps in code — strip
+the old membership, then build one fresh group per column — so Vegasaur is not needed and nothing
+has to be called out to. Confirmed against the DLL: `new TrackEventGroup(Project)`,
+`Project.TrackEventGroups.Add(...)`, and `BaseList<T>.Add/Remove/RemoveAt/Count` all exist.
+
+Scope is strict. A lineage list follows every fragment through every split, so only pieces descended
+from **his selection** are regrouped — "just make sure it only applies to the clips I had selected on
+the timeline - not the entire timeline". Clips that were not grouped before stay ungrouped. The
+regrouping is inside the same `UndoBlock`, so one Ctrl+Z still restores everything.
+
+Two identity facts confirmed by reflection, because both could have caused silent damage:
+`TrackEvent` **and** `Track` each override `Equals`, `GetHashCode` and `op_Equality`. So list lookups
+match the same underlying timeline object rather than the wrapper instance — and `AffectedTracks`
+genuinely de-duplicates, which matters, because rippling one track twice would double-shift it.
+
+**Still his footage, not the script:** he noted some non-speaking audio surviving inside single
+clips and reasoned it is because he was loud before those statements. Nothing in the script filters
+becky-cut's answer, so if that needs changing it changes in becky-cut's VAD settings, not here.
+
 ## NOT verified — what could still be wrong
 
-Nothing below has been seen to happen on a real timeline. Treat it as untested intent.
+The cut itself is confirmed. Everything below is round 2 or an untested edge of it.
 
-1. Whether the edit actually keeps picture and sound together on his real dual-system project.
-2. Whether `Timecode.FromFrames(1).Nanos` returns a sane frame length on his project (it is read at
+1. **Everything added in round 2 is untested** — the regrouping and the VAD warning have never run.
+   He asked again: "do not test. I'll keep editing and test when i'm ready for a break."
+2. Whether the rebuilt groups are the shape he wants on a timeline where an audio event spans more
+   than one video event — overlapping fragments become one group, which is correct but bigger than a
+   pair.
+3. Whether `Timecode.FromFrames(1).Nanos` returns a sane frame length on his project (it is read at
    run time from VEGAS; the script falls back to no snapping if it comes back `<= 0`).
-3. Whether pulling in grouped partners picks up exactly the right events on a project with more
+4. Whether pulling in grouped partners picks up exactly the right events on a project with more
    complex grouping than video+audio pairs.
-4. Whether any span lands somewhere that leaves an overlap rather than a clean butt-join.
-5. `becky-cut` itself was **not re-run** this session — no ffmpeg or GPU work was started, to avoid
+5. `becky-cut` itself was **not re-run** in round 2 — no ffmpeg or GPU work was started, to avoid
    competing with his editing.
 
 ## How to verify it (when he is not editing)
