@@ -1,4 +1,4 @@
-# BeckyCut.cs — STATUS: the cut WORKS (Jordan confirmed); the regrouping threw E_FAIL and is now FIXED but UNTESTED
+# BeckyCut.cs — STATUS: the cut WORKS (Jordan confirmed); the regrouping is on its third attempt and UNTESTED
 
 **Round 1 (the cut itself) is confirmed working on his real project** — 2026-09-11: *"I tested the
 script, and it does work ... It actually DOES WORK!!! WELL DONE!!"*
@@ -191,12 +191,46 @@ throwing. The cut still applies and he gets a warning telling him to use his Mak
 Round 2's version let a COM refusal escape into the top-level handler, which is why he saw a bare
 `E_FAIL` box rather than something he could act on.
 
+## Round 4 — E_UNEXPECTED, the dead-wrapper bug (2026-09-11)
+
+Round 3 got past `E_FAIL` and then hit:
+
+> "The cut worked, but rebuilding the clip grouping did not: Catastrophic failure
+> (Exception from HRESULT: 0x8000FFFF (E_UNEXPECTED))"
+
+**The guard did its job** — the cut survived and he got an actionable message instead of losing the
+edit. That part of round 3 was right.
+
+**Root cause: dead COM wrappers.** The regrouping tracked every fragment as a `TrackEvent` reference
+collected during the cut. But **VEGAS deletes grouped events together** — removing one takes its
+partner on the other track with it, and the partner's own `track.Events.Remove(ev)` then returns
+`false`. The code only dropped a fragment from its tracking list when `Remove` returned `true`, so
+cascaded-away events stayed in the list as references to events that no longer existed. Reading
+`.Track` off one of those is exactly what `E_UNEXPECTED` means.
+
+**Fix: carry nothing across the edit.** Each grouped clip's ruler range is recorded *before* the
+cut, translated forward by the spans that were removed (`MapForward`), and the fragments are found
+afterwards by **re-reading the tracks**. Every event object the regrouping touches is fresh and
+alive by construction. The whole lineage mechanism — `Piece`, `FindPiece`, `RemovePiece`, and the
+scope list threaded through `SplitAt`/`DeleteInside` — is deleted, which also makes the cut itself
+simpler than it was.
+
+Two more hardening changes, because a third blind round trip would be unacceptable:
+
+- **Every stage is named, and the name comes back in the message.** "reading the tracks",
+  "ungrouping the clips", "making the new groups", and so on. If VEGAS refuses again, the next
+  report says which call it was instead of a bare HRESULT.
+- **Dissolving a group no longer walks its member list.** It compares `group.Count` against how many
+  of its members are ours. That list can still name events the cut deleted, so walking it would have
+  been the same dead-wrapper bug by another route.
+
 ## NOT verified — what could still be wrong
 
 The cut itself is confirmed. Everything below is round 2 or an untested edge of it.
 
-1. **The round-3 regrouping has never run.** Round 2's version was tested by Jordan and threw
-   E_FAIL; this is the fix for that, and it is again untested — he is still editing.
+1. **The round-4 regrouping has never run.** Round 2 threw E_FAIL, round 3 threw E_UNEXPECTED; this
+   is the fix for the second one, and it is again untested — he is still editing. If it fails again
+   the message will now name the stage, which is the thing to report.
 2. Whether the rebuilt groups are the shape he wants on a timeline where an audio event spans more
    than one video event — overlapping fragments become one group, which is correct but bigger than a
    pair.

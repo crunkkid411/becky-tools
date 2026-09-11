@@ -561,9 +561,22 @@ A group is dissolved **only when every one of its members is one of your fragmen
 holds something you did not select, it is left completely alone. Breaking up someone else's grouping
 to tidy up ours would be a worse bug than the one being fixed.
 
+**Never hold a `TrackEvent` across the edit.** A second attempt threw
+`Catastrophic failure (E_UNEXPECTED)`. It tracked each fragment as an event reference collected
+during the cut — but **VEGAS deletes grouped events together**: removing one takes its partner on
+the other track with it, and the partner's own `Remove` then returns `false`, so the tracking list
+kept a reference to an event that no longer existed. Touching a dead COM wrapper *is*
+`E_UNEXPECTED`.
+
+So nothing survives the edit now. The ruler range of each grouped clip is recorded beforehand,
+translated forward by the spans that were removed, and the fragments are found by **reading the
+tracks again**. Every event object used in the regrouping is fresh and alive by construction. Do not
+"optimise" that back into a list of references.
+
 **The grouping is best-effort and can never cost you the cut.** The cut is the product; the
-regrouping is a convenience. Every grouping step is guarded, and if VEGAS refuses one you get a
-warning telling you to use your Make Groups button — not a lost edit.
+regrouping is a convenience. Every step is staged and guarded, and **the stage name comes back in
+the message** — so a refusal reports *which call* failed instead of just "catastrophic failure". If
+VEGAS refuses one, you get a warning telling you to use your Make Groups button — not a lost edit.
 
 ## Auto-ripple
 
