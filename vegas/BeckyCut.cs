@@ -36,7 +36,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Web.Script.Serialization;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using ScriptPortal.Vegas;
 
@@ -490,9 +490,7 @@ public class EntryPoint
         CutReport report = null;
         try
         {
-            JavaScriptSerializer json = new JavaScriptSerializer();
-            json.MaxJsonLength = int.MaxValue;
-            report = json.Deserialize<CutReport>(stdout);
+            report = ParseCutReport(stdout);
         }
         catch (Exception ex)
         {
@@ -517,6 +515,138 @@ public class EntryPoint
         }
 
         return report;
+    }
+
+    // ------------------------------------------------- reading becky's answer
+
+    // ParseCutReport reads becky-cut's --dry-run JSON WITHOUT
+    // System.Web.Extensions.dll.
+    //
+    // This is the bug that made the first BeckyCut.cs unusable, so it earns the
+    // paragraph. VEGAS compiles these scripts in-process against a small fixed
+    // set of assemblies. JavaScriptSerializer is not in it - it lives in
+    // System.Web.Extensions.dll, which only loads when a <script>.cs.config
+    // sidecar sits beside the .cs, and the installer copied only the .cs. So the
+    // script compiled clean under csc (whose csc.rsp quietly references that
+    // assembly - see check-vegas-script.ps1's /noconfig) and then died the
+    // moment Jordan ran it from the Tools menu:
+    //   "The type or namespace name 'Script' does not exist in the namespace
+    //    'System.Web'"
+    // BeckyCaptions.cs - the one that has always worked - reads becky's JSON
+    // with a regex for exactly this reason. Doing the same here keeps BeckyCut
+    // a SINGLE self-contained file with no sidecar to lose.
+    //
+    // This only has to survive Go's MarshalIndent (whitespace and key order),
+    // not arbitrary JSON: every decision object is flat, three scalar keys.
+    private static CutReport ParseCutReport(string json)
+    {
+        if (string.IsNullOrEmpty(json))
+        {
+            throw new ApplicationException("becky-cut printed nothing at all.");
+        }
+
+        CutReport report = new CutReport();
+        report.decisions = new List<Decision>();
+
+        double value;
+        if (TryNumberField(json, "fps", out value))
+        {
+            report.fps = value;
+        }
+        if (TryNumberField(json, "duration", out value))
+        {
+            report.duration = value;
+        }
+        report.threshold = StringField(json, "threshold");
+
+        string array = ExtractArray(json, "decisions");
+        if (array == null)
+        {
+            throw new ApplicationException("becky-cut's answer has no \"decisions\" list.");
+        }
+
+        foreach (Match m in Regex.Matches(array, @"\{[^{}]*\}"))
+        {
+            string blob = m.Value;
+            string status = StringField(blob, "status");
+            double start;
+            double end;
+
+            // All three or nothing - a half-read decision would silently cut
+            // the wrong part of the clip, which is worse than not cutting.
+            if (status == null)
+            {
+                continue;
+            }
+            if (!TryNumberField(blob, "start", out start))
+            {
+                continue;
+            }
+            if (!TryNumberField(blob, "end", out end))
+            {
+                continue;
+            }
+
+            report.decisions.Add(new Decision { status = status, start = start, end = end });
+        }
+
+        return report;
+    }
+
+    // TryNumberField pulls "<key>": <number>. The closing quote inside the
+    // pattern is what stops "threshold" also matching "threshold_db".
+    private static bool TryNumberField(string blob, string key, out double value)
+    {
+        value = 0.0;
+        Match m = Regex.Match(blob, "\"" + key + "\"" + @"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?)");
+        if (!m.Success)
+        {
+            return false;
+        }
+        return double.TryParse(m.Groups[1].Value, NumberStyles.Float,
+                               CultureInfo.InvariantCulture, out value);
+    }
+
+    // StringField pulls "<key>": "<value>", honouring backslash escapes so a
+    // Windows path in the JSON cannot end the match early.
+    private static string StringField(string blob, string key)
+    {
+        Match m = Regex.Match(blob, "\"" + key + "\"" + @"\s*:\s*""((?:[^""\\]|\\.)*)""");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    // ExtractArray returns the text inside the [ ] following "<key>":, counting
+    // brackets so a nested array could never truncate it.
+    private static string ExtractArray(string json, string key)
+    {
+        int at = json.IndexOf("\"" + key + "\"", StringComparison.Ordinal);
+        if (at < 0)
+        {
+            return null;
+        }
+        int open = json.IndexOf('[', at);
+        if (open < 0)
+        {
+            return null;
+        }
+
+        int depth = 0;
+        for (int i = open; i < json.Length; i++)
+        {
+            if (json[i] == '[')
+            {
+                depth++;
+            }
+            else if (json[i] == ']')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return json.Substring(open + 1, i - open - 1);
+                }
+            }
+        }
+        return null;
     }
 
     // ----------------------------------------------------------- the edit

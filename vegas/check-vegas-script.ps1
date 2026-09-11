@@ -24,6 +24,11 @@ if (-not (Test-Path $Script)) {
     exit 1
 }
 
+# Hand csc a real Windows path. Given X:/a/b.cs it reads the /a as an option and
+# resolves the file somewhere else entirely, then reports CS1504 "could not be
+# opened" for a path you never typed - which reads exactly like a missing file.
+$Script = (Resolve-Path $Script).ProviderPath
+
 $csc = @(
     "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
     "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
@@ -54,8 +59,17 @@ if (-not $vegasDll) {
 
 $out = Join-Path $env:TEMP 'becky-vegas-scriptcheck.dll'
 
+# /noconfig is LOAD-BEARING, not tidiness. Without it csc silently reads
+# csc.rsp from the Framework folder, which references ~30 extra assemblies
+# including System.Web.Extensions.dll. VEGAS's own in-process compiler does
+# NOT. That gap is how a script can compile-check GREEN here and still die
+# inside VEGAS with 'The type or namespace name X does not exist' - which is
+# exactly what happened to BeckyCut.cs (Jordan, 2026-09-10: two sessions of
+# junk scripts). /noconfig makes this checker see the same small reference
+# set VEGAS gives a script, so green here means green there.
 $cscArgs = @(
-    '/nologo', '/target:library', '/warn:0',
+    '/nologo', '/noconfig', '/target:library', '/warn:0',
+    '/r:mscorlib.dll',
     "/out:$out",
     "/r:$vegasDll",
     '/r:System.dll', '/r:System.Core.dll', '/r:System.Drawing.dll',

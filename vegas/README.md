@@ -5,6 +5,7 @@ Two scripts live here. They do different jobs:
 | Script | What it does |
 |---|---|
 | **`BeckyCaptions.cs`** | Captions the edit you already have open — transcribes with becky and lays one text event per caption on a "Becky Captions" track. **Start here for captions.** |
+| **`BeckyCut.cs`** | Cuts the dead air out of the events you have **selected**, in place, on the timeline you already have open. becky-cut decides where; this splits and deletes. One Ctrl+Z puts it back. **Start here for jump-cutting a selection.** |
 | `BeckyReviewTimeline.cs` | Builds a *review* timeline from a list of forensic hits (path + in/out), each as a named Region. Nothing to do with captions. |
 | **`BeckyRoughCut.cs`** | The unattended rough-cut assembler: reads `BECKY_ROUGHCUT_JSON`, builds video+audio tracks with paired events, markers and regions, saves the `.veg`, exits. `vegas180.exe -SCRIPT:<path>` + the env var = fully headless. It does NO thinking - all of it happens upstream. **Do not drive it by hand: run `Build Rough Cut.bat` (or `scripts/roughcut.py --launch-vegas`), which writes the JSON and launches this.** The JSON now comes from `scripts/build_roughcut.py`, not the older `becky-roughcut` Go path. Recipe and calibration targets: `SKILL.md` `# ROUGH CUT`. |
 | `BeckyVerifyProject.cs` | Reads a `.veg` back headless (`BECKY_VERIFY_VEG=<path>`) and writes `<path>.verify.txt` with track/event/marker/region counts and length — the proof a delivery actually landed. |
@@ -40,6 +41,56 @@ trial:
 - **A `.cs` that fails to compile pops the exact same dialog as a corrupt project file** — if a
   headless `-SCRIPT` run silently produces nothing, check the script compiles before suspecting
   the project or the data.
+
+**A VEGAS script is compiled against a SMALL assembly set, and `csc` will lie to you about it.**
+VEGAS references roughly what a bare console app gets: `mscorlib`, `System`, `System.Core`,
+`System.Drawing`, `System.Windows.Forms`, `System.Xml`, `ScriptPortal.Vegas`. Anything else -
+`System.Web.Extensions.dll` (`JavaScriptSerializer`), `System.Net.Http`, etc. - is **not** there.
+The trap: `csc.exe` silently reads `csc.rsp` from the .NET Framework folder, which references about
+thirty extra assemblies **including** `System.Web.Extensions.dll`. So a script can compile-check
+perfectly here and still die inside VEGAS with:
+
+```
+BeckyCut.cs(39) : The type or namespace name 'Script' does not exist in the
+namespace 'System.Web' (are you missing an assembly reference?)
+```
+
+That false green is exactly what shipped two unusable scripts to Jordan (2026-09-10) - the checker
+said OK, so nobody looked again. `check-vegas-script.ps1` now passes **`/noconfig`**, so it sees the
+same small set VEGAS does and reproduces that error in about a second. **Do not remove
+`/noconfig`.** If you need an assembly VEGAS does not load, either (a) don't - `BeckyCaptions.cs`
+and now `BeckyCut.cs` both read becky's JSON with a plain `Regex` and stay single-file - or
+(b) ship a `<script>.cs.config` sidecar next to the `.cs`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<ScriptSettings>
+  <AssemblyReference>System.Web.Extensions.dll</AssemblyReference>
+</ScriptSettings>
+```
+
+and make sure the installer actually copies it. `BeckyRoughCut.cs.config` has existed all along and
+was being left behind, which is exactly why BeckyRoughCut ran from the repo path and failed from the
+Tools menu with the same `System.Web` error.
+
+**Scripts do NOT have to live in `C:\Program Files`, and should not.** VEGAS looks in seven folders
+(its own FAQ, "1.10: How do I add a script to the Scripting menu?" in
+`vegasprodata\VEGASScriptFAQ.html`). The per-user one - `C:\Users\<you>\Documents\Vegas Script Menu\`
+- needs **no administrator rights**, so there is no UAC prompt on every update. Measured on VEGAS
+Pro 18, 2026-09-10:
+
+- Tools > Scripting lists **one entry per script NAME**, not one per copy.
+- The **per-user copy wins**. A stale `BeckyCut.cs` that could not even compile was sitting in
+  `Program Files` at the time; once the good copy was in Documents, the menu item ran that one.
+- `Tools > Scripting > Rescan Script Menu Folder` picks up a change **without restarting VEGAS**.
+
+`Install Vegas Scripts.bat` installs there and no longer elevates at all.
+
+One consequence to know before you "fix" it: **`check-vegas-script.ps1` reports COMPILE FAILED for
+`BeckyRoughCut.cs`, and that is correct.** The checker deliberately does not know about `.cs.config`
+sidecars, so it sees the bare reference set. BeckyRoughCut is fine in VEGAS (confirmed 2026-09-10:
+it opens its "Becky: choose vegas_cut.json" picker from the Tools menu). Every other script here
+must be COMPILE OK.
 
 **Never force-kill VEGAS** (Task Manager "End Task", killing the PID, etc). It leaves a
 process holding port 2015, and every later launch shows a blocking "VegasAIBridge failed to
@@ -412,3 +463,83 @@ count in `pending_markers.json` + any caller-supplied markers usually means some
 onto the timeline at all (check `mapToTimeline` in `becky-go/cmd/roughcut/main.go` — this is
 exactly the class of bug the 2026-08-24 stem-mismatch fix caught, where every dynamically
 generated marker silently vanished and the count never moved off a stale baseline).
+
+---
+
+# 5. `BeckyCut.cs` — cut the dead air out of what you have SELECTED
+
+This is the jump-cut tool. It works on the edit you already have open, in place: the source files
+are only ever READ, nothing is re-encoded, and nothing outside the events you selected moves.
+
+## Run it
+
+1. Open your edit in VEGAS.
+2. **Select the events you want cut** (click one, Ctrl+click for more). Video+audio events that are
+   grouped are selected together, which is what you want.
+3. **Tools > Scripting > BeckyCut**.
+4. A small dialog appears:
+   - **Leave gaps shorter than this alone (seconds)** — default `0.25`. becky-cut already pads every
+     keep by 0.04s in front and 0.25s behind, so a surviving 0.1s "cut" is the space between two
+     words in one breath; removing it makes speech sound clipped. This is the one knob worth turning.
+   - **Close the gaps inside each clip** — off by default. Off, the silent pieces are deleted and
+     holes are left where they were (the clip keeps its original footprint). On, the surviving
+     pieces are butted back together from where the clip started, so the clip gets shorter and
+     nothing else on the timeline moves.
+5. Click **Cut**.
+
+There is no "done" box — the shorter clips on the timeline are the confirmation. **One Ctrl+Z puts
+the whole thing back**; the entire edit is a single UndoBlock.
+
+Select nothing and it says so rather than guessing at a whole track.
+
+## Where the decisions come from
+
+`becky-cut <source> --dry-run`, once per distinct source file (two events off the same clip share
+one analysis). `--dry-run` computes the edit and renders nothing. The threshold is measured from the
+gap between *this* recording's room tone and *this* recording's speech
+(`becky-go/cmd/cut/level.go`), so a quiet Rode lav and a loud phone both work with no dial to turn,
+and a Silero VAD post-pass flips coughs, chair squeaks and door thuds to cuts.
+
+becky's cut spans are in **seconds into the source file**; the script maps each one through that
+event's own in-point and playback rate onto the ruler, so it is correct on a clip you have already
+trimmed or speed-changed.
+
+## Before you run it
+
+`becky-cut.exe` must exist (`build-all-tools.bat`). The script finds it via `BECKY_CUT`, then
+`..\becky-go\bin\` relative to the script, then `PATH`.
+
+## Verifying it without clicking anything
+
+Two checks, both runnable:
+
+```bat
+REM 1. Does the JSON reader still agree with becky-cut? (~5s, no VEGAS)
+powershell -ExecutionPolicy Bypass -File vegas\test-beckycut-parser.ps1
+
+REM 2. Does the whole code path work inside real VEGAS? (~1 min)
+set BECKY_CUT_SELFTEST=X:\AI-2\becky-tools\test.mp4
+set BECKY_CUT=X:\AI-2\becky-tools\becky-go\bin\becky-cut.exe
+"C:\Program Files\VEGAS\VEGAS Pro 18.0\vegas180.exe" -SCRIPT:"X:\AI-2\becky-tools\vegas\BeckyCut.cs"
+```
+
+(1) compiles the real `BeckyCut.cs` and calls its real private `ParseCutReport` by reflection, then
+checks the decision counts against becky-cut's own JSON counted a different way — so it fails if the
+reader ever silently reads zero decisions, or reads them off by one key.
+
+(2) builds a throwaway one-clip project, selects it, runs the same code a human click runs, writes
+`<media>.becky-cut-selftest.txt` and exits **without saving**. Look for `RESULT: OK`. VEGAS will ask
+"Do you want to save changes to Untitled?" on the way out — answer **No**.
+
+**After any `-SCRIPT:` launch, screenshot within 30 seconds and keep screenshotting.** A `-SCRIPT`
+run is never invisible, and a modal dialog sitting on top of it looks exactly like success from the
+outside (see the gotchas at the top of this file). Never poll a file blind.
+
+## Design notes worth keeping
+
+- **Splits are found by ruler position on a fresh snapshot of `track.Events` each time**, never by
+  holding a reference across a split. VEGAS splits grouped events together, so a held reference can
+  silently become the wrong half.
+- **Gap-closing assigns ABSOLUTE positions**, so running it twice changes nothing.
+- **It reads becky's JSON with a `Regex`, not `JavaScriptSerializer`** — see the assembly-set gotcha
+  at the top. Keep it that way; it is what makes this a single file with no sidecar to lose.

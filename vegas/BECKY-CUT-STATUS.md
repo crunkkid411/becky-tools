@@ -1,140 +1,116 @@
-# BeckyCut.cs — STATUS: written, compiles, NOT VERIFIED IN VEGAS
+# BeckyCut.cs — STATUS: WORKING, VERIFIED IN VEGAS (2026-09-10, evening)
 
-Written 2026-09-10. Stopped by Jordan mid-verification. Read this before touching it.
+Supersedes the earlier "written, compiles, NOT VERIFIED" version of this file.
+The how-to now lives in `README.md` section 5; this file is the evidence record.
 
-## What I broke (protocol failure, on the record)
+## What was actually wrong
 
-**I launched VEGAS headless and then sat in a blind 10-minute polling loop without
-ever looking at the screen.** `vegas/README.md` — which I had already read in this
-same session — says in plain words:
+One line. `BeckyCut.cs` line 39 was:
 
-> A `-SCRIPT` launch is therefore never actually invisible ... if this dialog is
-> sitting on top of it unattended, the script never gets to run: no buildlog.txt,
-> no .veg write ... this produced a silent, no-error failure that looked identical
-> to success.
-
-That is exactly what happened. VEGAS (PID 9800) was still running, holding 886 MB,
-with **no report file written**, when Jordan stopped me. It was parked on a dialog.
-I never took a single screenshot.
-
-`CLAUDE.md` also says **"YOU HAVE VISION AND WIN32 ACCESS — you MUST verify visually
-every build phase before continuing. don't be lazy."** I did not.
-
-Second failure: I did not write anything to memory as I went, so if this session had
-died, all of the below would have been lost.
-
-**The rule for whoever picks this up: after ANY `vegas180.exe -SCRIPT:` launch, take
-a screenshot within 30 seconds and every 30–60 seconds after. Never poll a file
-blind.**
-
-## What is actually done and verified
-
-### 1. becky-cut's threshold estimator — FIXED AND MEASURED (this part is real)
-
-`becky-go/cmd/cut/level.go` was rewritten. The old estimator derived the cut
-threshold from ffmpeg `volumedetect`'s single `mean_volume` and clamped it at
--50 dB, which put the right answer out of reach at any `--headroom` on
-quiet-mic footage. Replaced with the valley rule specified in
-`HANDOFF-BECKY-CUT-ADAPTIVE.md`:
-
-```
-floor_db  = 5th  percentile of per-frame RMS dBFS   (room tone)
-speech_db = 90th percentile of per-frame RMS dBFS   (programme level)
-threshold = floor_db + 0.52 * (speech_db - floor_db)      capped at -28 dB
+```csharp
+using System.Web.Script.Serialization;   // JavaScriptSerializer
 ```
 
-Measured, not assumed:
+`System.Web.Extensions.dll` is **not** in the small assembly set VEGAS compiles a script against, so
+VEGAS refused it at launch:
 
-| clip | before | after |
+```
+BeckyCut.cs(39) : The type or namespace name 'Script' does not exist in the
+namespace 'System.Web' (are you missing an assembly reference?)
+```
+
+`BeckyRoughCut.cs` had the identical line. It got away with it only because it ships a
+`BeckyRoughCut.cs.config` sidecar that adds the reference — and the installer filtered on `*.cs`, so
+that sidecar was never copied into the Script Menu. It therefore worked when launched by full path
+from the repo, and failed from the Tools menu. Same error, same day, different cause.
+
+## Why two sessions shipped it anyway
+
+`check-vegas-script.ps1` said **COMPILE OK** — because `csc.exe` silently reads `csc.rsp` from the
+.NET Framework folder, which references ~30 extra assemblies *including* `System.Web.Extensions.dll`.
+The checker was referencing an assembly VEGAS does not have. It was a false green, and it was
+trusted instead of the machine.
+
+## The fixes
+
+| # | Fix | File |
 |---|---|---|
-| `HJOC7106.MP4` (Rode Wireless GO II) | -36.1 dB, 85 segs, 103.1 s kept, median 0.83 s, **19 fragments < 0.6 s** | -57.1 dB, 72 segs, 139.3 s kept, median 1.70 s, **2 fragments < 0.6 s** |
-| `test-for-clips.mp4` (normal level) | -28.0 dB, 72 segs, 89.0 s kept, median 0.97 s, 21 fragments < 0.6 s | -44.6 dB, 61 segs, 118.1 s kept, median 1.47 s, 5 fragments < 0.6 s |
+| 1 | `/noconfig` — the checker now sees the same assemblies VEGAS does, and reproduces the real error in ~1s | `vegas/check-vegas-script.ps1` |
+| 2 | JSON read with `Regex` instead of `JavaScriptSerializer`; BeckyCut is now a single self-contained file with no sidecar to lose | `vegas/BeckyCut.cs` |
+| 3 | Installer copies `.cs.config` sidecars, installs to `Documents\Vegas Script Menu` (no admin, no UAC), and reports stale `Program Files` copies | `install-vegas-scripts.ps1`, `Install Vegas Scripts.bat` |
+| 4 | A runnable check so the reader cannot silently rot | `vegas/test-beckycut-parser.ps1` |
 
-The Go percentile port matches the proven Python reference (`scripts/speechcut.py`)
-to **0.001 dB** on the same file (floor -78.737 vs -78.738, speech -37.173 vs
--37.174) — that is the proof the port is correct, not a guess.
+## The evidence
 
-Gates: `go build ./...`, `go vet ./...` green; `go test ./cmd/cut/` green with new
-value-asserting tests. Two test failures elsewhere (`cmd/tts` needs a model,
-`internal/assistant` router) and three `gofmt` hits in `cmd/ask` are **pre-existing
-on master** — those files were never touched here.
-
-Deviation from the work order, deliberately: it said to port the measurement into a
-new Python helper (`levels.py`). I did it in Go off an ffmpeg PCM pipe instead —
-same window (20 ms), same hop (10 ms), same percentiles, verified against the Python
-to 3 decimals — so becky-cut needs neither Python nor numpy to pick its own
-threshold. Steps 4–7 of that work order (VAD-gated speech level, `--profile`,
-per-file persistence, rewiring `roughcut.py`) are **NOT done**.
-
-### 2. `vegas/BeckyCut.cs` — written, compiles, NEVER RUN
-
-Compile-checked clean against `ScriptPortal.Vegas.dll` (VEGAS Pro 18):
-
+**Offline — the checker now catches it:**
 ```
-powershell -ExecutionPolicy Bypass -File vegas\check-vegas-script.ps1 -Script "X:\AI-2\becky-tools\vegas\BeckyCut.cs"
-  COMPILE OK
+COMPILE FAILED  BeckyCut.cs   (before the fix)
+  BeckyCut.cs(39,18): error CS0234: The type or namespace name 'Script' does not
+  exist in the namespace 'System.Web'
+COMPILE OK      BeckyCut.cs   (after)
 ```
 
-**Compiling is not working.** Nothing below has been seen to happen on a real
-timeline. Treat every claim in this section as untested intent.
-
-What it is meant to do:
-
-1. Read the events you have **selected** (any track). Nothing selected → an error
-   box telling you to select something. It never guesses at a whole track.
-2. Run `becky-cut <source> --dry-run` once per distinct source file — no render, no
-   new file, the sources are only ever read.
-3. Map becky's cut spans (seconds into the source) through each event's own
-   in-point and playback rate onto the ruler.
-4. Split at both edges of each span and delete the piece in between, restricted to
-   that event's own footprint so nothing else on the timeline is touched.
-5. Optionally close the gaps **inside each clip only** (the clip gets shorter,
-   nothing else moves).
-6. The whole thing is one `UndoBlock` — one Ctrl+Z should put the timeline back.
-
-Design choices worth keeping:
-
-- **Splits are found by ruler position on a fresh snapshot of `track.Events` each
-  time, never by holding a reference across a split.** VEGAS splits grouped events
-  together, so a held reference can silently become the wrong half.
-- **Gap-closing assigns ABSOLUTE positions**, so it is idempotent even if VEGAS
-  moves a group partner for us.
-- **Minimum gap default 0.25 s**, on the dialog. becky-cut's margin already pads
-  every keep by 0.04 s / 0.25 s, so a surviving 0.1 s "cut" is the space between two
-  words in one breath — removing it makes speech sound clipped.
-- Env overrides skip the dialog (`BECKY_CUT_MIN_GAP`, `BECKY_CUT_CLOSE_GAPS`),
-  matching the env-var pattern the other becky VEGAS scripts use.
-
-## The unfinished step — the headless proof
-
-`BECKY_CUT_SELFTEST=<media file>` makes the script build a throwaway one-clip
-project, select it, run the real code path, write
-`<media>.becky-cut-selftest.txt`, and exit without saving.
-
-```bat
-set BECKY_CUT_SELFTEST=C:\some\clip.mp4
-set BECKY_CUT=X:\AI-2\becky-tools\becky-go\bin\becky-cut.exe
-"C:\Program Files\VEGAS\VEGAS Pro 18.0\vegas180.exe" -SCRIPT:"X:\AI-2\becky-tools\vegas\BeckyCut.cs"
+**Offline — the JSON reader agrees with becky-cut, counted a different way:**
 ```
+BeckyCut.cs parser vs becky-cut on test.mp4
+  ok    decisions        29
+  ok    keep             11
+  ok    cut              18
+  ok    fps              29.97
+  ok    threshold        -37.3dB (floor -61.2dB, speech -15.2dB, valley 46.0dB x 0.52)
+  PARSER TEST PASSED
+```
+(Note `keep_segments: 14` in becky-cut's JSON is **not** the answer key — it is the count *before*
+the Silero VAD pass, and `removed_by_vad: 3` of those are flipped to cut. 14 - 3 = 11.)
 
-**This has never produced a report file.** The one attempt hung on a dialog. Whoever
-runs it next: screenshot the screen within 30 seconds of launching, dismiss whatever
-is on top (`EnumWindows` for a visible window on the VEGAS PID whose title contains
-"VegasAIBridge", then `PostMessage(hWnd, 0x0010, 0, 0)`), and keep screenshotting.
+**In real VEGAS, headless — `BECKY_CUT_SELFTEST`, which had never once produced a report file:**
+```
+media: X:\AI-2\becky-tools\test.mp4
+clip_length_seconds: 45.111
+events_selected_before: 2
+becky_decisions: 29
+min_gap_seconds: 0.25
+close_gaps: False
+pieces_removed: 28
+track 0 (Becky Cut selftest (video)): events=9 kept_seconds=25.391 first_start=0 last_end=44.778
+track 1 (Becky Cut selftest (audio)): events=9 kept_seconds=25.391 first_start=0 last_end=44.778
+RESULT: OK
+```
+Video and audio counts identical — the two stayed in sync.
 
-Also still not done: the script is **not installed** into
-`C:\Program Files\VEGAS\VEGAS Pro 18.0\Script Menu`, so it does not appear under
-Tools ▸ Scripting yet. `Install Vegas Scripts.bat` at the repo root does that and
-needs an admin prompt.
+**In real VEGAS, by hand, driven with mouse clicks and screenshotted at every step** — the path
+Jordan actually uses:
+
+1. Tools > Scripting shows **BeckyCut** (one entry, not two, despite the stale copy still sitting in
+   `Program Files`).
+2. It opens the options dialog — *"2 events selected. becky will cut the dead air out of them and
+   leave everything else alone."* — not a compile error.
+3. Cut with defaults: the 45s clip became 9 pieces with holes where the silence was, video and audio
+   aligned.
+4. **Ctrl+Z restored the timeline exactly** — back to one 45.03s clip on each track.
+5. Cut again with **Close the gaps** ticked: the pieces butted together, 45s down to ~25s, nothing
+   outside the clip moved.
+6. `BeckyRoughCut` from the same menu now opens its *"Becky: choose vegas_cut.json"* picker instead
+   of erroring — fix #3 confirmed on the second script too.
+
+VEGAS was closed with `WM_CLOSE` and "No" to the save prompt each time, never force-killed.
+
+## The protocol that was broken last session, and was followed this time
+
+> After ANY `vegas180.exe -SCRIPT:` launch, screenshot within 30 seconds and keep screenshotting.
+> Never poll a file blind.
+
+It mattered: both VEGAS launches this session parked on a modal dialog ("The last session did not
+complete properly", "Do you want to save changes to Untitled?"). Each was seen in a screenshot and
+clicked. Blind polling would have looked exactly like the hang that ended the previous session.
 
 ## Not touched
 
-No VEGAS setting, preference, template or default was changed by any of this. The
-only VEGAS-side action taken was launching `vegas180.exe -SCRIPT:` once, on a
-throwaway project built in memory from a temp clip, which was never saved.
+No VEGAS setting, preference, template or default was changed. The four stale copies under
+`C:\Program Files\VEGAS\VEGAS Pro 18.0\Script Menu` were left alone — removing them needs an admin
+prompt and they are shadowed by the per-user copies anyway. The installer says so when it runs.
 
-Jordan's separate report — playback jumping back toward the start of the timeline
-when the playhead reaches the right edge of the visible area — was **not
-investigated**. First things to check are Loop Playback (Q) with a loop region set,
-and the auto-scroll / "cursor and playhead" preference; neither is something these
-scripts write to.
+Still open, unrelated and uninvestigated: Jordan's report of playback jumping back toward the start
+of the timeline when the playhead reaches the right edge of the visible area. First things to check
+are Loop Playback (Q) with a loop region set, and the auto-scroll preference. No becky script writes
+to either.
