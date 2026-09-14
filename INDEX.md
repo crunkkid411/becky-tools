@@ -7,6 +7,16 @@
   watch-a-video commands, the real working-tool list, how to run a workflow `.json` +
   the opt-in agent step, and an OSINT quickstart. For Jordan or any human/agent that just
   wants to RUN becky.** New 2026-07-14. Keep it current when tools/commands change.
+- **`vegas/README.md` section 6 + `SKILL.md` `# VEGAS PRO 18`** — **transcript search INSIDE VEGAS
+  and a working control channel into it.** `vegas/BeckyVegas/` is a VEGAS Application Extension:
+  View > Extensions > **Becky Search** searches the open timeline (hits shown on the ruler, "cut
+  from your edit" flagged) or any footage folder (double-click adds the line on "Becky Pulls"
+  tracks), transcribes missing clips, and has BeckyCut/BeckyCaptions buttons. `becky-vegas.exe`
+  (`becky-go/cmd/vegas`) drives the running VEGAS over `\\.\pipe\becky-vegas-<pid>`: status,
+  dialogs, timeline, search, jump, markers, insert, snapshot, run_script, command. Search engine =
+  `becky-review-index --timeline`. Installed by `Install Vegas Scripts.bat`, which also retires the
+  never-working VegasAIBridge. Why OFX could not do this, why the old bridge died, and the measured
+  VEGAS 18 API facts are in those two docs. New 2026-09-14.
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,

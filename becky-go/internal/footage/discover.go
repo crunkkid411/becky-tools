@@ -96,8 +96,20 @@ var subtitleSubdirs = map[string]bool{
 // case-insensitively against a directory's base name; used by every WalkDir in
 // this package (Index, collectVideoBases, buildSubtitleIDIndex, collectOrphans)
 // so a render never becomes searchable or a false transcript orphan.
+//
+// The rest are software folders that are never footage but ARE full of files
+// with video extensions: ".ts" is both MPEG transport stream and TypeScript, so
+// a Python venv's gradio frontend showed up as ~150 "videos with no transcript"
+// in a VEGAS folder search (2026-09-13), each one a Transcribe button waiting to
+// burn the GPU on source code.
 var excludedWalkDirs = map[string]bool{
-	"render": true,
+	"render":        true,
+	"node_modules":  true,
+	"site-packages": true,
+	".git":          true,
+	"venv":          true,
+	".venv":         true,
+	"__pycache__":   true,
 }
 
 // skipExcludedDir reports whether d is a directory this package must never

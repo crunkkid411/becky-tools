@@ -1102,3 +1102,68 @@ mixing step in Vegas rather than something this tool should auto-apply.
 - One heavy media app at a time; detection passes first, review app after.
 - The QA gate is honesty: report what was cut and what was dropped, never a duration-% vanity
   number.
+
+
+# VEGAS PRO 18 — transcript search inside VEGAS, and driving the open VEGAS from outside
+
+Built 2026-09-13/14 and verified live in VEGAS Pro 18 build 527 (every step clicked with the mouse on
+a throwaway Untitled project and screenshotted). Full reference: `vegas/README.md` section 6.
+
+## What Jordan has
+
+- **View > Extensions > Becky Search** - a panel inside VEGAS. "Search my timeline": type what was
+  said, see every place it is spoken ON THE RULER, double-click to put the cursor there with the
+  line selected. "Search a folder": pick any footage folder, double-click a line to add it at the
+  cursor on "Becky Pulls" tracks. Clips with no transcript get a "Transcribe N clips" button. Two
+  buttons run the working scripts (BeckyCut, BeckyCaptions) on the selection.
+- Installed by **`Install Vegas Scripts.bat`** (VEGAS closed). The old VegasAIBridge is retired by
+  that installer into `%LOCALAPPDATA%\BeckyVegas\retired\` - it never worked (its own threading bug).
+
+## For agents: `becky-vegas` is the ONE call into a running VEGAS
+
+```bat
+becky-vegas status            :: is VEGAS up, what project, cursor/selection, event counts
+becky-vegas dialogs           :: ALWAYS check before acting: open dialogs with their text + buttons
+becky-vegas timeline          :: every media event (source, in, out, timeline, track, rate, selected)
+becky-vegas search query="what he said"                 :: timeline hits with on_timeline true/false
+becky-vegas search query="what he said" folder="X:\Videos\2026\09_sept"
+becky-vegas jump start=45.76 end=50.08
+becky-vegas snapshot path="C:\...\frame.png"            :: then LOOK at the frame (real pixels)
+becky-vegas add_marker seconds=12.5 label="..."   |  add_region start= end= label=
+becky-vegas insert path="..." in=10 out=14         :: lands on "Becky Pulls" tracks, one undo step
+becky-vegas run_script path="X:\AI-2\becky-tools\vegas\BeckyCut.cs"
+becky-vegas command section=Global name=<keyboard.ini command name>
+becky-vegas help
+```
+
+Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the extension running.
+
+## Rules that are law here
+
+- **VEGAS objects are touched only on VEGAS's main thread.** In the extension that is `UiThread.Run`.
+  Anything that touches `vegas.*` from a pipe/HTTP/timer thread is the exact bug that killed
+  VegasAIBridge (`E_NOINTERFACE` on IVegasCOM).
+- **Jordan's projects are his.** There is no save/open/close verb, on purpose. Never add one without
+  him asking. Test only on a new Untitled project: `vegas180.exe -CMDMODULE:"...BeckyVegas.dll" "<test clip>"`
+  (and not while the installed copy is present - VEGAS would load both).
+- **Look at VEGAS.** A dialog can park VEGAS at any time; `becky-vegas dialogs` names it, and a
+  screenshot confirms it. Edit verbs refuse while a dialog is open or a render runs - do not work
+  around that, answer the dialog (with Jordan's intent) first.
+- **The wrapper applies, becky decides.** The panel and the bridge invent no numbers: search is
+  `becky-review-index` (`--timeline` mode), transcription is `becky-transcribe`
+  (`<clip>_parakeet_transcription.srt`), cuts and captions are the existing scripts.
+- **Never force-kill VEGAS**; close with WM_CLOSE and answer the save prompt (No for a test project).
+
+## Measured VEGAS 18 facts (do not relearn)
+
+- `Transport.CursorPosition` BEFORE `SelectionStart/Length`, or the selection is cleared.
+- `Vegas.AppActivated` never fired for the extension; poll the foreground window.
+- `SaveSnapshot` returns real frames in a normal session (blank only under `-SCRIPT`).
+- `InvokeCommand(section, name)`: section = keyboard.ini context (`Global` proven), name = full
+  keyboard.ini name. TrackView-context commands returned ok and did nothing.
+- `AddVideoTrack()` adds at the top, `AddAudioTrack()` at the bottom; one UndoBlock = one Ctrl+Z.
+- No Trimmer API in 18. The API html in `VegasProData/` is a 2021 revision - reflect over the
+  installed `ScriptPortal.Vegas.dll` for the truth.
+- VEGAS loads extension DLLs from SUBFOLDERS of its extension folders too.
+- OpenFX cannot see the project (no tracks/events/media paths in the OFX kit) - a timeline search
+  must be an Application Extension, not an OFX plugin.

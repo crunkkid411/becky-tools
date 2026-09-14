@@ -16,5 +16,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%PS%"
 echo.
 echo   Done. In VEGAS: Tools - Scripting - Becky Cut / BeckyCaptions
 echo   Already open? Tools - Scripting - Rescan Script Menu Folder
+echo   Transcript search: View - Extensions - Becky Search
 echo.
 pause

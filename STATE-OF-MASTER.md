@@ -6,6 +6,17 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — Becky Search inside VEGAS Pro 18 + `becky-vegas` control channel (2026-09-14, local)
+
+View > Extensions > **Becky Search**: transcript search of the open timeline (ruler positions, "cut
+from your edit" rows) and of any footage folder (double-click adds the line on "Becky Pulls"
+tracks), Transcribe-missing-clips, BeckyCut/BeckyCaptions buttons. `becky-vegas.exe` drives the
+running VEGAS for Claude Code/Whoretana (status, dialogs, timeline, search, jump, markers, insert,
+snapshot, run_script, command). Installed tonight via `Install Vegas Scripts.bat`, which retired the
+never-working VegasAIBridge (moved to `%LOCALAPPDATA%\BeckyVegas\retired\`). Verified live by mouse
+and screenshot on a throwaway project; Jordan has not used it yet. Docs: `vegas/README.md` section 6,
+`SKILL.md` `# VEGAS PRO 18`. Details: top of `HANDOFF-LOG.md`.
+
 ### CURRENT — the silence cut WORKS and is a one-click tool; Jordan accepted it (2026-08-26, local)
 
 Jordan's verdict after human review: *"a far-cry from what the rough-cut vision entails, but it's

@@ -160,3 +160,55 @@ func TestMapSpanButtedEventsAreAShift(t *testing.T) {
 	nearly(t, "start", start, 34.25)
 	nearly(t, "end", end, 35.0)
 }
+
+// SourceHits answers "where on MY timeline is this line from the source file?" -
+// the reverse of MapSpan. Each case is a real editing situation.
+func TestSourceHits(t *testing.T) {
+	tl := VegasTimeline{Events: []VegasEvent{
+		{Source: `C:\v\a.mp4`, In: 10, Out: 14, Timeline: 0, Track: 1},
+		{Source: `C:\v\a.mp4`, In: 40, Out: 42, Timeline: 10, Track: 1},
+		{Source: `C:\v\a.mp4`, In: 10, Out: 14, Timeline: 30, Track: 3}, // same shot used again later
+		{Source: `C:\v\fast.mp4`, In: 0, Out: 10, Timeline: 100, Rate: 2},
+		// picture and sound of one clip: two events, one place on the ruler
+		{Source: `C:\v\pair.mp4`, In: 0, Out: 8, Timeline: 200, Track: 0},
+		{Source: `C:\v\pair.mp4`, In: 0, Out: 8, Timeline: 200, Track: 1},
+	}}
+	type span struct{ start, end float64 }
+	cases := []struct {
+		name   string
+		source string
+		cue    span
+		want   []TimelineHit
+	}{
+		{"inside first event, and the reuse", `C:\v\a.mp4`, span{11, 12},
+			[]TimelineHit{{Timeline: 1, TimelineEnd: 2, Track: 1}, {Timeline: 31, TimelineEnd: 32, Track: 3}}},
+		{"cut out of the edit", `C:\v\a.mp4`, span{20, 21}, nil},
+		{"starts before the in-point: only the kept part", `C:\v\a.mp4`, span{39, 41},
+			[]TimelineHit{{Timeline: 10, TimelineEnd: 11, Track: 1}}},
+		{"ends exactly at an in-point is not a hit", `C:\v\a.mp4`, span{38, 40}, nil},
+		{"sped-up event divides by the rate", `C:\v\fast.mp4`, span{4, 6},
+			[]TimelineHit{{Timeline: 102, TimelineEnd: 103}}},
+		{"Windows path compare ignores case and slashes", `c:/V/A.MP4`, span{41, 41.5},
+			[]TimelineHit{{Timeline: 11, TimelineEnd: 11.5, Track: 1}}},
+		{"zero-length cue inside an event", `C:\v\a.mp4`, span{13, 13},
+			[]TimelineHit{{Timeline: 3, TimelineEnd: 3, Track: 1}, {Timeline: 33, TimelineEnd: 33, Track: 3}}},
+		{"other file never matches", `C:\v\b.mp4`, span{11, 12}, nil},
+		{"video+audio of one clip is ONE hit, not two", `C:\v\pair.mp4`, span{2, 3},
+			[]TimelineHit{{Timeline: 202, TimelineEnd: 203, Track: 0}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tl.SourceHits(tc.source, tc.cue.start, tc.cue.end)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d hits %+v, want %d %+v", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range got {
+				nearly(t, "timeline", got[i].Timeline, tc.want[i].Timeline)
+				nearly(t, "timeline_end", got[i].TimelineEnd, tc.want[i].TimelineEnd)
+				if got[i].Track != tc.want[i].Track {
+					t.Errorf("hit %d track = %d, want %d", i, got[i].Track, tc.want[i].Track)
+				}
+			}
+		})
+	}
+}

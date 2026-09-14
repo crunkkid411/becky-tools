@@ -145,6 +145,27 @@ func TestIndexMissingFolderDegrades(t *testing.T) {
 // and without this exclusion those show back up in Index() as if they were
 // original case footage (findable/searchable) and their sidecar .srt as an
 // "orphan" transcript.
+// TestIndex_SkipsSoftwareFolders is the 2026-09-13 regression: a folder search in
+// VEGAS listed a Python venv's TypeScript sources (.ts = MPEG-TS extension) as
+// untranscribed videos. Software folders are never footage.
+func TestIndex_SkipsSoftwareFolders(t *testing.T) {
+	root := synthFolder(t) // 3 real videos
+	for _, junk := range []string{
+		filepath.Join("models", "voice", "venv", "Lib", "site-packages", "gradio", "client", "index.ts"),
+		filepath.Join("web", "node_modules", "hls", "demo.mp4"),
+		filepath.Join(".git", "lfs", "objects", "clip.mov"),
+	} {
+		writeFile(t, filepath.Join(root, junk), "not footage")
+	}
+	idx, err := Index(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Videos) != 3 {
+		t.Fatalf("Index() found %d videos, want 3 (software folders are not footage): %+v", len(idx.Videos), idx.Videos)
+	}
+}
+
 func TestIndex_SkipsRenderFolder(t *testing.T) {
 	root := synthFolder(t) // 3 real videos (see synthFolder)
 	writeFile(t, filepath.Join(root, "render", "clips_ring_0001.mp4"), "rendered output, not evidence")
@@ -848,5 +869,45 @@ func TestIndex_PairsByYouTubeIDAcrossUnrecognizedSubfolder(t *testing.T) {
 	}
 	if cands[0].Source == "" {
 		t.Fatalf("hit must carry the video source (playable), got empty source")
+	}
+}
+
+// TestIndexFiles covers the VEGAS timeline case: clips spread over several
+// folders, one of them a separate audio recorder file (not a video extension),
+// a becky-made local transcript, a clip with no transcript, and the same clip
+// listed twice (once with different case, as VEGAS can report it). Only the
+// listed files are indexed - the unlisted sibling video must not appear.
+func TestIndexFiles(t *testing.T) {
+	root := t.TempDir()
+	cam := filepath.Join(root, "camera", "IURJ0280.MP4")
+	rec := filepath.Join(root, "recorder", "take1.wav")
+	bare := filepath.Join(root, "camera", "IURJ0281.MP4")
+	writeFile(t, cam, "")
+	writeFile(t, bare, "")
+	writeFile(t, filepath.Join(root, "camera", "unlisted.mp4"), "")
+	writeFile(t, rec, "")
+	writeFile(t, filepath.Join(root, "camera", "IURJ0280_parakeet_transcription.srt"), srtBody("scissors"))
+	writeFile(t, filepath.Join(root, "recorder", "take1.srt"), srtBody("mirror"))
+
+	idx := IndexFiles([]string{cam, "", rec, bare, filepath.Join(root, "camera", "iurj0280.mp4")})
+
+	if len(idx.Videos) != 3 {
+		t.Fatalf("indexed %d files, want 3 (dedupe + no unlisted sibling): %+v", len(idx.Videos), idx.Videos)
+	}
+	by := map[string]Video{}
+	for _, v := range idx.Videos {
+		by[v.Name] = v
+	}
+	if v := by["IURJ0280.MP4"]; !v.HasTranscript || filepath.Base(v.TranscriptPath) != "IURJ0280_parakeet_transcription.srt" {
+		t.Errorf("camera clip transcript = %q, want the local parakeet sidecar", v.TranscriptPath)
+	}
+	if v := by["take1.wav"]; !v.HasTranscript || filepath.Base(v.TranscriptPath) != "take1.srt" {
+		t.Errorf("recorder wav transcript = %q, want take1.srt", v.TranscriptPath)
+	}
+	if v := by["IURJ0281.MP4"]; v.HasTranscript {
+		t.Errorf("IURJ0281 must have no transcript, got %q (a neighbour's transcript was stolen)", v.TranscriptPath)
+	}
+	if hits := GrepTranscripts(idx, []string{"mirror"}); len(hits) != 1 || hits[0].Name != "take1.wav" {
+		t.Errorf("grep mirror = %+v, want one hit from take1.wav", hits)
 	}
 }

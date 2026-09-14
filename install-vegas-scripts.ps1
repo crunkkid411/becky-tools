@@ -86,8 +86,66 @@ if ($stale.Count -gt 0) {
     Write-Host "  Note: $($stale.Count) older copy/copies still sit under C:\Program Files." -ForegroundColor Yellow
     Write-Host '  They are IGNORED - VEGAS uses the ones just installed. Nothing to do.' -ForegroundColor Yellow
 }
+# ---------------------------------------------------------------------------
+# The Becky Search panel (vegas\BeckyVegas): a VEGAS Application Extension DLL.
+# It installs into Documents\Vegas Application Extensions - no admin, one of the
+# seven folders VEGAS reads extensions from (scripting FAQ 4.2). VEGAS only
+# loads extensions when it starts, and it locks the DLL while running, so this
+# part is skipped (with a plain message) while VEGAS is open.
+#
+# It also retires the old VegasAIBridge.dll. That bridge never worked (every
+# command ran on the wrong thread - see vegas\BeckyVegas\UiThread.cs) and it is
+# what threw "failed to start HTTP server" popups. Nothing else uses it
+# (checked 2026-09-13). It is MOVED, never deleted, to
+# %LOCALAPPDATA%\BeckyVegas\retired - OUTSIDE every extension folder, because
+# VEGAS also loads DLLs from subfolders (VEGASpython lives in one).
+# ---------------------------------------------------------------------------
+$extSource = Join-Path $PSScriptRoot 'vegas\BeckyVegas'
+$extDll = Join-Path $extSource 'bin\BeckyVegas.dll'
+$extDir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Vegas Application Extensions'
+Write-Host ''
+Write-Host '  Becky Search panel' -ForegroundColor Cyan
+if (Get-Process -Name vegas180 -ErrorAction SilentlyContinue) {
+    Write-Host '     VEGAS is open. Close VEGAS, then run this again to install the panel.' -ForegroundColor Yellow
+} else {
+    $newest = Get-ChildItem $extSource -Filter *.cs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not (Test-Path $extDll) -or ($newest -and $newest.LastWriteTime -gt (Get-Item $extDll).LastWriteTime)) {
+        Write-Host '     building it...'
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $extSource 'build.ps1') | Out-Null
+    }
+    if (-not (Test-Path $extDll)) {
+        Write-Host '     FAILED: the panel could not be built (Visual Studio Build Tools missing?).' -ForegroundColor Red
+    } else {
+        try {
+            New-Item -ItemType Directory -Force -Path $extDir | Out-Null
+            Copy-Item $extDll (Join-Path $extDir 'BeckyVegas.dll') -Force
+            Write-Host '     installed  BeckyVegas.dll' -ForegroundColor Green
+        } catch {
+            Write-Host ('     FAILED     BeckyVegas.dll  -  ' + $_.Exception.Message) -ForegroundColor Red
+        }
+        $retired = Join-Path $env:LOCALAPPDATA ('BeckyVegas\retired\' + (Get-Date -Format 'yyyy-MM-dd_HHmmss'))
+        $oldBridges = @(
+            (Join-Path $extDir 'VegasAIBridge.dll'),
+            (Join-Path $env:ProgramData 'VEGAS Pro\Application Extensions\VegasAIBridge.dll')
+        )
+        foreach ($old in $oldBridges) {
+            if (-not (Test-Path $old)) { continue }
+            try {
+                New-Item -ItemType Directory -Force -Path $retired | Out-Null
+                $tag = if ($old -like "$env:ProgramData*") { 'ProgramData' } else { 'Documents' }
+                Move-Item $old (Join-Path $retired ('VegasAIBridge-from-' + $tag + '.dll')) -Force
+                Add-Content (Join-Path $retired 'HOW-TO-PUT-BACK.txt') ('VegasAIBridge-from-' + $tag + '.dll came from: ' + $old)
+                Write-Host ('     retired    the old VegasAIBridge.dll (' + $tag + ')') -ForegroundColor Green
+            } catch {
+                Write-Host ('     could not move the old bridge at ' + $old + '  -  ' + $_.Exception.Message) -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
 Write-Host ''
 Write-Host '  In VEGAS: Tools - Scripting - (the script name).'
 Write-Host '  Already open? Tools - Scripting - Rescan Script Menu Folder.'
+Write-Host '  Becky Search panel: View - Extensions - Becky Search.'
 Write-Host ''
 Read-Host '  Press Enter to close'

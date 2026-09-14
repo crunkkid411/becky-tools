@@ -258,6 +258,83 @@ func Index(folder string) (FolderIndex, error) {
 	return idx, nil
 }
 
+// IndexFiles is Index for an explicit list of media files instead of a folder
+// walk - what a VEGAS timeline hands over, where the clips can live in any number
+// of folders. Each file's transcript is resolved by the same rules Index uses
+// (strict sidecar first, then the forgiving resolver), disambiguated against the
+// other videos in that file's own directory. Nothing is walked recursively and no
+// orphans are collected: a timeline search is about the clips on the timeline.
+// Unlike Index it does not filter by extension, so a separate audio recorder's
+// file on the timeline is searchable too. Blank and duplicate paths collapse
+// (case-insensitively, as on Windows); Videos is sorted by Path. Read-only.
+func IndexFiles(paths []string) FolderIndex {
+	idx := FolderIndex{Videos: []Video{}, Orphans: []OrphanTranscript{}}
+	seen := map[string]bool{}
+	var files []string
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		key := strings.ToLower(filepath.Clean(p))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		files = append(files, p)
+	}
+	sort.Strings(files)
+
+	claimed := map[string]bool{}
+	disByDir := map[string]disambig{}
+	for _, p := range files {
+		dir := filepath.Dir(p)
+		dis, ok := disByDir[dir]
+		if !ok {
+			dis = newDisambig(videoBasesIn(dir))
+			disByDir[dir] = dis
+		}
+		v := Video{Path: p, Name: filepath.Base(p)}
+		sub := sidecar.FindSubtitle(p)
+		if sub == "" {
+			sub = resolveTranscript(p, claimed, dis)
+		}
+		if sub != "" {
+			v.TranscriptPath = sub
+			v.HasTranscript = true
+			claimed[filepath.Clean(sub)] = true
+		}
+		if m, ok := loadMetaQuiet(p); ok {
+			v.Meta = m
+		}
+		if info, err := os.Stat(p); err == nil {
+			v.Mtime = info.ModTime().Unix()
+		}
+		resolveRecorded(&v)
+		idx.Videos = append(idx.Videos, v)
+	}
+	return idx
+}
+
+// videoBasesIn lists the video base names directly inside dir (no recursion) -
+// the disambiguation context IndexFiles needs so two cuts of one source in the
+// same folder never trade transcripts. An unreadable dir yields none.
+func videoBasesIn(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && videoExts[strings.ToLower(filepath.Ext(e.Name()))] {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 // VideoByName returns the indexed video whose basename equals name (the GUI/AI
 // refer to a source by filename, not absolute path). The second result is false
 // when no such video is indexed.

@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"becky-go/internal/pathx"
 )
@@ -39,6 +40,10 @@ type VegasEvent struct {
 	Timeline float64 `json:"timeline"`
 	Track    int     `json:"track,omitempty"`
 	Label    string  `json:"label,omitempty"`
+	// Rate is the event's playback speed. 0 means 1.0: BeckyCaptions.cs does not
+	// send it. In/Out stay SOURCE seconds either way, so a 2x event covers
+	// (Out-In)/2 seconds of ruler. Only SourceHits reads it.
+	Rate float64 `json:"rate,omitempty"`
 }
 
 // Dur is the event's length in seconds, clamped to >= 0.
@@ -208,6 +213,77 @@ func (t VegasTimeline) MapSpan(start, end float64) (float64, float64, bool) {
 		tlEnd = tlStart
 	}
 	return tlStart, tlEnd, true
+}
+
+// TimelineHit is one place on the VEGAS ruler where a stretch of a source file
+// is actually visible in the edit.
+type TimelineHit struct {
+	Timeline    float64 `json:"timeline"`     // ruler seconds where the source span starts showing
+	TimelineEnd float64 `json:"timeline_end"` // ruler seconds where it stops
+	Track       int     `json:"track"`
+}
+
+// SourceHits is MapSpan's opposite: given [start,end) seconds INSIDE source, it
+// returns every ruler position where the edit shows that stretch. A line that was
+// cut out of the edit returns nothing; a line used twice returns both, in ruler
+// order. When only part of the span survived the cut, the hit covers just that
+// part. Paths compare the way Windows does - case and separator do not matter -
+// because the timeline comes from VEGAS and the transcript from a folder walk.
+func (t VegasTimeline) SourceHits(source string, start, end float64) []TimelineHit {
+	if end < start {
+		end = start
+	}
+	key := pathKey(source)
+	var hits []TimelineHit
+	for _, e := range t.Events {
+		if pathKey(e.Source) != key {
+			continue
+		}
+		// Overlap test on source seconds. A zero-length cue counts when it sits
+		// inside the event, so an instant still finds its clip.
+		if end > start {
+			if start >= e.Out || end <= e.In {
+				continue
+			}
+		} else if start < e.In || start >= e.Out {
+			continue
+		}
+		rate := e.Rate
+		if rate <= 0 {
+			rate = 1
+		}
+		lo := max(start, e.In)
+		hi := min(end, e.Out)
+		hits = append(hits, TimelineHit{
+			Timeline:    e.Timeline + (lo-e.In)/rate,
+			TimelineEnd: e.Timeline + (hi-e.In)/rate,
+			Track:       e.Track,
+		})
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Timeline < hits[j].Timeline })
+	// A clip's picture and its sound are two events over the same ruler span, so
+	// without this every line would be listed twice (measured in VEGAS 2026-09-13).
+	// One place on the ruler is one hit; the first track wins.
+	out := hits[:0]
+	for _, h := range hits {
+		if n := len(out); n > 0 && abs(out[n-1].Timeline-h.Timeline) < spanEps && abs(out[n-1].TimelineEnd-h.TimelineEnd) < spanEps {
+			continue
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// pathKey folds a path to the form Windows compares: lowercase, forward slashes.
+func pathKey(p string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(p), `\`, "/"))
 }
 
 // stem drops a file extension from a base name.

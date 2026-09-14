@@ -1,9 +1,13 @@
 # Becky → VEGAS Pro
 
-Two scripts live here. They do different jobs:
+**Start with the Becky Search panel** (section 6): transcript search of your timeline and of any
+footage folder, inside VEGAS, plus the `becky-vegas` control channel that lets Claude Code, becky
+tools and Whoretana drive the open VEGAS. The scripts below still do their own jobs and the panel
+has buttons for the two you use most.
 
-| Script | What it does |
+| Piece | What it does |
 |---|---|
+| **`BeckyVegas/` (extension)** | **View ▸ Extensions ▸ Becky Search.** Type what was said, find every place it is spoken - on the timeline or in a folder - double-click to jump there or pull that line onto the timeline. Also the `\\.\pipe\becky-vegas-<pid>` control channel (`becky-vegas.exe`). **Section 6.** |
 | **`BeckyCaptions.cs`** | Captions the edit you already have open — transcribes with becky and lays one text event per caption on a "Becky Captions" track. **Start here for captions.** |
 | **`BeckyCut.cs`** | Cuts the dead air out of the events you have **selected**, in place, on the timeline you already have open. becky-cut decides where; this splits, deletes and ripples the gap closed. **One click - no dialog, no knobs, same answer every time.** One Ctrl+Z puts it back. **Start here for jump-cutting a selection.** |
 | `BeckyReviewTimeline.cs` | Builds a *review* timeline from a list of forensic hits (path + in/out), each as a named Region. Nothing to do with captions. |
@@ -98,7 +102,14 @@ start HTTP server" dialog that has to be dismissed before anything else can run.
 `WM_CLOSE` (or the normal window close) and answer the save prompt with **No** if the project
 was only a headless throwaway.
 
-**A third-party "VegasAIBridge" plugin is installed on this machine** and throws its own
+**UPDATE 2026-09-14: VegasAIBridge is RETIRED.** It was not third-party - it was an earlier
+homemade attempt (source: `X:\Videos\video_tools\vegas-ai-agent\vegas-extension\src\`), and it
+never worked for its own reason, not VEGAS's (section 6). `Install Vegas Scripts.bat` moves both
+copies to `%LOCALAPPDATA%\BeckyVegas\retired\<date>\` (with a note saying where each came from),
+so the port-2015 dialog below no longer happens on this machine. The history is kept because it
+explains old handoff notes.
+
+**A "VegasAIBridge" plugin was installed on this machine** and threw its own
 port-conflict error dialog on startup. Measured 2026-08-25: on a machine with any earlier VEGAS
 session still around, this fires on EVERY fresh `vegas180.exe -SCRIPT:` launch, not just
 "sometimes" - and it is a REAL modal dialog, not suppressed by launching from Go with
@@ -659,3 +670,133 @@ run is never invisible, and a modal dialog on top of it looks exactly like succe
   one-frame slivers behind.
 - **It reads becky's JSON with a `Regex`, not `JavaScriptSerializer`** — see the assembly-set gotcha
   at the top. Keep it that way; it is what makes this a single file with no sidecar to lose.
+
+---
+
+# 6. `BeckyVegas/` — the Becky Search panel + the `becky-vegas` control channel
+
+One VEGAS Application Extension DLL (C#, .NET Framework 4.8, `vegas/BeckyVegas/`), loaded by VEGAS
+at startup from `Documents\Vegas Application Extensions\BeckyVegas.dll`. Built and verified live in
+VEGAS Pro 18 build 527 on 2026-09-13/14 - every behaviour below was clicked through with the mouse
+on a throwaway Untitled project and screenshotted.
+
+## Why an extension and not an OpenFX plugin
+
+Jordan asked for "an OFX plugin that allows me to search timeline footage AND folder footage based
+on transcript". The OFX kit VEGAS ships (`Documents\Vegas_Assets\openfx\SonyOfxPIDK`: the
+*Sony Vegas Video Plug-in SDK.doc* and `ofxSonyVegas.h`) gives a plugin parameters, a custom HWND
+panel, progress/messages and the Timeline suite (`getTime`/`gotoTime`) - and **no access to the
+project, its tracks, its events or the files on them**. An OFX plugin cannot know what footage is on
+the timeline, so it cannot search it. An Application Extension (`ICustomCommandModule` +
+`DockableControl`, scripting FAQ section 4) can read every event, move the cursor, add events and
+markers, and run becky's tools - so that is what this is. It docks and floats like a native window.
+
+## Install / update
+
+Double-click **`Install Vegas Scripts.bat`** with VEGAS closed. It builds the DLL if the sources are
+newer (Visual Studio Build Tools' Roslyn compiler, `vegas/BeckyVegas/build.ps1`), copies it into
+`Documents\Vegas Application Extensions`, and retires the old VegasAIBridge (moved, never deleted).
+No admin. Then in VEGAS: **View > Extensions > Becky Search** (VEGAS remembers where you put it).
+
+**Test a change WITHOUT installing it:**
+`vegas180.exe -CMDMODULE:"<repo>\vegas\BeckyVegas\bin\BeckyVegas.dll" "<a test clip>"` (scripting
+FAQ 4.7) loads the DLL for that one session. Pass a media file so VEGAS opens a new Untitled
+project, never one of Jordan's. **Do not do this while the installed copy is in
+`Documents\Vegas Application Extensions`** - VEGAS would load both. A running VEGAS locks the DLL,
+so build to a side folder while it is open: set `BECKYVEGAS_OUT` to another folder before
+`build.ps1`.
+
+## Using the panel (Jordan)
+
+- **Search my timeline** - type what was said, Enter. Each result shows where it is on the ruler
+  (cyan). Double-click: the cursor goes there and exactly the spoken line is selected, so Space
+  plays it. A line that exists in a clip on the timeline but was trimmed away shows as
+  **"cut from your edit"** (amber) - right-click it to add it back at the cursor.
+- **Search a folder** - **Choose folder...** (the modern Windows picker) or drop a folder on the
+  panel. Double-click a result: that line is added at the cursor on two **"Becky Pulls"** tracks
+  (video + audio, grouped), and the cursor moves to its end so the next pull lands after it.
+  Right-click: jump / add this line / add the whole clip / add a marker / copy the words / show in
+  Explorer. Every edit is one Ctrl+Z.
+- **Transcribe N clips** appears when clips have no transcript. It runs `becky-transcribe` one clip
+  at a time in the background (VEGAS stays usable, **Stop** cancels) and writes
+  `<clip>_parakeet_transcription.srt` beside each clip - the same name becky-clip uses, so Becky
+  Review finds them too, and an official `<clip>.srt` is never overwritten. The search re-runs when
+  it finishes.
+- **Cut silence in selection** / **Caption selection** run `BeckyCut.cs` / `BeckyCaptions.cs`
+  exactly as the Tools > Scripting menu does (verified: BeckyCaptions put 254 captions on the test
+  clip; BeckyCut cut the 5-minute clip to 1:29, picture and sound together).
+
+The search is **not reimplemented** here: it is `becky-review-index` (the engine behind Becky
+Review's search pane), which gained `--timeline <json>` for this. The timeline JSON is the same
+`internal/edl/vegastimeline.go` contract BeckyCaptions writes, and `VegasTimeline.SourceHits` maps a
+spoken line in a file back to every ruler position that shows it (speed changes included; a clip's
+picture and sound count once).
+
+## The control channel - `becky-vegas.exe` (Claude Code, Whoretana, becky tools)
+
+The extension listens on `\\.\pipe\becky-vegas-<pid>` (this Windows user only; network clients are
+refused) and writes `%LOCALAPPDATA%\BeckyVegas\instances\<pid>.json` so the client can find the
+right VEGAS. One JSON request line in, one JSON reply line out. `becky-vegas` wraps it:
+
+```bat
+becky-vegas status                         :: project, cursor, selection, counts, rendering flag
+becky-vegas dialogs                        :: open VEGAS dialogs: title, message text, buttons
+becky-vegas timeline                       :: every media event: source, in, out, timeline, track, rate
+becky-vegas search query="beauty mirror"   :: transcript search of the timeline (on_timeline true/false)
+becky-vegas search query="scissors" folder="E:\footage"
+becky-vegas jump start=45.76 end=50.08     :: cursor there, that span selected, scrolled into view
+becky-vegas insert path="X:\clip.mp4" in=10 out=14        :: onto the Becky Pulls tracks at the cursor
+becky-vegas add_marker seconds=9.12 label="check this"
+becky-vegas snapshot path="C:\tmp\frame.png"              :: the preview frame at the cursor, real pixels
+becky-vegas run_script path="X:\...\BeckyCut.cs"          :: any VEGAS script, like Tools > Scripting
+becky-vegas command section=Global name=Tools.Video.VideoEventFX   :: a VEGAS command by keyboard.ini name
+becky-vegas show_panel | play | stop | pause | markers | selected | transcribe path=... | help
+```
+
+Exit code 0 = VEGAS did it, 1 = VEGAS refused or failed (the reason is in the JSON), 2 = no VEGAS
+with the extension is running. `--pid N` picks one VEGAS when several are open (default: the one
+focused most recently).
+
+**Safety built in:** anything that changes the project refuses while VEGAS is rendering or showing a
+dialog (the refusal names the dialog and its message), every edit is one undo step, and there is
+deliberately no save / open / close command.
+
+**Whoretana:** whenever VEGAS comes to the front, the extension sends one line to
+`\\.\pipe\Whoretana`:
+`{"cmd":"active_app","active_app":"vegas_pro","project_path":...,"pipe":"becky-vegas-<pid>","timeline_state":{...}}`
+- the SharedState payload from `X:\AI-2\CLAUDE.md`. Verified against a stand-in listener. Whoretana
+ignores commands it does not handle yet, so this is harmless until it reads them.
+
+## Why the old VegasAIBridge never worked (so nobody re-diagnoses it)
+
+VEGAS objects may only be touched on VEGAS's main thread (scripting FAQ, application extensions).
+VegasAIBridge answered HTTP requests on a thread-pool thread and "fixed" that with
+`SynchronizationContext.Current` captured in `InitializeModule` - which is **null** there - and its
+helper then fell into `// No UI context - just run directly`, i.e. straight back onto the wrong
+thread. Every call died with *"Unable to cast COM object ... IVegasCOM ... E_NOINTERFACE"*, and its
+`COM-ISSUE-ANALYSIS.md` concluded VEGAS itself could not run scripts from an extension. **That
+conclusion is wrong** - `run_script` works (a probe script added its marker from outside VEGAS).
+The working pattern is `UiThread.cs`: create a `Control` in `InitializeModule`, touch `.Handle` so the
+window exists on the main thread, then `BeginInvoke` onto it from any thread, with a timeout that
+cancels queued work so an edit can never land late.
+
+## VEGAS 18 facts measured while building it (API traps)
+
+- Set `Transport.CursorPosition` **before** `SelectionStart`/`SelectionLength` - setting the cursor
+  afterwards clears the selection (it read back 0).
+- `Vegas.AppActivated` **never fired** for the extension when VEGAS came to the front; the extension
+  polls the foreground window once a second instead.
+- `vegas.SaveSnapshot(path, ImageFileFormat.PNG)` returns a **real** frame in a normal session (the
+  blank-frame trap in section 0 is `-SCRIPT`-only).
+- `vegas.InvokeCommand(section, name)` is undocumented; `section` is the **keyboard.ini context**
+  and `name` the full keyboard.ini command name. `("Global", "Tools.Video.VideoEventFX")` works.
+  TrackView-context commands (`TrackView.Nudge.RightByFrames`) returned without error and did
+  nothing. Opening Video Event FX also adds a tab to Jordan's floating dock, and dock layouts
+  persist - close whatever you opened.
+- `Project.AddVideoTrack()` puts the track at the **top**, `AddAudioTrack()` at the **bottom**.
+- One `UndoBlock` around track creation + events + `new TrackEventGroup()` grouping is one Ctrl+Z.
+- The API reference in `VegasProData/` is a 2021 revision; the ground truth for this machine is
+  reflection over `C:\Program Files\VEGAS\VEGAS Pro 18.0\ScriptPortal.Vegas.dll`. There is no
+  Trimmer API in 18 - that is why folder hits are pulled onto the timeline instead.
+- VEGAS scans **subfolders** of its extension folders, so a DLL "disabled" by moving it into a
+  subfolder still loads. Move it out of every extension folder.

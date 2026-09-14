@@ -10,6 +10,52 @@
 
 ---
 
+## Becky Search inside VEGAS Pro 18 + a control channel that actually works; VegasAIBridge retired (2026-09-14 overnight, local, `master`)
+
+Jordan's ask: *"Allow me to use becky-tools within Vegas Pro 18 - an OFX plugin that allows me to
+search timeline footage AND folder footage based on transcript would be ideal. Please also
+integrate AS MUCH external tools and controls with my Vegas Pro 18 as possible. The vegas pro
+bridge which currently exists DOES NOT WORK."*
+
+**Not OFX, with the docs as the reason.** The VEGAS OFX kit (`Documents\Vegas_Assets\openfx\SonyOfxPIDK`,
+*Sony Vegas Video Plug-in SDK.doc*, `ofxSonyVegas.h`, `ofxTimeLine.h`) gives parameters, an HWND
+panel and gotoTime - nothing about the project, tracks, events or media paths. So it is an
+Application Extension (scripting FAQ section 4), `vegas/BeckyVegas/`, one DLL.
+
+**What shipped (all verified in VEGAS by mouse + screenshot on a throwaway Untitled project):**
+- *Becky Search* panel: timeline search with ruler positions and "cut from your edit" rows; folder
+  search with the modern folder picker; double-click jump (line selected) or add the line on
+  "Becky Pulls" tracks (grouped, one Ctrl+Z); right-click menu; Transcribe missing clips
+  (`<clip>_parakeet_transcription.srt`, background, Stop); Cut silence / Caption selection buttons
+  (BeckyCaptions put 254 captions on the test clip, BeckyCut cut 5:00 -> 1:29 in sync).
+- `becky-vegas.exe` (new `cmd/vegas`) over `\\.\pipe\becky-vegas-<pid>`: ping/status/dialogs/timeline/
+  selected/markers/cursor/jump/play/stop/pause/add_marker/add_region/insert/search/transcribe/
+  run_script/command/snapshot/show_panel. Edits refuse while a dialog is open or a render runs.
+- Whoretana: on focus, one `{"cmd":"active_app",...}` line to `\\.\pipe\Whoretana` (stand-in listener
+  received it).
+- `becky-review-index --timeline <json>` + `footage.IndexFiles` + `edl.VegasTimeline.SourceHits`
+  (tests), and `internal/footage` now skips venv/site-packages/node_modules/.git (a folder search had
+  listed a Python venv's `.ts` TypeScript files as untranscribed videos).
+- `Install Vegas Scripts.bat` installs the DLL (no admin) and MOVES both VegasAIBridge.dll copies to
+  `%LOCALAPPDATA%\BeckyVegas\retired\2026-09-14_000639\` (with HOW-TO-PUT-BACK.txt). Run tonight;
+  VEGAS then started with no port dialog and the panel loaded.
+
+**Why VegasAIBridge never worked:** it captured `SynchronizationContext.Current` in InitializeModule
+(null there) and its helper fell back to "run directly" on the HTTP thread -> E_NOINTERFACE. Its
+`COM-ISSUE-ANALYSIS.md` ("RunScriptFile fails even on the UI thread") is wrong: `run_script` works.
+
+**Measured API facts** (full list in `vegas/README.md` section 6): cursor before selection;
+AppActivated never fires; SaveSnapshot is real outside `-SCRIPT`; `InvokeCommand("Global",
+"<keyboard.ini name>")` works; AddVideoTrack=top, AddAudioTrack=bottom; subfolder DLLs load.
+
+**Gates:** `go build ./...` + `go vet ./...` green; `gofmt` clean on every changed file (CRLF only).
+`go test ./...`: every package touched here passes; two failures are NOT from this work -
+`internal/assistant TestHandleTier2Funnel` fails identically on an untouched master worktree, and
+`cmd/tts TestRun_DegradesWhenNoModel` expects a missing TTS model that this PC has.
+`build-all-tools.bat` rebuilt `becky-vegas.exe` and `becky-review-index.exe`.
+
+---
+
 ## Quote markers deleted as dishonest; QUOTES.md is the deliverable; DELIVER, never point at a path (2026-08-26, local, `master`)
 
 Two separate failures in one exchange, both now invariants.
