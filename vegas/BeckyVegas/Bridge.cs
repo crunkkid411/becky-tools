@@ -96,11 +96,13 @@ namespace BeckyVegas
             return security;
         }
 
+        // Serve runs on a thread-pool thread: the WHOLE body, disposal included, sits
+        // inside the catch, because an exception escaping a pool thread ends VEGAS.
         void Serve(NamedPipeServerStream connection)
         {
-            using (connection)
+            try
             {
-                try
+                using (connection)
                 {
                     StreamReader reader = new StreamReader(connection, new UTF8Encoding(false), false, 1 << 16);
                     string line = reader.ReadLine();
@@ -109,14 +111,14 @@ namespace BeckyVegas
                     connection.Flush();
                     connection.WaitForPipeDrain();
                 }
-                catch (IOException)
-                {
-                    // the client hung up early - nothing to answer
-                }
-                catch (Exception ex)
-                {
-                    Log.Error("pipe serve", ex);
-                }
+            }
+            catch (IOException)
+            {
+                // the client hung up early - nothing to answer
+            }
+            catch (Exception ex)
+            {
+                Log.Error("pipe serve", ex);
             }
         }
 

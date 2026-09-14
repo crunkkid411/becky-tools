@@ -205,13 +205,11 @@ namespace BeckyVegas
                     pipe.Flush();
                 }
             }
-            catch (TimeoutException)
+            catch (Exception)
             {
-                // Whoretana is not running - nothing to tell.
-            }
-            catch (IOException)
-            {
-                // busy or gone mid-write; the next focus change sends a fresh state
+                // Whoretana not running (timeout), busy, gone mid-write or refusing us:
+                // the next focus change sends a fresh state. This runs on a thread-pool
+                // thread, where ANY escaped exception would terminate VEGAS itself.
             }
         }
 

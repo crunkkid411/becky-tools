@@ -42,14 +42,24 @@ namespace BeckyVegas
             get { return Thread.CurrentThread.ManagedThreadId == uiThreadId; }
         }
 
-        // Post queues work on the main thread and returns immediately.
+        // Post queues work on the main thread and returns immediately. It never throws:
+        // it is called from background threads (a search finishing), and while VEGAS is
+        // shutting down the window handle can already be gone - an exception escaping a
+        // background thread would terminate VEGAS.
         internal static void Post(Action action)
         {
-            marshal.BeginInvoke((MethodInvoker)delegate
+            try
             {
-                try { action(); }
-                catch (Exception ex) { Log.Error("posted work", ex); }
-            });
+                marshal.BeginInvoke((MethodInvoker)delegate
+                {
+                    try { action(); }
+                    catch (Exception ex) { Log.Error("posted work", ex); }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error("post to main thread", ex);
+            }
         }
 
         // Run executes fn on the main thread and returns its result. If VEGAS is busy

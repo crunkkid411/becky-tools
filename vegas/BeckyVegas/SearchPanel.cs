@@ -46,6 +46,8 @@ namespace BeckyVegas
 
         readonly List<Row> rows = new List<Row>();
         List<MediaFile> untranscribed = new List<MediaFile>();
+        System.Windows.Forms.Timer refillTimer;
+        int lastListWidth = -1;
         bool folderMode;
         bool busy;
         volatile bool stopRequested;
@@ -96,14 +98,14 @@ namespace BeckyVegas
 
             folderRow = TwoColumnRow();
             folderBox = MakeTextBox(baseFont);
-            folderBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; StartSearch(); } };
+            folderBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Safe("search", StartSearch); } };
             browseButton = MakeButton("Choose folder...", (s, e) => ChooseFolder());
             folderRow.Controls.Add(folderBox, 0, 0);
             folderRow.Controls.Add(browseButton, 1, 0);
 
             TableLayoutPanel queryRow = TwoColumnRow();
             queryBox = MakeTextBox(bigFont);
-            queryBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; StartSearch(); } };
+            queryBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Safe("search", StartSearch); } };
             searchButton = MakeButton("Search", (s, e) => StartSearch());
             searchButton.Font = bigFont;
             searchButton.BackColor = Cyan;
@@ -130,12 +132,28 @@ namespace BeckyVegas
             resultsList.BorderStyle = BorderStyle.FixedSingle;
             resultsList.IntegralHeight = false;
             resultsList.Margin = new Padding(0, 6, 0, 6);
-            resultsList.MeasureItem += MeasureRow;
-            resultsList.DrawItem += DrawRow;
+            // Every handler below is wrapped: an exception that escapes a WinForms event
+            // handler lands on VEGAS's own UI thread and can take VEGAS down with
+            // Jordan's unsaved project in it. Paint handlers only log (touching the
+            // status label from inside a paint could re-enter the paint).
+            resultsList.MeasureItem += (s, e) => Quiet("measure row", () => MeasureRow(s, e));
+            resultsList.DrawItem += (s, e) => Quiet("draw row", () => DrawRow(s, e));
             resultsList.DoubleClick += (s, e) => Safe("double-click", () => DefaultAction(true));
             resultsList.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Safe("enter", () => DefaultAction(false)); } };
-            resultsList.MouseDown += OnResultsMouseDown;
-            resultsList.Resize += (s, e) => RefillList(); // row heights depend on the width
+            resultsList.MouseDown += (s, e) => Safe("right-click", () => OnResultsMouseDown(s, e));
+            // Row heights depend on the width, but re-measuring hundreds of rows on every
+            // pixel of a window drag lags; wait until the width settles.
+            refillTimer = new System.Windows.Forms.Timer { Interval = 150 };
+            refillTimer.Tick += (s, e) => { refillTimer.Stop(); Quiet("refill", RefillList); };
+            resultsList.Resize += (s, e) =>
+            {
+                if (resultsList.ClientSize.Width != lastListWidth)
+                {
+                    lastListWidth = resultsList.ClientSize.Width;
+                    refillTimer.Stop();
+                    refillTimer.Start();
+                }
+            };
 
             hintLabel = new Label
             {
@@ -171,7 +189,7 @@ namespace BeckyVegas
             Controls.Add(root);
             // Labels only wrap when they know how wide they may get; without this the
             // status line ran off the edge of the panel mid-sentence.
-            root.SizeChanged += (s, e) => FitLabels(root);
+            root.SizeChanged += (s, e) => Quiet("fit labels", () => FitLabels(root));
             FitLabels(root);
 
             foreach (Control c in new Control[] { root, resultsList, queryBox, folderBox, statusLabel })
@@ -213,7 +231,7 @@ namespace BeckyVegas
             b.Padding = new Padding(8, 3, 8, 3);
             b.Margin = new Padding(0, 0, 8, 0);
             b.UseVisualStyleBackColor = false;
-            b.Click += onClick;
+            b.Click += (s, e) => Safe(text, () => onClick(s, e));
             return b;
         }
 
@@ -673,6 +691,20 @@ namespace BeckyVegas
             t.Start();
         }
 
+        // Quiet runs a handler and only logs a failure - for paint and layout handlers,
+        // where updating the status label could itself trigger another paint.
+        static void Quiet(string what, Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(what, ex);
+            }
+        }
+
         void Safe(string what, Action action)
         {
             try
@@ -706,7 +738,10 @@ namespace BeckyVegas
 
         void OnDragEnter(object sender, DragEventArgs e)
         {
-            e.Effect = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+            Quiet("drag enter", () =>
+            {
+                e.Effect = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+            });
         }
 
         void OnDragDrop(object sender, DragEventArgs e)
@@ -791,6 +826,11 @@ namespace BeckyVegas
             if (disposing)
             {
                 stopRequested = true;
+                if (refillTimer != null)
+                {
+                    refillTimer.Stop();
+                    refillTimer.Dispose();
+                }
                 baseFont.Dispose();
                 bigFont.Dispose();
                 rowHeadFont.Dispose();
