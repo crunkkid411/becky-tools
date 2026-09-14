@@ -1152,6 +1152,9 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - **The wrapper applies, becky decides.** The panel and the bridge invent no numbers: search is
   `becky-review-index` (`--timeline` mode), transcription is `becky-transcribe`
   (`<clip>_parakeet_transcription.srt`), cuts and captions are the existing scripts.
+- **Timeline search answers from what the edit PLAYS** (the audio events' files) - Jordan's
+  dual-system timelines put a camera file under a separate recorder file; the camera's scratch mic
+  is never searched or transcribed while audio events exist.
 - **Never force-kill VEGAS**; close with WM_CLOSE and answer the save prompt (No for a test project).
 
 ## Measured VEGAS 18 facts (do not relearn)

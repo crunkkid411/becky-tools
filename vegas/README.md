@@ -730,7 +730,10 @@ The search is **not reimplemented** here: it is `becky-review-index` (the engine
 Review's search pane), which gained `--timeline <json>` for this. The timeline JSON is the same
 `internal/edl/vegastimeline.go` contract BeckyCaptions writes, and `VegasTimeline.SourceHits` maps a
 spoken line in a file back to every ruler position that shows it (speed changes included; a clip's
-picture and sound count once).
+picture and sound count once). **It searches what the edit PLAYS:** when the timeline has audio
+events, only their files are searched and offered for transcription (`VegasTimeline.Audible`) - on
+a dual-system timeline that is the recorder under the picture, not the camera's scratch mic, so a
+line is listed once and nobody's GPU time goes on audio nobody hears.
 
 ## The control channel - `becky-vegas.exe` (Claude Code, Whoretana, becky tools)
 

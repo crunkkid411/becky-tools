@@ -101,6 +101,9 @@ func main() {
 // after that ordering so it never trims away a hit that is on the timeline in
 // favour of one that is not.
 func searchTimeline(tl edl.VegasTimeline, terms []string, limit int) output {
+	// Search what the edit plays: on a dual-system timeline that is the recorder
+	// file under the picture, not the camera's scratch audio (see edl.Audible).
+	tl = tl.Audible()
 	sources := make([]string, 0, len(tl.Events))
 	for _, e := range tl.Events {
 		sources = append(sources, e.Source)

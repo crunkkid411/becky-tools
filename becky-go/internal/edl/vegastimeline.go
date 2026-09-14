@@ -44,6 +44,30 @@ type VegasEvent struct {
 	// send it. In/Out stay SOURCE seconds either way, so a 2x event covers
 	// (Out-In)/2 seconds of ruler. Only SourceHits reads it.
 	Rate float64 `json:"rate,omitempty"`
+	// Kind is "video" or "audio" when the writer knows (the BeckyVegas extension
+	// sends it; BeckyCaptions.cs does not, which leaves it "").
+	Kind string `json:"kind,omitempty"`
+}
+
+// Audible returns the timeline narrowed to its AUDIO events - what the edit
+// actually plays - whenever the writer marked any event as audio. On Jordan's
+// dual-system timelines the picture is a camera file and the sound a separate
+// recorder file (jordan-dual-system-audio); searching the camera's scratch-mic
+// transcript as well lists every line twice a few frames apart and offers to
+// transcribe files nobody hears. A timeline with no audio events, or one whose
+// writer never set Kind, comes back unchanged.
+func (t VegasTimeline) Audible() VegasTimeline {
+	audio := make([]VegasEvent, 0, len(t.Events))
+	for _, e := range t.Events {
+		if e.Kind == "audio" {
+			audio = append(audio, e)
+		}
+	}
+	if len(audio) == 0 {
+		return t
+	}
+	t.Events = audio
+	return t
 }
 
 // Dur is the event's length in seconds, clamped to >= 0.
