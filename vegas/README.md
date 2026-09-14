@@ -722,6 +722,10 @@ so build to a side folder while it is open: set `BECKYVEGAS_OUT` to another fold
   `<clip>_parakeet_transcription.srt` beside each clip - the same name becky-clip uses, so Becky
   Review finds them too, and an official `<clip>.srt` is never overwritten. The search re-runs when
   it finishes.
+- **Give it a keyboard shortcut:** Options > Customize Keyboard > **Global** tab > type `Becky` >
+  pick **View.Becky Search** > press the keys in "Shortcut keys" > Add > OK. The same list shows
+  every Becky script (`Script.BeckyCut`, `Script.BeckyCaptions`, ...), so those can get shortcuts
+  too (verified in the dialog 2026-09-14, then cancelled - nothing was assigned).
 - **Cut silence in selection** / **Caption selection** run `BeckyCut.cs` / `BeckyCaptions.cs`
   exactly as the Tools > Scripting menu does (verified: BeckyCaptions put 254 captions on the test
   clip; BeckyCut cut the 5-minute clip to 1:29, picture and sound together).
