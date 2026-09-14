@@ -103,7 +103,11 @@ var subtitleSubdirs = map[string]bool{
 // in a VEGAS folder search (2026-09-13), each one a Transcribe button waiting to
 // burn the GPU on source code.
 var excludedWalkDirs = map[string]bool{
-	"render":        true,
+	"render": true,
+	// _roughcut is the rough-cut pipeline's machine-artifact folder (SKILL.md # ROUGH CUT): its
+	// quotes\ and quotes_overlay\ are clips CUT FROM the project's own quote clips, so listing
+	// them doubles every hit and offers to transcribe copies (51 of them in 23_hj-fbi-recap).
+	"_roughcut":     true,
 	"node_modules":  true,
 	"site-packages": true,
 	".git":          true,

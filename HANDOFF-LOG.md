@@ -35,7 +35,12 @@ Application Extension (scripting FAQ section 4), `vegas/BeckyVegas/`, one DLL.
   received it).
 - `becky-review-index --timeline <json>` + `footage.IndexFiles` + `edl.VegasTimeline.SourceHits`
   (tests), and `internal/footage` now skips venv/site-packages/node_modules/.git (a folder search had
-  listed a Python venv's `.ts` TypeScript files as untranscribed videos).
+  listed a Python venv's `.ts` TypeScript files as untranscribed videos) and `_roughcut` (the rough
+  cut's own copies of quote clips doubled every hit - 23_hj-fbi-recap: 38 "FBI" hits -> 19, 51 fewer
+  "untranscribed" clips).
+- **Measured on Jordan's real data (read-only):** timeline search over the 1,690-clip fbi-recap rough
+  cut (3,380 events) 0.05s; folder search of that project 0.26s; all of `X:\Videos\2026` (929 videos,
+  114 transcribed) 3.2s.
 - `Install Vegas Scripts.bat` installs the DLL (no admin) and MOVES both VegasAIBridge.dll copies to
   `%LOCALAPPDATA%\BeckyVegas\retired\2026-09-14_000639\` (with HOW-TO-PUT-BACK.txt). Run tonight;
   VEGAS then started with no port dialog and the panel loaded.

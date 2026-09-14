@@ -154,6 +154,7 @@ func TestIndex_SkipsSoftwareFolders(t *testing.T) {
 		filepath.Join("models", "voice", "venv", "Lib", "site-packages", "gradio", "client", "index.ts"),
 		filepath.Join("web", "node_modules", "hls", "demo.mp4"),
 		filepath.Join(".git", "lfs", "objects", "clip.mov"),
+		filepath.Join("_roughcut", "quotes", "quote_001.mp4"), // becky's own cut of a quote clip
 	} {
 		writeFile(t, filepath.Join(root, junk), "not footage")
 	}
