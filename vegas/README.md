@@ -792,9 +792,13 @@ cancels queued work so an edit can never land late.
 - `vegas.SaveSnapshot(path, ImageFileFormat.PNG)` returns a **real** frame in a normal session (the
   blank-frame trap in section 0 is `-SCRIPT`-only).
 - `vegas.InvokeCommand(section, name)` is undocumented; `section` is the **keyboard.ini context**
-  and `name` the full keyboard.ini command name. `("Global", "Tools.Video.VideoEventFX")` works.
-  TrackView-context commands (`TrackView.Nudge.RightByFrames`) returned without error and did
-  nothing. Opening Video Event FX also adds a tab to Jordan's floating dock, and dock layouts
+  and `name` the full keyboard.ini command name. **Global commands work, including third-party
+  extensions':** `("Global", "Tools.Video.VideoEventFX")` opened Video Event FX, and
+  `("Global", "View.Vegasaur.1-Click Commands.Full Screen")` toggled VEGAS full screen and back
+  (names from `%APPDATA%\VEGAS Pro\18.0\HJ_2025.ini` / `Vegasaur_Keyboard.ini`).
+  **TrackView-context commands** (`TrackView.Nudge.RightByFrames`) returned without error and did
+  nothing - even with VEGAS focused - so do timeline edits with a script (`run_script`), not
+  `command`. Opening Video Event FX also adds a tab to Jordan's floating dock, and dock layouts
   persist - close whatever you opened.
 - `Project.AddVideoTrack()` puts the track at the **top**, `AddAudioTrack()` at the **bottom**.
 - One `UndoBlock` around track creation + events + `new TrackEventGroup()` grouping is one Ctrl+Z.

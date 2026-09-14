@@ -1162,8 +1162,10 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - `Transport.CursorPosition` BEFORE `SelectionStart/Length`, or the selection is cleared.
 - `Vegas.AppActivated` never fired for the extension; poll the foreground window.
 - `SaveSnapshot` returns real frames in a normal session (blank only under `-SCRIPT`).
-- `InvokeCommand(section, name)`: section = keyboard.ini context (`Global` proven), name = full
-  keyboard.ini name. TrackView-context commands returned ok and did nothing.
+- `InvokeCommand(section, name)`: section = keyboard.ini context, name = full keyboard.ini name.
+  Global commands work - VEGAS's own and Vegasaur's (`View.Vegasaur.1-Click Commands.Full Screen`
+  toggled full screen). TrackView-context commands return ok and do nothing, even with VEGAS
+  focused: do timeline edits through `run_script`.
 - `AddVideoTrack()` adds at the top, `AddAudioTrack()` at the bottom; one UndoBlock = one Ctrl+Z.
 - No Trimmer API in 18. The API html in `VegasProData/` is a 2021 revision - reflect over the
   installed `ScriptPortal.Vegas.dll` for the truth.
