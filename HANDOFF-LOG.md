@@ -10,6 +10,30 @@
 
 ---
 
+## Research: MiniCPM5-2B, Needle, Arch-Router/Plano + small "doer" proposal (2026-09-18, local, `master`)
+
+Jordan's ask: research MiniCPM5-2B (vendor benchmarks beat Gemma-4-E4B and Qwen3.5-4B at 2B), the
+Jev-reproductions tracker, the Katanemo router models' datasets, and Needle (29M tool caller); a
+separate research entry + a separate becky proposal. becky-decide is NOT to be built yet.
+
+**Delivered:** `research/model-minicpm5-2b.md`, `research/proposal-small-model-automation.md`,
+`research/small-model-toolcall-probe.py`, `research/small-model-toolcall-json-probe.py`.
+MiniCPM5-2B Q4_K_M GGUF downloaded to `X:\HuggingFace\models\openbmb\MiniCPM5-2B-GGUF\`.
+
+**Measured (RTX 3070, llama.cpp b9551, Q4):** tool calling 5 cases - MiniCPM5 5/5 correct content
+but 1/5 usable (XML calls not parsed into `tool_calls`), 180-305 ms, 2.6 GB GPU in use; Qwen3.5-4B
+5/5, 538-854 ms, 4.2 GB; Gemma-4 E4B 5/5, 317-542 ms, 3.7 GB (all include ~0.8 GB idle).
+JSON-schema-forced MiniCPM5: 4/5, the miss is `X:\footage` -> `X:\x0cootage` (JSON backslash
+escapes). Jev-style decisions: MiniCPM5 2/4 (only one to answer "none" on the vague request),
+48-82 ms. Independent SemIf (TheoLeeCJ/openjev): MiniCPM5 0.686 vs Qwen3.5-4B 0.813 - a 13-point
+gap, not "slightly". Vendor table is thinking-mode and self-reported.
+
+**Key calls:** Gemma-4 E4B stays the judge/decider; MiniCPM5 is a candidate tool-picker pending a
+100+ request eval on Jordan's own words; models never retype paths (code extracts, model selects);
+Needle's real model is 121M and ships telemetry ON; Katanemo publishes no datasets.
+
+---
+
 ## Research: System One models / Jev, and a `becky-decide` proposal (2026-09-18, local, `master`)
 
 Jordan's ask: research TypeSafe's Jev and the open-source Jev-likes, say whether a System One

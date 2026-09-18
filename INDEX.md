@@ -227,6 +227,14 @@
   weak at it**. Proposes `becky-decide` (Jev wire format, Gemma E4B, calibrate on Jordan's data)
   for real escalation confidence, retake candidates, routing, and a becky-judge pre-filter; plus
   where it fits (lookout) and must not fit (scheduler / merge gate) in a build-dark-factory run.
+- `research/model-minicpm5-2b.md` (+ `research/proposal-small-model-automation.md`, probes
+  `research/small-model-toolcall*-probe.py`) — **MiniCPM5-2B + Needle + Arch-Router/Plano
+  (2026-09-18, local; tested on this PC, nothing built).** MiniCPM5-2B (Apache-2.0, 1.56 GB Q4)
+  picked the right becky tool + details 5/5 at ~2x Gemma's speed and ~1.8 GB VRAM, BUT its XML
+  tool calls aren't parsed by llama.cpp b9551 (1/5 usable), JSON-forcing mangles Windows paths,
+  and it is weak at Jev-style yes/no decisions (0.686 vs Qwen3.5-4B 0.813, SemIf/openjev).
+  Proposal: MiniCPM5 as a small "doer" (tool-picker) with Gemma as judge; the model never retypes
+  paths. Needle = 121M (not 29M) and telemetry-on by default; Katanemo datasets are unpublished.
 - `research/qwen38-max-video.md` — **Qwen3.8-Max native video: what it actually takes and how
   to use it (2026-08-17, cloud; RESEARCH ONLY, rewritten after the first draft got the
   headline wrong). Read before any hosted-vision or long-video work.** Corrected findings:

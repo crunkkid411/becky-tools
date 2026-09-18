@@ -791,7 +791,11 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
   on becky's own llama-server (measured ~0.1 s/decision on this PC). Free, offline, Jev's wire
   format. Step 1 build, step 2 calibrate on Jordan's past decisions, step 3 wire into the vision
   ladder, retake candidates, becky-ask routing, becky-judge pre-filter. Hosted (paid) Jev is NOT
-  proposed. Nothing is built until Jordan says yes.
+  proposed. Nothing is built until Jordan says yes. **Jordan 2026-09-18: "don't build it just yet".**
+- **A small "doer" model for tool-picking and task set-up (`research/proposal-small-model-automation.md`,
+  2026-09-18).** MiniCPM5-2B picked the right becky tool 5/5 at ~1.8 GB VRAM, but its tool-call
+  format needs a reader (or a newer llama.cpp) first; then a 100+ request test on Jordan's own words
+  decides between MiniCPM5 / Qwen3.5-4B / Gemma-4 E4B. Not built.
 
 - **OCR ensemble + adversarial corroboration (`SPEC-OCR-ENSEMBLE.md`, landed 2026-06-28).** The
   *spec* is on master (multi-model OCR ensemble + adversarial ≥2-engine corroboration; adds the
