@@ -30,3 +30,33 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 echo "OK: all .bat/.ps1 launchers are ASCII-only."
+
+# --- PATH-wiping commands -------------------------------------------------------------
+# WHY: an old becky-go build script printed a setx-on-PATH line with %PATH% appended as
+# the "next step". Jordan ran it and it erased his whole user PATH (setx keeps at most
+# 1,024 chars; in PowerShell it saves the literal text %PATH%). Repaired 2026-09-17; see
+# HANDOFF-LOG.md. No script or README in this repo may print or run that command again,
+# nor write the combined $env:Path back into a persistent PATH. Tools reach PATH because
+# build-all-tools.bat copies them into C:\Users\only1\bin - nothing ever edits PATH.
+# (The same patterns are blocked for local agents by ~/.claude/hooks/block-path-overwrite.py.)
+setx_re='setx(\.exe)?[[:space:]]+(/m[[:space:]]+)?["'"'"']?path["'"'"']?([[:space:]]|$)'
+envpath_re='SetEnvironmentVariable\([[:space:]]*["'"'"']path["'"'"'][^)]*\$env:path'
+pathfail=0
+while IFS= read -r -d '' f; do
+  case "$f" in research/*) continue ;; esac
+  hits="$(grep -niE -e "$setx_re" -e "$envpath_re" "$f" 2>/dev/null)"
+  if [ -n "$hits" ]; then
+    echo "PATH-WIPING COMMAND in: $f"
+    echo "$hits" | sed 's/^/    line /'
+    pathfail=1
+  fi
+done < <(git ls-files -z -- '*.bat' '*.cmd' '*.ps1' '*.psm1' '*.sh' '*.py' '*.go' 'README*' '*/README*')
+
+if [ "$pathfail" -ne 0 ]; then
+  echo ""
+  echo "FAIL: a script or README tells someone to overwrite PATH (setx on PATH, or"
+  echo "      \$env:Path written back to User/Machine). This erased Jordan's user PATH once."
+  echo "      Copy tools into C:\\Users\\only1\\bin instead. History: HANDOFF-LOG.md 2026-09-18."
+  exit 1
+fi
+echo "OK: no script or README overwrites PATH."

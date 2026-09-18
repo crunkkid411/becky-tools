@@ -10,6 +10,34 @@
 
 ---
 
+## PATH-wiping advice removed and blocked for good (2026-09-18, local, `master`)
+
+Jordan's ask: read `HEY-MOTHERFUCKER.md` (untracked, repo root) and make sure it never happens
+again. That file shows an old becky-go build script printed a setx-on-PATH line as the "next
+step"; Jordan ran it and his whole user PATH was erased (repaired 2026-09-17).
+
+**Found:** the advice lived only in the OLD copy `C:\Users\only1\Documents\AI_Local\hj-toolbox\becky-go`
+(`build-all-tools.bat`, `build-first-tool.bat`, `README.md` incl. a `$env:Path` -> Machine form).
+A sweep of every repo under `X:\AI-2` found nothing else that does it (C# hits are process-only
+PATH; herdr/openfang/blender-mcp read the User PATH first - safe).
+
+**Fixed:** old copy's scripts + README now say run by full path or copy into a PATH folder; the
+only PowerShell form shown reads the User PATH first. Pushed to `crunkkid411/becky-go`
+(`4a9716f`; `build-all-tools.bat` there is untracked, fixed on disk only).
+
+**Guards (tested):**
+- `~/.claude/hooks/block-path-overwrite.py` (PreToolUse, Bash|PowerShell|Write|Edit): blocks
+  setx on PATH, raw registry writes of the Environment Path value, and User/Machine
+  `SetEnvironmentVariable('Path', ...)` built from `$env:Path` or without reading that scope first -
+  in commands AND in scripts/READMEs being written. 18/18 cases right (10 blocked, 8 harmless
+  look-alikes allowed: `git grep`, commit messages, setx on other vars, process-only PATH, the safe
+  form). Live-verified: it blocked an inert probe in this session.
+- `scripts/check-launchers.sh` (pre-commit + CI) now fails on the same patterns in tracked
+  scripts/READMEs (research/ excluded). Proven on a planted temp repo: bad .bat + README -> exit 1.
+- Rule recorded: becky `CLAUDE.md` §4, `X:\AI-2\CLAUDE.md` `# LESSONS`, agent memory.
+
+---
+
 ## Research: MiniCPM5-2B, Needle, Arch-Router/Plano + small "doer" proposal (2026-09-18, local, `master`)
 
 Jordan's ask: research MiniCPM5-2B (vendor benchmarks beat Gemma-4-E4B and Qwen3.5-4B at 2B), the

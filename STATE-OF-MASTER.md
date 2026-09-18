@@ -6,6 +6,13 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — PATH can no longer be wiped by becky advice or by an agent (2026-09-18, local)
+
+The old becky-go copy's setx-on-PATH "next step" (which erased Jordan's user PATH) is removed and
+pushed. A global Claude Code hook (`~/.claude/hooks/block-path-overwrite.py`) blocks PATH-wiping
+commands and scripts; `scripts/check-launchers.sh` fails pre-commit/CI on them. Details: top of
+`HANDOFF-LOG.md`.
+
 ### NEW — Becky Search inside VEGAS Pro 18 + `becky-vegas` control channel (2026-09-14, local)
 
 View > Extensions > **Becky Search**: transcript search of the open timeline (ruler positions, "cut

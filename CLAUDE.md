@@ -221,6 +221,13 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   a camera path" in ground.py's own words, and ignoring that panned a short across a
   Pikachu poster instead of the person. Word every such note as an OBSERVATION ("the
   tracker lost him for 3.4s"), never as a refusal ("limit 2.0s") — Jordan reads these.
+- **NEVER EDIT PATH, AND NEVER TELL ANYONE TO.** An old becky-go build script printed
+  `setx` on PATH with `%PATH%` appended as the "next step". Jordan ran it and it erased his
+  whole user PATH (`setx` keeps at most 1,024 characters; in PowerShell it saves the literal
+  text `%PATH%`). opencode, winget, browser-harness, bun and lms were broken for weeks
+  (repaired 2026-09-17). Tools reach PATH because `build-all-tools.bat` copies them into
+  `C:\Users\only1\bin`; nothing else is needed. Enforced by `scripts/check-launchers.sh`
+  (pre-commit + CI) and, for local agents, `~/.claude/hooks/block-path-overwrite.py`.
 - **NAME THE FONT in every ffmpeg `drawtext`.** With no `fontfile=`, drawtext asks
   fontconfig for a default, and `C:\Program Files\ffmpeg\...\bin\ffmpeg.exe` — which
   is on this PC's PATH and which `exec.LookPath("ffmpeg")` will pick depending on how
