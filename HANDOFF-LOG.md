@@ -10,6 +10,28 @@
 
 ---
 
+## Research: System One models / Jev, and a `becky-decide` proposal (2026-09-18, local, `master`)
+
+Jordan's ask: research TypeSafe's Jev and the open-source Jev-likes, say whether a System One
+model would benefit becky (and a build-dark-factory run), and propose an implementation if so.
+
+**Delivered:** `research/system-one-models-jev.md` (findings, independent test results, fit,
+proposal, dark-factory fit) + `research/system-one-probe.py` (the reproducible proof). **Nothing
+built; the proposal awaits Jordan's yes** (bottom of `STATE-OF-MASTER.md`).
+
+**Measured on this PC** (llama-server build 9551, one grammar-pinned token per question, option
+odds from `top_logprobs`): Gemma-4 E4B QAT 83-112 ms/decision, retake yes 0.83 / not-retake 0.006,
+"cut the dead air" -> roughcut 0.99, but 0.77 on a deliberately vague request (overconfident).
+Qwen3.5-4B 155-200 ms and wrong on two of four (verified the model itself answers "shorts" in free
+text, so the reader is faithful). Four hand-written cases = smoke test, not a benchmark.
+
+**Key calls:** hosted Jev breaks offline / free-or-OAuth / evidence-stays-local, so not proposed
+for becky; `cmd/vision/ladder.go` confidence is hedge-word heuristics ("no real logprobs") and is
+the first wiring target; System One output is a signal (block/escalate), never a verdict or merge
+gate.
+
+---
+
 ## Becky Search inside VEGAS Pro 18 + a control channel that actually works; VegasAIBridge retired (2026-09-14 overnight, local, `master`)
 
 Jordan's ask: *"Allow me to use becky-tools within Vegas Pro 18 - an OFX plugin that allows me to

@@ -219,6 +219,14 @@
   (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
   `HANDOFF-VIDEOAGENT-SEAM.md`.
+- `research/system-one-models-jev.md` (+ `research/system-one-probe.py`) — **System One models /
+  TypeSafe's Jev (2026-09-18, local; RESEARCH + PROPOSAL, nothing built).** Jev = typed
+  multiple-choice judgments with real probabilities, no text. Hosted Jev is ruled out for becky
+  (paid, online, text-only, evidence would leave the PC); the SAME trick runs free on becky's own
+  llama-server — **measured: Gemma-4 E4B ~0.1 s/decision, right on the 3 clear cases; Qwen3.5-4B
+  weak at it**. Proposes `becky-decide` (Jev wire format, Gemma E4B, calibrate on Jordan's data)
+  for real escalation confidence, retake candidates, routing, and a becky-judge pre-filter; plus
+  where it fits (lookout) and must not fit (scheduler / merge gate) in a build-dark-factory run.
 - `research/qwen38-max-video.md` — **Qwen3.8-Max native video: what it actually takes and how
   to use it (2026-08-17, cloud; RESEARCH ONLY, rewritten after the first draft got the
   headline wrong). Read before any hosted-vision or long-video work.** Corrected findings:

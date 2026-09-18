@@ -786,6 +786,13 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
 
 ### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
 
+- **`becky-decide`, a local Jev-style decision tool (`research/system-one-models-jev.md` section 7,
+  2026-09-18).** Typed yes/no / pick-one / score answers with real probabilities from Gemma-4 E4B
+  on becky's own llama-server (measured ~0.1 s/decision on this PC). Free, offline, Jev's wire
+  format. Step 1 build, step 2 calibrate on Jordan's past decisions, step 3 wire into the vision
+  ladder, retake candidates, becky-ask routing, becky-judge pre-filter. Hosted (paid) Jev is NOT
+  proposed. Nothing is built until Jordan says yes.
+
 - **OCR ensemble + adversarial corroboration (`SPEC-OCR-ENSEMBLE.md`, landed 2026-06-28).** The
   *spec* is on master (multi-model OCR ensemble + adversarial ≥2-engine corroboration; adds the
   Unlimited-OCR long-doc slot; GLM-OCR↔PaddleOCR-VL A/B; a mandatory leaderboard-sweep process fix;
