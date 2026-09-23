@@ -24,8 +24,7 @@ key + progression  →  drums  →  bass  →  chords  →  melody  →  texture
 
 Each later layer is written **aware of the earlier ones** (the "LEGO" principle):
 
-- **drums** — the groove/rhythmic foundation. Jordan's starting point (he often has a
-  loop already).
+- **drums** — the groove/rhythmic foundation.
 - **bass** — **LOCKS to the kick** (reads the actual kick onsets, not a template) and
   lands the **chord root on every strong beat**. → `arrange.AddBass`.
 - **chords** — one voicing per bar, **same key**; in a **minor key the V is major**
