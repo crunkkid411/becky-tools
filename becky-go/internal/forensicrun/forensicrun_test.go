@@ -244,8 +244,15 @@ func TestResolveKB(t *testing.T) {
 	if got := ResolveKB("/cases/jordan/kb"); got != "/cases/jordan/kb" {
 		t.Errorf("explicit kb must win, got %q", got)
 	}
+	old := installedKB
+	t.Cleanup(func() { installedKB = old })
+	installedKB = "/no/such/kb"
 	if got := ResolveKB(""); got != defaultKB {
-		t.Errorf("no explicit, no env -> default %q, got %q", defaultKB, got)
+		t.Errorf("no explicit, no env, no installed KB -> default %q, got %q", defaultKB, got)
+	}
+	installedKB = t.TempDir() // the regression: called from a folder with no ./kb-final
+	if got := ResolveKB(""); got != installedKB {
+		t.Errorf("no ./kb-final -> must fall back to the installed KB %q, got %q", installedKB, got)
 	}
 	t.Setenv("BECKY_KB", "/env/kb")
 	if got := ResolveKB(""); got != "/env/kb" {

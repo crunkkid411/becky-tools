@@ -6,6 +6,15 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — "transcribe and say who is talking" is one command; becky-case really runs (2026-09-23, local)
+
+An outside agent given `BECKY-USER-GUIDE.md` burned 31% of its context and still reported
+"diarization failed, output file isn't where expected". Cause: no tool joined transcript + speakers,
+and `becky-case` ran neither step it listed. Now: `becky-transcribe <file> --diarize` labels every
+line and saves `<video>.transcript.json` next to the video; `becky-case --file X` returns that
+labelled transcript; the known-people folder is found from any folder; the guide opens with a
+request -> one-command box. Verified on the 2-speaker test clip. Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — PATH can no longer be wiped by becky advice or by an agent (2026-09-18, local)
 
 The old becky-go copy's setx-on-PATH "next step" (which erased Jordan's user PATH) is removed and

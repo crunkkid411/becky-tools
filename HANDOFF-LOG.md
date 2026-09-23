@@ -10,6 +10,53 @@
 
 ---
 
+## Transcribe + who-is-talking in one call; becky-case actually runs (2026-09-23, local, `master`)
+
+Jordan's report: another agent, handed `BECKY-USER-GUIDE.md`, spent 31% of its context learning
+becky and returned "transcription succeeded but diarization failed, and the output file isn't
+where expected."
+
+**Measured root causes (2-speaker test clip `becky-clip-work/demo-case/2-speakers-test.mp4`):**
+- `becky-case --file X` finished in 0s with no transcript and no speakers. `forensicrun.runAndReport`
+  only ran becky-identify (+ transcribe/motion when `--subject` was given); the "becky-transcribe,
+  becky-diarize" in its `plan` was a label, never executed.
+- becky-identify failed with "knowledge base not found: kb-final" because the default KB was
+  cwd-relative — it only resolved when started from `becky-go/`.
+- No tool joined the transcript with the speakers (becky-diarize alone worked: 2 speakers in 4s).
+- Tools print to stdout by default; the guide never said where results go.
+
+**Fixed:**
+- `becky-transcribe --diarize` (or `--speakers N`, N>1): `cmd/transcribe/speakers.go` runs
+  becky-diarize on the extracted WAV, stamps each word with the speaker of largest time-overlap
+  (a word in a pause takes the nearest span), and `segmentize` now breaks a line at every speaker
+  change. Adds `speaker` on words/segments, `speakers` count, `speaker_note` on degrade. srt/vtt/txt
+  prefix lines with `SPEAKER_NN: `. Always saves `<video>.transcript.json` beside the video and prints
+  `saved: <path>` to stderr (plain transcribe is unchanged: stdout only, no sidecar).
+- `becky-case` `runCase` now always runs `becky-transcribe --diarize` (plain transcribe for
+  `--speakers 1`), feeds that JSON to `RunAndReport`, and returns `transcript` (speaker-labelled
+  lines), `speakers`, `saved_to`; the plan lists becky-diarize whenever it ran.
+- `forensicrun.ResolveKB` falls back to `X:\AI-2\becky-tools\becky-go\kb-final` when `./kb-final`
+  doesn't exist.
+- `BECKY-USER-GUIDE.md` now opens with an "Agents: read this box and stop" request -> one-command
+  table.
+
+**Verified:** unit tests for speaker labelling, line split at speaker change, degrade path, sidecar
+path, becky-case args + transcript attach, KB fallback. `build-all-tools.bat` green (108 tools,
+installed). Real run from `C:\`: `becky-transcribe interview.mp4 --diarize` -> 27s, 2 speakers, 15
+labelled lines, `interview.transcript.json` saved next to the video. The labels match
+becky-diarize's own split (speaker change at ~19.8s); nobody listened to check them by ear.
+`becky-case --file interview.mp4` from `C:\`: exit 0, 15 speaker-labelled lines, 2 speakers,
+`saved_to` set, nothing degraded (the KB was found); 1 name stated ("Hair Jordan", listed twice - a
+duplicate verdict worth a look), Shelby held as a candidate. It took **21 minutes** on a 50s clip,
+almost all of it the Gemma-4 name check (llama-server cold start + E4B/12B ladder). Correct but
+slow; the plain `becky-transcribe --diarize` path is the fast one (27s).
+
+**Not mine, still red on this machine:** `go test ./...` fails in `cmd/becky-reaper`, `cmd/daw`,
+`cmd/drummachine` (10-minute timeouts), `cmd/tts` (`TestRun_DegradesWhenNoModel`) and
+`internal/assistant` (`TestHandleTier2Funnel`) — none import the changed packages.
+
+---
+
 ## PATH-wiping advice removed and blocked for good (2026-09-18, local, `master`)
 
 Jordan's ask: read `HEY-MOTHERFUCKER.md` (untracked, repo root) and make sure it never happens

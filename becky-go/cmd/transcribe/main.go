@@ -1,7 +1,7 @@
 // becky-transcribe — Parakeet-TDT-0.6B-v3 speech-to-text via sherpa-onnx.
 //
 //	becky-transcribe <input> [--output f] [--format json|srt|txt|vtt]
-//	                 [--lang en] [--device auto|cuda|cpu] [--num-threads N] [--verbose]
+//	                 [--diarize] [--speakers N] [--lang en] [--device auto|cuda|cpu] [--num-threads N] [--verbose]
 //
 // --device defaults to "auto": run on CUDA when it works and fall back to CPU on
 // an out-of-memory (or any GPU) failure, re-running the clip so a transcript is
@@ -33,6 +33,7 @@ type Word struct {
 	Start      float64  `json:"start"`
 	End        float64  `json:"end"`
 	Confidence *float64 `json:"confidence"`
+	Speaker    string   `json:"speaker,omitempty"` // set with --diarize: who said this word
 }
 
 // Segment is a caption-sized grouping of words.
@@ -47,6 +48,7 @@ type Segment struct {
 	Start         float64  `json:"start"`
 	End           float64  `json:"end"`
 	Text          string   `json:"text"`
+	Speaker       string   `json:"speaker,omitempty"`        // set with --diarize: who said this line
 	SpeechPct     *float64 `json:"speech_pct,omitempty"`     // % of the segment VAD flagged as speech (nil if gate didn't run)
 	LowConfidence bool     `json:"low_confidence,omitempty"` // true if too little real speech to trust as a transcript
 }
@@ -77,6 +79,10 @@ type Output struct {
 	// skipped). Both are honesty fields: they make the filtering auditable.
 	VADApplied bool             `json:"vad_applied"`
 	VADDropped []DroppedSegment `json:"vad_dropped,omitempty"`
+	// Speakers is how many different voices --diarize heard; SpeakerNote says, in words, why
+	// the lines have no speaker labels when the speaker pass could not run.
+	Speakers    int    `json:"speakers,omitempty"`
+	SpeakerNote string `json:"speaker_note,omitempty"`
 	// Forensic is the SELF-REGULATING result, present ONLY with --forensic. It runs
 	// the protocol-enforcement engine (internal/forensicrun -> orchestrate) over this
 	// clip: corroborated names + watched on-screen intervals, with maybes HELD. Omitted
@@ -132,7 +138,8 @@ func main() {
 	noVAD := flag.Bool("no-vad", false, "skip the VAD speech-mask gate (keep ASR segments over silence)")
 	forensicMode := flag.Bool("forensic", false, "after transcribing, run the self-regulating forensic resolution (corroborated names + watched on-screen intervals) and add a \"forensic\" block; default off so existing consumers are unchanged")
 	subject := flag.String("subject", "", "with --forensic: who/what to locate on screen (presence is stated only where a model watched it)")
-	speakers := flag.Int("speakers", 0, "with --forensic: known speaker count (>1 triggers diarize in the plan; 0 = unknown)")
+	diarize := flag.Bool("diarize", false, "also work out WHO is speaking: every line gets a speaker label, and the result is saved next to the video as <name>.transcript.json")
+	speakers := flag.Int("speakers", 0, "known speaker count, if you know it (>1 also turns on --diarize; 0 = let becky work it out)")
 	kb := flag.String("kb", "", "with --forensic: knowledge-base dir for naming (default: BECKY_KB env, else kb-final)")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
 
@@ -225,6 +232,19 @@ func main() {
 
 	// Force non-nil slices so the "words"/"segments" fields marshal as [] (not
 	// null) on a zero-word clip — downstream consumers (becky-embed) expect arrays.
+	// --diarize (or a known count >1): label every word with its speaker BEFORE segmenting, so a
+	// caption line never straddles two speakers. Degrade, never crash: on failure the transcript
+	// still ships, unlabelled, with a plain-words note saying why.
+	wantSpeakers := *diarize || *speakers > 1
+	nSpeakers, speakerNote := 0, ""
+	if wantSpeakers {
+		beckyio.Logf(*verbose, "working out who is speaking (becky-diarize)...")
+		nSpeakers, speakerNote = labelSpeakers(res.Words, wav, *speakers)
+		if speakerNote != "" {
+			beckyio.Logf(true, "becky-transcribe: %s", speakerNote)
+		}
+	}
+
 	words := res.Words
 	if words == nil {
 		words = []Word{}
@@ -254,15 +274,17 @@ func main() {
 	}
 
 	output := Output{
-		File:       input,
-		Duration:   round3(info.Duration),
-		Model:      res.Model,
-		Language:   res.Language,
-		Text:       text,
-		Words:      words,
-		Segments:   segments,
-		VADApplied: vadApplied,
-		VADDropped: vadDropped,
+		File:        input,
+		Duration:    round3(info.Duration),
+		Model:       res.Model,
+		Language:    res.Language,
+		Text:        text,
+		Words:       words,
+		Segments:    segments,
+		VADApplied:  vadApplied,
+		VADDropped:  vadDropped,
+		Speakers:    nSpeakers,
+		SpeakerNote: speakerNote,
 	}
 	beckyio.Logf(*verbose, "%d words, %d segments (%d dropped by VAD)",
 		len(output.Words), len(output.Segments), len(vadDropped))
@@ -278,13 +300,23 @@ func main() {
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
-	if *out == "" {
+	// The speaker path always leaves a file next to the video AND prints the result, and says
+	// where the file went — so a caller never has to hunt for it.
+	if wantSpeakers && *out == "" {
+		fmt.Print(rendered)
+		side := sidecarPath(input)
+		if err := os.WriteFile(side, []byte(rendered), 0o644); err != nil {
+			beckyio.Logf(true, "becky-transcribe: could not save next to the video (%v); the result above is complete", err)
+		} else {
+			beckyio.Logf(true, "saved: %s", side)
+		}
+	} else if *out == "" {
 		fmt.Print(rendered)
 	} else {
 		if err := os.WriteFile(*out, []byte(rendered), 0o644); err != nil {
 			beckyio.Fatalf("write output: %v", err)
 		}
-		beckyio.Logf(*verbose, "wrote %s", *out)
+		beckyio.Logf(*verbose || wantSpeakers, "saved: %s", *out)
 	}
 }
 
@@ -463,19 +495,21 @@ func segmentize(words []Word) []Segment {
 	start := words[0].Start
 	end := words[0].End
 	prevEnd := words[0].Start
+	speaker := words[0].Speaker
 	flush := func() {
 		if len(cur) == 0 {
 			return
 		}
-		segs = append(segs, Segment{Start: round3(start), End: round3(end), Text: strings.Join(cur, " ")})
+		segs = append(segs, Segment{Start: round3(start), End: round3(end), Text: strings.Join(cur, " "), Speaker: speaker})
 		cur = nil
 	}
 	for i, w := range words {
 		gap := w.Start - prevEnd
 		runningLen := len(strings.Join(cur, " "))
-		if i > 0 && (gap > segGapSeconds || runningLen >= segMaxChars) {
+		if i > 0 && (gap > segGapSeconds || runningLen >= segMaxChars || w.Speaker != speaker) {
 			flush()
 			start = w.Start
+			speaker = w.Speaker
 		}
 		cur = append(cur, w.Word)
 		end = w.End
@@ -494,23 +528,38 @@ func render(o Output, format string) (string, error) {
 		}
 		return string(b) + "\n", nil
 	case "txt":
-		return o.Text + "\n", nil
+		if o.Speakers == 0 {
+			return o.Text + "\n", nil
+		}
+		var b strings.Builder
+		for _, s := range o.Segments {
+			fmt.Fprintf(&b, "[%s] %s%s\n", timecode(s.Start, "."), speakerPrefix(s), s.Text)
+		}
+		return b.String(), nil
 	case "srt":
 		var b strings.Builder
 		for i, s := range o.Segments {
-			fmt.Fprintf(&b, "%d\n%s --> %s\n%s\n\n", i+1, srtTime(s.Start), srtTime(s.End), s.Text)
+			fmt.Fprintf(&b, "%d\n%s --> %s\n%s%s\n\n", i+1, srtTime(s.Start), srtTime(s.End), speakerPrefix(s), s.Text)
 		}
 		return b.String(), nil
 	case "vtt":
 		var b strings.Builder
 		b.WriteString("WEBVTT\n\n")
 		for _, s := range o.Segments {
-			fmt.Fprintf(&b, "%s --> %s\n%s\n\n", vttTime(s.Start), vttTime(s.End), s.Text)
+			fmt.Fprintf(&b, "%s --> %s\n%s%s\n\n", vttTime(s.Start), vttTime(s.End), speakerPrefix(s), s.Text)
 		}
 		return b.String(), nil
 	default:
 		return "", fmt.Errorf("unknown format: %s (use json, srt, txt, vtt)", format)
 	}
+}
+
+// speakerPrefix is "SPEAKER_00: " on a labelled line, "" otherwise.
+func speakerPrefix(s Segment) string {
+	if s.Speaker == "" {
+		return ""
+	}
+	return s.Speaker + ": "
 }
 
 func srtTime(sec float64) string { return timecode(sec, ",") }

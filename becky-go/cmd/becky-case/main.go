@@ -17,6 +17,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"becky-go/internal/forensicrun"
@@ -46,6 +50,19 @@ type caseReport struct {
 	Held     []orchestrate.Verdict `json:"held_candidates"` // one-signal maybes, NOT stated
 	Audit    []string              `json:"audit"`
 	Degraded []string              `json:"degraded,omitempty"` // tools/models that were absent (honest partial)
+	// What was said, line by line, each line labelled with its speaker. Speakers is how many
+	// voices were heard; SavedTo is the full transcript file becky-transcribe left by the video.
+	Speakers   int        `json:"speakers,omitempty"`
+	Transcript []caseLine `json:"transcript,omitempty"`
+	SavedTo    string     `json:"saved_to,omitempty"`
+}
+
+// caseLine is one line of speech in the case report.
+type caseLine struct {
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Speaker string  `json:"speaker,omitempty"`
+	Text    string  `json:"text"`
 }
 
 func fromForensic(fr forensicrun.ForensicReport) caseReport {
@@ -60,11 +77,73 @@ func report(file, subject string, speakers int, identify, transcribe, motion, va
 		forensicrun.Inputs{Identify: identify, Transcribe: transcribe, Motion: motion, Validate: validate}, nil, 0))
 }
 
+// runTranscribe is the seam to becky-transcribe (swapped in tests).
+var runTranscribe = forensicrun.RunTool
+
 // runCase is the IMPURE one dumb call: actually run the tools + the model ladder over the file.
+// It ALWAYS transcribes (what was said is half the answer) and labels speakers unless the caller
+// said there is exactly one — the old build listed "becky-transcribe, becky-diarize" in its plan
+// but ran neither, returning an empty report in 0 seconds.
 func runCase(file, subject string, speakers int) caseReport {
 	ctx, cancel := context.WithTimeout(context.Background(), caseTimeout)
 	defer cancel()
-	return fromForensic(forensicrun.RunAndReport(ctx, file, subject, "", speakers, nil))
+	var degraded []string
+	trJSON, err := runTranscribe(ctx, "becky-transcribe", transcribeArgs(file, speakers)...)
+	if err != nil {
+		degraded = append(degraded, "becky-transcribe: "+err.Error())
+		trJSON = nil
+	}
+	rep := fromForensic(forensicrun.RunAndReport(ctx, file, subject, "", speakers, trJSON))
+	rep.Degraded = append(degraded, rep.Degraded...)
+	if speakers != 1 && !slices.Contains(rep.Plan, "becky-diarize") {
+		rep.Plan = append([]string{"becky-transcribe", "becky-diarize"}, dropStep(rep.Plan, "becky-transcribe")...)
+	}
+	attachTranscript(&rep, trJSON)
+	return rep
+}
+
+// transcribeArgs: always transcribe; label speakers unless the caller said there is exactly one.
+func transcribeArgs(file string, speakers int) []string {
+	args := []string{file}
+	if speakers != 1 {
+		args = append(args, "--diarize")
+	}
+	if speakers > 0 {
+		args = append(args, "--speakers", strconv.Itoa(speakers))
+	}
+	return args
+}
+
+func dropStep(steps []string, name string) []string {
+	var out []string
+	for _, s := range steps {
+		if s != name {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// attachTranscript copies the speaker-labelled lines from becky-transcribe JSON into the report.
+func attachTranscript(rep *caseReport, trJSON []byte) {
+	var tr struct {
+		Speakers    int        `json:"speakers"`
+		SpeakerNote string     `json:"speaker_note"`
+		Segments    []caseLine `json:"segments"`
+	}
+	if len(trJSON) == 0 || json.Unmarshal(trJSON, &tr) != nil {
+		return
+	}
+	rep.Speakers, rep.Transcript = tr.Speakers, tr.Segments
+	if tr.SpeakerNote != "" {
+		rep.Degraded = append(rep.Degraded, "speakers: "+tr.SpeakerNote)
+	}
+	if rep.File != "" && len(tr.Segments) > 0 {
+		side := strings.TrimSuffix(rep.File, filepath.Ext(rep.File)) + ".transcript.json"
+		if _, err := os.Stat(side); err == nil {
+			rep.SavedTo = side
+		}
+	}
 }
 
 func main() {
@@ -94,6 +173,9 @@ func main() {
 
 	b, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(b))
-	fmt.Fprintf(os.Stderr, "becky-case: %d name(s), %d on-screen interval(s), %d held\n",
-		len(rep.Names), len(rep.OnScreen), len(rep.Held))
+	fmt.Fprintf(os.Stderr, "becky-case: %d line(s) of speech from %d speaker(s), %d name(s), %d on-screen interval(s), %d held\n",
+		len(rep.Transcript), rep.Speakers, len(rep.Names), len(rep.OnScreen), len(rep.Held))
+	if rep.SavedTo != "" {
+		fmt.Fprintf(os.Stderr, "saved: %s\n", rep.SavedTo)
+	}
 }

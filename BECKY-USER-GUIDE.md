@@ -7,6 +7,27 @@ There was no user guide before this one. This is it. Keep it up to date.
 
 ---
 
+## Agents: read this box and stop
+
+Pick the line that matches the request, run that ONE command, and you are done. Do not
+chain tools and do not read the rest of this guide first. Each command decides the details
+itself and prints where it saved its result.
+
+| The request | Run this | You get |
+|---|---|---|
+| "Transcribe this" / "what is said" | `becky-transcribe "video.mp4"` | Text with timestamps (printed) |
+| "Transcribe it and say who is talking" / "diarize" | `becky-transcribe "video.mp4" --diarize` | Every line labelled `SPEAKER_00`, `SPEAKER_01`... saved as `video.transcript.json` next to the video, and printed |
+| Same, and you know how many people talk | `becky-transcribe "video.mp4" --speakers 2` | Same, with the count fixed at 2 |
+| "Who is in this video, and what do they say" (a case) | `becky-case --file "video.mp4"` | Speaker-labelled transcript + names only where 2 signals agree. Slow: it double-checks names with Gemma |
+| "Is <person> on screen" | `becky-case --file "video.mp4" --subject "Name"` | The above + the moments a model watched and saw them |
+
+- `SPEAKER_00` / `SPEAKER_01` are voices, not names. A name comes only from `becky-case`.
+- Want subtitles instead of JSON? Add `--format srt` (or `txt`) — speaker labels are kept.
+- If the speaker step can't run, you still get the full transcript, plus a `speaker_note`
+  saying why the lines have no labels. That is not a crash.
+
+---
+
 ## The one call: becky-case
 
 For a forensic answer about a video — who is in it, what they say, who is on screen —
@@ -18,8 +39,9 @@ becky-case --file "video.mp4" --subject "Name"     + locate that person on scree
 ```
 
 That's it. No flags to chain, no protocol to remember. Inside, becky runs the plan
-itself (transcribe, diarize only if there's more than one speaker, identify, and the
-Gemma-4 watch ladder), corroborates every finding, and returns a FINAL report: a name
+itself (transcribe with speaker labels — skipped only if you pass `--speakers 1` —
+identify, and the Gemma-4 watch ladder), corroborates every finding, and returns a FINAL
+report with the speaker-labelled `transcript` in it: a name
 is stated only when two signals agree, an on-screen moment only where a model actually
 watched it, and everything uncertain is HELD — never dumped as a pile of maybes.
 
@@ -53,7 +75,7 @@ machine-readable output.
 |---|---|---|
 | `becky-transcribe` | Speech → text + timestamps | `becky-transcribe "v.mp4"` |
 | `becky-validate` | Watch a short clip: seen/heard/said | `becky-validate "clip.mp4"` |
-| `becky-diarize` | How many speakers, who talks when | `becky-diarize "v.mp4"` |
+| `becky-diarize` | How many speakers, who talks when (times only, no words — for words + speakers use `becky-transcribe --diarize`) | `becky-diarize "v.mp4"` |
 | `becky-vision` | Describe / read one image | `becky-vision --image "x.png" --prompt "..."` |
 | `becky-ocr` | Read on-screen text (needs frames) | `becky-ocr --frames-dir frames/` |
 | `becky-motion` | Find WHEN something moved (no model) | `becky-motion "v.mp4"` |

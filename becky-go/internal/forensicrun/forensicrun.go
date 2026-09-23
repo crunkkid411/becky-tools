@@ -123,9 +123,14 @@ type ToolRunner func(ctx context.Context, tool string, args, extraEnv []string) 
 // case); without it naming can never resolve, so the runtime must always supply one.
 const defaultKB = "kb-final"
 
+// installedKB is where the enrolled-people KB actually lives on Jordan's PC. The bare "kb-final"
+// only resolves when a tool is started from becky-go/, so an agent calling from any other folder
+// got "knowledge base not found" — which surfaced to it as a failed run.
+var installedKB = `X:\AI-2\becky-tools\becky-go\kb-final`
+
 // ResolveKB picks the knowledge-base dir for becky-identify: an explicit value wins, else the
-// BECKY_KB env (so the forensic agent sets a case's KB once, not per call), else the convention.
-// Exported so the entry tools (becky-resolve etc.) resolve the KB identically.
+// BECKY_KB env (so the forensic agent sets a case's KB once, not per call), else ./kb-final if it
+// exists, else the installed KB. Exported so the entry tools resolve the KB identically.
 func ResolveKB(explicit string) string {
 	if s := strings.TrimSpace(explicit); s != "" {
 		return s
@@ -133,7 +138,15 @@ func ResolveKB(explicit string) string {
 	if s := strings.TrimSpace(os.Getenv("BECKY_KB")); s != "" {
 		return s
 	}
-	return defaultKB
+	if isDir(defaultKB) || !isDir(installedKB) {
+		return defaultKB
+	}
+	return installedKB
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 // RunAndReport is the IMPURE self-regulating entry: it gathers becky-identify (always, with the

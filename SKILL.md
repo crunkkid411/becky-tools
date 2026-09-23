@@ -79,6 +79,19 @@ The engine + its rules are cloud-built and proven; steps 1–4 are the local mod
 result through the gate: a name is stated only when corroborated, an on-screen interval only where a model
 watched it, maybes are held. No flags, no chaining, no protocol for the agent to remember. Proven end-to-end
 (one speaker → plan skips diarize; Shelby named, John held, cat on-screen at [10-13]). Tool/model runs are local.
+**Fixed 2026-09-23:** until then a bare `--file` listed "becky-transcribe, becky-diarize" in its plan but
+ran NEITHER (only identify, which failed on a cwd-relative `kb-final`), returning an empty report in 0s.
+`runCase` now always runs `becky-transcribe --diarize` (skipped only for `--speakers 1`) and returns the
+speaker-labelled lines in `transcript`; `forensicrun.ResolveKB` falls back to the installed
+`becky-go\kb-final` when `./kb-final` isn't there.
+
+**Transcript + who is talking = `becky-transcribe <file> --diarize`** (or `--speakers N`, N>1). It runs
+`becky-diarize` itself (`cmd/transcribe/speakers.go`), labels every word by largest time-overlap with the
+speaker spans (a word in a pause takes the nearest span), splits caption lines at every speaker change, and
+writes `speaker` on words + segments and a `speakers` count. It ALWAYS saves `<video>.transcript.json` beside
+the video (the name becky-moment/becky-clip already read) and prints `saved: <path>` on stderr. A failed
+speaker pass degrades to the plain transcript + a plain-words `speaker_note`. Do NOT make agents chain
+`becky-transcribe` + `becky-diarize` by hand again — that cost an agent 31% of its context (2026-09-23).
 
 **The protocols enforced in RUNNING, tested tools (the proven pattern — extend it, don't reinvent):**
 - **`becky-resolve`** (naming): reads becky-identify's real output and STATES a name only when corroborated
@@ -204,7 +217,8 @@ becky "this is Shelby" "<clip>"            # teach a new person from a clip — 
 Each prints JSON (or use `--format srt|txt|vtt` on transcribe):
 ```
 becky-transcribe "<video>" --format srt          # what's said + timestamps
-becky-diarize    "<video>"                        # how many speakers + when each talks
+becky-transcribe "<video>" --diarize              # what's said, every line labelled with its speaker
+becky-diarize    "<video>"                        # how many speakers + when each talks (times only)
 becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face)
 becky-validate   "<video>"                        # AV description of on-screen actions (Gemma-4, default backend)
 ```

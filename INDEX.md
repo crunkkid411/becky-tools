@@ -7,6 +7,13 @@
   watch-a-video commands, the real working-tool list, how to run a workflow `.json` +
   the opt-in agent step, and an OSINT quickstart. For Jordan or any human/agent that just
   wants to RUN becky.** New 2026-07-14. Keep it current when tools/commands change.
+  **Its top box ("Agents: read this box and stop") is the request -> one-command table**; an
+  agent handed the guide should never need more than that box. Added 2026-09-23 after an agent
+  spent 31% of its context learning becky just to transcribe + diarize.
+- **Transcript with speakers = `becky-transcribe <file> --diarize`** (`cmd/transcribe/speakers.go`):
+  runs becky-diarize itself, labels every line, saves `<video>.transcript.json` beside the video.
+  `becky-case --file X` now really transcribes + labels speakers (it listed them and ran neither
+  before 2026-09-23). Details: `SKILL.md` "The ONE-CALL entry", top of `HANDOFF-LOG.md`.
 - **`vegas/README.md` section 6 + `SKILL.md` `# VEGAS PRO 18`** — **transcript search INSIDE VEGAS
   and a working control channel into it.** `vegas/BeckyVegas/` is a VEGAS Application Extension:
   View > Extensions > **Becky Search** searches the open timeline (hits shown on the ruler, "cut

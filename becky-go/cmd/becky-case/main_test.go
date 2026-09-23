@@ -1,6 +1,30 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// The regression: a bare `becky-case --file X` must transcribe AND label speakers (the old build
+// listed both in its plan and ran neither); only a caller-stated single speaker skips diarize.
+func TestTranscribeArgs(t *testing.T) {
+	cases := map[int]string{0: "v.mp4 --diarize", 1: "v.mp4 --speakers 1", 3: "v.mp4 --diarize --speakers 3"}
+	for n, want := range cases {
+		if got := strings.Join(transcribeArgs("v.mp4", n), " "); got != want {
+			t.Errorf("speakers=%d: want %q, got %q", n, want, got)
+		}
+	}
+}
+
+func TestAttachTranscript(t *testing.T) {
+	var rep caseReport
+	attachTranscript(&rep, []byte(`{"speakers":2,"segments":[
+	  {"start":1,"end":2,"speaker":"SPEAKER_00","text":"hello"},
+	  {"start":3,"end":4,"speaker":"SPEAKER_01","text":"hi"}]}`))
+	if rep.Speakers != 2 || len(rep.Transcript) != 2 || rep.Transcript[1].Speaker != "SPEAKER_01" || rep.Transcript[1].Text != "hi" {
+		t.Errorf("transcript not attached: %+v", rep)
+	}
+}
 
 const idJSON = `{"identifications":[
   {"type":"corroborated","name":"Shelby","confidence":0.88,"corroborated_by":["voice","face"]},
