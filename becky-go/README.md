@@ -67,10 +67,13 @@ burst and hands `validate` the exact 1-second window. No local video-LLM does tr
 VRAM (verified 2026-06) — a bigger model does NOT fix this; cheap motion math + targeted slow-model
 is the answer.
 
-**Diarization (the #1 blunder source).** Phantom-speaker fix = VAD speech-gating (strip
-music/SFX/intro before clustering) + clustering threshold **0.7** + auto-mode `--min-speaker-frac`
-**0.15** (drops spurious cross-talk clusters). Single-speaker clip → 1 speaker. `identify`'s
-internal diarizer passes the same values so the two agree.
+**Diarization (the #1 blunder source).** Since 2026-09-24 `becky-diarize` (and so
+`becky-transcribe --diarize`) runs **nvidia/Nemotron-3-Diarization** through NeMo-Speech.cpp's native
+`nemo-speech.exe` (CPU, 0 VRAM; set up by `scripts\get-nemotron-diar.ps1`, config keys `nemo_speech` /
+`diar_model`). One model decides who speaks and how many people there are, so the sherpa knobs below
+are accepted and ignored there. The sherpa pipeline below now serves only `identify`'s internal
+diarizer: VAD speech-gating (strip music/SFX/intro before clustering) + clustering threshold **0.7**
++ auto-mode `--min-speaker-frac` **0.15** (drops spurious cross-talk clusters).
 
 **Voice >> face reliability.** CAM++ voice margin is huge (same-person ~0.76–0.91 vs different
 ~0.03), so `--voice-threshold 0.45` is safe. Face is the weak modality. The deployed CAM++ model

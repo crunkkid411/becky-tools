@@ -92,6 +92,10 @@ writes `speaker` on words + segments and a `speakers` count. It ALWAYS saves `<v
 the video (the name becky-moment/becky-clip already read) and prints `saved: <path>` on stderr. A failed
 speaker pass degrades to the plain transcript + a plain-words `speaker_note`. Do NOT make agents chain
 `becky-transcribe` + `becky-diarize` by hand again — that cost an agent 31% of its context (2026-09-23).
+Since 2026-09-24 the speakers come from **nvidia/Nemotron-3-Diarization** (native `nemo-speech.exe`,
+CPU, 0 VRAM; `scripts\get-nemotron-diar.ps1`). Ids are SPEAKER_00, 01, ... by first appearance; two
+speakers' spans may overlap, and a tied word stays with the previous word's speaker. It can still
+merge two people talking fast over background audio (TikTok skit, top of `HANDOFF-LOG.md`).
 
 **The protocols enforced in RUNNING, tested tools (the proven pattern — extend it, don't reinvent):**
 - **`becky-resolve`** (naming): reads becky-identify's real output and STATES a name only when corroborated
@@ -322,7 +326,8 @@ crest"), **name what we know** (write "John Clancy", not "speaker_1"), describe 
 its force/resistance dynamics**, flag only genuine uncertainty. Clarity = recall.
 
 ## Honest status (what works, what to watch)
-- **Reliable:** transcribe; diarize (single-speaker → 1; hardened); **identify by VOICE** + the
+- **Reliable:** transcribe; diarize (Nemotron-3-Diarization since 2026-09-24: 2 voices where sherpa
+  heard 1 on a festival clip; can still merge a fast two-person skit); **identify by VOICE** + the
   corroborated voice+face fusion; search (now incl. OCR text); enrollment incl. natural-language
   `becky "this is X"`; OCR; motion; the `becky` orchestrator. Portrait-video faces + accented
   names now work (both were bugs, now fixed — Shelby IDs at 0.94).

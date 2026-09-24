@@ -1,34 +1,35 @@
-// becky-diarize — speaker diarization via sherpa-onnx (pyannote-seg-3.0 + CAM++).
+// becky-diarize — speaker diarization with NVIDIA Nemotron-3-Diarization.
 //
 //	becky-diarize <input> [--output f] [--format json|srt|txt]
 //	              [--min-speakers N] [--max-speakers N] [--device cpu|cuda]
-//	              [--threshold 0.5] [--keep-temp] [--verbose]
+//	              [--keep-temp] [--verbose]
 //
-// Takes an audio OR video file, extracts 16 kHz mono PCM, runs sherpa-onnx
-// offline diarization, and emits speaker-labeled segments grouped by speaker.
-// Speaker count auto-detects (num_clusters=-1 + cosine threshold) unless
-// --min/--max-speakers pin it. No LLM; deterministic. JSON to stdout (or
-// --output); diagnostics to stderr; exit 0 on success.
+// Takes an audio OR video file, extracts 16 kHz mono PCM, runs
+// nvidia/Nemotron-3-Diarization (end-to-end streaming Sortformer, up to 8 speakers)
+// through NeMo-Speech.cpp's native nemo-speech.exe, and emits speaker-labeled
+// segments grouped by speaker. No LLM; deterministic. JSON to stdout (or --output);
+// diagnostics to stderr; exit 0 on success.
 //
-// HARDENED OVER-SPLIT RULES (diarization is the #1 blunder source; these are the
-// strict rules, verified on real clips — do not loosen without re-running the suite):
+// ENGINE SWAP (2026-09-24). This tool used to run sherpa-onnx (pyannote-seg-3.0 +
+// CAM++ + clustering, pyhelpers/diarize_sherpa.py). Jordan: it "failed
+// catastrophically" on real footage. Nemotron decides WHO speaks and HOW MANY people
+// there are in one model, so the sherpa-era over-split guards (VAD gating, clustering
+// --threshold, --min-speaker-frac / --min-speaker-duration) no longer apply. Those
+// flags are still ACCEPTED so older callers don't break, and do nothing (--device as well).
+// diarize_sherpa.py stays in the repo; becky-identify still uses it.
 //
-//	R1. VAD speech-gating ON (auto mode): diarize ONLY Silero speech regions, so
-//	    music / intro stings / SFX never get embedded by CAM++ as phantom speakers.
-//	    (Lives in diarize_sherpa.py; the Go side passes --vad-model.)
-//	R2. Clustering threshold 0.7 (not the sherpa default): a higher cosine threshold
-//	    refuses to split one talker's natural timbre variation into two clusters.
-//	R3. Outlier-merge floor --min-speaker-frac 0.15 (HARDENED from 0.10): a cluster
-//	    holding <15% of total speech is merged into the nearest real speaker. On real
-//	    footage a brief cross-talk / background voice forms a ~13% spurious THIRD
-//	    cluster that 0.10 let through (2-speakers-test.mp4 came back as 3). At 0.15 it
-//	    merges, while genuine speakers (which each hold 20%+ on the real 2-speaker
-//	    clips) both survive. --min-speaker-duration 1.5s is the absolute-time partner.
+// Runtime: native C++ plus a 107 MB q8_0 GGUF (models\diar\), no Python or torch.
+// The build there is CPU-only (upstream hard-codes 4 threads), so diarization never
+// takes VRAM from the shared 8 GB GPU. Geometry is the model card's own benchmarked
+// "very high latency (offline)" setting (DIHARD III DER 12.73); segment thresholds
+// are NeMo-Speech.cpp's defaults for this checkpoint.
 //
-// Verified counts (real clips, 2026-06-08): single-speaker monologue -> 1; the
-// 2-speaker clips (2-speakers-test.mp4, the Jordan+Shelby contact clip,
-// different-person-test.mp4) -> 2. identify's internal diarization (cmd/identify/
-// diarize.go) passes the SAME 0.15 floor so the two tools agree on speaker count.
+// Speaker ids are SPEAKER_00, SPEAKER_01, ... in order of FIRST appearance, with no gaps
+// (renumber). Nemotron can mark two voices active at once, so segments of different
+// speakers may overlap. --max-speakers N caps the count: when the model
+// hears more voices than the caller says exist, the ones with the least speech are
+// merged into whichever kept speaker talks nearest in time. The model cannot be
+// forced UP to --min-speakers.
 package main
 
 import (
@@ -43,24 +44,26 @@ import (
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
 	"becky-go/internal/mediainfo"
-	"becky-go/internal/pyhelpers"
+	"becky-go/internal/proc"
 )
 
-// flatSegment is one (start, end, speaker) span as the Python helper emits it.
+// modelID names the engine in the output so a reader knows what labelled the speech.
+const modelID = "nvidia/Nemotron-3-Diarization"
+
+// nemotronGeometry is the model card's "very high latency (offline)" configuration, in
+// 80 ms encoder frames: speaker cache 264, FIFO 40, chunk 340, right context 40, cache
+// update every 300 (a 30.4 s input buffer). Left context stays 0, as the checkpoint's
+// own streaming config has it.
+var nemotronGeometry = []string{
+	"--diar-spkcache", "264", "--diar-fifo", "40", "--diar-chunk", "340",
+	"--diar-rc", "40", "--diar-update-period", "300",
+}
+
+// flatSegment is one (start, end, speaker) span.
 type flatSegment struct {
 	Start   float64 `json:"start"`
 	End     float64 `json:"end"`
 	Speaker string  `json:"speaker"`
-}
-
-// helperResult mirrors diarize_sherpa.py's stdout.
-type helperResult struct {
-	Skipped     bool          `json:"skipped"`
-	Reason      string        `json:"reason"`
-	Duration    float64       `json:"duration"`
-	SampleRate  int           `json:"sample_rate"`
-	NumSpeakers int           `json:"num_speakers"`
-	Segments    []flatSegment `json:"segments"`
 }
 
 // Segment is one speaker-labeled span in the output schema.
@@ -70,43 +73,38 @@ type Segment struct {
 	Confidence float64 `json:"confidence"`
 }
 
-// Speaker groups all segments attributed to one cluster.
+// Speaker groups all segments attributed to one voice.
 type Speaker struct {
 	ID       string    `json:"id"`
 	Segments []Segment `json:"segments"`
 }
 
-// Output is the becky-diarize JSON contract.
+// Output is the becky-diarize JSON contract. Model was added 2026-09-24; the rest is unchanged.
 type Output struct {
 	File     string    `json:"file"`
 	Duration float64   `json:"duration"`
+	Model    string    `json:"model,omitempty"`
 	Speakers []Speaker `json:"speakers"`
 }
 
-// sherpa-onnx exposes no per-segment posterior, so we attach a fixed confidence.
-// Documented choice: clustered diarization output is a hard assignment, not a
-// probability — 1.0 signals "assigned" rather than a calibrated score.
+// nemo-speech prints hard segments, not per-segment probabilities, so every segment
+// carries a fixed confidence. Documented choice: 1.0 means "assigned", not a
+// calibrated score.
 const segmentConfidence = 1.0
 
 func main() {
 	out := flag.String("output", "", "output file (default: stdout)")
 	format := flag.String("format", "json", "output format: json, srt, txt")
-	minSpeakers := flag.Int("min-speakers", 1, "minimum number of speakers")
-	maxSpeakers := flag.Int("max-speakers", 0, "maximum number of speakers (0 = auto)")
-	device := flag.String("device", "", "device: cpu, cuda (default from config)")
-	threshold := flag.Float64("threshold", 0.7, "clustering cosine threshold (auto mode)")
-	// minSpeakerFrac: auto-mode outlier-merge floor. A cluster holding less than this
-	// fraction of total speech is merged into the nearest real speaker. HARDENED to
-	// 0.15 (was the helper's 0.10 default): on real footage a brief cross-talk /
-	// background voice forms a ~13% spurious third cluster that 0.10 let survive
-	// (2-speakers-test came back as 3). 0.15 merges it while genuine speakers — which
-	// hold 20%+ of the speech each on the real 2-speaker clips — both survive. Tunable
-	// for clips with a real, sparse third speaker.
-	minSpeakerFrac := flag.Float64("min-speaker-frac", 0.15,
-		"auto mode: merge clusters below this fraction of total speech (hardened over-split guard)")
-	minSpeakerDur := flag.Float64("min-speaker-duration", 1.5,
-		"auto mode: merge clusters with less than this many seconds of total speech")
-	numThreads := flag.Int("num-threads", 4, "ONNX inference threads")
+	minSpeakers := flag.Int("min-speakers", 1, "minimum number of speakers (informational: the model cannot be forced up)")
+	maxSpeakers := flag.Int("max-speakers", 0, "maximum number of speakers (0 = no cap; extra voices merge into the nearest kept speaker)")
+	// Sherpa-era knobs, kept so older callers don't fail on an unknown flag. Nemotron needs none of them.
+	// --device too: nemo-speech exits 2 on "--device cuda" when built without CUDA, and the build is
+	// CPU-only on purpose (the GPU is shared), so it always runs on the backend it was built with.
+	_ = flag.String("device", "", "ignored (nemo-speech runs on the backend it was built with: CPU here)")
+	_ = flag.Float64("threshold", 0.7, "ignored (sherpa-era clustering knob)")
+	_ = flag.Float64("min-speaker-frac", 0.15, "ignored (sherpa-era outlier-merge knob)")
+	_ = flag.Float64("min-speaker-duration", 1.5, "ignored (sherpa-era outlier-merge knob)")
+	_ = flag.Int("num-threads", 4, "ignored (nemo-speech uses 4 CPU threads)")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
 
@@ -119,15 +117,11 @@ func main() {
 	}
 
 	cfg := config.Load()
-	dev := cfg.Device
-	if *device != "" {
-		dev = *device
+	if !fileExists(cfg.NemoSpeech) {
+		beckyio.Fatalf("diarization runtime not found: %q (set it up with scripts\\get-nemotron-diar.ps1)", cfg.NemoSpeech)
 	}
-	if cfg.DiarSegModel == "" || !fileExists(cfg.DiarSegModel) {
-		beckyio.Fatalf("segmentation model not found: %q", cfg.DiarSegModel)
-	}
-	if cfg.SpeakerEmbModel == "" || !fileExists(cfg.SpeakerEmbModel) {
-		beckyio.Fatalf("speaker embedding model not found: %q", cfg.SpeakerEmbModel)
+	if !fileExists(cfg.DiarModel) {
+		beckyio.Fatalf("diarization model not found: %q (set it up with scripts\\get-nemotron-diar.ps1)", cfg.DiarModel)
 	}
 
 	info, err := mediainfo.Probe(cfg.FFprobe, input)
@@ -147,32 +141,27 @@ func main() {
 		defer os.Remove(wav)
 	}
 
-	script, err := pyhelpers.Materialize("diarize_sherpa.py", pyhelpers.DiarizeSherpa)
-	if err != nil {
-		beckyio.Fatalf("materialize helper: %v", err)
-	}
-
-	numClusters := resolveNumClusters(*minSpeakers, *maxSpeakers)
-	beckyio.Logf(*verbose, "running diarization (device=%s, num_clusters=%d, threshold=%.2f, min-speaker-frac=%.2f)...",
-		dev, numClusters, *threshold, *minSpeakerFrac)
-	res, err := runHelper(cfg, script, wav, dev, numClusters, *threshold, *minSpeakerFrac, *minSpeakerDur, *numThreads, *verbose)
+	beckyio.Logf(*verbose, "running %s (nemo-speech)...", modelID)
+	segs, err := runNemo(cfg, wav, *verbose)
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
-	if res.Skipped {
-		beckyio.Fatalf("diarization skipped: %s", res.Reason)
+	if n := countSpeakers(segs); *maxSpeakers > 0 && n > *maxSpeakers {
+		beckyio.Logf(*verbose, "model heard %d voices; caller says at most %d, merging the smallest", n, *maxSpeakers)
+		segs = capSpeakers(segs, *maxSpeakers)
 	}
+	if n := countSpeakers(segs); *minSpeakers > 1 && n < *minSpeakers {
+		beckyio.Logf(*verbose, "model heard %d voice(s); caller expected at least %d", n, *minSpeakers)
+	}
+	segs = renumber(segs)
 
-	duration := res.Duration
-	if duration <= 0 {
-		duration = info.Duration
-	}
 	output := Output{
 		File:     input,
-		Duration: round3(duration),
-		Speakers: groupBySpeaker(res.Segments),
+		Duration: round3(info.Duration),
+		Model:    modelID,
+		Speakers: groupBySpeaker(segs),
 	}
-	beckyio.Logf(*verbose, "%d speaker(s), %d total segments", len(output.Speakers), len(res.Segments))
+	beckyio.Logf(*verbose, "%d speaker(s), %d total segments", len(output.Speakers), len(segs))
 
 	rendered, err := render(output, *format)
 	if err != nil {
@@ -204,20 +193,6 @@ func parsePositional() string {
 	return input
 }
 
-// resolveNumClusters maps --min/--max-speakers onto sherpa's num_clusters knob.
-// -1 means auto-detect (cosine threshold decides). When both bounds agree on a
-// single count (or only a min>1 is given), we pin that count; otherwise we stay
-// in auto mode and let the threshold pick.
-func resolveNumClusters(minSpk, maxSpk int) int {
-	if maxSpk > 0 && minSpk == maxSpk {
-		return maxSpk
-	}
-	if minSpk > 1 && maxSpk == 0 {
-		return minSpk
-	}
-	return -1
-}
-
 func extractAudio(ffmpeg, input string) (string, error) {
 	tmp, err := os.CreateTemp("", "becky_diar_*.wav")
 	if err != nil {
@@ -228,6 +203,7 @@ func extractAudio(ffmpeg, input string) (string, error) {
 	cmd := exec.Command(ffmpeg, "-y", "-i", input,
 		"-vn", "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
 		"-loglevel", "error", path)
+	proc.NoWindow(cmd)
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
@@ -237,28 +213,11 @@ func extractAudio(ffmpeg, input string) (string, error) {
 	return path, nil
 }
 
-func runHelper(cfg config.Config, script, wav, device string, numClusters int, threshold, minSpeakerFrac, minSpeakerDur float64, numThreads int, verbose bool) (helperResult, error) {
-	args := []string{script, wav,
-		"--seg-model", cfg.DiarSegModel,
-		"--embedding-model", cfg.SpeakerEmbModel,
-		"--num-clusters", fmt.Sprintf("%d", numClusters),
-		"--threshold", fmt.Sprintf("%.3f", threshold),
-		"--min-speaker-frac", fmt.Sprintf("%.3f", minSpeakerFrac),
-		"--min-speaker-duration", fmt.Sprintf("%.3f", minSpeakerDur),
-		"--num-threads", fmt.Sprintf("%d", numThreads),
-		"--device", device}
-	// Pass the Silero model so the helper gates diarization to speech-only
-	// regions (default ON in auto mode): this strips music / intro stings / SFX
-	// that CAM++ would otherwise embed as phantom speakers on social-media
-	// footage (the "single talker -> 5 speakers" bug). Helper enables gating
-	// whenever a vad-model is supplied.
-	if cfg.SileroVADModel != "" && fileExists(cfg.SileroVADModel) {
-		args = append(args, "--vad-model", cfg.SileroVADModel)
-	}
-	if verbose {
-		args = append(args, "--verbose")
-	}
-	cmd := exec.Command(cfg.Python, args...)
+// runNemo runs `nemo-speech diarize <wav> --format json` and returns its segments.
+func runNemo(cfg config.Config, wav string, verbose bool) ([]flatSegment, error) {
+	args := append([]string{"diarize", wav, "--model", cfg.DiarModel, "--format", "json"}, nemotronGeometry...)
+	cmd := exec.Command(cfg.NemoSpeech, args...)
+	proc.NoWindow(cmd)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	if verbose {
@@ -267,40 +226,108 @@ func runHelper(cfg config.Config, script, wav, device string, numClusters int, t
 		cmd.Stderr = &stderr
 	}
 	if err := cmd.Run(); err != nil {
-		return helperResult{}, fmt.Errorf("diarize helper failed: %v\n%s", err, tail(stderr.String()))
+		return nil, fmt.Errorf("nemo-speech diarize failed: %v\n%s", err, tail(stderr.String()))
 	}
-	res, ok := parseHelperJSON(stdout.String())
-	if !ok {
-		return helperResult{}, fmt.Errorf("could not parse diarize helper output:\n%s", tail(stdout.String()))
-	}
-	return res, nil
+	return parseNemoJSON(stdout.String())
 }
 
-// parseHelperJSON tolerates leading C++ log noise by scanning lines bottom-up
-// for the first that unmarshals into the expected shape.
-func parseHelperJSON(s string) (helperResult, bool) {
-	if r, ok := tryUnmarshal(strings.TrimSpace(s)); ok {
-		return r, true
+// parseNemoJSON reads nemo-speech's {"file","segments":[{"start","end","speaker"}]} where
+// speaker is 1-based in arrival order, and names speakers SPEAKER_00, SPEAKER_01, ... It
+// skips anything printed before the JSON object.
+func parseNemoJSON(s string) ([]flatSegment, error) {
+	i := strings.Index(s, "{")
+	if i < 0 {
+		return nil, fmt.Errorf("nemo-speech printed no JSON:\n%s", tail(s))
 	}
-	lines := strings.Split(s, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
+	var v struct {
+		Segments []struct {
+			Start   float64 `json:"start"`
+			End     float64 `json:"end"`
+			Speaker int     `json:"speaker"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal([]byte(s[i:]), &v); err != nil {
+		return nil, fmt.Errorf("could not read nemo-speech output: %v\n%s", err, tail(s))
+	}
+	segs := make([]flatSegment, 0, len(v.Segments))
+	for _, g := range v.Segments {
+		if g.End <= g.Start || g.Speaker < 1 {
 			continue
 		}
-		if r, ok := tryUnmarshal(line); ok {
-			return r, true
-		}
+		segs = append(segs, flatSegment{Start: g.Start, End: g.End, Speaker: fmt.Sprintf("SPEAKER_%02d", g.Speaker-1)})
 	}
-	return helperResult{}, false
+	return segs, nil
 }
 
-func tryUnmarshal(s string) (helperResult, bool) {
-	var r helperResult
-	if json.Unmarshal([]byte(s), &r) == nil && (r.Skipped || r.Segments != nil || r.SampleRate > 0) {
-		return r, true
+func countSpeakers(segs []flatSegment) int {
+	seen := map[string]bool{}
+	for _, s := range segs {
+		seen[s.Speaker] = true
 	}
-	return helperResult{}, false
+	return len(seen)
+}
+
+// capSpeakers keeps the max speakers with the most total speech and hands every segment of the
+// others to the kept speaker whose segment midpoint is nearest in time.
+// ponytail: nearest-in-time is a heuristic; a voice-embedding match would pick the right person
+// when two kept speakers talk equally close by. Add it if a caller-pinned count ever mislabels.
+func capSpeakers(segs []flatSegment, max int) []flatSegment {
+	talk := map[string]float64{}
+	for _, s := range segs {
+		talk[s.Speaker] += s.End - s.Start
+	}
+	if max < 1 || len(talk) <= max {
+		return segs
+	}
+	ids := make([]string, 0, len(talk))
+	for id := range talk {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if talk[ids[i]] != talk[ids[j]] {
+			return talk[ids[i]] > talk[ids[j]]
+		}
+		return ids[i] < ids[j]
+	})
+	keep := map[string]bool{}
+	for _, id := range ids[:max] {
+		keep[id] = true
+	}
+	out := make([]flatSegment, len(segs))
+	for i, s := range segs {
+		out[i] = s
+		if keep[s.Speaker] {
+			continue
+		}
+		mid, best := (s.Start+s.End)/2, -1.0
+		for _, k := range segs {
+			if !keep[k.Speaker] {
+				continue
+			}
+			if d := abs((k.Start+k.End)/2 - mid); best < 0 || d < best {
+				out[i].Speaker, best = k.Speaker, d
+			}
+		}
+	}
+	return out
+}
+
+// renumber names speakers SPEAKER_00, SPEAKER_01, ... in order of first appearance, with no gaps.
+// The model can open a speaker slot that post-processing then drops entirely (festival clip: slots
+// 1 and 3 kept, 2 gone), and capSpeakers leaves holes too; callers expect a contiguous set.
+func renumber(segs []flatSegment) []flatSegment {
+	out := append([]flatSegment(nil), segs...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
+	ids := map[string]string{}
+	for i := range out {
+		id, ok := ids[out[i].Speaker]
+		if !ok {
+			id = fmt.Sprintf("SPEAKER_%02d", len(ids))
+			ids[out[i].Speaker] = id
+		}
+		out[i].Speaker = id
+	}
+	return out
 }
 
 // groupBySpeaker turns the flat (start,end,speaker) list into the schema's
@@ -397,6 +424,13 @@ func srtTime(sec float64) string {
 
 func round3(f float64) float64 {
 	return float64(int(f*1000+0.5)) / 1000
+}
+
+func abs(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
 }
 
 func fileExists(p string) bool {

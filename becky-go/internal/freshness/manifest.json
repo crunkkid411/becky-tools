@@ -30,10 +30,36 @@
       "note": "Face detection + ArcFace embeddings via onnxruntime."
     },
     {
+      "id": "nemotron-3-diarization",
+      "name": "NVIDIA Nemotron-3-Diarization (streaming Sortformer, q8_0 GGUF)",
+      "used_by": [
+        "becky-diarize",
+        "becky-transcribe"
+      ],
+      "pinned": "rev f667ed73 Nemotron-3-Diarization.q8_0.gguf (sha256 08456d9e...)",
+      "upstream": {
+        "type": "hf-model",
+        "ref": "nvidia/Nemotron-3-Diarization"
+      },
+      "note": "becky-diarize's model since 2026-09-24 (replaced sherpa pyannote+CAM++). Up to 8 speakers, end to end. Run by NeMo-Speech.cpp; set up with scripts/get-nemotron-diar.ps1."
+    },
+    {
+      "id": "nemo-speech-cpp",
+      "name": "NeMo-Speech.cpp (nemo-speech.exe, native C++/ggml runtime)",
+      "used_by": [
+        "becky-diarize"
+      ],
+      "pinned": "main 97a15afa, built from source, CPU backend",
+      "upstream": {
+        "type": "github-release",
+        "ref": "NVIDIA/NeMo-Speech.cpp"
+      },
+      "note": "Built from source because release v0.1.0 (2026-08-19) predates Nemotron-3-Diarization support (added 2026-09-24). Switch to a release build once one includes it."
+    },
+    {
       "id": "pyannote-seg-3",
       "name": "pyannote-segmentation-3.0 (diarization)",
       "used_by": [
-        "becky-diarize",
         "becky-identify"
       ],
       "pinned": "3.0",
@@ -41,13 +67,12 @@
         "type": "hf-model",
         "ref": "pyannote/segmentation-3.0"
       },
-      "note": "Speaker segmentation ONNX for sherpa diarization."
+      "note": "Speaker segmentation ONNX for sherpa diarization. becky-diarize stopped using it 2026-09-24 (now Nemotron-3-Diarization); becky-identify still does."
     },
     {
       "id": "campplus-spk",
       "name": "3D-Speaker CAM++ speaker embedding",
       "used_by": [
-        "becky-diarize",
         "becky-identify"
       ],
       "pinned": "campplus_sv_en_voxceleb_16k",

@@ -57,8 +57,11 @@ func parseDiarize(raw []byte) ([]speakerSpan, error) {
 }
 
 // speakerAt returns the speaker whose spans overlap [start,end] the most; a word that falls in a
-// gap between spans (diarize trims pauses) takes the nearest span's speaker.
-func speakerAt(spans []speakerSpan, start, end float64) string {
+// gap between spans (diarize trims pauses) takes the nearest span's speaker. When two voices cover
+// the word equally (Nemotron marks overlapping speech, both people talking at once), prev — the
+// previous word's speaker — keeps it, so a line doesn't flip back and forth on a tie. Same for the
+// nearest-span pick, which zero-length ASR words (start == end) always go through.
+func speakerAt(spans []speakerSpan, start, end float64, prev string) string {
 	overlap := map[string]float64{}
 	for _, s := range spans {
 		if o := minF(end, s.End) - maxF(start, s.Start); o > 0 {
@@ -71,6 +74,9 @@ func speakerAt(spans []speakerSpan, start, end float64) string {
 			best, bestO = id, o
 		}
 	}
+	if bestO > 0 && overlap[prev] == bestO {
+		return prev
+	}
 	if best != "" {
 		return best
 	}
@@ -82,7 +88,7 @@ func speakerAt(spans []speakerSpan, start, end float64) string {
 		} else if mid > s.End {
 			d = mid - s.End
 		}
-		if bestD < 0 || d < bestD {
+		if bestD < 0 || d < bestD || (d == bestD && s.Speaker == prev) {
 			best, bestD = s.Speaker, d
 		}
 	}
@@ -109,8 +115,10 @@ func labelSpeakers(words []Word, media string, speakers int) (int, string) {
 // labelWords stamps each word with its speaker and returns how many distinct speakers were used.
 func labelWords(words []Word, spans []speakerSpan) int {
 	seen := map[string]bool{}
+	prev := ""
 	for i := range words {
-		words[i].Speaker = speakerAt(spans, words[i].Start, words[i].End)
+		words[i].Speaker = speakerAt(spans, words[i].Start, words[i].End, prev)
+		prev = words[i].Speaker
 		if words[i].Speaker != "" {
 			seen[words[i].Speaker] = true
 		}

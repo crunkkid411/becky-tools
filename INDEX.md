@@ -14,6 +14,10 @@
   runs becky-diarize itself, labels every line, saves `<video>.transcript.json` beside the video.
   `becky-case --file X` now really transcribes + labels speakers (it listed them and ran neither
   before 2026-09-23). Details: `SKILL.md` "The ONE-CALL entry", top of `HANDOFF-LOG.md`.
+- **Speaker engine = nvidia/Nemotron-3-Diarization** (since 2026-09-24): `becky-diarize` runs it
+  through NVIDIA's native `nemo-speech.exe` (CPU, 0 VRAM). Setup `scripts\get-nemotron-diar.ps1`;
+  config `nemo_speech` / `diar_model`; measurements and the known miss at the top of `HANDOFF-LOG.md`.
+  becky-identify still uses the old sherpa helper.
 - **`vegas/README.md` section 6 + `SKILL.md` `# VEGAS PRO 18`** — **transcript search INSIDE VEGAS
   and a working control channel into it.** `vegas/BeckyVegas/` is a VEGAS Application Extension:
   View > Extensions > **Becky Search** searches the open timeline (hits shown on the ruler, "cut

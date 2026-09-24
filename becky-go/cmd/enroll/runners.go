@@ -46,7 +46,7 @@ type diarSegment struct {
 }
 
 // runDiarize shells out to becky-diarize.exe over a video and parses its JSON.
-// Reusing the binary gives us its VAD gating + sherpa recipe unchanged.
+// Reusing the binary gives us its diarization engine unchanged (Nemotron-3-Diarization since 2026-09-24).
 func runDiarize(diarizeBin, video, device string, verbose bool) (diarOutput, error) {
 	if diarizeBin == "" {
 		return diarOutput{}, fmt.Errorf("becky-diarize binary not found")

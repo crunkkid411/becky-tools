@@ -22,8 +22,10 @@ type Config struct {
 	FFprobe             string `json:"ffprobe"`
 	SileroVADModel      string `json:"silero_vad_model"`   // silero_vad.onnx for sherpa-onnx VAD
 	VADScript           string `json:"vad_script"`         // legacy torch Silero analyzer (optional)
-	DiarSegModel        string `json:"diar_seg_model"`     // pyannote-segmentation-3.0 model.onnx
+	DiarSegModel        string `json:"diar_seg_model"`     // pyannote-segmentation-3.0 model.onnx (becky-identify only since 2026-09-24)
 	SpeakerEmbModel     string `json:"speaker_emb_model"`  // CAM++ 3D-Speaker embedding onnx
+	NemoSpeech          string `json:"nemo_speech"`        // NeMo-Speech.cpp nemo-speech.exe: becky-diarize's runtime (native, CPU)
+	DiarModel           string `json:"diar_model"`         // nvidia/Nemotron-3-Diarization q8_0 GGUF (becky-diarize)
 	Sqlite3             string `json:"sqlite3"`            // sqlite3.exe CLI (for sqlite-vec DB access)
 	SqliteVecExt        string `json:"sqlite_vec_ext"`     // sqlite-vec vec0 loadable extension (vec0.dll)
 	EmbedModelCache     string `json:"embed_model_cache"`  // sentence-transformers cache dir (Qwen3 weights)
@@ -237,7 +239,11 @@ func defaults() Config {
 		SpeakerEmbModel: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\diarization\3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx`,
 		),
-		Sqlite3: resolve("sqlite3", `C:\ProgramData\anaconda3\Library\bin\sqlite3.exe`),
+		// becky-diarize (and so becky-transcribe --diarize) since 2026-09-24: Nemotron-3-Diarization
+		// run by NeMo-Speech.cpp, built CPU-only from source. scripts/get-nemotron-diar.ps1 sets both up.
+		NemoSpeech: firstExisting(`X:\AI-2\becky-tools\models\diar\nemo-speech\nemo-speech.exe`),
+		DiarModel:  firstExisting(`X:\AI-2\becky-tools\models\diar\Nemotron-3-Diarization.q8_0.gguf`),
+		Sqlite3:    resolve("sqlite3", `C:\ProgramData\anaconda3\Library\bin\sqlite3.exe`),
 		SqliteVecExt: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\sqlite-vec\vec0.dll`,
 		),
@@ -483,6 +489,12 @@ func merge(base, over Config) Config {
 	}
 	if over.SpeakerEmbModel != "" {
 		base.SpeakerEmbModel = over.SpeakerEmbModel
+	}
+	if over.NemoSpeech != "" {
+		base.NemoSpeech = over.NemoSpeech
+	}
+	if over.DiarModel != "" {
+		base.DiarModel = over.DiarModel
 	}
 	if over.Sqlite3 != "" {
 		base.Sqlite3 = over.Sqlite3

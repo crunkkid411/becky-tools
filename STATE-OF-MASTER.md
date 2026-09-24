@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — who-is-talking now runs NVIDIA Nemotron-3-Diarization (2026-09-24, local)
+
+`becky-diarize` (so `becky-transcribe <file> --diarize`) swapped sherpa for Nemotron-3-Diarization via
+NVIDIA's native `nemo-speech.exe` (CPU, 0 VRAM, ~5s for 77s of audio). A festival clip the old engine
+called 1 speaker is now 2; the 2-speaker test clip is still 2. Same JSON, plus `model`. Setup:
+`scripts\get-nemotron-diar.ps1`. Known miss: a fast two-person TikTok skit with background audio still
+comes out as 1 speaker. becky-identify still uses sherpa. Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — "transcribe and say who is talking" is one command; becky-case really runs (2026-09-23, local)
 
 An outside agent given `BECKY-USER-GUIDE.md` burned 31% of its context and still reported

@@ -50,8 +50,28 @@ func TestLabelSpeakersSplitsLinesAtSpeakerChange(t *testing.T) {
 // A word in a pause between spans takes the nearest speaker instead of going unlabelled.
 func TestSpeakerAtGapTakesNearest(t *testing.T) {
 	spans := []speakerSpan{{0, 4, "A"}, {6, 9, "B"}}
-	if got := speakerAt(spans, 5.6, 5.8); got != "B" {
+	if got := speakerAt(spans, 5.6, 5.8, ""); got != "B" {
 		t.Errorf("want B, got %q", got)
+	}
+}
+
+// Overlapping speech (festival clip, 2026-09-24): B's turn runs 20-25s while A cuts in at 21-22s,
+// so both cover "boys come" fully. The tie must stay with the line's speaker (B), not flip to A
+// because "A" sorts first; a word only A covers still goes to A.
+func TestSpeakerAtOverlapTieKeepsPreviousSpeaker(t *testing.T) {
+	spans := []speakerSpan{{20, 25, "B"}, {21, 22, "A"}, {30, 31, "A"}}
+	if got := speakerAt(spans, 21.4, 21.8, "B"); got != "B" {
+		t.Errorf("tie inside overlap: want B (previous speaker), got %q", got)
+	}
+	if got := speakerAt(spans, 21.4, 21.8, ""); got != "A" {
+		t.Errorf("tie with no previous speaker: want A (lowest id), got %q", got)
+	}
+	if got := speakerAt(spans, 30.2, 30.6, "B"); got != "A" {
+		t.Errorf("only A talks here: want A, got %q", got)
+	}
+	// A zero-length ASR word ("come" at 21.84-21.84) overlaps nothing; inside both spans it stays with B.
+	if got := speakerAt(spans, 21.84, 21.84, "B"); got != "B" {
+		t.Errorf("zero-length word inside overlap: want B, got %q", got)
 	}
 }
 

@@ -10,6 +10,64 @@
 
 ---
 
+## becky-diarize now runs NVIDIA Nemotron-3-Diarization (2026-09-24, local, `master`)
+
+Jordan: the diarization "failed catastrophically" on real footage; replace it with
+nvidia/Nemotron-3-Diarization so `becky-transcribe "video.mp4" --diarize` can pick out Hair Jordan's
+lines. **Measured before:** the sherpa pipeline (pyannote-seg-3.0 + CAM++ + clustering) called a
+76.6s festival clip where several people talk **1 speaker** (40s run).
+
+**Runtime choice:** NVIDIA's own native port, NeMo-Speech.cpp (`nemo-speech.exe diarize`, C++/ggml)
+with the model's 107 MB q8_0 GGUF. No Python, torch or NeMo install, no venv change. Built CPU-only
+so it never takes VRAM from the shared 8 GB GPU (measured 0 MiB). Release v0.1.0 predates Nemotron-3
+support, so the source is pinned to main `97a15afa`. The model is not gated (no HF token).
+`scripts\get-nemotron-diar.ps1` builds it (VS 2022 C++ tools, CMake, Ninja; vcpkg fetches
+sentencepiece into `%LOCALAPPDATA%\NeMoSpeech`) and downloads the sha256-checked GGUF into
+`models\diar\`. Config keys `nemo_speech` / `diar_model` (defaults point there). The script's steps
+were each run by hand and worked; the script itself has not been run end to end.
+
+**Changed:**
+- `cmd/diarize/main.go`: runs `nemo-speech diarize` with the model card's "very high latency
+  (offline)" geometry (spkcache 264, fifo 40, chunk 340, rc 40, update 300; card DIHARD III DER
+  12.73) and NeMo-Speech.cpp's default thresholds. Seven settings were compared on the festival
+  clip; all gave the same turn pattern, so the card's stays. JSON schema unchanged, plus a `model`
+  field. Speaker ids are renumbered SPEAKER_00, 01, ... by first appearance with no gaps (the model
+  dropped its slot 2 on the festival clip and left SPEAKER_00 + SPEAKER_02). Segments of different
+  speakers can now overlap (both talking at once). `--max-speakers N` merges the voices with the
+  least speech into the kept speaker talking nearest in time; `--min-speakers` cannot force more.
+  The sherpa knobs (`--threshold`, `--min-speaker-frac`, `--min-speaker-duration`, `--num-threads`)
+  and `--device` are accepted and ignored: nemo-speech exits 2 on `--device cuda` without a CUDA
+  build, and becky-enroll passes `--device`.
+- `cmd/transcribe/speakers.go`: when two overlapping voices cover a word equally, the previous
+  word's speaker keeps it (also for zero-length ASR words). Before this, the tie went to the lower id
+  and chopped "watch these boys come up..." into four one-word-ish lines.
+- `internal/config` (2 keys), `internal/freshness/manifest.json` (2 rows; pyannote/CAM++ now
+  `used_by` becky-identify only), `becky-go/README.md` diarization paragraph, a stale comment in
+  `cmd/enroll/runners.go`.
+- **Not changed:** becky-identify still diarizes internally with `pyhelpers/diarize_sherpa.py`
+  (kept, as is the helper).
+
+**Verified (installed binaries, `build-all-tools.bat` green, 108 tools):**
+- Festival clip (76.6s): **2 speakers**, 14 labelled lines, `becky-transcribe --diarize` 15.3s
+  (becky-diarize alone 5.1s, 0 MiB VRAM; the ASR step peaks ~1.4 GB).
+- `becky-clip-work/demo-case/2-speakers-test.mp4` (50s): still 2 speakers, second voice from 18.4s
+  (sherpa: ~19.8s), 17 lines, 11.3s.
+- Unit tests for parsing, renumbering, the speaker cap, and the overlap tie.
+- Nobody listened by ear.
+
+**Still wrong:**
+- A 12.4s two-person skit (tiktok 7129588193552256299: pink-haired man and green-haired man
+  trading lines) comes out as **1 speaker**. A CAM++ voice check scores one line 0.03-0.13 against
+  the first three, so at least two voices are there.
+- Ten settings were tried (thresholds down to 0.3, offline, v3 presets); none split it. The model
+  holds one voice active for all 12s, even between lines, which suggests background audio under the
+  skit.
+- Untried fix: isolate vocals before diarizing. becky has no vocal-separation tool yet.
+- On the festival clip, SPEAKER_00 may also merge two men (blond at ~11-13s and ~54-56s, green-haired
+  at ~27-31s) — not confirmed by ear.
+
+---
+
 ## Transcribe + who-is-talking in one call; becky-case actually runs (2026-09-23, local, `master`)
 
 Jordan's report: another agent, handed `BECKY-USER-GUIDE.md`, spent 31% of its context learning
