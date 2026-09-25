@@ -1,0 +1,17 @@
+[
+ {"id": "self-orchestration", "pain": "becky-tools does not decide for itself which tool or model to run next; agents have to chain tools by hand", "source": "Jordan 2026-09-25 chat; becky-tools CLAUDE.md s2"},
+ {"id": "honest-confidence", "pain": "local models guess how sure they are from hedge words instead of real probabilities, so escalation from small to big model is unreliable", "source": "research/system-one-models-jev.md s6.1"},
+ {"id": "vram-budget", "pain": "only 8 GB of graphics memory, so big local models cannot run alongside the voice assistant", "source": "X:/AI-2/CLAUDE.md gotchas"},
+ {"id": "claude-plan-burn", "pain": "runaway or looping agents burn the paid Claude usage plan", "source": "becky-tools CLAUDE.md invariants"},
+ {"id": "no-paid-apis", "pain": "anything that needs a paid cloud API or subscription is off limits; tools must be free and local", "source": "becky-tools CLAUDE.md invariants"},
+ {"id": "video-clipping", "pain": "turning finished videos into good vertical shorts and clips automatically, framed on the right subject", "source": "becky-tools CLAUDE.md clipping invariants"},
+ {"id": "video-editing", "pain": "rough-cutting raw footage: removing dead air and retakes without shredding the edit", "source": "becky-tools CLAUDE.md editing invariants"},
+ {"id": "forensic-video", "pain": "finding who is on screen and what is said, with timestamps, in long forensic videos", "source": "becky-tools CLAUDE.md s1"},
+ {"id": "voice-assistant", "pain": "the always-on local voice assistant (Whoretana) hearing requests and routing them to the right tool quickly", "source": "X:/AI-2/CLAUDE.md s2"},
+ {"id": "reading-load", "pain": "long technical reports are physically hard to read; results must be short, plain and high-contrast", "source": "X:/AI-2/CLAUDE.md s4"},
+ {"id": "computer-use", "pain": "letting a local AI safely operate the Windows desktop, browser and apps on Jordan's behalf", "source": "Jordan 2026-09-25 chat (total fluid integration)"},
+ {"id": "intent-understanding", "pain": "understanding Jordan's intent from his own local data (chat logs, computer use) better than corporate algorithms", "source": "Jordan 2026-09-25 chat"},
+ {"id": "music-production", "pain": "AI help inside music production: DAW control, plugins, arranging, mixing", "source": "becky-tools CLAUDE.md music invariant; Cubase factory LESSONS"},
+ {"id": "agent-factory", "pain": "unattended coding-agent factories that ship tested work without breaking things or needing babysitting", "source": "X:/AI-2/CLAUDE.md LESSONS (Cubase factory)"},
+ {"id": "knowledge-capture", "pain": "saving web pages, videos and notes into the Obsidian vault in a form that can be searched later", "source": "clip-sync.ps1 / this task"}
+]

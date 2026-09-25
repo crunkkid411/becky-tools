@@ -1191,3 +1191,23 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - VEGAS loads extension DLLs from SUBFOLDERS of its extension folders too.
 - OpenFX cannot see the project (no tracks/events/media paths in the OFX kit) - a timeline search
   must be an Application Extension, not an OFX plugin.
+
+# SYSTEM ONE — cheap typed decisions (Laya) and the playlist reader
+
+**`becky-decide`** answers typed questions with probabilities and no text: stdin is a Jev-shaped
+request `{"state": "...", "questions": {"q": {"type": "choice", "instructions": "...", "criteria":
+{"key": "description", ...}}}}` (also `score`, `noul`), stdout the answers. Laya ONNX on CPU, 0 VRAM,
+~0.5s. In Go use `internal/systemone` (`Choice`, `Score`, `Noul`, `Runner.Decide`).
+
+Rules that are law here (measured 2026-09-25, `research/playlist-intake/README.md`):
+- **The model picks, code computes.** Laya cannot count, reads wording literally and gets worse with
+  irrelevant text. Measure facts in code; put only what needs judging in the state.
+- **Guard the expensive mistake with two signals.** A code fact AND model confidence, or take the
+  safe branch (`cmd/intake/decide.go` `guardRoute`).
+- **Not for nuanced relevance.** "Is this useful to Jordan?" saturates at yes. Use embeddings.
+- Check with `becky-decide --selftest`; do not trust published example numbers.
+
+**`becky-intake <playlist-or-video-url> [--limit 3] [--dry-run] [--ids a,b]`** reads new videos of
+the "ai-useful" playlist into Obsidian notes (see top of `HANDOFF-LOG.md`). `--dry-run` only shows
+each video's route. Downloads live in `research/playlist-intake/TEMP` and are deleted by code.
+Jordan's pain list is `research/playlist-intake/pains.json`.

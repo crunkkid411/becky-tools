@@ -10,6 +10,47 @@
 
 ---
 
+---
+
+## System One (Laya) + `becky-intake` for the "ai-useful" playlist (2026-09-25, local, `master`)
+
+Jordan: run the Qwen omni-skill-creator once (paid exception) on GitHub Trending Weekly #50, then
+rebuild the result locally with a System One model so becky can route the playlist itself: short
+repo-pointer videos -> read the repo; real tutorials -> full analysis. Downloads go to TEMP and are
+deleted by code, never by a model. His yt-dlp config must not change.
+
+**Added:**
+- `internal/pyhelpers/laya_decide.py` + `internal/systemone` + `cmd/decide` (`becky-decide`): Python
+  port of receptron/laya's sequence builder over `receptron/laya-onnx` rev 68f27dfe (1.7 GB, in
+  `models\laya\`; `tokenizers` added to the venv-dml). DirectML fails on a Reshape node, so CPU:
+  ~1.8s load, ~0.5s per 3-question call. `--selftest` passes (billing 0.88, water 0.84, dog 0.00).
+  The receptron README's example numbers do NOT reproduce (0.48 vs 0.94) even with a byte-exact
+  sequence; weights unchanged since 19 Sep. Treated as stale README numbers.
+- `cmd/intake` (`becky-intake`): yt-dlp always with `--ignore-config`; facts (length, links, repos,
+  chapters) measured by code; Laya route question links|speech; `guardRoute` needs 3+ repos AND
+  P(links) >= 0.7 or it transcribes. Speech route: audio only into `TEMP\<11-char id>`,
+  `becky-transcribe`, Gemma-4 E4B step list; `defer os.RemoveAll`, guarded so it can only delete
+  `<folder named TEMP>\<video id>`; start-up sweep of leftovers. Empty transcript (music-only
+  video) skips Gemma and says so. Repos via `gh api`. Pain match: Qwen3-Embedding-0.6B Q8_0 GGUF
+  (official, rev 370f27d7, `models\embeddings\gguf\`) via a transient CPU llama-server; new
+  `llmlocal.NewEmbedClient` / `Embed`. Notes go to
+  `C:\Users\only1\Documents\Obsidian\browser_data\YouTube`, state to
+  `research/playlist-intake/seen.json` (not committed).
+- `research/playlist-intake/`: `pains.json` (15 pains with sources), README (Qwen vs local, >8 GB
+  models write-up), `qwen-skill/system-one-intake/` (Qwen perception log 0-620s + SKILL.md, L1 pass).
+
+**Measured:** dry run over 13 sampled playlist videos: only the Trending roundup went "links"
+(75%); Laya alone had sent two long talks to "links" because of sponsor links, hence the guard.
+Laya on "is this repo useful?" saturated (AUC 0.45-0.59); embeddings AUC 0.64 on 35 hand labels.
+Embedding speed 466s (sentence-transformers, CPU torch) -> 4.5s (llama.cpp GGUF), same AUC. Full run
+on 2 videos: 81s, both notes written, TEMP empty afterwards.
+
+**Not done / needs Jordan:** not wired into the "Becky Playlist Scout (idle)" scheduled task (776
+videos backlog at `--limit 3`). pains.json is hand-written; a local log-miner to refresh it is
+proposed only. No on-screen text reading for music-only videos yet. Qwen's third chunk (620-911s)
+timed out twice and was not retried (cost). `.gitignore` for `research/playlist-intake/TEMP` and
+`seen.json` was blocked by a safety hook; they are simply never staged.
+
 ## becky-diarize now runs NVIDIA Nemotron-3-Diarization (2026-09-24, local, `master`)
 
 Jordan: the diarization "failed catastrophically" on real footage; replace it with

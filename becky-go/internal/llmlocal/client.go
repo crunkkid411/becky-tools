@@ -61,10 +61,11 @@ type Options struct {
 // started the server; the spawn-per-call client serialises naturally because
 // each call owns its own server.
 type Client struct {
-	model  string // text GGUF path
-	server string // llama-server.exe path (or a name resolvable on PATH)
-	ngl    int    // GPU layers to offload (99 = full; a 4B Q4 fits 8 GB)
-	ctxLen int    // context window
+	model  string   // text GGUF path
+	server string   // llama-server.exe path (or a name resolvable on PATH)
+	ngl    int      // GPU layers to offload (99 = full; a 4B Q4 fits 8 GB)
+	ctxLen int      // context window
+	extra  []string // extra llama-server flags (the embedding client's pooling)
 	logf   func(format string, a ...any)
 
 	warm bool // keep one resident server for the session
@@ -263,6 +264,7 @@ func (c *Client) spawnServer(ctx context.Context) (string, func(), error) {
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
 	}
+	args = append(args, c.extra...)
 	c.logf("llmlocal: spawning llama-server on %s (-ngl %d)…", url, c.ngl)
 
 	cmd := exec.Command(c.server, args...)

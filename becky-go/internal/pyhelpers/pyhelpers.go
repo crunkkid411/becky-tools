@@ -52,6 +52,9 @@ var Ground []byte
 //go:embed falcon_detect.py
 var FalconDetect []byte
 
+//go:embed laya_decide.py
+var LayaDecide []byte
+
 // Materialize writes an embedded script to a stable temp path and returns it.
 func Materialize(name string, content []byte) (string, error) {
 	dir := filepath.Join(os.TempDir(), "becky-pyhelpers")

@@ -6,6 +6,15 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — a System One model (Laya) + the playlist reader `becky-intake` (2026-09-25, local)
+
+`becky-decide` runs Laya (open Jev alternative, ONNX, CPU, 0 VRAM) for typed decisions.
+`becky-intake <playlist-url>` reads new "ai-useful" videos: Laya picks "read the linked repos" or
+"transcribe it" (code vetoes a shaky "links"), audio goes to a TEMP folder that code always deletes,
+a 0.6B embedding model on llama.cpp matches each video and repo to `pains.json`, one Obsidian note per
+video. Two videos in 81s. NOT yet wired to the 4-hourly "Becky Playlist Scout" task (needs Jordan's
+OK). Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — who-is-talking now runs NVIDIA Nemotron-3-Diarization (2026-09-24, local)
 
 `becky-diarize` (so `becky-transcribe <file> --diarize`) swapped sherpa for Nemotron-3-Diarization via

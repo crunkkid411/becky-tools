@@ -3,6 +3,12 @@
 **Canonical (read these):**
 - `CLAUDE.md` — how we work. **NO LONGER** the *current* handoff state (§6) - moved to STATE-OF-MASTER.md and INDEX.md (Jordan, 7-04-2026).
 - `INDEX.md` (this file) - *current* doc map; which file, when. STOP updating in CLAUDE.md; it lives here now.
+- **System One (typed decisions) = `becky-decide`** (`cmd/decide`, `internal/systemone`): Laya ONNX
+  (`models\laya\`, CPU, 0 VRAM, ~0.5s) answers choice/score/yes-no questions with probabilities, no
+  text. Rule: the model picks, code computes and guards. `--selftest` must pass. First user:
+  **`becky-intake`** (`cmd/intake`) turns the "ai-useful" YouTube playlist into Obsidian notes, routing
+  each video links-vs-speech. Research + measured limits: `research/playlist-intake/README.md`.
+  New 2026-09-25.
 - `BECKY-USER-GUIDE.md` — **plain, no-fluff guide for USING becky (not building it): the
   watch-a-video commands, the real working-tool list, how to run a workflow `.json` +
   the opt-in agent step, and an OSINT quickstart. For Jordan or any human/agent that just
