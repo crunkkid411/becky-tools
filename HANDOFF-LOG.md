@@ -45,8 +45,10 @@ Laya on "is this repo useful?" saturated (AUC 0.45-0.59); embeddings AUC 0.64 on
 Embedding speed 466s (sentence-transformers, CPU torch) -> 4.5s (llama.cpp GGUF), same AUC. Full run
 on 2 videos: 81s, both notes written, TEMP empty afterwards.
 
-**Not done / needs Jordan:** not wired into the "Becky Playlist Scout (idle)" scheduled task (776
-videos backlog at `--limit 3`). pains.json is hand-written; a local log-miner to refresh it is
+**Scheduled (Jordan approved, 3 per run):** the "Becky Playlist Scout (idle)" task now runs
+`scripts\playlist-intake.ps1` instead of hj-mission-control's `scout-idle.ps1` (left untouched). A
+manual run under PowerShell 5.1 wrote 3 real notes in 149s, TEMP empty. 777-video backlog.
+**Not done / needs Jordan:** pains.json is hand-written; a local log-miner to refresh it is
 proposed only. No on-screen text reading for music-only videos yet. Qwen's third chunk (620-911s)
 timed out twice and was not retried (cost). `.gitignore` for `research/playlist-intake/TEMP` and
 `seen.json` was blocked by a safety hook; they are simply never staged.

@@ -12,8 +12,9 @@
 `becky-intake <playlist-url>` reads new "ai-useful" videos: Laya picks "read the linked repos" or
 "transcribe it" (code vetoes a shaky "links"), audio goes to a TEMP folder that code always deletes,
 a 0.6B embedding model on llama.cpp matches each video and repo to `pains.json`, one Obsidian note per
-video. Two videos in 81s. NOT yet wired to the 4-hourly "Becky Playlist Scout" task (needs Jordan's
-OK). Details: top of `HANDOFF-LOG.md`.
+video. Two videos in 81s. Jordan approved: the 4-hourly idle task "Becky Playlist Scout (idle)" now
+runs `scripts\playlist-intake.ps1` (3 videos per run, log in `research\playlist-intake\intake.log`).
+Details: top of `HANDOFF-LOG.md`.
 
 ### NEW — who-is-talking now runs NVIDIA Nemotron-3-Diarization (2026-09-24, local)
 
