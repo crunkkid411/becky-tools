@@ -1045,6 +1045,16 @@ func (a *App) timelineLocked() TimelineView {
 	var cursor float64
 	for _, c := range a.reel.Clips {
 		dur := c.Dur()
+		// Same fallback the render uses (internal/reel overlayDate/overlayLink): no
+		// sidecar value -> recover date/link from the yt-dlp file name, so the
+		// overlay preview shows exactly the lines the render burns in.
+		date, link := c.Meta.Date, c.Meta.Link
+		if date == "" {
+			date = footage.DateFromName(baseName(c.Source))
+		}
+		if link == "" {
+			link = footage.LinkFromName(baseName(c.Source))
+		}
 		clips = append(clips, ClipView{
 			ID:        c.ID,
 			Source:    c.Source,
@@ -1054,10 +1064,10 @@ func (a *App) timelineLocked() TimelineView {
 			StartSec:  cursor,
 			DurSec:    dur,
 			Label:     c.Label,
-			Date:      c.Meta.Date,
+			Date:      date,
 			Person:    c.Meta.Person,
 			Location:  c.Meta.Location,
-			Link:      c.Meta.Link,
+			Link:      link,
 			SourceFPS: c.Meta.SourceFPS,
 			Color:     clipColor(c.Source),
 		})

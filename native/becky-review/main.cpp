@@ -1004,6 +1004,32 @@ static void stopPlayback(double& curSec, bool& playing, bool returnToStart) {
     g_stockSec = -1; g_stockFlash = false; g_playStartSec = -1;
 }
 
+// PLAY SELECTED (Jordan 2026-10-02): the toolbar Play button plays ONLY the selected
+// clips, in timeline order, then stops. Space / Enter / every other way to play are
+// untouched - they never fill this list. Each entry is a [start,end) span in
+// compilation seconds; touching selected clips are merged into one span so playback
+// runs straight through them with no re-seek. Empty = not in play-selected mode.
+// The playback tick (main loop) walks it; anything that stops playback clears it.
+static std::vector<std::pair<double, double>> g_selPlay;
+static size_t g_selPlayIdx = 0;
+
+// Builds g_selPlay from the current selection. Returns false (list left empty) when
+// no selected clip is on the track, so the caller can fall back to a normal play.
+static bool buildSelPlay() {
+    g_selPlay.clear(); g_selPlayIdx = 0;
+    for (auto& c : g_track[0]) {
+        if (!g_sel.count(c.id)) continue;
+        double s = c.compStart, e = c.compStart + (c.out - c.in);
+        if (e <= s) continue;
+        if (!g_selPlay.empty() && s <= g_selPlay.back().second + 1e-3)
+            g_selPlay.back().second = (std::max)(g_selPlay.back().second, e);
+        else
+            g_selPlay.push_back({ s, e });
+    }
+    std::sort(g_selPlay.begin(), g_selPlay.end());
+    return !g_selPlay.empty();
+}
+
 // SEEK WORKER (coalesce-to-latest). emitScrub used to call engineCall("seek")
 // SYNCHRONOUSLY on the UI thread on every frame of a drag/scrub - a full blocking
 // pipe round-trip to the Go engine (~ms each), whose reply was then thrown away.
@@ -3262,6 +3288,14 @@ int main(int argc, char** argv) {
             static bool s_wasPlaying = false;
             if (playing && !s_wasPlaying) { g_playStartSec = curSec; clearScrubPreview(); }
             s_wasPlaying = playing;
+            if (!playing && !g_selPlay.empty()) { g_selPlay.clear(); g_selPlayIdx = 0; }   // any stop ends play-selected
+        }
+        // A selection-play span that the playhead has left by other means (a click on
+        // the timeline mid-play, a boundary jump) is no longer "playing the selection":
+        // drop back to normal playback instead of yanking the playhead to the next span.
+        if (playing && !g_selPlay.empty() && g_selPlayIdx < g_selPlay.size()) {
+            const auto& sp = g_selPlay[g_selPlayIdx];
+            if (curSec > sp.second + 0.25) { g_selPlay.clear(); g_selPlayIdx = 0; }
         }
 
         // D-9 (step 6 rewrite): PLAYBACK follows the ENGINE's clock - in-process,
@@ -3300,7 +3334,19 @@ int main(int argc, char** argv) {
             // E-10: below-threshold ranges are SKIPPED seamlessly during playback.
             if (g_thrOn) for (auto& r : g_quietRanges) if (curSec >= r.first && curSec < r.second) { curSec = r.second; engineReelSeek(curSec); break; }
             stageMark("quiet-range-skip");
-            if (curSec >= g_compDur || engine::reelEnded()) {
+            // PLAY SELECTED: at the end of the current selected span, jump to the
+            // next one; after the last, stop and return to where it started.
+            if (!g_selPlay.empty() && g_selPlayIdx < g_selPlay.size() &&
+                (curSec >= g_selPlay[g_selPlayIdx].second - 0.01 || engine::reelEnded())) {
+                if (++g_selPlayIdx < g_selPlay.size()) {
+                    curSec = g_selPlay[g_selPlayIdx].first;
+                    engineReelSeek(curSec);
+                } else {
+                    g_selPlay.clear(); g_selPlayIdx = 0;
+                    stopPlayback(curSec, playing, true);
+                }
+            }
+            if (playing && (curSec >= g_compDur || engine::reelEnded())) {
                 curSec = 0; engineReelSeek(0);
             }
             stageMark("loop-reseek");
@@ -5094,10 +5140,17 @@ int main(int argc, char** argv) {
                     // Same rule as Space, via the same helper. This button used to
                     // just flip the flag, so the stock return (E-6) - and now the
                     // play-start return - happened on the KEY but not on the BUTTON.
+                    // PLAY SELECTED (2026-10-02): with clips selected, play ONLY those
+                    // (timeline order) and stop after the last; nothing selected = the
+                    // old plain play. Space/Enter are unchanged.
                     if (playing) stopPlayback(curSec, playing, true);
-                    else { playing = true; g_playingExt = true; }
+                    else {
+                        if (buildSelPlay()) curSec = g_selPlay[0].first;
+                        playing = true; g_playingExt = true;
+                    }
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Pause" : "Play");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(playing ? "Pause" : (g_sel.empty() ? "Play" : "Play the selected clip(s), then stop"));
                 ImGui::SameLine();
                 // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
                 // says the same thing without being read.
