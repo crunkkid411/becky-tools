@@ -101,6 +101,7 @@ extern "C" { __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #include <sstream>
 #include <array>
 #include <exception>
+#include <regex>
 #include <iomanip>   // std::fixed/setprecision - editLog needs ms resolution (default double
                      // formatting is 6 sig figs, which is only tenths-of-a-second once process
                      // uptime passes ~10000s, useless for measuring a sub-100ms round trip)
@@ -560,12 +561,33 @@ static std::string secondsToTimecode(double sec, double fps) {
 // Returns the overlay lines (top -> bottom) for clip c, honoring g_overlay's
 // per-field toggles - empty when nothing is enabled/has content, mirroring
 // metaLine/overlayDate/overlayLink in drawtext.go.
-static std::vector<std::string> overlayLines(const Clip& c) {
+// Same filename fallbacks the render uses (becky-go internal/footage provenance.go,
+// DateFromName / LinkFromName, patterns from discover.go) for a clip with no sidecar
+// date/link - e.g. every left-panel preview clip, which is built locally with none.
+static std::string dateFromName(const std::string& name) {
+    static const std::regex re(R"(^(\d{4}-\d{2}-\d{2}|\d{8})[_ -]+)");
+    std::smatch m;
+    if (!std::regex_search(name, m, re)) return "";
+    std::string d = m[1].str();
+    if (d.size() == 8) d = d.substr(0, 4) + "-" + d.substr(4, 2) + "-" + d.substr(6, 2);
+    return d;
+}
+static std::string linkFromName(const std::string& name) {
+    static const std::regex re(R"(\[([A-Za-z0-9_-]{11})\])");
+    std::smatch m;
+    if (!std::regex_search(name, m, re)) return "";
+    return "https://www.youtube.com/watch?v=" + m[1].str();
+}
+// srcT = the source-file time of the frame on screen, so ORIG TC runs with playback
+// exactly like the render's burned-in running timecode (not frozen at the clip's in).
+static std::vector<std::string> overlayLines(const Clip& c, double srcT) {
     std::vector<std::string> lines;
-    if (g_overlay.showDate && !c.date.empty())
-        lines.push_back("Date: " + c.date + " UTC");
+    std::string date = c.date.empty() ? dateFromName(baseName(c.source)) : c.date;
+    std::string link = c.link.empty() ? linkFromName(baseName(c.source)) : c.link;
+    if (g_overlay.showDate && !date.empty())
+        lines.push_back("Date: " + date + " UTC");
     if (g_overlay.showTimecode)
-        lines.push_back("ORIG TC " + secondsToTimecode(c.in, sourceFps(c.source)));
+        lines.push_back("ORIG TC " + secondsToTimecode(srcT, sourceFps(c.source)));
     {
         std::vector<std::string> fields;
         if (g_overlay.showFilename) {
@@ -580,7 +602,7 @@ static std::vector<std::string> overlayLines(const Clip& c) {
             lines.push_back(joined);
         }
     }
-    if (g_overlay.showLink && !c.link.empty()) lines.push_back(c.link);
+    if (g_overlay.showLink && !link.empty()) lines.push_back(link);
     return lines;
 }
 // Step 6: the engine's frame is a plain ImGui::Image now, so the provenance
@@ -606,9 +628,10 @@ static ImFont* g_overlayFont = nullptr;
 // left margin 20 / bottom pad 61 (bottom edge -> top of the lowest line) / line step 58.
 // All of it is scaled to the DISPLAYED video by `scale` = the caller's fit scale
 // (sc = displayedHeight / sourceHeight), so it tracks the frame exactly like the reference.
-static void drawOverlayImGui(const Clip* cur, ImVec2 origin, ImVec2 size, float scale) {
+static void drawOverlayImGui(const Clip* cur, double compT, ImVec2 origin, ImVec2 size, float scale) {
     if (g_ovMode != 2 || !cur) return;
-    std::vector<std::string> lines = overlayLines(*cur);
+    double srcT = cur->in + (std::max)(0.0, compT - cur->compStart);
+    std::vector<std::string> lines = overlayLines(*cur, srcT);
     if (lines.empty()) return;
     if (scale <= 0.0f) scale = 1.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -4471,7 +4494,7 @@ int main(int argc, char** argv) {
                                                                  uv[0], uv[1], uv[2], uv[3]);
                     }
                     // provenance overlay + captions, drawn by ImGui ON the frame
-                    drawOverlayImGui(clipAtComp(0, curSec), at, { fw, fh }, sc);   // sc = fit scale = displayedH/sourceH (item 25)
+                    drawOverlayImGui(clipAtComp(0, curSec), curSec, at, { fw, fh }, sc);   // sc = fit scale = displayedH/sourceH (item 25)
                     // Item 1 (round 4): during a preview, g_caps deliberately still
                     // holds the REAL reel's captions (the lane must not change), so
                     // don't burn one over the audition frame at the preview time -
