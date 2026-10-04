@@ -122,10 +122,10 @@ func TestExportSelectionEmptyErrors(t *testing.T) {
 	if _, err := app.AddClip("ring.mp4", 1, 3, "a"); err != nil {
 		t.Fatalf("AddClip: %v", err)
 	}
-	if _, err := app.ExportSelection(nil, ""); err == nil {
+	if _, err := app.ExportSelection(nil, "", ""); err == nil {
 		t.Error("ExportSelection with no ids should error")
 	}
-	if _, err := app.ExportSelection([]string{"does-not-exist"}, ""); err == nil {
+	if _, err := app.ExportSelection([]string{"does-not-exist"}, "", ""); err == nil {
 		t.Error("ExportSelection matching no clips should error")
 	}
 	// The bridge verb surfaces the same error (ok=false), not a panic.

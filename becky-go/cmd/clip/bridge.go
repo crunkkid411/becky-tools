@@ -221,10 +221,10 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 
 	// ---- render / export (new files) ----
 	case "export":
-		return a.ExportReel(argString(args, "output"))
+		return a.ExportReel(argString(args, "output"), argString(args, "prefix"))
 	case "export_selection":
 		// Render only the selected clips (their IDs) to a separate compilation MP4.
-		return a.ExportSelection(argStringSlice(args, "ids"), argString(args, "output"))
+		return a.ExportSelection(argStringSlice(args, "ids"), argString(args, "output"), argString(args, "prefix"))
 	case "write_edl":
 		path, err := a.WriteEDLOnly(argString(args, "output"))
 		if err != nil {

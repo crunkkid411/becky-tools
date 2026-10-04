@@ -92,6 +92,29 @@ void drawGrabCursor() {
     dl->AddCircle(ImVec2(a.x, m.y + s * 0.4f), s * 0.28f, line, 0, 1.2f);
 }
 
+// Copy Quote for timeline clips: per clip, the video's URL (when known), then the clip's
+// source in-point + the words it covers NOW, read from the source transcript so a trimmed
+// or extended clip copies exactly what it holds. Several clips -> timeline order, blank
+// line between. Used by the right-click menu and by Ctrl+click.
+static void copyClipQuotes(const std::vector<int>& idxs) {
+    std::string out;
+    bool loading = false;
+    for (int i : idxs) {
+        if (i < 0 || i >= (int)g_track[0].size()) continue;
+        const Clip& k = g_track[0][i];
+        std::string text;
+        if (!sourceQuoteText(k.source, k.in, k.out, text)) { loading = true; continue; }
+        if (text.empty()) continue;
+        char tc[24]; fmtTime(k.in, tc, sizeof tc, false);
+        if (!out.empty()) out += "\r\n\r\n";
+        out += quoteForClipboard(k.link.empty() ? linkFromName(baseName(k.source)) : k.link, tc, text);
+    }
+    if (!out.empty()) { copyQuoteToClipboard(out, idxs.size() > 1 ? "Copied quotes" : "Copied quote"); return; }
+    g_renderMsg = loading ? "That video's transcript is still loading - try again in a moment"
+                          : "No transcript words on that clip to copy";
+    g_renderMsgAt = nowSec();
+}
+
 void drawTimeline(double& curSec, bool& playing) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -474,28 +497,14 @@ void drawTimeline(double& curSec, bool& playing) {
             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(c.source);
             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(c.source).c_str());
             if (ImGui::MenuItem("Open Transcript")) { g_searchMode.clear(); g_searchErr.clear(); openTranscript(c.source); }
-            // Copy Quote: per clip, the video's URL (when known), then the clip's source
-            // in-point + the words it covers NOW, read from the source transcript so a
-            // trimmed or extended clip copies exactly what it holds. Right-clicking one
-            // of several selected clips copies all of them, in timeline order.
+            // Copy Quote (copyClipQuotes): right-clicking one of several selected clips
+            // copies all of them, in timeline order.
             bool multi = g_sel.count(c.id) && g_sel.size() > 1;
             if (ImGui::MenuItem(multi ? "Copy Quotes" : "Copy Quote")) {
-                std::string out;
-                bool loading = false;
-                for (int i = 0; i < (int)g_track[0].size(); i++) {
-                    const Clip& k = g_track[0][i];
-                    if (multi ? !g_sel.count(k.id) : i != s_ctxIdx) continue;
-                    std::string text;
-                    if (!sourceQuoteText(k.source, k.in, k.out, text)) { loading = true; continue; }
-                    if (text.empty()) continue;
-                    char tc[24]; fmtTime(k.in, tc, sizeof tc, false);
-                    if (!out.empty()) out += "\r\n\r\n";
-                    out += quoteForClipboard(k.link.empty() ? linkFromName(baseName(k.source)) : k.link, tc, text);
-                }
-                if (!out.empty()) { ImGui::SetClipboardText(out.c_str()); g_renderMsg = multi ? "Copied quotes" : "Copied quote"; }
-                else if (loading) g_renderMsg = "That video's transcript is still loading - try again in a moment";
-                else g_renderMsg = "No transcript words on that clip to copy";
-                g_renderMsgAt = nowSec();
+                std::vector<int> idxs;
+                for (int i = 0; i < (int)g_track[0].size(); i++)
+                    if (multi ? g_sel.count(g_track[0][i].id) > 0 : i == s_ctxIdx) idxs.push_back(i);
+                copyClipQuotes(idxs);
             }
         }
         ImGui::EndPopup();
@@ -670,6 +679,7 @@ void drawTimeline(double& curSec, bool& playing) {
             if (g.ctrl) {
                 if (g_sel.count(c.id)) g_sel.erase(c.id); else { g_sel.insert(c.id); g_selAnchor = c.id; }
                 emitSelect();
+                copyClipQuotes({ g.idx });   // Ctrl+click also copies this clip's quote
             } else if (g.shiftK && !g_selAnchor.empty()) {
                 int ai = -1, bi = g.idx;
                 for (size_t i = 0; i < g_track[0].size(); i++)

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"becky-go/internal/edl"
+	"becky-go/internal/footage"
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/reel"
 	"becky-go/internal/subs"
@@ -53,7 +54,7 @@ type ExportResult struct {
 // re-based SRT beside it. outPath is the MP4 path (or "" → a slugged name in the
 // work dir). Returns the produced paths. The render degrades nvenc→libx264 inside
 // internal/reel; a missing ffmpeg yields a clear error, never a panic.
-func (a *App) ExportReel(outPath string) (ExportResult, error) {
+func (a *App) ExportReel(outPath, prefix string) (ExportResult, error) {
 	a.mu.Lock()
 	r := a.reel
 	a.mu.Unlock()
@@ -64,7 +65,7 @@ func (a *App) ExportReel(outPath string) (ExportResult, error) {
 	// The captions the reviewer is looking at go INTO the file. The .srt is timed
 	// to the whole reel, which is exactly what a full-reel render outputs.
 	srt, marginV := a.reelCaptions()
-	return a.renderReel(r, outPath, "_reel", srt, marginV)
+	return a.renderReel(r, outPath, "_reel", prefix, srt, marginV)
 }
 
 // reelCaptions returns the hand-edited caption .srt sitting beside the OPEN reel
@@ -101,7 +102,7 @@ func (a *App) reelCaptions() (srt string, marginV int) {
 // the SAME render path as ExportReel on a filtered copy of the reel, so the selected
 // clips export byte-identically to a full export of just those clips. Unknown ids are
 // ignored; an empty / all-unknown selection is a clear error (never a silent no-op).
-func (a *App) ExportSelection(ids []string, outPath string) (ExportResult, error) {
+func (a *App) ExportSelection(ids []string, outPath, prefix string) (ExportResult, error) {
 	want := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if s := strings.TrimSpace(id); s != "" {
@@ -124,7 +125,7 @@ func (a *App) ExportSelection(ids []string, outPath string) (ExportResult, error
 	// reel, so dropping clips shifts every later cue off its words — silently wrong
 	// captions are worse than none. renderReel says so in the note. Upgrade path:
 	// re-base the cues onto the selection's timeline before burning.
-	return a.renderReel(sub, outPath, "_selection", "", 0)
+	return a.renderReel(sub, outPath, "_selection", prefix, "", 0)
 }
 
 // renderReel renders r to outPath (or an auto-sequenced <slug><suffix>_NNNN.mp4 in
@@ -133,17 +134,17 @@ func (a *App) ExportSelection(ids []string, outPath string) (ExportResult, error
 // timeline) and ExportSelection (a filtered sub-reel) so both behave identically.
 // capSRT (when non-empty) is BURNED INTO the video in the render's own ffmpeg
 // pass — the rendered file is the product, so preview-only captions are a bug.
-func (a *App) renderReel(r edl.Reel, outPath, suffix, capSRT string, capMarginV int) (ExportResult, error) {
+func (a *App) renderReel(r edl.Reel, outPath, suffix, prefix, capSRT string, capMarginV int) (ExportResult, error) {
 	if strings.TrimSpace(outPath) == "" {
 		dir, err := a.renderDir(reel.ClipSources(r.Clips)...)
 		if err != nil {
 			return ExportResult{}, err
 		}
-		// Name by the clips' SOURCE: clips_<sourcestem>_NNNN.mp4 when every clip is from
-		// ONE video, else clips_compilation_NNNN.mp4. The _NNNN sequence (next free number)
-		// means a re-export never overwrites a previous one.
-		_ = suffix // superseded by source-based naming (kept in the signature for callers)
-		outPath = nextSequencedPath(dir, exportBaseName(r.Clips), ".mp4")
+		// Name by the clips' SOURCE: <prefix>_<sourcestem>_[VIDEOID]_NNNN.mp4 when every
+		// clip is from ONE video, else <prefix>_compilation_NNNN.mp4 (prefix = the name he
+		// typed, "clips" when blank). The _NNNN sequence (next free number) means a
+		// re-export never overwrites a previous one.
+		outPath = nextSequencedPath(dir, exportBaseName(r.Clips, prefix), ".mp4")
 	}
 	outPath = absOut(outPath)
 
@@ -579,9 +580,13 @@ func nextSequencedPath(dir, base, ext string) string {
 }
 
 // exportBaseName builds the export file base from the clips' SOURCE videos:
-// "clips_<sourcestem>" when every clip shares ONE source, else "clips_compilation".
-// nextSequencedPath appends the _NNNN sequence + extension.
-func exportBaseName(clips []edl.Clip) string {
+// "<prefix>_<sourcestem>" when every clip shares ONE source, else
+// "<prefix>_compilation". prefix is the name Jordan typed at render time ("clips"
+// when blank). The source's YouTube id stays verbatim in brackets ("_[VIDEOID]",
+// the same form as the transcript file names) instead of being lowercased into
+// the slug. nextSequencedPath appends the _NNNN sequence + extension.
+func exportBaseName(clips []edl.Clip, prefix string) string {
+	prefix = cleanExportPrefix(prefix)
 	stem := ""
 	for _, c := range clips {
 		s := baseName(c.Source)
@@ -589,13 +594,32 @@ func exportBaseName(clips []edl.Clip) string {
 		if stem == "" {
 			stem = s
 		} else if s != stem {
-			return "clips_compilation"
+			return prefix + "_compilation"
 		}
 	}
 	if stem == "" {
-		return "clips_compilation"
+		return prefix + "_compilation"
 	}
-	return "clips_" + slugName(stem)
+	if id := footage.VideoIDFromName(stem); id != "" {
+		return prefix + "_" + slugName(strings.Replace(stem, "["+id+"]", "", 1)) + "_[" + id + "]"
+	}
+	return prefix + "_" + slugName(stem)
+}
+
+// cleanExportPrefix keeps the typed name as-is minus characters Windows forbids in
+// a file name; blank means the old default, "clips".
+func cleanExportPrefix(p string) string {
+	p = strings.Map(func(r rune) rune {
+		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
+			return -1
+		}
+		return r
+	}, p)
+	p = strings.Trim(p, " .")
+	if p == "" {
+		return "clips"
+	}
+	return p
 }
 
 // absOut returns the cleaned absolute form of an output path (best-effort).

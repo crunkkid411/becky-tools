@@ -585,6 +585,36 @@ std::string quoteForClipboard(const std::string& link, const std::string& timeco
     if (!link.empty()) out = link + "\r\n";
     return out + timecode + " \"" + text + "\"";
 }
+// Puts text on the clipboard and flashes a small "copied" tag at the mouse
+// (drawCopiedToast, once per frame) so the copy is visibly confirmed.
+// Render name prompt (toolbar): which button asked (1 = render selection, 2 = export),
+// which render to start this frame once Enter confirmed, and the typed name.
+static int s_exportKind = 0, s_exportRun = 0;
+static bool s_exportNameFocus = false;
+static char s_exportName[128] = "clips";
+static double g_copiedToastAt = -1.0;
+static ImVec2 g_copiedToastPos;
+void copyQuoteToClipboard(const std::string& text, const char* msg) {
+    ImGui::SetClipboardText(text.c_str());
+    g_renderMsg = msg; g_renderMsgAt = nowSec();
+    g_copiedToastAt = nowSec();
+    g_copiedToastPos = ImGui::GetIO().MousePos;
+}
+static void drawCopiedToast() {
+    const double kHold = 0.25, kFade = 0.45;   // full for a beat, then fades out
+    double age = nowSec() - g_copiedToastAt;
+    if (g_copiedToastAt < 0 || age > kHold + kFade) return;
+    float a = age <= kHold ? 1.0f : (float)(1.0 - (age - kHold) / kFade);
+    const char* label = "copied";
+    ImVec2 ts = ImGui::CalcTextSize(label);
+    float pad = 4.0f * ImGui::GetIO().FontGlobalScale;
+    ImVec2 p0(g_copiedToastPos.x + 12.0f, g_copiedToastPos.y - ts.y - 2 * pad - 6.0f);
+    ImVec2 p1(p0.x + ts.x + 2 * pad, p0.y + ts.y + 2 * pad);
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    fg->AddRectFilled(p0, p1, IM_COL32(10, 10, 10, (int)(230 * a)), 3.0f);
+    fg->AddRect(p0, p1, IM_COL32(0x14, 0xFF, 0x39, (int)(255 * a)), 3.0f, 0, 1.5f);
+    fg->AddText(ImVec2(p0.x + pad, p0.y + pad), IM_COL32(0x14, 0xFF, 0x39, (int)(255 * a)), label);
+}
 // srcT = the source-file time of the frame on screen, so ORIG TC runs with playback
 // exactly like the render's burned-in running timecode (not frozen at the clip's in).
 static std::vector<std::string> overlayLines(const Clip& c, double srcT) {
@@ -3857,6 +3887,9 @@ int main(int argc, char** argv) {
                         ImGui::SetNextItemAllowOverlap();
                         if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick) && !overIdx) {
                             g_hitSel = (int)i;
+                            // Ctrl+click also copies the quote (same text as its right-click Copy Quote).
+                            if (ImGui::GetIO().KeyCtrl)
+                                copyQuoteToClipboard(quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text), "Copied quote");
                             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec, playing, lastComposed);
                             // Item 4: single click PLAYS the quote's span (still never
                             // touches the real reel - see previewPlaySpan's comment).
@@ -3889,11 +3922,8 @@ int main(int argc, char** argv) {
                             }
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
-                            if (ImGui::MenuItem("Copy Quote")) {
-                                std::string copied = quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text);
-                                ImGui::SetClipboardText(copied.c_str());
-                                g_renderMsg = "Copied quote"; g_renderMsgAt = nowSec();
-                            }
+                            if (ImGui::MenuItem("Copy Quote"))
+                                copyQuoteToClipboard(quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text), "Copied quote");
                             if (showIdx && ImGui::MenuItem("Index for Search")) requestIndexSource(h.source);
                             ImGui::EndPopup();
                         }
@@ -4198,11 +4228,11 @@ int main(int argc, char** argv) {
                         cueClicked = true; cueHovered = true;
                     }
                     // Right-click copies this quote: timestamp + the quote in quotation marks.
-                    if (overCue && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered()) {
-                        std::string copied = quoteForClipboard(linkFromName(baseName(c.source)), c.timecode, c.text);
-                        ImGui::SetClipboardText(copied.c_str());
-                        g_renderMsg = "Copied quote"; g_renderMsgAt = nowSec();
-                    }
+                    // Ctrl+click copies it too (on top of its normal multi-select toggle below).
+                    if (overCue && ImGui::IsWindowHovered() &&
+                        (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+                         (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyCtrl)))
+                        copyQuoteToClipboard(quoteForClipboard(linkFromName(baseName(c.source)), c.timecode, c.text), "Copied quote");
                     // Corrected live (item B): single click ANYWHERE in this cue's words
                     // PLAYS its span (item 4, round 2) - previewPlaySpan never touches
                     // the real g_track[0]. Double-click ADDS, inserted at the playhead,
@@ -5510,8 +5540,12 @@ int main(int argc, char** argv) {
                     ImGui::BeginDisabled();
                 }
                 if (fixedButton(selLabel, { "render selection (000)", "render selection" })) {
+                    s_exportKind = 1; s_exportNameFocus = true; ImGui::OpenPopup("##exportname");
+                }
+                if (s_exportRun == 1) {
+                    s_exportRun = 0;
                     std::vector<std::string> ids(g_sel.begin(), g_sel.end());
-                    engineCallAsync("export_selection", { {"ids", ids}, {"output", ""} }, 300.0,
+                    engineCallAsync("export_selection", { {"ids", ids}, {"output", ""}, {"prefix", std::string(s_exportName)} }, 300.0,
                                     "Rendering the selected clips...", [](const json& r) {
                     if (r.value("ok", false)) {
                         const json& d = r.contains("data") ? r["data"] : r;
@@ -5537,7 +5571,11 @@ int main(int argc, char** argv) {
                 // Item 18: draw via refBtn so export gets the same white outer glow on hover
                 // as every other button (green fill + black text preserved).
                 if (refBtn("export##doexport")) {
-                    engineCallAsync("export", { {"output", ""} }, 300.0, "Rendering video...", [](const json& r) {
+                    s_exportKind = 2; s_exportNameFocus = true; ImGui::OpenPopup("##exportname");
+                }
+                if (s_exportRun == 2) {
+                    s_exportRun = 0;
+                    engineCallAsync("export", { {"output", ""}, {"prefix", std::string(s_exportName)} }, 300.0, "Rendering video...", [](const json& r) {
                     if (r.value("ok", false)) {
                         const json& d = r.contains("data") ? r["data"] : r;
                         std::string caps = d.value("captions", std::string());
@@ -5550,6 +5588,21 @@ int main(int argc, char** argv) {
                     });
                 }
                 ImGui::PopStyleColor(4);
+            }
+            // Render name prompt: export / render selection first ask for the name that
+            // replaces "clips_" in the file name. The box opens focused with the last
+            // name pre-selected, so he just types and presses Enter (Esc cancels). The
+            // render itself starts next frame via s_exportRun, from the same code above.
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("##exportname", nullptr,
+                                       ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                if (s_exportNameFocus) { ImGui::SetKeyboardFocusHere(); s_exportNameFocus = false; }
+                ImGui::SetNextItemWidth(360.0f * ImGui::GetIO().FontGlobalScale);
+                bool go = ImGui::InputTextWithHint("##exportnamebox", "render name", s_exportName, sizeof s_exportName,
+                                                   ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { s_exportKind = 0; ImGui::CloseCurrentPopup(); }
+                else if (go) { s_exportRun = s_exportKind; s_exportKind = 0; ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
             }
             // Export EDL - not in the reference's button row, but a working
             // Vegas/FCP-interchange feature nobody asked to remove; kept, just
@@ -5617,6 +5670,7 @@ int main(int argc, char** argv) {
             crashLog("UI frame: caught non-std exception - frame degraded, not crashing");
         }
 
+        drawCopiedToast();
         ImGui::Render();
         stageMark("imgui-render");
         float clr[4] = { 0.06f, 0.07f, 0.09f, 1.0f };
