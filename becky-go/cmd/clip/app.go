@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -35,6 +36,7 @@ import (
 	"becky-go/internal/footage"
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/qmd"
+	"becky-go/internal/reel"
 	"becky-go/internal/sidecar"
 )
 
@@ -1178,6 +1180,51 @@ func (a *App) Redo() (TimelineView, bool) {
 // (<path>.markers.json) because they are not part of edl.Reel; they are saved
 // with it so a reopened project keeps them (feedback 11).
 func (a *App) SaveReel(path string) (string, error) {
+	return a.saveReelTo(path)
+}
+
+// errNeedsProjectName is what SaveProject returns when nothing has been saved or
+// loaded yet - the review app answers it by asking him for a project name.
+var errNeedsProjectName = errors.New("needs_name")
+
+// SaveProject is the review app's Save / Save As. name == "": update the project
+// file already open (errNeedsProjectName when there is none yet). name != "":
+// a NEW project file "<name>.reel.json" in the same folder the exports go to;
+// an existing file is never overwritten - "<name>_2", "_3"... instead.
+func (a *App) SaveProject(name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		a.mu.Lock()
+		cur := a.reelPath
+		a.mu.Unlock()
+		if strings.TrimSpace(cur) == "" {
+			return "", errNeedsProjectName
+		}
+		return a.saveReelTo(cur)
+	}
+	a.mu.Lock()
+	sources := reel.ClipSources(a.reel.Clips)
+	a.mu.Unlock()
+	dir, err := a.renderDir(sources...)
+	if err != nil {
+		return "", err
+	}
+	return a.saveReelTo(nextFreeProjectPath(dir, cleanExportPrefix(name)))
+}
+
+// nextFreeProjectPath returns dir/<base>.reel.json, or the first free
+// dir/<base>_N.reel.json, so a new project never replaces an old one.
+func nextFreeProjectPath(dir, base string) string {
+	p := filepath.Join(dir, base+".reel.json")
+	for n := 2; n <= 9999; n++ {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			return p
+		}
+		p = filepath.Join(dir, fmt.Sprintf("%s_%d.reel.json", base, n))
+	}
+	return p
+}
+
+func (a *App) saveReelTo(path string) (string, error) {
 	a.mu.Lock()
 	if strings.TrimSpace(path) == "" {
 		path = a.reelPath

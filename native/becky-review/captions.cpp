@@ -537,6 +537,21 @@ void saveCapStyle() {
     f << "{\"margin_v\": " << g_capMarginV << "}\n";
 }
 
+// rehomeCaptions points the caption sidecars at a project just saved under a NEW
+// path (Save As / first save) and writes them there, so the hand-edited captions and
+// their placement travel with the project instead of staying beside the old file.
+// Same "<reel stem>.srt" rule loadCaptions uses. No-op when the path is unchanged.
+void rehomeCaptions(const std::string& reelPath) {
+    std::string p = reelPath; fwslash(p);
+    size_t dot = p.find_last_of('.'), slash = p.find_last_of('/');
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p = p.substr(0, dot);
+    std::string cap = p + ".srt";
+    if (cap == g_capPath) return;
+    g_capPath = cap;
+    if (g_capSidecar) saveCaptions();
+    saveCapStyle();
+}
+
 // saveCaptions rewrites the whole .srt in time order after any edit. SRT is
 // conventionally time-ordered and a drag can reorder cues, so it sorts - and then
 // repairs g_capSel so the white border stays on the caption the user is holding.
@@ -837,6 +852,9 @@ void rebuildDerivedCaptions() {
     // 2. Seed captions for clips not yet seeded, from their source transcript.
     bool waiting = false;
     for (auto& clip : g_track[0]) {
+        // Fetch every clip's source words up front (once per video), seeded or not,
+        // so Copy Quote / Ctrl+click have them ready instead of "still loading".
+        requestSrcCues(baseName(clip.source));
         if (g_capSeededClips.count(clip.id)) continue;
         std::string name = baseName(clip.source);
         auto it = g_srcCues.find(name);

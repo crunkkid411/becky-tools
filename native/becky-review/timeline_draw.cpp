@@ -555,6 +555,9 @@ void drawTimeline(double& curSec, bool& playing) {
             else if (zone == 5) { g_gest.kind = 5; g_gest.gIn = c.in; g_gest.gOut = c.out; }
             else {
                 g_gest.kind = 2;
+                // Ctrl+click also copies this clip's quote - on the PRESS, so a hand that
+                // lets go of Ctrl early or drifts a few pixels still gets the copy.
+                if (io.KeyCtrl) copyClipQuotes({ idx });
                 if (g_sel.count(c.id) && g_sel.size() > 1)
                     for (size_t i = 0; i < g_track[0].size(); i++)
                         if (g_sel.count(g_track[0][i].id)) g_gest.group.push_back((int)i);
@@ -678,9 +681,7 @@ void drawTimeline(double& curSec, bool& playing) {
             Clip& c = g_track[0][g.idx];
             if (g.ctrl) {
                 if (g_sel.count(c.id)) g_sel.erase(c.id); else { g_sel.insert(c.id); g_selAnchor = c.id; }
-                emitSelect();
-                copyClipQuotes({ g.idx });   // Ctrl+click also copies this clip's quote
-            } else if (g.shiftK && !g_selAnchor.empty()) {
+                emitSelect();            } else if (g.shiftK && !g_selAnchor.empty()) {
                 int ai = -1, bi = g.idx;
                 for (size_t i = 0; i < g_track[0].size(); i++)
                     if (g_track[0][i].id == g_selAnchor) { ai = (int)i; break; }

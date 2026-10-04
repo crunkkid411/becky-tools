@@ -206,6 +206,13 @@ func (a *App) dispatch(verb string, args map[string]any) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"path": path}, nil
+	case "save_project":
+		// The review app's Save (name "") / Save As (name set) - see SaveProject.
+		path, err := a.SaveProject(argString(args, "name"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path}, nil
 	case "load_reel":
 		return a.LoadReel(argString(args, "path"))
 

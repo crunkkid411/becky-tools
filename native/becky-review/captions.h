@@ -85,6 +85,7 @@ void drawCaptionsImGui(double t, ImVec2 origin, ImVec2 size);
 void pushCapUndo();
 void saveCaptions();
 void saveCapStyle();
+void rehomeCaptions(const std::string& reelPath);
 void reanchorCap(Caption& cap);
 size_t capTokenCount(const std::string& s);
 size_t nthSpaceIndex(const std::string& s, int k);

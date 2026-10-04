@@ -592,6 +592,11 @@ std::string quoteForClipboard(const std::string& link, const std::string& timeco
 static int s_exportKind = 0, s_exportRun = 0;
 static bool s_exportNameFocus = false;
 static char s_exportName[128] = "clips";
+// Save / Save As (toolbar): open the name box next frame, its focus request, the
+// typed name, and a save to send this frame (name "" = update the open project).
+static bool s_projAsk = false, s_projNameFocus = false, s_projSaveRun = false;
+static char s_projName[128] = "";
+static std::string s_projSaveName;
 static double g_copiedToastAt = -1.0;
 static ImVec2 g_copiedToastPos;
 void copyQuoteToClipboard(const std::string& text, const char* msg) {
@@ -3887,14 +3892,16 @@ int main(int argc, char** argv) {
                         ImGui::SetNextItemAllowOverlap();
                         if (ImGui::Selectable(line.c_str(), g_hitSel == (int)i, ImGuiSelectableFlags_AllowDoubleClick) && !overIdx) {
                             g_hitSel = (int)i;
-                            // Ctrl+click also copies the quote (same text as its right-click Copy Quote).
-                            if (ImGui::GetIO().KeyCtrl)
-                                copyQuoteToClipboard(quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text), "Copied quote");
                             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addHitToTimeline(h, curSec, playing, lastComposed);
                             // Item 4: single click PLAYS the quote's span (still never
                             // touches the real reel - see previewPlaySpan's comment).
                             else previewPlaySpan(h.source, h.start, h.end, curSec, playing, lastComposed);
                         }
+                        // Ctrl+click also copies the quote (same text as its right-click Copy
+                        // Quote). Checked on the PRESS, like the transcript's: the Selectable
+                        // above only fires on release, by which time Ctrl may be up already.
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyCtrl && !overIdx)
+                            copyQuoteToClipboard(quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text), "Copied quote");
                         // Right-click = the video rows' menu, on a hit. Right-click
                         // also MOVES the selection first, so the menu and the row
                         // Enter would act on can never be two different rows.
@@ -5497,13 +5504,40 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
             }
             // save / load - plain text, matching the reference exactly (no icon).
-            if (refBtn("save##savereel")) {
-                engineCallAsync("save_reel", { {"path", ""} }, 20.0, "Saving reel...", [](const json& r) {
-                    g_renderMsg = r.value("ok", false) ? "Saved reel " + r.value("data", json::object()).value("path", std::string()) : "Save reel failed: " + r.value("error", std::string("?"));
+            // Save updates the open project file; the very first save (nothing saved or
+            // loaded yet - the engine answers "needs_name") asks for a name instead.
+            // Right-click = Save As: always asks, always a NEW file. Both land in the
+            // export folder and never overwrite another project (save_project).
+            if (refBtn("save##savereel")) s_projSaveRun = true;
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) s_projAsk = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save project  (right-click: Save As)");
+            if (s_projAsk) { s_projAsk = false; s_projNameFocus = true; ImGui::OpenPopup("##projname"); }
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("##projname", nullptr,
+                                       ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                if (s_projNameFocus) { ImGui::SetKeyboardFocusHere(); s_projNameFocus = false; }
+                ImGui::SetNextItemWidth(360.0f * ImGui::GetIO().FontGlobalScale);
+                bool go = ImGui::InputTextWithHint("##projnamebox", "project name", s_projName, sizeof s_projName,
+                                                   ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                else if (go && s_projName[0]) { s_projSaveName = s_projName; s_projSaveRun = true; ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
+            }
+            if (s_projSaveRun) {
+                s_projSaveRun = false;
+                std::string name = s_projSaveName; s_projSaveName.clear();
+                engineCallAsync("save_project", { {"name", name} }, 20.0, "Saving project...", [](const json& r) {
+                    if (r.value("ok", false)) {
+                        std::string p = r.value("data", json::object()).value("path", std::string());
+                        rehomeCaptions(p);
+                        g_renderMsg = "Saved project " + p;
+                    } else if (r.value("error", std::string()) == "needs_name") {
+                        s_projAsk = true;   // first save: ask for the name (opened next frame)
+                        return;
+                    } else g_renderMsg = "Save failed: " + r.value("error", std::string("?"));
                     g_renderMsgAt = nowSec();
                 });
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Reel");
             ImGui::SameLine();
             if (refBtn("load##loadreel")) {
                 std::string picked = pickOpenReelFile(hwnd);
