@@ -4137,10 +4137,12 @@ int main(int argc, char** argv) {
                     if (newParagraph) { ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kPalette[0]), "%s", c.timecode.c_str()); ImGui::SameLine(0, 6); lastTimestampAt = c.start; }
                     bool isMatch = !within.empty() && ciContains(c.text, within);
                     bool cueHovered = false, cueClicked = false;
-                    // Item 5: bounding box of every word this cue draws (may wrap
-                    // across lines), so the selected cue can be outlined afterward
-                    // without a filled overlay dimming the text underneath it.
-                    ImVec2 cueMin(1e9f, 1e9f), cueMax(-1e9f, -1e9f);
+                    // One rect PER WRAPPED LINE of this cue (min, max), not one bounding
+                    // box: a cue that starts mid-line and wraps had a box spanning the full
+                    // width of every line it touched, which covered the neighbouring cues -
+                    // two quotes lit up at once and one double-click hit (and added) both.
+                    static std::vector<std::pair<ImVec2, ImVec2>> cueLines;
+                    cueLines.clear();
                     size_t pos = 0, n = c.text.size();
                     while (pos < n) {
                         size_t wstart = c.text.find_first_not_of(' ', pos);
@@ -4166,8 +4168,9 @@ int main(int argc, char** argv) {
                         ImVec2 wp0 = ImGui::GetCursorScreenPos();
                         ImGui::TextUnformatted(word.c_str());
                         ImVec2 wp1 = ImGui::GetItemRectMax();
-                        cueMin.x = (std::min)(cueMin.x, wp0.x); cueMin.y = (std::min)(cueMin.y, wp0.y);
-                        cueMax.x = (std::max)(cueMax.x, wp1.x); cueMax.y = (std::max)(cueMax.y, wp1.y);
+                        if (cueLines.empty() || wp0.y > cueLines.back().first.y + 0.5f) cueLines.push_back({ wp0, wp1 });
+                        else { cueLines.back().second.x = (std::max)(cueLines.back().second.x, wp1.x);
+                               cueLines.back().second.y = (std::max)(cueLines.back().second.y, wp1.y); }
                         if (ImGui::IsItemHovered()) cueHovered = true;
                         if (ImGui::IsItemClicked()) cueClicked = true;
                         ImGui::PopID();
@@ -4178,10 +4181,16 @@ int main(int argc, char** argv) {
                     // used to be silently ignored because only the individual word
                     // items had a hit test. Anywhere inside the cue's own bounding box
                     // counts, on top of the per-word hits already collected above.
-                    if (!cueClicked && cueMax.x > cueMin.x &&
-                        ImGui::IsMouseHoveringRect(cueMin, cueMax) &&
-                        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    bool overCue = cueHovered;
+                    for (auto& ln : cueLines) if (ImGui::IsMouseHoveringRect(ln.first, ln.second)) overCue = true;
+                    if (!cueClicked && overCue && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                         cueClicked = true; cueHovered = true;
+                    }
+                    // Right-click copies this quote: timestamp + the quote in quotation marks.
+                    if (overCue && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered()) {
+                        std::string copied = c.timecode + " \"" + c.text + "\"";
+                        ImGui::SetClipboardText(copied.c_str());
+                        g_renderMsg = "Copied quote"; g_renderMsgAt = nowSec();
                     }
                     // Corrected live (item B): single click ANYWHERE in this cue's words
                     // PLAYS its span (item 4, round 2) - previewPlaySpan never touches
@@ -4216,15 +4225,17 @@ int main(int argc, char** argv) {
                     // background channel so it sits BEHIND the words already submitted
                     // above, and at low enough alpha the text stays readable on top.
                     bool cueSelected = g_cueMulti.empty() ? (g_cueSel == (int)i) : (g_cueMulti.count((int)i) > 0);
-                    if (cueSelected && cueMax.x > cueMin.x) {
+                    if (cueSelected && !cueLines.empty()) {
                         cueSplit.SetCurrentChannel(dl, 0);
                         // Feedback 11: same visibility complaint as the match
                         // highlight above - 70 was near-invisible; 110 with the
                         // 220-alpha border reads clearly without washing the words.
-                        dl->AddRectFilled(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
-                                          IM_COL32(0x14, 0xFF, 0x39, 110), 3.0f);
-                        dl->AddRect(ImVec2(cueMin.x - 3, cueMin.y - 2), ImVec2(cueMax.x + 3, cueMax.y + 2),
-                                    IM_COL32(0x14, 0xFF, 0x39, 220), 3.0f, 0, 1.5f);
+                        for (auto& ln : cueLines) {
+                            dl->AddRectFilled(ImVec2(ln.first.x - 3, ln.first.y - 2), ImVec2(ln.second.x + 3, ln.second.y + 2),
+                                              IM_COL32(0x14, 0xFF, 0x39, 110), 3.0f);
+                            dl->AddRect(ImVec2(ln.first.x - 3, ln.first.y - 2), ImVec2(ln.second.x + 3, ln.second.y + 2),
+                                        IM_COL32(0x14, 0xFF, 0x39, 220), 3.0f, 0, 1.5f);
+                        }
                         cueSplit.SetCurrentChannel(dl, 1);
                     }
                     if (g_cueSel == (int)i && g_cueScrollPending) { ImGui::SetScrollHereY(0.3f); g_cueScrollPending = false; }

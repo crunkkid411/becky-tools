@@ -474,6 +474,29 @@ void drawTimeline(double& curSec, bool& playing) {
             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(c.source);
             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(c.source).c_str());
             if (ImGui::MenuItem("Open Transcript")) { g_searchMode.clear(); g_searchErr.clear(); openTranscript(c.source); }
+            // Copy Quote: each clip's source in-point + its caption words in quotation
+            // marks. Right-clicking one of several selected clips copies all of them,
+            // in timeline order, one per line.
+            bool multi = g_sel.count(c.id) && g_sel.size() > 1;
+            if (ImGui::MenuItem(multi ? "Copy Quotes" : "Copy Quote")) {
+                std::string out;
+                for (int i = 0; i < (int)g_track[0].size(); i++) {
+                    const Clip& k = g_track[0][i];
+                    if (multi ? !g_sel.count(k.id) : i != s_ctxIdx) continue;
+                    std::vector<const Caption*> caps;
+                    for (auto& cp : g_caps) if (!k.id.empty() && cp.clipId == k.id && !cp.text.empty()) caps.push_back(&cp);
+                    if (caps.empty()) continue;
+                    std::sort(caps.begin(), caps.end(), [](const Caption* a, const Caption* b) { return a->start < b->start; });
+                    std::string text;
+                    for (auto* cp : caps) { if (!text.empty()) text += " "; text += cp->text; }
+                    char tc[24]; fmtTime(k.in, tc, sizeof tc, false);
+                    if (!out.empty()) out += "\n";
+                    out += std::string(tc) + " \"" + text + "\"";
+                }
+                if (!out.empty()) { ImGui::SetClipboardText(out.c_str()); g_renderMsg = multi ? "Copied quotes" : "Copied quote"; }
+                else g_renderMsg = "No transcript words on that clip to copy";
+                g_renderMsgAt = nowSec();
+            }
         }
         ImGui::EndPopup();
     }
