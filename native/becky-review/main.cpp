@@ -3905,7 +3905,13 @@ int main(int argc, char** argv) {
                         // Right-click = the video rows' menu, on a hit. Right-click
                         // also MOVES the selection first, so the menu and the row
                         // Enter would act on can never be two different rows.
-                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { g_hitSel = (int)i; ImGui::OpenPopup("hitctx"); }
+                        // Ctrl + right-click copies instead of opening the menu: on his PC a Ctrl+left
+                        // click arrives as a RIGHT click with Ctrl held (it opened this menu).
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                            g_hitSel = (int)i;
+                            if (ImGui::GetIO().KeyCtrl) copyQuoteToClipboard(quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text), "Copied quote");
+                            else ImGui::OpenPopup("hitctx");
+                        }
                         if (ImGui::BeginPopup("hitctx")) {
                             // The popup is only as wide as its widest MENU ITEM, so a
                             // raw filename header just ran off the edge and got clipped

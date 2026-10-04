@@ -450,7 +450,12 @@ void drawTimeline(double& curSec, bool& playing) {
                 saveCaptions();
             }
         }
-        else if (clipHit(mx, my, idx, zone)) { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
+        else if (clipHit(mx, my, idx, zone)) {
+            // Ctrl + right-click copies instead of opening the menu: on his PC a
+            // Ctrl+left click arrives as a RIGHT click with Ctrl held.
+            if (io.KeyCtrl) copyClipQuotes({ idx });
+            else { s_ctxIdx = idx; ImGui::OpenPopup("clipctx"); }
+        }
         else if (showCaps && my >= capY && my <= capY + capH) {
             // Jordan (feedback 11): right-clicking EMPTY caption-lane space creates a
             // fresh blank segment he can type a custom caption into - same click-to-edit
