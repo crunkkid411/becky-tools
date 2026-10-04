@@ -474,45 +474,26 @@ void drawTimeline(double& curSec, bool& playing) {
             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(c.source);
             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(c.source).c_str());
             if (ImGui::MenuItem("Open Transcript")) { g_searchMode.clear(); g_searchErr.clear(); openTranscript(c.source); }
-            // Copy Quote: each clip's source in-point + its caption words in quotation
-            // marks. Right-clicking one of several selected clips copies all of them,
-            // in timeline order, one per line.
+            // Copy Quote: per clip, the video's URL (when known), then the clip's source
+            // in-point + the words it covers NOW, read from the source transcript so a
+            // trimmed or extended clip copies exactly what it holds. Right-clicking one
+            // of several selected clips copies all of them, in timeline order.
             bool multi = g_sel.count(c.id) && g_sel.size() > 1;
             if (ImGui::MenuItem(multi ? "Copy Quotes" : "Copy Quote")) {
                 std::string out;
+                bool loading = false;
                 for (int i = 0; i < (int)g_track[0].size(); i++) {
                     const Clip& k = g_track[0][i];
                     if (multi ? !g_sel.count(k.id) : i != s_ctxIdx) continue;
-                    std::vector<const Caption*> caps;
-                    for (auto& cp : g_caps) if (!k.id.empty() && cp.clipId == k.id && !cp.text.empty()) caps.push_back(&cp);
-                    if (caps.empty()) continue;
-                    std::sort(caps.begin(), caps.end(), [](const Caption* a, const Caption* b) { return a->start < b->start; });
-                    // Only the words still INSIDE the clip after trimming: each caption
-                    // carries Parakeet's per-word source times, so keep a word when its
-                    // midpoint is within [in, out]. Raw words also keep the transcript's
-                    // casing/punctuation (caption text is lowercased for display).
-                    std::vector<CapWord> words;
-                    for (auto* cp : caps)
-                        for (auto& w : cp->words) {
-                            double mid = (w.start + w.end) * 0.5;
-                            if (mid >= k.in && mid <= k.out) words.push_back(w);
-                        }
-                    std::stable_sort(words.begin(), words.end(), [](const CapWord& a, const CapWord& b) { return a.start < b.start; });
                     std::string text;
-                    for (size_t w = 0; w < words.size(); w++) {
-                        if (w > 0 && words[w].start == words[w - 1].start && words[w].word == words[w - 1].word) continue;   // same word carried by two captions
-                        if (!text.empty()) text += " ";
-                        text += words[w].word;
-                    }
-                    // No word timings at all (e.g. an official .srt): whole caption text, as before.
-                    if (words.empty())
-                        for (auto* cp : caps) { if (!text.empty()) text += " "; text += cp->text; }
+                    if (!sourceQuoteText(k.source, k.in, k.out, text)) { loading = true; continue; }
                     if (text.empty()) continue;
                     char tc[24]; fmtTime(k.in, tc, sizeof tc, false);
-                    if (!out.empty()) out += "\n";
-                    out += std::string(tc) + " \"" + text + "\"";
+                    if (!out.empty()) out += "\r\n\r\n";
+                    out += quoteForClipboard(k.link.empty() ? linkFromName(baseName(k.source)) : k.link, tc, text);
                 }
                 if (!out.empty()) { ImGui::SetClipboardText(out.c_str()); g_renderMsg = multi ? "Copied quotes" : "Copied quote"; }
+                else if (loading) g_renderMsg = "That video's transcript is still loading - try again in a moment";
                 else g_renderMsg = "No transcript words on that clip to copy";
                 g_renderMsgAt = nowSec();
             }

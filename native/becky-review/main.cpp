@@ -572,11 +572,18 @@ static std::string dateFromName(const std::string& name) {
     if (d.size() == 8) d = d.substr(0, 4) + "-" + d.substr(4, 2) + "-" + d.substr(6, 2);
     return d;
 }
-static std::string linkFromName(const std::string& name) {
+std::string linkFromName(const std::string& name) {
     static const std::regex re(R"(\[([A-Za-z0-9_-]{11})\])");
     std::smatch m;
     if (!std::regex_search(name, m, re)) return "";
     return "https://www.youtube.com/watch?v=" + m[1].str();
+}
+// The text every "Copy Quote" puts on the clipboard: the video's URL (when known) on
+// its own line, then the timestamp and the quote in quotation marks on the next.
+std::string quoteForClipboard(const std::string& link, const std::string& timecode, const std::string& text) {
+    std::string out;
+    if (!link.empty()) out = link + "\r\n";
+    return out + timecode + " \"" + text + "\"";
 }
 // srcT = the source-file time of the frame on screen, so ORIG TC runs with playback
 // exactly like the render's burned-in running timecode (not frozen at the clip's in).
@@ -3883,7 +3890,7 @@ int main(int argc, char** argv) {
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
                             if (ImGui::MenuItem("Copy Quote")) {
-                                std::string copied = h.timecode + " \"" + h.text + "\"";
+                                std::string copied = quoteForClipboard(linkFromName(baseName(h.source)), h.timecode, h.text);
                                 ImGui::SetClipboardText(copied.c_str());
                                 g_renderMsg = "Copied quote"; g_renderMsgAt = nowSec();
                             }
@@ -4192,7 +4199,7 @@ int main(int argc, char** argv) {
                     }
                     // Right-click copies this quote: timestamp + the quote in quotation marks.
                     if (overCue && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered()) {
-                        std::string copied = c.timecode + " \"" + c.text + "\"";
+                        std::string copied = quoteForClipboard(linkFromName(baseName(c.source)), c.timecode, c.text);
                         ImGui::SetClipboardText(copied.c_str());
                         g_renderMsg = "Copied quote"; g_renderMsgAt = nowSec();
                     }

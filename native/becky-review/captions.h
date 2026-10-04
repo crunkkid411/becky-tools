@@ -73,6 +73,9 @@ std::string baseName(const std::string& p);
 double reelFps();
 double quantToFrame(double t);
 void rebuildDerivedCaptions();
+// The source video's own transcript words inside [in, out] (source seconds), joined.
+// Returns false when that video's transcript hasn't loaded yet.
+bool sourceQuoteText(const std::string& source, double in, double out, std::string& text);
 bool captionTryUndo();
 bool captionTryRedo();
 void loadCaptions(const std::string& reelPath);

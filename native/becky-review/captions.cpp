@@ -571,6 +571,65 @@ void saveCaptions() {
 // directly, the transcript fetch via drainAsync) - so no locking here.
 // Transcripts arrive asynchronously; each arrival re-runs this, so captions
 // appear per source as its transcript lands, never blocking a frame.
+// Fetch a source video's caption_chunks (with per-word times) into g_srcCues once.
+static void requestSrcCues(const std::string& name) {
+    if (g_srcCues.count(name) || g_srcCuesInFlight.count(name)) return;
+    g_srcCuesInFlight.insert(name);
+    // caption_chunks, NOT transcript: the pace-based (pause-driven) chunker
+    // becky-subtitle uses - 22 chars only as a last resort, phrases kept
+    // whole, no gaps. So an un-captioned clip shows proper TikTok captions
+    // instead of the raw Parakeet transcript (long lines + speech gaps).
+    engineCallAsync("caption_chunks", { {"name", name} }, 25.0, "loading captions",
+        [name](const json& r) {
+            g_srcCuesInFlight.erase(name);
+            if (!r.value("ok", false)) {
+                // NOT cached: usually boot ordering (the forensic launcher
+                // loads the reel before open_folder indexes the folder).
+                // Retry (bounded) until the index exists; only a real
+                // answer is worth remembering.
+                static std::map<std::string, int> retries;
+                if (++retries[name] > 8) g_srcCues[name] = {};   // give up this session
+                rebuildDerivedCaptions();
+                return;
+            }
+            std::vector<Caption> cues;
+            if (r.contains("data") && r["data"].is_array())
+                for (auto& q : r["data"]) {
+                    Caption cp; cp.srcIn = q.value("start", 0.0); cp.srcOut = q.value("end", 0.0);
+                    cp.text = q.value("text", std::string());
+                    if (q.contains("words") && q["words"].is_array())
+                        for (auto& wj : q["words"])
+                            cp.words.push_back({ wj.value("word", std::string()), wj.value("start", 0.0), wj.value("end", 0.0) });
+                    if (cp.srcOut > cp.srcIn && !cp.text.empty()) cues.push_back(cp);
+                }
+            // an empty ok-list is cached too - "this source has no
+            // transcript" is an answer, asked exactly once
+            g_srcCues[name] = std::move(cues);
+            rebuildDerivedCaptions();
+        });
+}
+// sourceQuoteText reads the SOURCE video's transcript (g_srcCues, the same words the
+// captions were seeded from), not the clip's captions: captions are seeded once when a
+// clip is added, so after a trim/extend they no longer match the clip's span. A word
+// counts when its midpoint is inside [in, out]; a cue with no word timing (official
+// .srt) counts whole when its midpoint is inside.
+bool sourceQuoteText(const std::string& source, double in, double out, std::string& text) {
+    text.clear();
+    auto it = g_srcCues.find(baseName(source));
+    if (it == g_srcCues.end()) { requestSrcCues(baseName(source)); return false; }
+    for (auto& q : it->second) {
+        if (q.words.empty()) {
+            double mid = (q.srcIn + q.srcOut) * 0.5;
+            if (mid >= in && mid <= out) { if (!text.empty()) text += " "; text += q.text; }
+            continue;
+        }
+        for (auto& w : q.words) {
+            double mid = (w.start + w.end) * 0.5;
+            if (mid >= in && mid <= out && !w.word.empty()) { if (!text.empty()) text += " "; text += w.word; }
+        }
+    }
+    return true;
+}
 // rebuildDerivedCaptions is the ONE post-reload caption refresh (kept its old name
 // so every caller - loadTimelineView, applyAddClipDelta, seekToSpan, the transcript
 // arrival - stays wired). It no longer CLEARS + re-derives from scratch (that threw
@@ -782,41 +841,7 @@ void rebuildDerivedCaptions() {
         std::string name = baseName(clip.source);
         auto it = g_srcCues.find(name);
         if (it == g_srcCues.end()) {
-            if (!g_srcCuesInFlight.count(name)) {
-                g_srcCuesInFlight.insert(name);
-                // caption_chunks, NOT transcript: the pace-based (pause-driven) chunker
-                // becky-subtitle uses - 22 chars only as a last resort, phrases kept
-                // whole, no gaps. So an un-captioned clip shows proper TikTok captions
-                // instead of the raw Parakeet transcript (long lines + speech gaps).
-                engineCallAsync("caption_chunks", { {"name", name} }, 25.0, "loading captions",
-                    [name](const json& r) {
-                        g_srcCuesInFlight.erase(name);
-                        if (!r.value("ok", false)) {
-                            // NOT cached: usually boot ordering (the forensic launcher
-                            // loads the reel before open_folder indexes the folder).
-                            // Retry (bounded) until the index exists; only a real
-                            // answer is worth remembering.
-                            static std::map<std::string, int> retries;
-                            if (++retries[name] > 8) g_srcCues[name] = {};   // give up this session
-                            rebuildDerivedCaptions();
-                            return;
-                        }
-                        std::vector<Caption> cues;
-                        if (r.contains("data") && r["data"].is_array())
-                            for (auto& q : r["data"]) {
-                                Caption cp; cp.srcIn = q.value("start", 0.0); cp.srcOut = q.value("end", 0.0);
-                                cp.text = q.value("text", std::string());
-                                if (q.contains("words") && q["words"].is_array())
-                                    for (auto& wj : q["words"])
-                                        cp.words.push_back({ wj.value("word", std::string()), wj.value("start", 0.0), wj.value("end", 0.0) });
-                                if (cp.srcOut > cp.srcIn && !cp.text.empty()) cues.push_back(cp);
-                            }
-                        // an empty ok-list is cached too - "this source has no
-                        // transcript" is an answer, asked exactly once
-                        g_srcCues[name] = std::move(cues);
-                        rebuildDerivedCaptions();
-                    });
-            }
+            requestSrcCues(name);
             waiting = true;
             continue;
         }

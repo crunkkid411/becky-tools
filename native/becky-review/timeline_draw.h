@@ -140,6 +140,8 @@ void drawWave(ImDrawList* dl, const std::string& source, double cin, double cout
 bool clipPreparing(const Clip& c);
 double snapComp(double t, double pps, double curSec, int exclIdx, float px = 8.0f);
 void fmtTime(double s, char* out, size_t n, bool subSec);
+std::string linkFromName(const std::string& name);
+std::string quoteForClipboard(const std::string& link, const std::string& timecode, const std::string& text);
 double rulerStep(double pps);
 
 // --------------- timeline surface functions (defined in timeline_draw.cpp) ---------------
