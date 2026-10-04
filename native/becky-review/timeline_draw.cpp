@@ -487,8 +487,27 @@ void drawTimeline(double& curSec, bool& playing) {
                     for (auto& cp : g_caps) if (!k.id.empty() && cp.clipId == k.id && !cp.text.empty()) caps.push_back(&cp);
                     if (caps.empty()) continue;
                     std::sort(caps.begin(), caps.end(), [](const Caption* a, const Caption* b) { return a->start < b->start; });
+                    // Only the words still INSIDE the clip after trimming: each caption
+                    // carries Parakeet's per-word source times, so keep a word when its
+                    // midpoint is within [in, out]. Raw words also keep the transcript's
+                    // casing/punctuation (caption text is lowercased for display).
+                    std::vector<CapWord> words;
+                    for (auto* cp : caps)
+                        for (auto& w : cp->words) {
+                            double mid = (w.start + w.end) * 0.5;
+                            if (mid >= k.in && mid <= k.out) words.push_back(w);
+                        }
+                    std::stable_sort(words.begin(), words.end(), [](const CapWord& a, const CapWord& b) { return a.start < b.start; });
                     std::string text;
-                    for (auto* cp : caps) { if (!text.empty()) text += " "; text += cp->text; }
+                    for (size_t w = 0; w < words.size(); w++) {
+                        if (w > 0 && words[w].start == words[w - 1].start && words[w].word == words[w - 1].word) continue;   // same word carried by two captions
+                        if (!text.empty()) text += " ";
+                        text += words[w].word;
+                    }
+                    // No word timings at all (e.g. an official .srt): whole caption text, as before.
+                    if (words.empty())
+                        for (auto* cp : caps) { if (!text.empty()) text += " "; text += cp->text; }
+                    if (text.empty()) continue;
                     char tc[24]; fmtTime(k.in, tc, sizeof tc, false);
                     if (!out.empty()) out += "\n";
                     out += std::string(tc) + " \"" + text + "\"";

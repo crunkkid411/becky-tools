@@ -3882,7 +3882,11 @@ int main(int argc, char** argv) {
                             }
                             if (ImGui::MenuItem("Open in File Browser")) openInFileBrowser(h.source);
                             if (ImGui::MenuItem("Copy File Name")) ImGui::SetClipboardText(baseName(h.source).c_str());
-                            if (ImGui::MenuItem("Copy Quote")) ImGui::SetClipboardText(h.text.c_str());
+                            if (ImGui::MenuItem("Copy Quote")) {
+                                std::string copied = h.timecode + " \"" + h.text + "\"";
+                                ImGui::SetClipboardText(copied.c_str());
+                                g_renderMsg = "Copied quote"; g_renderMsgAt = nowSec();
+                            }
                             if (showIdx && ImGui::MenuItem("Index for Search")) requestIndexSource(h.source);
                             ImGui::EndPopup();
                         }
