@@ -262,12 +262,21 @@ Two separate tools, two different llama.cpp paths, **one model on the GPU at a t
   **Qwen3-VL** only for a dedicated VL job. Resolved by `config.Qwen()` (`BECKY_QWEN_MODEL`); fetched by
   `scripts/get-qwen35.ps1`.
 
+- **`becky-unstick`** — Microsoft **Fara1.5-4B** (browser-control specialist, Qwen3.5-4B base) for ONE stuck
+  browser screenshot: `becky-unstick --image <shot.png>` -> JSON `{action, x, y, thoughts}` in SCREENSHOT pixels
+  (Fara answers on a 1000x1000 grid; the tool scales it). `action:"terminate"` = nothing is blocking. It runs
+  Fara's verbatim training system prompt (`cmd/unstick/fara_system.txt`, rendered from github.com/microsoft/fara);
+  changing it degrades Fara. It never clicks anything itself. The agent Firefox (`X:gent-browserf.mjs unstick`)
+  does the clicking, max 3 rounds, Escape if the same click fails twice. Fara is trained to STOP before sign-ins,
+  purchases and sending messages, and the default goal forbids accepting/subscribing.
+
 ### Models on disk (full paths)
 | Model | Role | GGUF | mmproj |
 |---|---|---|---|
 | LFM2.5-VL **450M** | fastest still-image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-450m\LFM2.5-VL-450M-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-450m-Q8_0.gguf` |
 | LFM2.5-VL **1.6B** (default for `becky-vision`) | fast higher-quality still image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
 | **Qwen3.5-4B** (Unsloth) ← *orchestrator + ask-router + SINGLE-IMAGE corroborator; image-capable, NOT a "Qwen3.5-VL"; never video* | routes becky-ask, proposes in becky-scout, `becky-vision --qwen` single still | `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf` | `…\mmproj-F16.gguf` (image) |
+| **Fara1.5-4B** (bartowski Q4_K_M) ← *browser unsticker* | `becky-unstick`: what to click on a stuck page | `X:\AI-2ecky-tools\modelsara1.5-4b\Fara1.5-4B-Q4_K_M.gguf` | `…\mmproj-Fara1.5-4B-f16.gguf` |
 | **Gemma-4 E4B-it QAT** ← *default AVLM* | AV clip analysis (vision **+ audio**) | `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | `X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf` |
 | **Gemma-4 12B-it QAT** ← *re-verify tier (downloaded + verified 2026-06-24)* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(6.3 GB, present)* | `…\mmproj-12B-BF16.gguf` *(present)* |
 

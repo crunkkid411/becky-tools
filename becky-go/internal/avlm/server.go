@@ -24,6 +24,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"becky-go/internal/proc"
 )
 
 // contentPart models the subset of the OpenAI chat content schema we send.
@@ -224,6 +226,7 @@ func (r *Runner) spawnServer(ctx context.Context) (string, func(), error) {
 	r.Logf("avlm: spawning llama-server on %s (-ngl %d)...", url, r.NGL)
 
 	cmd := exec.Command(r.Server, args...)
+	proc.NoWindow(cmd) // never flash a console when the caller is headless (becky-unstick, GUIs)
 	// Send server logs to a temp file so they never pollute the tool's stdout.
 	logFile, _ := os.CreateTemp("", "becky_llama_server_*.log")
 	if logFile != nil {

@@ -12,6 +12,35 @@
 
 ---
 
+## `becky-unstick` — Fara1.5-4B unsticks the agent browser (2026-10-05, local, `master`)
+
+Jordan: agents get stuck on popups everywhere; use a small local vision model that only checks when a page is
+stuck (e.g. loading >30s) so Claude tokens go to reasoning, not babysitting. All checks/timers headless.
+
+**Model choice (verified on the HF hub, not a blog):** `microsoft/Fara1.5-4B`, released 2026-05-21, MIT, SFT of
+Qwen3.5-4B for browser computer-use; model card: WebVoyager 80.8 / Online-Mind2Web 57.3. GGUF:
+`bartowski/Fara1.5-4B-GGUF` Q4_K_M (2.9 GB) + `mmproj-Fara1.5-4B-f16.gguf` (0.7 GB) in `modelsara1.5-4b\`.
+
+**Added:**
+- `cmd/unstick` (`becky-unstick`): reuses `internal/avlm.AnalyzeImage` (llama-server). System prompt =
+  `fara_system.txt`, rendered byte-exact with microsoft/fara's own `get_computer_use_system_prompt`
+  (mode fara_next_browser, identity fara_qwen35, critical points fara-1.5, display 1000). Coordinates come back
+  on a 1000x1000 grid (`coord_spaces.FARA_DISPLAY_SIZE`) and are scaled to the screenshot. Tests: `parse_test.go`.
+- `internal/avlm/server.go`: `proc.NoWindow` on the spawned llama-server (it had none; a headless caller could
+  flash a console).
+- Caller (outside the repo): `X:gent-browserf.mjs` `unstick` + auto-check in `goto` after 30s; any command
+  auto-starts the agent Firefox.
+
+**Verified (real runs):** Manus pricing popup -> click (856,324), true X at (853,324), 15.4s cold / 3.8s infer;
+clean page -> terminate; injected cookie modal cleared end to end through ff.mjs; 40s-slow local page fired the
+30s check and still finished; a process watch during the run saw zero visible helper windows.
+
+**Traps found:** a white-on-white test popup (dark mode) hid the X, so Fara picked 'Manage' (correctly avoiding
+'Accept all') and repeated it 3x: ff.mjs now presses Escape and stops if the same click repeats. A JS timer
+without `unref()` made every fast `goto` wait 30s: fixed.
+
+---
+
 ## System One (Laya) + `becky-intake` for the "ai-useful" playlist (2026-09-25, local, `master`)
 
 Jordan: run the Qwen omni-skill-creator once (paid exception) on GitHub Trending Weekly #50, then
@@ -455,7 +484,8 @@ The four requirements, each a separate round of his feedback:
 Traps banked this round: Windows `CreationTime` on this footage is the COPY time and orders the
 timeline backwards - use ffprobe `format_tags=creation_time`. `Counter(set(doc))` gives every token
 identical IDF. matplotlib is broken in this box's anaconda env; PIL works. Writing Windows paths
-through a non-raw Python string mangles them (`` became a real CR inside SKILL.md).
+through a non-raw Python string mangles them (`
+` became a real CR inside SKILL.md).
 
 Not done: this is silence + noise removal, ordered, with markers - NOT his full rough-cut
 definition (no take judging, no retake removal, no narrative/pacing). No LLM in this path.

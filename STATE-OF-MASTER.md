@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — `becky-unstick`: a local 4B model clears stuck browser pages (2026-10-05, local)
+
+Microsoft Fara1.5-4B (trained only to use a browser) looks at a screenshot of a stuck page and says where to
+click. The agent Firefox (`X:gent-browserf.mjs`) calls it when a page loads for over 30s, or on `unstick`.
+Verified: it found the X on Manus's real 'Restore your account?' popup (3 px off), cleared a test cookie popup
+end to end, said 'nothing blocking' on clean pages, and no window flashed. avlm's llama-server now always
+spawns hidden. Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — a System One model (Laya) + the playlist reader `becky-intake` (2026-09-25, local)
 
 `becky-decide` runs Laya (open Jev alternative, ONNX, CPU, 0 VRAM) for typed decisions.

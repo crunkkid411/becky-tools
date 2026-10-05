@@ -9,6 +9,11 @@
   **`becky-intake`** (`cmd/intake`) turns the "ai-useful" YouTube playlist into Obsidian notes, routing
   each video links-vs-speech. Research + measured limits: `research/playlist-intake/README.md`.
   New 2026-09-25.
+- **Browser unsticker = `becky-unstick`** (`cmd/unstick`): Microsoft **Fara1.5-4B** (Qwen3.5-4B fine-tuned only
+  for browser control; `modelsara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and
+  returns the click that clears the popup/banner, or `terminate` if nothing blocks. Hidden llama-server, ~4s warm /
+  ~15s cold. Caller: the agent Firefox `X:gent-browserf.mjs` (`unstick` command + automatic check when a page
+  loads >30s). New 2026-10-05.
 - `BECKY-USER-GUIDE.md` — **plain, no-fluff guide for USING becky (not building it): the
   watch-a-video commands, the real working-tool list, how to run a workflow `.json` +
   the opt-in agent step, and an OSINT quickstart. For Jordan or any human/agent that just

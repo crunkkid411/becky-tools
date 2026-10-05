@@ -46,7 +46,7 @@ The friendly entry point is **`becky.exe`** (the orchestrator).
 | Identity/forensic | `identify` (voice+face+location → corroborated names), `events` (scene/phone/multi-face), `osint` (provenance frames + EXIF/GPS metadata), `validate` (Gemma-4 AV description), `framematch` (same-room exhibit), `motion` (sub-second movement localizer) | who/what/where, evidence-grade |
 | Index/report | `embed` (Qwen3 vectors), `search` (hybrid FTS5+vec+OCR RRF), `ocr` (text off frames), `consolidate`, `review` (LLM annotate), `export` | searchable corpus + reports |
 | Orchestration | `becky` (plain-language op runner), `enroll` (wiki→KB + `becky "this is X" <clip>`), `cluster` (recurring-unknown "Person A"), `ask` (TUI front-door, saves output next to source) | drive the toolset; build/grow the KB |
-| Utility/meta | `web2md`, `deslop`, `debt-scan`, `eval` (recall harness), `pipeline` (chains the above), `new-tool` (AI-assisted tool scaffolding) | |
+| Utility/meta | `unstick` (Fara1.5-4B: what to click on a stuck browser page), `web2md`, `deslop`, `debt-scan`, `eval` (recall harness), `pipeline` (chains the above), `new-tool` (AI-assisted tool scaffolding) | |
 | Clipping (shorts) | `moment` (which bits are worth posting), `hits` (moments -> reel), `short` (**the vertical short: Gemma-4 picks the in/out, nine-rung framing ladder, then a CRITIC watches the render and can send it back**), `speaking` (LR-ASD: which visible face is talking) | finished video -> 9:16 short. See SKILL.md's VIDEO CLIPPING section |
 | Music / DAW | `compose` (genre→MIDI stems), `hum`, `vox`, `mix`, `drum`, `wire`, `reaper` (**AI-first DAW: authors REAPER `.rpp` sessions + drives REAPER, which hosts all his VSTs**) | becky as the AI brain over a real DAW |
 
