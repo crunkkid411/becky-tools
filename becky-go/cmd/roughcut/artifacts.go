@@ -137,7 +137,9 @@ func launchVegasPro(out, scriptOverride string, verbose bool) error {
 		return fmt.Errorf("no Vegas Pro install found under C:\\Program Files\\VEGAS")
 	}
 	cmd := exec.Command(vegasExe, "-SCRIPT:"+script)
-	cmd.Env = append(os.Environ(), "BECKY_ROUGHCUT_JSON="+jsonPath)
+	// BECKY_ROUGHCUT_EXIT=1: this unattended launch is the only run that lets
+	// BeckyRoughCut.cs close VEGAS when it is done.
+	cmd.Env = append(os.Environ(), "BECKY_ROUGHCUT_JSON="+jsonPath, "BECKY_ROUGHCUT_EXIT=1")
 	proc.NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch vegas: %w", err)

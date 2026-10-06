@@ -2,6 +2,14 @@
 //
 //	becky-transcribe <input> [--output f] [--format json|srt|txt|vtt]
 //	                 [--diarize] [--speakers N] [--lang en] [--device auto|cuda|cpu] [--num-threads N] [--verbose]
+//	                 [--single-pass] [--lexicon words.txt] [--no-lexicon] [--cleanup]
+//
+// Every run listens twice: Parakeet, then WhisperX as a second opinion for
+// passages Parakeet missed (secondpass.go; --single-pass skips it). Jordan's
+// niche word list fixes misheard names (lexicon.go; --lexicon adds lines,
+// --no-lexicon skips it). --cleanup then lets Gemma-4 proofread for misheard
+// words the list does not have yet (cleanup.go). All three are text-only for
+// the words Parakeet heard: no timestamp moves.
 //
 // --device defaults to "auto": run on CUDA when it works and fall back to CPU on
 // an out-of-memory (or any GPU) failure, re-running the clip so a transcript is
@@ -34,6 +42,9 @@ type Word struct {
 	End        float64  `json:"end"`
 	Confidence *float64 `json:"confidence"`
 	Speaker    string   `json:"speaker,omitempty"` // set with --diarize: who said this word
+	// Source is set only on words the main Parakeet pass missed and the second
+	// pass recovered: "parakeet-recheck" (both models heard it) or "whisperx".
+	Source string `json:"source,omitempty"`
 }
 
 // Segment is a caption-sized grouping of words.
@@ -83,6 +94,15 @@ type Output struct {
 	// the lines have no speaker labels when the speaker pass could not run.
 	Speakers    int    `json:"speakers,omitempty"`
 	SpeakerNote string `json:"speaker_note,omitempty"`
+	// SecondPass is the audit trail of the WhisperX second opinion (what it
+	// recovered, what stayed unconfirmed, how its timing compares); nil with
+	// --single-pass. LexiconFixes lists every niche-word fix applied.
+	SecondPass   *SecondPass  `json:"second_pass,omitempty"`
+	LexiconFixes []LexiconFix `json:"lexicon_fixes,omitempty"`
+	// CleanupFixes lists every word --cleanup changed; CleanupNote says, in
+	// words, why the proofreading did not run or stopped early.
+	CleanupFixes []CleanupFix `json:"cleanup_fixes,omitempty"`
+	CleanupNote  string       `json:"cleanup_note,omitempty"`
 	// Forensic is the SELF-REGULATING result, present ONLY with --forensic. It runs
 	// the protocol-enforcement engine (internal/forensicrun -> orchestrate) over this
 	// clip: corroborated names + watched on-screen intervals, with maybes HELD. Omitted
@@ -141,6 +161,10 @@ func main() {
 	diarize := flag.Bool("diarize", false, "also work out WHO is speaking: every line gets a speaker label, and the result is saved next to the video as <name>.transcript.json")
 	speakers := flag.Int("speakers", 0, "known speaker count, if you know it (>1 also turns on --diarize; 0 = let becky work it out)")
 	kb := flag.String("kb", "", "with --forensic: knowledge-base dir for naming (default: BECKY_KB env, else kb-final)")
+	singlePass := flag.Bool("single-pass", false, "skip the WhisperX second opinion (faster; passages Parakeet misses stay missing)")
+	lexiconFile := flag.String("lexicon", "", "extra niche-word fixes (\"heard => meant\" per line) on top of the built-in list")
+	noLexicon := flag.Bool("no-lexicon", false, "skip the niche word list")
+	cleanup := flag.Bool("cleanup", false, "after the word list, Gemma-4 proofreads for misheard names and slang (text only, never moves a timestamp)")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
 
 	input := parsePositional()
@@ -195,9 +219,11 @@ func main() {
 	// the proven CPU Parakeet always stays available ("keep the CPU one in case").
 	var res helperResult
 	usedDML := false
+	var dmlScript, dmlDev string
 	if cfg.DMLTranscribePython != "" && dev != "cpu" && dev != "cuda" {
-		if dmlScript, derr := pyhelpers.Materialize("transcribe_parakeet_dml.py", pyhelpers.TranscribeParakeetDML); derr == nil {
-			dmlDev := "dml"
+		var derr error
+		if dmlScript, derr = pyhelpers.Materialize("transcribe_parakeet_dml.py", pyhelpers.TranscribeParakeetDML); derr == nil {
+			dmlDev = "dml"
 			if dev != "auto" && dev != "" {
 				dmlDev = dev
 			}
@@ -228,6 +254,51 @@ func main() {
 		beckyio.Logf(*verbose, "GPU run failed (%s) — fell back to CPU", res.FallbackReason)
 	} else if res.Device != "" {
 		beckyio.Logf(*verbose, "transcribed on %s", res.Device)
+	}
+
+	// Second opinion (WhisperX + Parakeet's second look) and the niche word
+	// list. Both only ever ADD words Parakeet missed or fix spelling; neither
+	// moves a timestamp of a word Parakeet heard.
+	var second *SecondPass
+	if !*singlePass {
+		beckyio.Logf(*verbose, "second opinion: WhisperX (Jordan's settings)...")
+		var recheck recheckFunc
+		if usedDML {
+			recheck = func(spans [][2]float64) ([][]Word, error) {
+				beckyio.Logf(*verbose, "second look: Parakeet re-listens to %d passage(s) only WhisperX heard...", len(spans))
+				return runRecheck(cfg.DMLTranscribePython, dmlScript, wav, dmlDev, spans, *verbose)
+			}
+		}
+		res.Words, second = secondPassFor(cfg.WhisperXExe, wav, *lang, recheck, res.Words, *verbose)
+		if second.Note != "" {
+			beckyio.Logf(true, "becky-transcribe: %s", second.Note)
+		}
+		beckyio.Logf(*verbose, "second opinion recovered %d passage(s); %d unconfirmed", len(second.Recovered), len(second.Unconfirmed))
+	}
+	var lexFixes []LexiconFix
+	if !*noLexicon {
+		fixes, bad, lerr := loadLexicon(*lexiconFile)
+		if lerr != nil {
+			beckyio.Fatalf("read --lexicon: %v", lerr)
+		}
+		for _, b := range bad {
+			beckyio.Logf(true, "becky-transcribe: skipped a word-list line it could not read: %q", b)
+		}
+		res.Words, lexFixes = applyLexicon(res.Words, fixes)
+	}
+	var cleanFixes []CleanupFix
+	cleanNote := ""
+	if *cleanup {
+		fixes, _, _ := loadLexicon(*lexiconFile)
+		beckyio.Logf(*verbose, "cleanup: Gemma-4 proofreads the transcript (text only)...")
+		res.Words, cleanFixes, cleanNote = cleanupWithGemma(cfg, res.Words, knownTerms(fixes), *verbose)
+		if cleanNote != "" {
+			beckyio.Logf(true, "becky-transcribe: %s", cleanNote)
+		}
+		beckyio.Logf(*verbose, "cleanup changed %d word(s)", len(cleanFixes))
+	}
+	if second != nil || len(lexFixes) > 0 || len(cleanFixes) > 0 {
+		res.Text = wordsText(res.Words)
 	}
 
 	// Force non-nil slices so the "words"/"segments" fields marshal as [] (not
@@ -274,17 +345,21 @@ func main() {
 	}
 
 	output := Output{
-		File:        input,
-		Duration:    round3(info.Duration),
-		Model:       res.Model,
-		Language:    res.Language,
-		Text:        text,
-		Words:       words,
-		Segments:    segments,
-		VADApplied:  vadApplied,
-		VADDropped:  vadDropped,
-		Speakers:    nSpeakers,
-		SpeakerNote: speakerNote,
+		File:         input,
+		Duration:     round3(info.Duration),
+		Model:        res.Model,
+		Language:     res.Language,
+		Text:         text,
+		Words:        words,
+		Segments:     segments,
+		VADApplied:   vadApplied,
+		VADDropped:   vadDropped,
+		Speakers:     nSpeakers,
+		SpeakerNote:  speakerNote,
+		SecondPass:   second,
+		LexiconFixes: lexFixes,
+		CleanupFixes: cleanFixes,
+		CleanupNote:  cleanNote,
 	}
 	beckyio.Logf(*verbose, "%d words, %d segments (%d dropped by VAD)",
 		len(output.Words), len(output.Segments), len(vadDropped))

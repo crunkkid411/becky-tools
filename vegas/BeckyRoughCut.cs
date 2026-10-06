@@ -12,9 +12,14 @@
  * stops, the quote plays, the main edit resumes - never on top of his voice.
  *
  * HOW TO RUN
- *   Agent / walk-away:  set BECKY_ROUGHCUT_JSON=<path to vegas_cut.json>, then
+ *   Agent / walk-away:  set BECKY_ROUGHCUT_JSON=<path to vegas_cut.json> and
+ *                       BECKY_ROUGHCUT_EXIT=1, then
  *                       vegas180.exe -SCRIPT:<this file>
- *                       (becky-roughcut --launch-vegas does exactly this)
+ *                       (becky-roughcut --launch-vegas does exactly this; it is
+ *                       the ONLY way the script closes VEGAS when it is done)
+ *   Live session:       becky-vegas run_script path=<this file> json=<vegas_cut.json>
+ *                       (VEGAS stays open; fixed 2026-10-05 - it used to call
+ *                       vegas.Exit() every time, which closed Jordan's session)
  *   By hand:            Tools > Scripting > Run Script... ; a picker appears.
  *
  * VP18 API gotchas canonized here: Timecode has no .Seconds (use .Nanos*1e-7
@@ -53,6 +58,10 @@ public class EntryPoint
     public void FromVegas(Vegas vegas)
     {
         string jsonPath = Environment.GetEnvironmentVariable("BECKY_ROUGHCUT_JSON");
+        if (string.IsNullOrEmpty(jsonPath))
+        {
+            jsonPath = ScriptArg("json"); // becky-vegas run_script ... json=<path>
+        }
         if (string.IsNullOrEmpty(jsonPath) || !File.Exists(jsonPath))
         {
             using (OpenFileDialog dlg = new OpenFileDialog())
@@ -75,7 +84,28 @@ public class EntryPoint
             log.Add("FATAL: " + ex);
         }
         try { File.WriteAllLines(logPath, log.ToArray()); } catch { }
-        vegas.Exit();
+        // Close VEGAS only for the unattended launch that asked for it; in a
+        // live session the edit stays open for Jordan.
+        if (Environment.GetEnvironmentVariable("BECKY_ROUGHCUT_EXIT") == "1")
+        {
+            vegas.Exit();
+        }
+    }
+
+    // ScriptArg reads one argument that becky-vegas run_script wrote to
+    // %LOCALAPPDATA%\BeckyVegas\script-args.json ("" when absent).
+    static string ScriptArg(string key)
+    {
+        try
+        {
+            string p = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                                    "BeckyVegas", "script-args.json");
+            if (!File.Exists(p)) return "";
+            var args = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(p)) as Dictionary<string, object>;
+            object v;
+            return args != null && args.TryGetValue(key, out v) && v != null ? v.ToString() : "";
+        }
+        catch { return ""; }
     }
 
     static void Run(Vegas vegas, string jsonPath, List<string> log)

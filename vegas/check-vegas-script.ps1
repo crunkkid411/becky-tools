@@ -73,9 +73,18 @@ $cscArgs = @(
     "/out:$out",
     "/r:$vegasDll",
     '/r:System.dll', '/r:System.Core.dll', '/r:System.Drawing.dll',
-    '/r:System.Windows.Forms.dll', '/r:System.Xml.dll',
-    $Script
+    '/r:System.Windows.Forms.dll', '/r:System.Xml.dll'
 )
+# A script may ask VEGAS for more assemblies in <script>.config
+# (<AssemblyReference>System.Web.Extensions.dll</AssemblyReference>); VEGAS
+# honours that file, so the checker must too (BeckyRoughCut.cs needs it).
+$config = "$Script.config"
+if (Test-Path $config) {
+    ([xml](Get-Content $config -Raw)).ScriptSettings.AssemblyReference | ForEach-Object {
+        if ($_) { $cscArgs += "/r:$($_.Trim())" }
+    }
+}
+$cscArgs += $Script
 
 $result = & $csc $cscArgs 2>&1
 if ($LASTEXITCODE -eq 0) {

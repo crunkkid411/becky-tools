@@ -158,6 +158,18 @@ func (r *Runner) ensureServer(ctx context.Context) (string, func(), error) {
 	return r.spawnServer(ctx)
 }
 
+// Start spawns ONE multimodal llama-server for a run of many requests (e.g.
+// becky-livestream asking about hundreds of frames) and points the Runner at
+// it, so each AnalyzeImage reuses the loaded weights. Call stop when done.
+func (r *Runner) Start(ctx context.Context) (stop func(), err error) {
+	url, cleanup, err := r.spawnServer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.ServerURL = url
+	return func() { cleanup(); r.ServerURL = "" }, nil
+}
+
 // chat POSTs one /v1/chat/completions request (an optional system message + the
 // given user content parts) and returns the assistant text. It always disables
 // the Gemma-4 thinking channel. Every recoverable failure is a *DegradeError.

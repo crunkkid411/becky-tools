@@ -6,6 +6,18 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — `becky-livestream`: a livestream clip-down is one call; transcription fixed (2026-10-05, local)
+
+`becky-livestream --model gemma|qwen|claude "<video>"` (or one of the three `Livestream Edit - *.bat`
+launchers in `workflows/livestream/`) transcribes, picks what to keep from one line of guidance, cuts on
+the audio, checks the frames for publish risks, builds and saves the VEGAS project
+(`<folder>-<model>.veg`), re-transcribes the finished edit to check it, and writes a report. Gemma and
+Qwen check each other's calls. Test stream (15 min): Qwen kept 95% of the wanted content with 4 s extra,
+Gemma 88% / 33 s, Claude 75% / 3 s; all three timelines frame-exact. becky-transcribe now has no
+zero-length words, a WhisperX second opinion, a word list and Gemma proofreading. Three projects +
+`27-livestream-model-comparison.md` wait for Jordan in `X:\Videos\2026\09_sept\27-livestream\`.
+Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — first real edit through VEGAS: the apology livestream (2026-10-05, local)
 
 Claude cut Jordan's 1h52m apology livestream to a 63m29s edit in VEGAS (apology only, chat and dead air out)
@@ -19,7 +31,7 @@ list except the becky-cut minimum cut. No becky-tools code changed. Report:
 ### NEW — `becky-unstick`: a local 4B model clears stuck browser pages (2026-10-05, local)
 
 Microsoft Fara1.5-4B (trained only to use a browser) looks at a screenshot of a stuck page and says where to
-click. The agent Firefox (`X:gent-browserf.mjs`) calls it when a page loads for over 30s, or on `unstick`.
+click. The agent Firefox (`X:\agent-browser\ff.mjs`) calls it when a page loads for over 30s, or on `unstick`.
 Verified: it found the X on Manus's real 'Restore your account?' popup (3 px off), cleared a test cookie popup
 end to end, said 'nothing blocking' on clean pages, and no window flashed. avlm's llama-server now always
 spawns hidden. Details: top of `HANDOFF-LOG.md`.
@@ -838,9 +850,15 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
 
 ### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
 
-- **becky-cut minimum cut length (2026-10-05).** becky-cut leaves 1-3 frame jump cuts (191 in the apology
-  edit, 12.9 s). Jordan is judging 6 marked examples in `apology-livestream.veg` (orange markers
-  "Tiny cut N of 6") before any fix. Nothing changed until he says so.
+- **A breath pass for becky-livestream (2026-10-05).** Jordan's idea: a SEPARATE pass, after becky-cut's
+  VAD and never touching it, that finds loud breaths inside kept pieces and treats them as pauses.
+  Built as examples only: `breath.go` puts ~5 markers per edit on loud wordless gaps. Nothing is cut
+  until he judges the markers in the three `27-livestream-*.veg` projects and says yes.
+- **Keep whole unsure stretches (2026-10-05).** A stray unsure sentence with nothing confidently kept
+  nearby is cut; on the test stream that cut Claude's whole 11:51-12:20 stretch (to-do list intro, "no
+  time for the drama and legal stuff"). Option: keep a run of 3+ unsure sentences instead. His call.
+
+(Answered 2026-10-05: becky-cut's 1-3 frame jump cuts are fine - "it's functioning correctly". No change.)
 
 - **`becky-decide`, a local Jev-style decision tool (`research/system-one-models-jev.md` section 7,
   2026-09-18).** Typed yes/no / pick-one / score answers with real probabilities from Gemma-4 E4B

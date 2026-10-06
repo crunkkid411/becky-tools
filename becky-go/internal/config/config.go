@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Python              string `json:"python"`                // interpreter with sherpa_onnx + torch
 	DMLTranscribePython string `json:"dml_transcribe_python"` // GPU ASR venv (onnx-asr+DirectML); empty = use sherpa CPU
+	WhisperXExe         string `json:"whisperx_exe"`          // Jordan's own WhisperX install (its venv's whisperx.exe): becky-transcribe's second opinion; empty = single pass
 	FaceDMLPython       string `json:"face_dml_python"`       // GPU face-detection venv (insightface+DirectML); empty = FacePython's CPU-only onnxruntime
 	ParakeetModelDir    string `json:"parakeet_model_dir"`    // sherpa-onnx Parakeet-TDT-0.6B-v3 dir
 	AutoEditor          string `json:"auto_editor"`           // auto-editor binary
@@ -219,7 +220,11 @@ func defaults() Config {
 	return Config{
 		Python:              detectPython(),
 		DMLTranscribePython: detectDMLTranscribePython(),
-		FaceDMLPython:       detectFaceDMLPython(),
+		// WhisperX is used ONLY through Jordan's own install (2026-10-05: "use it
+		// directly because it does not play nice with anything else"): its stable
+		// venv (torch 2.7+cu118), never pip-installed into another environment.
+		WhisperXExe:   firstExisting(`X:\AI-2\whisperX\venv\Scripts\whisperx.exe`),
+		FaceDMLPython: detectFaceDMLPython(),
 		ParakeetModelDir: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\asr\sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`,
 		),
@@ -465,6 +470,9 @@ func merge(base, over Config) Config {
 	}
 	if over.DMLTranscribePython != "" {
 		base.DMLTranscribePython = over.DMLTranscribePython
+	}
+	if over.WhisperXExe != "" {
+		base.WhisperXExe = over.WhisperXExe
 	}
 	if over.ParakeetModelDir != "" {
 		base.ParakeetModelDir = over.ParakeetModelDir

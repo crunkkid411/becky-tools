@@ -13,6 +13,9 @@
 //	becky-vegas help          every command the extension knows
 //	becky-vegas instances     which VEGAS windows are reachable
 //
+// Plus the client-side verbs in verbs.go (launch, new_project, save,
+// dialog_click, run_script with arguments).
+//
 // key=value arguments: true/false become booleans, numbers become numbers,
 // anything else is a string. --pid N picks a VEGAS when several are open;
 // otherwise the one focused most recently wins.
@@ -67,11 +70,32 @@ func main() {
 	if err != nil {
 		fail(2, err.Error())
 	}
+	if cmd == "launch" {
+		res, err := launch(*timeout)
+		if err != nil {
+			fail(1, err.Error())
+		}
+		printJSON(map[string]any{"ok": true, "result": res})
+		return
+	}
+	if cmd == "run_script" {
+		if args, err = prepareRunScript(args); err != nil {
+			fail(1, err.Error())
+		}
+	}
 	req, _ := json.Marshal(map[string]any{"id": 1, "cmd": cmd, "args": args})
 
 	candidates, err := choose(list, *pid)
 	if err != nil {
 		fail(2, err.Error())
+	}
+	if clientVerbs[cmd] {
+		res, err := runClientVerb(cmd, args, candidates[0], *timeout)
+		if err != nil {
+			fail(1, err.Error())
+		}
+		printJSON(map[string]any{"ok": true, "result": res})
+		return
 	}
 	var lastErr error
 	for _, inst := range candidates {

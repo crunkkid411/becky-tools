@@ -222,10 +222,19 @@ Each prints JSON (or use `--format srt|txt|vtt` on transcribe):
 ```
 becky-transcribe "<video>" --format srt          # what's said + timestamps
 becky-transcribe "<video>" --diarize              # what's said, every line labelled with its speaker
+becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads misheard names (text only)
 becky-diarize    "<video>"                        # how many speakers + when each talks (times only)
 becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face)
 becky-validate   "<video>"                        # AV description of on-screen actions (Gemma-4, default backend)
 ```
+`becky-transcribe` listens twice by default (2026-10-05): Parakeet (word timings from the model's own
+token durations, windows that start and end in pauses) and then WhisperX (`X:\AI-2\whisperX`,
+Jordan's settings) as a second opinion. A passage only WhisperX heard is re-listened by Parakeet
+first; else WhisperX's words are kept when its aligner is sure (score >= 0.5), shifted by the
+measured offset; else it is listed under `second_pass.unconfirmed`. Then Jordan's word list
+(`cmd/transcribe/lexicon.txt`; `--lexicon` adds lines) fixes misheard names. `--single-pass` skips
+WhisperX. None of this moves a timestamp of a word Parakeet heard. WhisperX starts words a median
+~75 ms after Parakeet; becky-cut / auto-editor cut times stay the gold standard for cutting.
 `becky-validate` defaults to `--backend gemma4-local` — you don't need to pass it. See the
 **Vision / audio-visual models** section below for which model runs, how to pick 12B vs E4B,
 and how to describe a single still image.
@@ -266,7 +275,7 @@ Two separate tools, two different llama.cpp paths, **one model on the GPU at a t
   browser screenshot: `becky-unstick --image <shot.png>` -> JSON `{action, x, y, thoughts}` in SCREENSHOT pixels
   (Fara answers on a 1000x1000 grid; the tool scales it). `action:"terminate"` = nothing is blocking. It runs
   Fara's verbatim training system prompt (`cmd/unstick/fara_system.txt`, rendered from github.com/microsoft/fara);
-  changing it degrades Fara. It never clicks anything itself. The agent Firefox (`X:gent-browserf.mjs unstick`)
+  changing it degrades Fara. It never clicks anything itself. The agent Firefox (`X:\agent-browser\ff.mjs unstick`)
   does the clicking, max 3 rounds, Escape if the same click fails twice. Fara is trained to STOP before sign-ins,
   purchases and sending messages, and the default goal forbids accepting/subscribing.
 
@@ -276,7 +285,7 @@ Two separate tools, two different llama.cpp paths, **one model on the GPU at a t
 | LFM2.5-VL **450M** | fastest still-image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-450m\LFM2.5-VL-450M-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-450m-Q8_0.gguf` |
 | LFM2.5-VL **1.6B** (default for `becky-vision`) | fast higher-quality still image describe/OCR | `X:\AI-2\becky-tools\models\lfm2.5-vl-1.6b\LFM2.5-VL-1.6B-Q8_0.gguf` | `…\mmproj-LFM2.5-VL-1.6b-Q8_0.gguf` |
 | **Qwen3.5-4B** (Unsloth) ← *orchestrator + ask-router + SINGLE-IMAGE corroborator; image-capable, NOT a "Qwen3.5-VL"; never video* | routes becky-ask, proposes in becky-scout, `becky-vision --qwen` single still | `X:\HuggingFace\models\unsloth\Qwen3.5-4B-GGUF\Qwen3.5-4B-UD-Q4_K_XL.gguf` | `…\mmproj-F16.gguf` (image) |
-| **Fara1.5-4B** (bartowski Q4_K_M) ← *browser unsticker* | `becky-unstick`: what to click on a stuck page | `X:\AI-2ecky-tools\modelsara1.5-4b\Fara1.5-4B-Q4_K_M.gguf` | `…\mmproj-Fara1.5-4B-f16.gguf` |
+| **Fara1.5-4B** (bartowski Q4_K_M) ← *browser unsticker* | `becky-unstick`: what to click on a stuck page | `X:\AI-2\becky-tools\models\fara1.5-4b\Fara1.5-4B-Q4_K_M.gguf` | `…\mmproj-Fara1.5-4B-f16.gguf` |
 | **Gemma-4 E4B-it QAT** ← *default AVLM* | AV clip analysis (vision **+ audio**) | `X:\AI-2\becky-tools\models\gemma4\gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf` | `X:\AI-2\becky-tools\models\gemma4\mmproj-BF16.gguf` |
 | **Gemma-4 12B-it QAT** ← *re-verify tier (downloaded + verified 2026-06-24)* | a tier up on reasoning + audio | `X:\AI-2\becky-tools\models\gemma4\gemma-4-12B-it-qat-UD-Q4_K_XL.gguf` *(6.3 GB, present)* | `…\mmproj-12B-BF16.gguf` *(present)* |
 
@@ -1160,9 +1169,18 @@ becky-vegas snapshot path="C:\...\frame.png"            :: then LOOK at the fram
 becky-vegas add_marker seconds=12.5 label="..."   |  add_region start= end= label=
 becky-vegas insert path="..." in=10 out=14         :: lands on "Becky Pulls" tracks, one undo step
 becky-vegas run_script path="X:\AI-2\becky-tools\vegas\BeckyCut.cs"
+becky-vegas run_script path="...\BeckyKeepList.cs" job="C:\...\vegas-job.txt"   :: extra key=value = the script's args
 becky-vegas command section=Global name=<keyboard.ini command name>
+becky-vegas launch                 :: start VEGAS (or use the open one); restore-autosave question -> back up, then No
+becky-vegas new_project            :: refuses while the open project has unsaved changes
+becky-vegas save path="X:\...\name.veg"   :: refuses an existing file unless overwrite=true; no path = save in place
+becky-vegas dialog_click button=OK [title="..."]   :: BM_CLICK the ONE matching button of an open dialog
 becky-vegas help
 ```
+
+Scripts read their arguments from `%LOCALAPPDATA%\BeckyVegas\script-args.json` (VEGAS 18 scripts
+cannot take any; `run_script` rewrites the file before every run, `{}` when there are none).
+`BeckyRoughCut.cs` reads `json=`, `BeckyKeepList.cs` reads `job=`.
 
 Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the extension running.
 
@@ -1171,9 +1189,13 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - **VEGAS objects are touched only on VEGAS's main thread.** In the extension that is `UiThread.Run`.
   Anything that touches `vegas.*` from a pipe/HTTP/timer thread is the exact bug that killed
   VegasAIBridge (`E_NOINTERFACE` on IVegasCOM).
-- **Jordan's projects are his.** There is no save/open/close verb, on purpose. Never add one without
-  him asking. Test only on a new Untitled project: `vegas180.exe -CMDMODULE:"...BeckyVegas.dll" "<test clip>"`
-  (and not while the installed copy is present - VEGAS would load both).
+- **Jordan's projects are his.** `launch`, `new_project`, `save` and `dialog_click` exist because he
+  asked for them (2026-10-05, report rec #7), and each refuses the risky case: `new_project` will not
+  drop unsaved changes, `save` will not overwrite a file unless told `overwrite=true`, `dialog_click`
+  needs exactly one matching button. There is still no open/close verb. Read a dialog's text before
+  answering it. Test extension changes only on a new Untitled project:
+  `vegas180.exe -CMDMODULE:"...BeckyVegas.dll" "<test clip>"` (and not while the installed copy is
+  present - VEGAS would load both).
 - **Look at VEGAS.** A dialog can park VEGAS at any time; `becky-vegas dialogs` names it, and a
   screenshot confirms it. Edit verbs refuse while a dialog is open or a render runs - do not work
   around that, answer the dialog (with Jordan's intent) first.
@@ -1201,14 +1223,19 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - OpenFX cannot see the project (no tracks/events/media paths in the OFX kit) - a timeline search
   must be an Application Extension, not an OFX plugin.
 - **Job scripts do what the verbs can't** (2026-10-05): `run_script` runs an `EntryPoint.FromVegas`
-  .cs and blocks until it finishes. It takes no arguments, so generate a one-off .cs per job (data
-  baked in, ASCII, CRLF) and compile-check it with csc against `ScriptPortal.Vegas.dll` first. An
+  .cs and blocks until it finishes (up to 30 min). VEGAS passes a script no arguments, so either read
+  `script-args.json` (above; `BeckyKeepList.cs` takes a job FILE this way) or generate a one-off .cs
+  per job (data baked in, ASCII, CRLF); compile-check either with `vegas/check-vegas-script.ps1`. An
   insert + ripple of 1,446 clip pairs + markers + regions + `vegas.SaveProject` ran in 1.1 s. Make
   the script check an anchor event and abort untouched if the timeline is not the planned one.
 - Regions show as GREEN flags in the marker bar, markers ORANGE; both share one numbering.
 - After an unclean exit VEGAS asks to restore autosaves: back them up, then BM_CLICK "No" (the
   files are kept). `becky-vegas dialogs` cannot connect while VEGAS is still on its splash.
-- Save/new/dialog-click verbs: Jordan approved adding them on 2026-10-05 (report rec #7); not built.
+- Save/new/launch/dialog-click verbs: Jordan approved them on 2026-10-05 (report rec #7); built the
+  same day in `becky-go/cmd/vegas/verbs.go` (client side: they run as tiny job scripts through
+  `run_script`, so the extension did not change).
+- A script's modal progress window (BeckyCut's "Becky Cut" form) is listed by `dialogs` too: it is
+  not a message box. Only a `#32770` window with buttons is a question to answer.
 
 ## Editing a long stream down to one story (first real test, 2026-10-05)
 
@@ -1224,6 +1251,53 @@ Full report: `vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`. Rules it 
   codes) and put a labeled region on each finding - never silently cut them (Jordan loved this).
 - **Edit types are separate workflows** (Jordan 2026-10-05): livestream clip-down (content cuts on
   request), rough cut (retakes only), shorts from widescreen.
+
+### The livestream clip-down is ONE call now: `becky-livestream` (2026-10-05)
+
+```bat
+becky-livestream --model gemma|qwen|claude "<video>" [--guidance "what to keep"] [--no-vegas] [--fresh]
+```
+Jordan's launchers: `workflows/livestream/Livestream Edit - Gemma|Qwen|Claude.bat` (copy into the
+footage folder; drag the video on, or double-click). What to keep comes from `--guidance`, else
+`<video name>.guidance.txt`, else `guidance.txt` beside the video, else it asks for one line.
+Every step runs, in this order, every time (`cmd/livestream/`):
+1. `becky-transcribe --cleanup` (two passes + word list + Gemma proofreading), cached in
+   `<footage>\becky-edit\<video>.transcript.json` and shared by all three models.
+2. `becky-cut --dry-run` (cached `becky-cut.json`) + the 16 kHz audio (`source16k.wav`).
+3. **The content decision is the ONLY model step** (`select.go`). Gemma or Qwen lead: first they
+   list the WANTED TOPICS in the guidance (printed at the top of the report, so a misread guidance
+   is visible), then every sentence gets one label (narrative / chat_reply / super_chat / break /
+   retake / meta) + the number of the wanted topic it is part of (0 = none) + confidence, held to a
+   JSON schema, 40 sentences per call with a one-line outline of the whole stream. **Local models
+   are NOT asked keep/cut**: becky keeps a sentence when its topic is wanted AND it is narrative.
+   Asked keep/cut, Qwen3.5-4B labeled the whole baldness topic "narrative" and still said cut for
+   every line; asked which topic, it numbered the same lines topic 2 (2026-10-05). The OTHER local
+   model re-decides, without seeing the first answer, both sides of every keep/cut boundary, every
+   cut within 4 sentences of a kept one, and every call below 70% (Gemma-4 rates nearly everything
+   100, so confidence alone never fires). Agree = done; disagree or unreviewed-and-unsure = KEPT and
+   marked "Unsure" (a stray unsure sentence 3+ sentences from anything confidently kept is cut and
+   listed). Claude decides keep/cut itself for the whole stream in one headless call through
+   `fleet-run.ps1` (Jordan's subscription). Saved as `selection-<model>.json` and reused while the
+   guidance is the same (`--fresh` decides again). Every local request ends "Write the JSON
+   compactly, on one line": under a schema Gemma-4 pretty-prints and ran out of tokens.
+4. Cut points from the audio (`edges.go`, the apology rules): becky-cut's edge when a pause is
+   there, else the quietest frame between the two words; a cut inside speech that is still above
+   becky-cut's silence threshold gets a "loud cut" marker.
+5. Publish check on the kept frames (`publish.go`): a frame every 2 s -> becky-ocr (address, phone,
+   email, ID and booking-code patterns = region) + Gemma-4 vision on new pictures (another
+   creator's content / documents with names / private details; 2+ frames in a row = region, one
+   frame = report only).
+6. Breath examples (`breath.go`): ~5 markers on loud wordless gaps inside kept pieces. MARKERS
+   ONLY - Jordan has not approved a breath pass; nothing is cut.
+7. VEGAS: `launch`, `new_project`, `BeckyKeepList.cs` (grouped pairs, butt-joined), save as
+   `<folder>-<gemma4|qwen3.5|claude>.veg` (never over an existing file), `BeckyCut.cs` unchanged.
+8. Edit check (`verify.go`): timeline vs the predicted pieces, then the edit's audio rebuilt from
+   the timeline, re-transcribed and lined up with the planned words BY TIMELINE TIME. A word is
+   "lost" only when its whole span was cut AND it was not heard: Parakeet puts the first word after
+   a pause ~0.3 s early, inside the silence BeckyCut removed, so a span check alone reported 14-18
+   false losses per edit ("I have hair", which every edit plays).
+9. Regions/markers, save, `becky-edit\report-<model>.md`.
+VRAM: every model step runs alone and before VEGAS opens (8 GB ceiling).
 
 # SYSTEM ONE — cheap typed decisions (Laya) and the playlist reader
 

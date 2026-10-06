@@ -10,9 +10,9 @@
   each video links-vs-speech. Research + measured limits: `research/playlist-intake/README.md`.
   New 2026-09-25.
 - **Browser unsticker = `becky-unstick`** (`cmd/unstick`): Microsoft **Fara1.5-4B** (Qwen3.5-4B fine-tuned only
-  for browser control; `modelsara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and
+  for browser control; `models\fara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and
   returns the click that clears the popup/banner, or `terminate` if nothing blocks. Hidden llama-server, ~4s warm /
-  ~15s cold. Caller: the agent Firefox `X:gent-browserf.mjs` (`unstick` command + automatic check when a page
+  ~15s cold. Caller: the agent Firefox `X:\agent-browser\ff.mjs` (`unstick` command + automatic check when a page
   loads >30s). New 2026-10-05.
 - `BECKY-USER-GUIDE.md` — **plain, no-fluff guide for USING becky (not building it): the
   watch-a-video commands, the real working-tool list, how to run a workflow `.json` +
@@ -44,6 +44,19 @@
   workaround, the Parakeet word-timing root cause (zero-length words = `merge_tokens_to_words`;
   window heads drop sentences), and the becky-tools fix list Jordan agreed (all but the min-cut one).
   Read before building the livestream clip-down workflow. New 2026-10-05.
+- **Livestream clip-down = `becky-livestream --model gemma|qwen|claude <video>`** (`cmd/livestream`;
+  Jordan's launchers `workflows/livestream/Livestream Edit - *.bat`): transcript -> becky-cut ->
+  ONE model step (what stays: Gemma/Qwen name each sentence's wanted topic + label and becky
+  applies the keep rule, the other local model re-checks topic edges and unsure calls; Claude
+  via fleet-run) -> audio cut points -> publish check (OCR + Gemma vision) -> VEGAS (`BeckyKeepList.cs`
+  + `BeckyCut.cs`) -> edit check (re-transcribe the timeline) -> regions + `becky-edit\report-*.md`.
+  Steps, rules and the model comparison: `SKILL.md` "The livestream clip-down is ONE call now", top
+  of `HANDOFF-LOG.md`. New 2026-10-05.
+- **Transcription fixed at the root (2026-10-05):** `becky-transcribe` builds word times from
+  Parakeet-TDT's own durations (no zero-length words), windows start and end in pauses, and every
+  run adds a WhisperX second opinion (`cmd/transcribe/secondpass.go`) + Jordan's word list
+  (`lexicon.txt`); `--cleanup` adds Gemma-4 proofreading (`cleanup.go`, text only). New
+  `becky-vegas` verbs: launch, new_project, save, dialog_click, script args (`cmd/vegas/verbs.go`).
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,

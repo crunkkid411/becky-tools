@@ -10,6 +10,7 @@ has buttons for the two you use most.
 | **`BeckyVegas/` (extension)** | **View ▸ Extensions ▸ Becky Search.** Type what was said, find every place it is spoken - on the timeline or in a folder - double-click to jump there or pull that line onto the timeline. Also the `\\.\pipe\becky-vegas-<pid>` control channel (`becky-vegas.exe`). **Section 6.** |
 | **`BeckyCaptions.cs`** | Captions the edit you already have open — transcribes with becky and lays one text event per caption on a "Becky Captions" track. **Start here for captions.** |
 | **`BeckyCut.cs`** | Cuts the dead air out of the events you have **selected**, in place, on the timeline you already have open. becky-cut decides where; this splits, deletes and ripples the gap closed. **One click - no dialog, no knobs, same answer every time.** One Ctrl+Z puts it back. **Start here for jump-cutting a selection.** |
+| `BeckyKeepList.cs` | The keep-list applicator for `becky-livestream`: into an EMPTY project, places one media file's kept sections (a TAB-separated job file of frame ranges, passed as `job=` through `becky-vegas run_script`) as grouped video+audio pairs butt-joined from 0, project size and frame rate from the clip, all selected so `BeckyCut.cs` can run next. Writes `<job>.result.txt` ("ok events=..." or "error: ..."), never a dialog. Do not drive it by hand: `becky-livestream` writes the job. |
 | `BeckyReviewTimeline.cs` | Builds a *review* timeline from a list of forensic hits (path + in/out), each as a named Region. Nothing to do with captions. |
 | **`BeckyRoughCut.cs`** | The unattended rough-cut assembler: reads `BECKY_ROUGHCUT_JSON`, builds video+audio tracks with paired events, markers and regions, saves the `.veg`, exits. `vegas180.exe -SCRIPT:<path>` + the env var = fully headless. It does NO thinking - all of it happens upstream. **Do not drive it by hand: run `Build Rough Cut.bat` (or `scripts/roughcut.py --launch-vegas`), which writes the JSON and launches this.** The JSON now comes from `scripts/build_roughcut.py`, not the older `becky-roughcut` Go path. Recipe and calibration targets: `SKILL.md` `# ROUGH CUT`. |
 | `BeckyVerifyProject.cs` | Reads a `.veg` back headless (`BECKY_VERIFY_VEG=<path>`) and writes `<path>.verify.txt` with track/event/marker/region counts and length — the proof a delivery actually landed. |
@@ -756,6 +757,11 @@ becky-vegas insert path="X:\clip.mp4" in=10 out=14        :: onto the Becky Pull
 becky-vegas add_marker seconds=9.12 label="check this"
 becky-vegas snapshot path="C:\tmp\frame.png"              :: the preview frame at the cursor, real pixels
 becky-vegas run_script path="X:\...\BeckyCut.cs"          :: any VEGAS script, like Tools > Scripting
+becky-vegas run_script path="X:\...\BeckyKeepList.cs" job="C:\...\job.txt"  :: extra key=value = script args
+becky-vegas launch                         :: start VEGAS (or use the open one); answers ONLY the restore-autosave question (backup first)
+becky-vegas new_project                    :: refuses while the open project has unsaved changes
+becky-vegas save path="X:\...\name.veg"    :: refuses an existing file unless overwrite=true; no path = save in place
+becky-vegas dialog_click button=OK         :: BM_CLICK the one matching button of an open dialog (title= narrows it)
 becky-vegas command section=Global name=Tools.Video.VideoEventFX   :: a VEGAS command by keyboard.ini name
 becky-vegas show_panel | play | stop | pause | markers | selected | transcribe path=... | help
 ```
@@ -765,8 +771,15 @@ with the extension is running. `--pid N` picks one VEGAS when several are open (
 focused most recently).
 
 **Safety built in:** anything that changes the project refuses while VEGAS is rendering or showing a
-dialog (the refusal names the dialog and its message), every edit is one undo step, and there is
-deliberately no save / open / close command.
+dialog (the refusal names the dialog and its message), and every edit is one undo step. `launch`,
+`new_project`, `save` and `dialog_click` (Jordan approved them 2026-10-05) live in the client
+(`becky-go/cmd/vegas/verbs.go`): the project ones run as tiny job scripts through `run_script`, and
+each refuses the risky case (unsaved changes, an existing file, an ambiguous button). There is still
+no open / close command.
+
+**Script arguments:** VEGAS 18 passes a script nothing, so `run_script` writes every extra
+`key=value` (or `args_file=` with one JSON object) to `%LOCALAPPDATA%\BeckyVegas\script-args.json`
+right before the run (`{}` when there are none); `BeckyRoughCut.cs` and `BeckyKeepList.cs` read it.
 
 **Whoretana:** whenever VEGAS comes to the front, the extension sends one line to
 `\\.\pipe\Whoretana`:

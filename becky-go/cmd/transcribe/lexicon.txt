@@ -1,0 +1,17 @@
+# Jordan's niche word list: names, places and slang the speech models mishear.
+# One fix per line:   heard => meant
+# Matching ignores case and punctuation and only matches whole words.
+# TEXT ONLY: a fix never moves a timestamp. The "meant" side has either the
+# same number of words as the "heard" side (a word-for-word swap) or exactly
+# one word (the heard words merge into one word that spans from the first
+# word's start to the last word's end). Anything else is reported, not used.
+# Add more with:  becky-transcribe <file> --lexicon my-words.txt
+
+harry jordan => Hair Jordan
+hairy jordan => Hair Jordan
+take it back 2007 => TakingBack2007
+taking back 2007 => TakingBack2007
+take it back two thousand seven => TakingBack2007
+taking back two thousand seven => TakingBack2007
+disc tracks => diss tracks
+disc track => diss track

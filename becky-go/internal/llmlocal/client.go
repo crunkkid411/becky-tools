@@ -53,6 +53,10 @@ type Options struct {
 	// message.content instead of a stripped reasoning channel. Load-bearing for
 	// Qwen "unified" GGUFs (verified at runtime, 2026-06-08).
 	EnableThinking bool
+	// ResponseFormat, when set, is sent as the OpenAI "response_format" field.
+	// llama-server compiles a JSON schema into a grammar, so a small model can
+	// only answer in that shape (becky-livestream's per-sentence decisions).
+	ResponseFormat any
 }
 
 // Client drives a local llama-server text model over HTTP. Construct it with
@@ -104,6 +108,14 @@ func NewClientCtx(model, server string, ctxLen int, logf func(string, ...any)) *
 	if ctxLen > 0 {
 		c.ctxLen = ctxLen
 	}
+	return c
+}
+
+// NewWarmClientCtx is NewWarmClient with a larger context window, for a session
+// of long prompts (becky-livestream sends ~40 transcript sentences per call).
+func NewWarmClientCtx(model, server string, ctxLen int, logf func(string, ...any)) *Client {
+	c := NewClientCtx(model, server, ctxLen, logf)
+	c.warm = true
 	return c
 }
 
@@ -213,6 +225,9 @@ func (c *Client) post(ctx context.Context, baseURL, system, user string, opts Op
 			{"role": "user", "content": user},
 		},
 		"chat_template_kwargs": map[string]bool{"enable_thinking": opts.EnableThinking},
+	}
+	if opts.ResponseFormat != nil {
+		reqBody["response_format"] = opts.ResponseFormat
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {

@@ -12,6 +12,98 @@
 
 ---
 
+## becky-livestream: the livestream clip-down is one call + transcription fixed at the root (2026-10-05, local, `master`)
+
+Jordan: implement the apology report's "What becky-tools needs" list except #5 (becky-cut's minimum cut -
+he judged the marked 1-3 frame cuts fine, "it's functioning correctly"), fix the Parakeet issue FIRST, then
+build the clip-down workflow from how the apology stream was edited, run it with local Gemma-4, local
+Qwen3.5-4B and Claude, and leave three VEGAS projects in the footage folder named by model, plus one `.bat`
+per model. Gemma and Qwen may review each other "wherever it makes sense, especially when there is a low
+confidence score (if we're even using confidence scores)". The loud-breath pass: thoughts first, no build.
+
+**Built (one branch):**
+- **Transcription (#2, #3, #4)** - `internal/pyhelpers/transcribe_parakeet_dml.py`: word ends from
+  Parakeet-TDT's own token durations (no zero-length words), punctuation never stretches a word, windows
+  start and end in pauses with midpoint ownership, `--spans` re-listen mode. `cmd/transcribe/secondpass.go`:
+  WhisperX second opinion on every run (`X:\AI-2\whisperX`, Jordan's settings from
+  `whsiperx_basic.bat`, config `whisperx_exe`); a passage only WhisperX heard is re-listened by Parakeet
+  first, else WhisperX's words are kept when its aligner score >= 0.5 (shifted by the measured offset),
+  else listed in `second_pass.unconfirmed_passages`. `lexicon.txt` (+ `--lexicon`, `--no-lexicon`): his
+  niche words, text only. `--cleanup` (`cleanup.go`): Gemma-4 E4B proofreads in batches; only look-alike
+  one-for-one swaps or known terms are accepted, no timestamp moves; it returns only the lines it changed.
+  `--single-pass` skips WhisperX.
+- **becky-vegas verbs (#7)** - `cmd/vegas/verbs.go`: `launch` (answers ONLY the restore-autosave question,
+  after copying the autosaves; also when VEGAS was already open showing it), `new_project` (refuses unsaved
+  changes), `save` (refuses an existing file unless overwrite=true), `dialog_click`, and script arguments
+  through `%LOCALAPPDATA%\BeckyVegas\script-args.json`. The extension is unchanged.
+- **BeckyRoughCut.cs (#9)** fixed; `vegas/check-vegas-script.ps1` compiles any job script like VEGAS does.
+- **`vegas/BeckyKeepList.cs` (#6)** - one media file's kept frame ranges as grouped pairs, butt-joined,
+  project size/rate from the clip, all selected for BeckyCut.
+- **`becky-livestream` (#1, #6, #8, #10)** - `cmd/livestream/`: select.go (content decision; local models
+  name each sentence's WANTED TOPIC + label and becky applies keep = topic > 0 AND narrative; the other local
+  model re-decides both sides of every keep/cut edge, cuts within 4 sentences of a keep, and calls below
+  70%), claude.go (fleet-run, opus, OAuth; Claude answers keep/cut itself), edges.go (the apology cut-point
+  rules), publish.go (OCR + Gemma vision), breath.go (examples only), vegas.go, verify.go (re-transcribe the
+  timeline, match by timeline time), report.go (prints the topics the model read in the guidance).
+- **Launchers** - `workflows/livestream/Livestream Edit - Gemma|Qwen|Claude.bat` (ASCII, end in `pause`),
+  copied into `X:\Videos\2026\09_sept\27-livestream\`.
+
+**Results on the test stream** (`X:\Videos\2026\09_sept\27-livestream\`, 15-min "SOME of my videos are
+back"; guidance: the copyright/channel-deletion update + "topic #1" baldness). "Wanted kept" is measured
+against Claude's own reading (update 3:07-3:22 and 11:09-12:21, baldness 12:59-end, 206 s):
+
+| | Gemma-4 (Qwen reviews) | Qwen3.5 (Gemma reviews) | Claude (opus, fleet-run) |
+|---|---|---|---|
+| Edit | 3:04, 11 sections | 2:49, 7 sections | 2:13, 6 sections |
+| Wanted kept / extra | 88% / 33 s | 95% / 4 s | 75% / 3 s |
+| Unsure regions | 18 | 6 | 7 |
+| Reviewer re-decided | 88 calls, 25 disagreed | 31 calls, 8 disagreed | - |
+| Decision time | 6m48s | 7m06s | 1m23s |
+
+All three: every timeline piece frame-identical to the plan, 0 gaps / picture-sound mismatches / ungrouped;
+98.3-99.2% of the planned words heard again in the re-transcribed edit; publish check 0 findings. Projects
+`27-livestream-gemma4|qwen3.5|claude.veg` + `27-livestream-model-comparison.md` (for Jordan) in the footage
+folder; reports in `becky-edit\report-<model>.md`. Claude rated 11:51-12:20 (to-do list intro, "no time
+for the drama and legal stuff") 55-65% and the isolated-unsure rule cut the whole stretch - flagged to Jordan
+as his call, not changed.
+
+Transcription, verified from the files: apology stream 15,431 words (old 15,084), 0 zero-length (old 7,889),
+47 passages recovered, 7 unconfirmed, 944 s for 1h52m. Test stream: 1,872 words, 0 zero-length, 4 recovered,
+1 unconfirmed; `--cleanup` (changed-lines-only, live run 434 s for the whole transcription) fixed "Hare" ->
+"Hair" twice and changed nothing else - word-for-word and time-for-time identical to the earlier transcript.
+
+**Traps found on the live runs (each fixed and tested):**
+- Asked keep/cut, Qwen3.5-4B labeled the whole baldness topic "narrative" and still answered cut: 0 keeps
+  in 109 review calls; Gemma-4 kept 33% of the wanted content. Asked "which numbered wanted topic is this
+  part of?" both tagged the right lines. Now the lead model first lists the wanted topics in the guidance
+  (`wantedTopics`), every sentence gets topic + label, and `keeps()` applies the rule in Go.
+- The outline call shared the decision system prompt and once answered with a list of labels; it has its own
+  `outlinePrompt` now.
+- Gemma-4 under a JSON schema pretty-prints: 40 decisions ran out of a 2,600-token allowance. Asking for
+  "compactly, on one line" -> 1,088 tokens, 14 s per 40 sentences.
+- Temperature 0 + a fixed seed means a retry is the SAME answer; the retry now gets double the allowance.
+- Gemma-4 rated 276 of 300 calls exactly 100 - a confidence trigger alone almost never asks the reviewer.
+  The reviewer now always re-decides both sides of every keep/cut boundary and every cut within 4 sentences
+  of a kept one.
+- The edit check reported 14-18 planned words "lost" per edit, "I have hair" (13:10) among them in all three.
+  becky-cut was right: the audio is -60 dB until 791.0 s, exactly where BeckyCut's piece starts; Parakeet puts
+  the first word after a pause up to ~0.3 s early, inside the removed silence. `verify.go` now matches words
+  by timeline time (a fully cut span is placed at the cut) and calls a word lost only when its span is gone
+  AND the re-transcription did not hear it: 18/17/14 -> 1/1/0 (the one left is a real "uh" at 12:02, in a
+  -54..-62 dB stretch becky-cut removed).
+- The autosave backup globbed `*autosave*`, matched an earlier backup FOLDER and failed ("Incorrect
+  function"), leaving VEGAS on its restore question; folders are skipped now. And `launch` did not look for
+  that question when VEGAS was already open.
+- BeckyCut's progress window shows in `becky-vegas dialogs`; only a `#32770` with an OK button is a message box.
+- `go test ./...`: `cmd/tts` TestRun_DegradesWhenNoModel and `internal/assistant` TestHandleTier2Funnel fail
+  on an unchanged HEAD too - not from this work.
+
+**For Jordan to decide (nothing changed without him):** keep whole unsure stretches (3+ lines) instead of
+cutting them when nothing nearby is a sure keep (the 11:51-12:20 case); the breath pass (only ~5 example
+markers per edit, nothing cut).
+
+---
+
 ## VEGAS real-world test — the apology livestream edited end to end (2026-10-05, local, `master`)
 
 Jordan: test the VEGAS tools on a real job. Import the 1h52m vertical livestream into a new project saved per
@@ -65,7 +157,7 @@ stuck (e.g. loading >30s) so Claude tokens go to reasoning, not babysitting. All
 
 **Model choice (verified on the HF hub, not a blog):** `microsoft/Fara1.5-4B`, released 2026-05-21, MIT, SFT of
 Qwen3.5-4B for browser computer-use; model card: WebVoyager 80.8 / Online-Mind2Web 57.3. GGUF:
-`bartowski/Fara1.5-4B-GGUF` Q4_K_M (2.9 GB) + `mmproj-Fara1.5-4B-f16.gguf` (0.7 GB) in `modelsara1.5-4b\`.
+`bartowski/Fara1.5-4B-GGUF` Q4_K_M (2.9 GB) + `mmproj-Fara1.5-4B-f16.gguf` (0.7 GB) in `models\fara1.5-4b\`.
 
 **Added:**
 - `cmd/unstick` (`becky-unstick`): reuses `internal/avlm.AnalyzeImage` (llama-server). System prompt =
@@ -74,7 +166,7 @@ Qwen3.5-4B for browser computer-use; model card: WebVoyager 80.8 / Online-Mind2W
   on a 1000x1000 grid (`coord_spaces.FARA_DISPLAY_SIZE`) and are scaled to the screenshot. Tests: `parse_test.go`.
 - `internal/avlm/server.go`: `proc.NoWindow` on the spawned llama-server (it had none; a headless caller could
   flash a console).
-- Caller (outside the repo): `X:gent-browserf.mjs` `unstick` + auto-check in `goto` after 30s; any command
+- Caller (outside the repo): `X:\agent-browser\ff.mjs` `unstick` + auto-check in `goto` after 30s; any command
   auto-starts the agent Firefox.
 
 **Verified (real runs):** Manus pricing popup -> click (856,324), true X at (853,324), 15.4s cold / 3.8s infer;
