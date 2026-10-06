@@ -1175,6 +1175,8 @@ becky-vegas launch                 :: start VEGAS (or use the open one); restore
 becky-vegas new_project            :: refuses while the open project has unsaved changes
 becky-vegas save path="X:\...\name.veg"   :: refuses an existing file unless overwrite=true; no path = save in place
 becky-vegas dialog_click button=OK [title="..."]   :: BM_CLICK the ONE matching button of an open dialog
+becky-vegas open_project path="X:\...\name.veg"     :: refuses while the open project has unsaved changes; checks it opened
+becky-vegas delete_marks prefix="Breath check|Breath example"   :: markers + regions whose label starts so; one undo step
 becky-vegas help
 ```
 
@@ -1192,8 +1194,12 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - **Jordan's projects are his.** `launch`, `new_project`, `save` and `dialog_click` exist because he
   asked for them (2026-10-05, report rec #7), and each refuses the risky case: `new_project` will not
   drop unsaved changes, `save` will not overwrite a file unless told `overwrite=true`, `dialog_click`
-  needs exactly one matching button. There is still no open/close verb. Read a dialog's text before
-  answering it. Test extension changes only on a new Untitled project:
+  needs exactly one matching button. `open_project` and `delete_marks` (2026-10-06) were added to
+  swap the breath markers in his three saved 27-livestream projects, which he approved: `open_project`
+  refuses unsaved changes and checks VEGAS really opened the file; `delete_marks` refuses an empty
+  prefix and is ONLY for becky's own labels ("Breath example", "Breath check") - never his. Both run
+  as job scripts that answer through a result file (a script that throws shows a VEGAS dialog and
+  stalls the run). There is still no close verb. Read a dialog's text before answering it. Test extension changes only on a new Untitled project:
   `vegas180.exe -CMDMODULE:"...BeckyVegas.dll" "<test clip>"` (and not while the installed copy is
   present - VEGAS would load both).
 - **Look at VEGAS.** A dialog can park VEGAS at any time; `becky-vegas dialogs` names it, and a
@@ -1236,6 +1242,13 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
   `run_script`, so the extension did not change).
 - A script's modal progress window (BeckyCut's "Becky Cut" form) is listed by `dialogs` too: it is
   not a message box. Only a `#32770` window with buttons is a question to answer.
+- (2026-10-06, reflected from the installed dll) `Vegas.OpenProject(string)` returns bool and works
+  from a job script through `run_script` (VEGAS swaps projects under the running script fine).
+  `Region` inherits `Marker`, but `Project.Markers` and `Project.Regions` are separate lists, each
+  with `Remove(...)`. A script that throws shows VEGAS's script-error dialog - catch and write a
+  result file instead (`runJobChecked` in `cmd/vegas/verbs.go`).
+- A window capture that does not steal focus: `PrintWindow(hwnd, dc, 2)` on VEGAS's main window
+  (PW_RENDERFULLCONTENT) returns the real UI even when it is behind other windows.
 
 ## Editing a long stream down to one story (first real test, 2026-10-05)
 
@@ -1256,6 +1269,7 @@ Full report: `vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`. Rules it 
 
 ```bat
 becky-livestream --model gemma|qwen|claude "<video>" [--guidance "what to keep"] [--no-vegas] [--fresh]
+becky-livestream --model gemma|qwen|claude "<video>" --breaths-only   :: redo ONLY the breath check on the saved project
 ```
 Jordan's launchers: `workflows/livestream/Livestream Edit - Gemma|Qwen|Claude.bat` (copy into the
 footage folder; drag the video on, or double-click). What to keep comes from `--guidance`, else
@@ -1287,8 +1301,22 @@ Every step runs, in this order, every time (`cmd/livestream/`):
    email, ID and booking-code patterns = region) + Gemma-4 vision on new pictures (another
    creator's content / documents with names / private details; 2+ frames in a row = region, one
    frame = report only).
-6. Breath examples (`breath.go`): ~5 markers on loud wordless gaps inside kept pieces. MARKERS
-   ONLY - Jordan has not approved a breath pass; nothing is cut.
+6. Breath check (`breath.go` + `motion.go` + `pyhelpers/sound_labels.py`; Jordan approved it
+   2026-10-06 as MARKERS ONLY - nothing is cut). Every wordless gap of 0.35 s+ inside one kept piece
+   gets two independent signals: a sound labeler (PretrainedSED `BEATs_strong_1`, MIT, installed in
+   `models\sed\PretrainedSED`, run with anaconda Python on the GPU, ~10 s, never downloads) and the
+   picture (whole-frame change 10x a second against his own median while talking; cached as
+   `becky-edit\<video>.motion.json`). A gap is a BREATH only when the labeler hears breathing
+   (>= 0.30), no other sound (< 0.15; room tone and sigh/gasp/sniff do not count as other), a voice
+   in at most 20% of it, AND the picture is still (< 1.5x mean, < 2.5x peak). Movement and voice are
+   never breaths; anything unsure stays. Up to 5 checked breaths become green "Breath check" regions
+   over the gap; the report lists every gap with its verdict. There is NO loudness test: 13 of the 14
+   old loudness-only "Breath example" markers were not breaths, and two real breaths sat under
+   becky-cut's threshold. If the labeler or the picture check cannot run, NO breath region is placed
+   and the report says why - never back to loudness. Known limit: a slow hand movement can pass as
+   still (1 of 20 gaps checked by eye). `--breaths-only` opens the saved `<folder>-<model>.veg`,
+   removes the old "Breath example"/"Breath check" marks, adds the new regions, saves, and rewrites
+   only the breath lines of `report-<model>.md`. Research: `research/breath-vs-movement-sound-labels.md`.
 7. VEGAS: `launch`, `new_project`, `BeckyKeepList.cs` (grouped pairs, butt-joined), save as
    `<folder>-<gemma4|qwen3.5|claude>.veg` (never over an existing file), `BeckyCut.cs` unchanged.
 8. Edit check (`verify.go`): timeline vs the predicted pieces, then the edit's audio rebuilt from

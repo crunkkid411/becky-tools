@@ -762,6 +762,8 @@ becky-vegas launch                         :: start VEGAS (or use the open one);
 becky-vegas new_project                    :: refuses while the open project has unsaved changes
 becky-vegas save path="X:\...\name.veg"    :: refuses an existing file unless overwrite=true; no path = save in place
 becky-vegas dialog_click button=OK         :: BM_CLICK the one matching button of an open dialog (title= narrows it)
+becky-vegas open_project path="X:\...\name.veg"   :: refuses while the open project has unsaved changes
+becky-vegas delete_marks prefix="Breath check"    :: markers + regions whose label starts so (a|b for several); one undo step
 becky-vegas command section=Global name=Tools.Video.VideoEventFX   :: a VEGAS command by keyboard.ini name
 becky-vegas show_panel | play | stop | pause | markers | selected | transcribe path=... | help
 ```
@@ -774,8 +776,9 @@ focused most recently).
 dialog (the refusal names the dialog and its message), and every edit is one undo step. `launch`,
 `new_project`, `save` and `dialog_click` (Jordan approved them 2026-10-05) live in the client
 (`becky-go/cmd/vegas/verbs.go`): the project ones run as tiny job scripts through `run_script`, and
-each refuses the risky case (unsaved changes, an existing file, an ambiguous button). There is still
-no open / close command.
+each refuses the risky case (unsaved changes, an existing file, an ambiguous button). `open_project`
+and `delete_marks` (2026-10-06) were added for the breath-marker swap Jordan approved; `delete_marks`
+is for becky's own labels only and refuses an empty prefix. There is still no close command.
 
 **Script arguments:** VEGAS 18 passes a script nothing, so `run_script` writes every extra
 `key=value` (or `args_file=` with one JSON object) to `%LOCALAPPDATA%\BeckyVegas\script-args.json`

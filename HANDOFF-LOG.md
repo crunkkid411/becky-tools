@@ -12,6 +12,79 @@
 
 ---
 
+## Breath check built: a sound labeler + the picture, markers only (2026-10-06, local, `master`)
+
+Jordan said **"yes"** to the proposal below: *"a gap counts as a breath only when the sound labeler
+hears a breath AND the video shows you still. Movement and talking are never cut, and anything unsure
+stays in. The first run would only replace those markers, for you to judge."*
+
+**Built:**
+- `internal/pyhelpers/sound_labels.py` (embedded as `pyhelpers.SoundLabels`): PretrainedSED
+  `BEATs_strong_1` over only the 10 s chunks that hold a gap. Per gap it returns:
+  - the breathing score;
+  - the strongest other sound (room tone and sigh/gasp/sniff are not counted);
+  - the share of voice frames.
+
+  It prints one JSON line and refuses to run without the checkpoint (it never downloads). Config:
+  `sound_label_python` (anaconda base) and `sound_label_repo` (`models\sed\PretrainedSED`, gitignored).
+- `cmd/livestream/motion.go`: ffmpeg at 10 fps, 72x128 gray, change from the frame before, cached as
+  `<video>.motion.json`. It is judged against his median movement while talking.
+- `cmd/livestream/breath.go` (rewritten). Every wordless gap of 0.35 s or more inside one kept piece is
+  checked; there is no loudness test any more. `judge()` decides in this order:
+  1. a voice in more than 20% of the gap: voice;
+  2. mean movement 1.5x or more, or a peak of 2.5x or more: movement;
+  3. another sound at 0.15 or more: other sound;
+  4. breathing at 0.30 or more: breath;
+  5. anything else: unclear.
+
+  Up to 5 breaths become green "Breath check" regions over the gap. The report lists every gap with its
+  verdict. If a signal cannot be measured: no breath regions, plus a note (it never falls back to
+  loudness).
+- `--breaths-only`:
+  - opens the saved `<folder>-<model>.veg`;
+  - deletes the old "Breath example"/"Breath check" marks and adds the new regions;
+  - saves, and rewrites only the breath lines of `report-<model>.md` (count corrected).
+
+  It never runs becky-cut or BeckyCut.cs.
+- New becky-vegas verbs:
+  - `open_project` refuses unsaved changes and checks the path VEGAS reports.
+  - `delete_marks prefix="a|b"` removes markers and regions in one UndoBlock, refuses an empty prefix,
+    and is verified through `markers`.
+
+  Both run as job scripts that answer through a result file, because a script that throws shows a VEGAS
+  dialog. `new_project` now shares `refuseUnsaved`.
+
+**Calibrated by eye** on 20 frame strips (details in the research doc's "Built" section):
+- The movement bounds went from 2.0x/3.5x to 1.5x/2.5x, because 0:18 (turning away) passed as still.
+- 14:07 also scored Sigh 0.15, so sigh/gasp/sniff count as breathing, not as "other".
+- The loudness gate was dropped: it hid real breaths at 13:18 and 14:10.
+- Known miss: a slow hand-in-hair (8:16) scores as still.
+
+**Ran it** on the three 27-livestream projects, after backing them up to `becky-edit\veg-backup-2026-10-06\`.
+The final version ran twice on each project, with the same result both times:
+
+| Project | Old markers removed | Were breaths | New "Breath check" regions |
+|---|---|---|---|
+| Gemma-4 | 5 | 0 (3 movement, 2 voice) | 1 (13:18) |
+| Qwen3.5 | 5 | 0 (the same 5 gaps) | 1 (13:18) |
+| Claude | 4 | 1 (14:07; plus 2 movement, 1 voice) | 3 (13:18, 14:07, 14:10) |
+
+Every region was read back from VEGAS and mapped to its stream time. The projects are saved, and
+`27-livestream-claude.veg` is left open. `27-livestream-model-comparison.md` got a breath line.
+
+**Checks:**
+- go build and vet are clean.
+- go test is green except the two older failures: `cmd/tts` TestRun_DegradesWhenNoModel and
+  `internal/assistant` TestHandleTier2Funnel.
+- gofmt complaints are CRLF only.
+- `build-all-tools.bat` built 112 tools.
+
+**Mistake caught:** I started patching main.go/report.go through an inline Python heredoc, against the
+LESSON. The script's own assertion stopped it before report.go was written. main.go was checked clean,
+and the rest was done with the Edit tool.
+
+---
+
 ## Breath or movement: research + a test on the 27-livestream, nothing built (2026-10-06, local, `master`)
 
 Jordan: *"does silero VAD identify exactly what the non-speech sounds are? If not, then we need a

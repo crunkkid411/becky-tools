@@ -1,6 +1,7 @@
 # Breath or movement? Naming the sound in a wordless gap (2026-10-06, local)
 
-RESEARCH + TEST + PROPOSAL. Nothing is built into becky-tools. The breath pass waits for Jordan's yes.
+RESEARCH + TEST + PROPOSAL, then BUILT the same day after Jordan's yes (markers only; see "Built" at
+the end).
 
 ## The question
 
@@ -85,7 +86,7 @@ or peaking at 3.5x or more.
 - **Gemma-4 E4B as a tie-breaker**: not needed. When the two signals disagree, the gap stays
   (corroborate, then conclude).
 
-## Proposal (awaiting Jordan's yes)
+## Proposal (Jordan said yes on 2026-10-06 - see "Built" below)
 
 1. A separate pass after becky-cut and BeckyCut that never touches either of them.
 2. A gap counts as a breath only when BOTH signals agree:
@@ -98,3 +99,51 @@ or peaking at 3.5x or more.
    - a thin pyhelper returns per-gap labels as JSON;
    - the motion check runs through ffmpeg in Go;
    - the pass itself stays in `cmd/livestream/breath.go`.
+
+## Built (2026-10-06, the same day: Jordan said "yes")
+
+Built as proposed, as becky-livestream's breath check (`cmd/livestream/breath.go`, `motion.go`,
+`internal/pyhelpers/sound_labels.py`). Markers only - nothing is cut.
+
+- **The sound labeler** runs once per edit over every candidate gap (anaconda Python, CUDA, about
+  10 s including the model load). It never downloads: the checkpoint must already be in
+  `models\sed\PretrainedSED\resources`. Per gap, with 0.1 s trimmed off each end (word edges carry
+  speech): the strongest breathing score (Breathing, Pant), the strongest OTHER sound and its name,
+  and the share of 40 ms frames with a voice above 0.5.
+- **"Other" leaves out** the room (Background noise, Mechanisms, hum, the room classes) and
+  breathing by another name (Gasp, Sigh, Sniff, Snort, Wheeze, Snoring). The clean breath at 14:07
+  also scored Sigh 0.15, and a sigh is still breathing; a cough, a laugh or a bump is not, and it
+  stays "other".
+- **The picture**: ffmpeg, 10 frames a second at 72x128 gray, mean pixel change from the frame
+  before, judged against his median while talking; cached as `becky-edit\<video>.motion.json`.
+- **The verdict, in order**: a voice in more than 20% of the gap = voice; mean movement 1.5x his
+  talking or more, or a peak of 2.5x or more = movement; another sound at 0.15 or more = other
+  sound; breathing at 0.30 or more = breath; anything else = unclear. The bounds lean to "not a
+  breath", because a missed breath only leaves a breath in.
+- **Calibration by eye (20 gaps in frame strips)**: the first draft's movement bounds (2.0x / 3.5x)
+  passed 0:18 as still while he turned away, so they were tightened to 1.5x / 2.5x. Hand on the
+  mouth at 8:46 now counts as movement, which is safe. One known miss: a slow hand-in-hair at 8:16
+  scores as still, so it would be marked a breath (it is in none of the three edits). Whole-frame
+  change catches fast movement; a person-pose signal would be the upgrade if slow movements matter.
+- **No loudness test.** The loudness gate was the old proxy, and it hid two real breaths (13:18 and
+  14:10, peaks around -44 dB against becky-cut's -43 dB threshold). Every wordless gap of 0.35 s or
+  more inside one kept piece is checked; a silent gap ends "unclear" and is left alone.
+- **If a signal cannot be measured**, no breath region is placed and the report says why. It never
+  falls back to loudness.
+
+Result on the three 27-livestream projects (`--breaths-only`; the final version ran twice on each
+project, with the same result both times). Each edit had only 7 pauses long enough to check, because
+BeckyCut takes the rest out.
+
+| Project | Old "Breath example" markers | Were breaths | New "Breath check" regions |
+|---|---|---|---|
+| Gemma-4 | 5 | 0 (3 movement, 2 voice) | 1 (13:18) |
+| Qwen3.5 | 5 | 0 (the same 5 gaps) | 1 (13:18) |
+| Claude | 4 | 1 (14:07; plus 2 movement, 1 voice) | 3 (13:18, 14:07, 14:10) |
+
+13:18 and 14:10 are new: both were quieter than becky-cut's threshold, so the loudness rule never
+saw them.
+
+Every new region was read back from VEGAS and mapped to the stream time of its breath. The
+projects were saved, and backups of the 2026-10-05 versions are in
+`X:\Videos\2026\09_sept\27-livestream\becky-edit\veg-backup-2026-10-06\`.

@@ -11,6 +11,10 @@ package main
 //	becky-vegas save                         save the open project to its own file
 //	becky-vegas run_script path=job.cs args_file=a.json   (or key=value ... as the arguments)
 //	becky-vegas dialog_click button="No" [title="..."]
+//	becky-vegas open_project path="X:\f\name.veg"   (refuses if the open one has unsaved changes)
+//	becky-vegas delete_marks prefix="Breath check|Breath example"   markers + regions whose label starts so; one undo step
+//
+// (open_project and delete_marks: 2026-10-06, for becky-livestream's breath check.)
 //
 // run_script arguments travel through %LOCALAPPDATA%\BeckyVegas\script-args.json
 // because VEGAS 18 gives a script no way to read arguments. The file is
@@ -30,7 +34,8 @@ import (
 )
 
 // clientVerbs are handled here, not by the extension.
-var clientVerbs = map[string]bool{"launch": true, "new_project": true, "save": true, "dialog_click": true}
+var clientVerbs = map[string]bool{"launch": true, "new_project": true, "save": true, "dialog_click": true,
+	"open_project": true, "delete_marks": true}
 
 func scriptArgsPath() string {
 	return filepath.Join(os.Getenv("LOCALAPPDATA"), "BeckyVegas", "script-args.json")
@@ -100,6 +105,71 @@ func saveScript(path string) string {
 	return jobScript("        vegas.SaveProject(" + csString(path) + ");")
 }
 
+// openProjectScript and deleteMarksScript answer through a result file instead
+// of throwing: a script error shows a VEGAS dialog, which stalls an unattended run.
+func openProjectScript(path, result string) string {
+	return jobScript(`        string r;
+        try { r = vegas.OpenProject(` + csString(path) + `) ? "ok" : "error: VEGAS did not open the project"; }
+        catch (Exception e) { r = "error: " + e.Message; }
+        System.IO.File.WriteAllText(` + csString(result) + `, r);`)
+}
+
+func deleteMarksScript(prefixes []string, result string) string {
+	lits := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		lits[i] = csString(p)
+	}
+	return jobScript(`        string r;
+        try
+        {
+            string[] prefixes = { ` + strings.Join(lits, ", ") + ` };
+            System.Collections.Generic.List<Marker> ms = new System.Collections.Generic.List<Marker>();
+            foreach (Marker m in vegas.Project.Markers)
+                foreach (string p in prefixes)
+                    if ((m.Label ?? "").StartsWith(p, StringComparison.Ordinal)) { ms.Add(m); break; }
+            System.Collections.Generic.List<Region> rs = new System.Collections.Generic.List<Region>();
+            foreach (Region g in vegas.Project.Regions)
+                foreach (string p in prefixes)
+                    if ((g.Label ?? "").StartsWith(p, StringComparison.Ordinal)) { rs.Add(g); break; }
+            using (UndoBlock u = new UndoBlock("Becky: remove marks"))
+            {
+                foreach (Marker m in ms) vegas.Project.Markers.Remove(m);
+                foreach (Region g in rs) vegas.Project.Regions.Remove(g);
+            }
+            r = "ok " + ms.Count + " " + rs.Count;
+        }
+        catch (Exception e) { r = "error: " + e.Message; }
+        System.IO.File.WriteAllText(` + csString(result) + `, r);`)
+}
+
+// splitPrefixes reads prefix="a|b". Empty parts are dropped: an empty prefix
+// would match, and remove, every marker.
+func splitPrefixes(v any) []string {
+	s, _ := v.(string)
+	var out []string
+	for p := range strings.SplitSeq(s, "|") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// countPrefixed counts the markers verb's entries whose label starts with a prefix.
+func countPrefixed(marks any, prefixes []string) int {
+	n := 0
+	for _, m := range asList(marks) {
+		label, _ := m["label"].(string)
+		for _, p := range prefixes {
+			if strings.HasPrefix(label, p) {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
 // checkSavePath refuses anything but a .veg in an existing folder, and never
 // overwrites an existing file unless asked (originals are never rewritten).
 func checkSavePath(path string, overwrite bool, exists func(string) bool) error {
@@ -166,21 +236,87 @@ func runJob(inst instance, name, src string, timeout time.Duration) error {
 	return err
 }
 
+// runJobChecked runs a job script that writes "ok ..." or "error: ..." to a
+// result file, and returns that answer.
+func runJobChecked(inst instance, name string, script func(result string) string, timeout time.Duration) (string, error) {
+	result := filepath.Join(os.TempDir(), "becky-vegas", name+".result.txt")
+	_ = os.Remove(result)
+	if err := runJob(inst, name+".cs", script(result), timeout); err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(result)
+	if err != nil {
+		return "", fmt.Errorf("VEGAS ran %s but it did not report back", name)
+	}
+	s := strings.TrimSpace(string(b))
+	if !strings.HasPrefix(s, "ok") {
+		return "", errors.New(strings.TrimPrefix(s, "error: "))
+	}
+	return s, nil
+}
+
+// refuseUnsaved stops a verb that would replace the open project while it has
+// unsaved changes (VEGAS would ask "save changes?" and stall).
+func refuseUnsaved(inst instance, timeout time.Duration) error {
+	st, err := send(inst, "status", nil, timeout)
+	if err != nil {
+		return err
+	}
+	if m, _ := st.(map[string]any); m != nil && m["project_modified"] == true {
+		return errors.New("the open project has unsaved changes - save it first (becky-vegas save)")
+	}
+	return nil
+}
+
 // runClientVerb carries out one client-side verb against the chosen VEGAS.
 func runClientVerb(cmd string, args map[string]any, inst instance, timeout time.Duration) (any, error) {
 	switch cmd {
 	case "new_project":
-		st, err := send(inst, "status", nil, timeout)
-		if err != nil {
+		if err := refuseUnsaved(inst, timeout); err != nil {
 			return nil, err
-		}
-		if m, _ := st.(map[string]any); m != nil && m["project_modified"] == true {
-			return nil, errors.New("the open project has unsaved changes - save it first (becky-vegas save)")
 		}
 		if err := runJob(inst, "new_project.cs", newProjectScript(), timeout); err != nil {
 			return nil, err
 		}
 		return send(inst, "status", nil, timeout)
+	case "open_project":
+		path, _ := args["path"].(string)
+		if !strings.EqualFold(filepath.Ext(path), ".veg") || !fileExists(path) {
+			return nil, fmt.Errorf("open_project needs path=<an existing .veg file>, got %q", path)
+		}
+		if err := refuseUnsaved(inst, timeout); err != nil {
+			return nil, err
+		}
+		if _, err := runJobChecked(inst, "open_project", func(res string) string { return openProjectScript(path, res) }, timeout); err != nil {
+			return nil, err
+		}
+		st, err := send(inst, "status", nil, timeout)
+		if err != nil {
+			return nil, err
+		}
+		if m, _ := st.(map[string]any); m == nil || !strings.EqualFold(filepath.Clean(fmt.Sprint(m["project_path"])), filepath.Clean(path)) {
+			return nil, fmt.Errorf("VEGAS answered, but %s is not the open project", path)
+		}
+		return st, nil
+	case "delete_marks":
+		prefixes := splitPrefixes(args["prefix"])
+		if len(prefixes) == 0 {
+			return nil, errors.New(`delete_marks needs prefix="how the labels start" (several: "a|b")`)
+		}
+		out, err := runJobChecked(inst, "delete_marks", func(res string) string { return deleteMarksScript(prefixes, res) }, timeout)
+		if err != nil {
+			return nil, err
+		}
+		var nm, nr int
+		_, _ = fmt.Sscanf(out, "ok %d %d", &nm, &nr)
+		left, err := send(inst, "markers", nil, timeout)
+		if err != nil {
+			return nil, err
+		}
+		if n := countPrefixed(left, prefixes); n > 0 {
+			return nil, fmt.Errorf("%d marker(s) starting with %q are still on the timeline", n, prefixes)
+		}
+		return map[string]any{"markers_removed": nm, "regions_removed": nr}, nil
 	case "save":
 		path, _ := args["path"].(string)
 		if path != "" {

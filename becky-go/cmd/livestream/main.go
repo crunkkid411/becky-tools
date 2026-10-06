@@ -16,7 +16,7 @@
 //     reviews, or Claude through Jordan's subscription
 //  4. cut points from the audio (edges.go), loud cuts flagged
 //  5. publish check on the kept frames (publish.go)
-//  6. breath examples (breath.go) - markers only, nothing is cut
+//  6. breath check (breath.go): a sound labeler + the picture; markers only, nothing is cut
 //  7. VEGAS: new project, keep list, BeckyCut.cs for the dead air, save as
 //     <folder name>-<model>.veg (an existing project is never overwritten)
 //  8. edit check (verify.go): the timeline vs the plan, re-transcribed
@@ -73,6 +73,7 @@ func main() {
 	guidance := flag.String("guidance", "", "what to keep, in plain words")
 	noVegas := flag.Bool("no-vegas", false, "make the plan and the checks, but no VEGAS project")
 	fresh := flag.Bool("fresh", false, "decide again even if this model already decided with the same guidance")
+	breathsOnly := flag.Bool("breaths-only", false, "redo only the breath check on this model's saved VEGAS project")
 	flag.Parse()
 
 	r := &run{cfg: config.Load(), started: time.Now()}
@@ -94,6 +95,10 @@ func main() {
 	r.work = filepath.Join(filepath.Dir(r.media), "becky-edit")
 	if err := os.MkdirAll(r.work, 0o755); err != nil {
 		fatal(err.Error())
+	}
+	if *breathsOnly {
+		r.redoBreaths()
+		return
 	}
 	r.guidance = pickGuidance(*guidance, r.media)
 	r.logf("video: %s", filepath.Base(r.media))
@@ -305,14 +310,16 @@ func (r *run) workflow(fresh, noVegas bool) {
 	findings, pubNotes := publishCheck(r.media, r.cfg.FFmpeg, r.cfg.FFprobe, gm, gp, r.cfg.LlamaServer, predicted, r.work, r.logf)
 	r.step("publish check", t0)
 
-	// 6. breath examples
-	breaths, breathTotal := breathMarks(breathSpots(words, predicted, au, cr.ThresholdDB))
+	// 6. breath check (markers only)
+	t0 = time.Now()
+	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, words, predicted, r.logf)
+	r.step("breath check", t0)
 
 	plan := map[string]any{"model": r.label, "guidance": r.guidance, "ranges": ranges, "predicted_pieces": predicted,
 		"loud_edges": loud, "findings": findings, "fps": r.fps}
 	writeJSON(filepath.Join(r.work, "plan-"+r.tag+".json"), plan)
 	if noVegas {
-		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, breaths, breathTotal, nil, nil, "")
+		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, nil, nil, "")
 		return
 	}
 
@@ -331,11 +338,11 @@ func (r *run) workflow(fresh, noVegas bool) {
 	r.step("edit check", t0)
 
 	// 9. regions and markers, save, report
-	marks := r.marks(sel, ss, ranges, findings, breaths, &ver, ps)
+	marks := r.marks(sel, ss, ranges, findings, bc.Picks, &ver, ps)
 	if err := addMarks(marks, r.logf); err != nil {
 		fatal("the edit is saved, but the regions could not be added: " + err.Error())
 	}
-	r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, breaths, breathTotal, &ver, marks, veg)
+	r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, &ver, marks, veg)
 }
 
 // decide runs (or reuses) this model's content decision.
@@ -422,12 +429,7 @@ func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Fin
 		}
 	}
 	ms = append(ms, loudEdgeMarks(ranges, ps, r.threshold)...)
-	for n, b := range breaths {
-		if t0, _, ok := toTimeline(ps, b.A, b.B); ok {
-			ms = append(ms, mark{At: t0, Label: breathLabel(n+1, len(breaths), b)})
-		}
-	}
-	return ms
+	return append(ms, breathRegions(breaths, ps)...)
 }
 
 // loudEdgeMarks: a marker on every cut that sits inside speech and is still loud.

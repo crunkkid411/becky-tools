@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"becky-go/internal/config"
 )
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
@@ -311,14 +313,16 @@ func TestGridFramesOnGlobalGrid(t *testing.T) {
 	}
 }
 
-func TestBreathSpotsOnlyLoudGapsInsideOnePiece(t *testing.T) {
+// Every wordless gap of 0.35 s+ inside one kept piece is a spot, loud or quiet
+// (the labeler, not loudness, says what it is); a gap a cut runs through is not.
+func TestBreathSpotsAreTheGapsInsideOnePiece(t *testing.T) {
 	ws := []Word{{Start: 0, End: 1.0}, {Start: 1.5, End: 2.0}, {Start: 2.6, End: 3.0}, {Start: 3.1, End: 3.5}}
-	au := pcmWith(16000, 2000, 5, span{2.0, 2.6})
-	got := breathSpots(ws, []span{{0, 4}}, au, -45)
-	if len(got) != 1 || !near(got[0].A, 1.0) || !near(got[0].B, 1.5) {
+	got := breathSpots(ws, []span{{0, 4}})
+	if len(got) != 2 || !near(got[0].A, 1.0) || !near(got[0].B, 1.5) || !near(got[1].A, 2.0) || !near(got[1].B, 2.6) {
 		t.Errorf("spots = %+v", got)
 	}
-	if got := breathSpots(ws, []span{{0, 1.2}, {1.3, 4}}, au, -45); len(got) != 0 {
+	got = breathSpots(ws, []span{{0, 1.2}, {1.3, 4}})
+	if len(got) != 1 || !near(got[0].A, 2.0) {
 		t.Errorf("a gap becky-cut already cut was reported: %+v", got)
 	}
 }
@@ -328,17 +332,144 @@ func TestBreathMarksSpreadAcrossTheEdit(t *testing.T) {
 	var spots []breath
 	for i, l := range lens {
 		a := 10 * float64(i)
-		spots = append(spots, breath{A: a, B: a + l})
+		spots = append(spots, breath{A: a, B: a + l, Verdict: vBreath})
 	}
-	picks, total := breathMarks(spots)
+	// Spots that are not checked breaths are never picked, however long.
+	spots = append(spots, breath{A: 200, B: 205, Verdict: vMovement}, breath{A: 210, B: 215, Verdict: vVoice})
+	picks := breathMarks(spots)
 	want := []float64{10, 30, 40, 70, 90}
-	if len(picks) != len(want) || !near(total, 6.25) {
-		t.Fatalf("picks %+v total %v", picks, total)
+	if len(picks) != len(want) {
+		t.Fatalf("picks %+v", picks)
 	}
 	for i := range want {
 		if !near(picks[i].A, want[i]) {
 			t.Errorf("pick %d at %v, want %v", i, picks[i].A, want[i])
 		}
+	}
+	if got := breathMarks([]breath{{A: 1, B: 2, Verdict: vMovement}, {A: 3, B: 4, Verdict: vUnclear}}); len(got) != 0 {
+		t.Errorf("no checked breaths should give no markers, got %+v", got)
+	}
+}
+
+// The verdicts the 27-livestream frame strips settled (research doc): a breath
+// sound during a big movement is a movement; his voice is never a breath.
+func TestJudgeBreathNeedsBothSignals(t *testing.T) {
+	cases := []struct {
+		name string
+		b    breath
+		want string
+	}{
+		{"14:07 still breath", breath{Breath: 0.52, Other: 0.043, Voice: 0.08, Move: 1.13, Peak: 1.79}, vBreath},
+		{"0:18 breath, but turning away", breath{Breath: 0.65, Other: 0.11, Move: 1.97, Peak: 2.98}, vMovement},
+		{"7:18 laughing", breath{Breath: 0.59, Other: 0.355, OtherLabel: "Laughter", Move: 0.59, Peak: 1.35}, vSound},
+		{"13:36 breath while sitting up fast", breath{Breath: 0.48, Other: 0.10, Move: 2.45, Peak: 4.74}, vMovement},
+		{"4:15 off camera, back with a drink", breath{Breath: 0.04, Other: 0.32, Voice: 0.04, Move: 1.41, Peak: 4.69}, vMovement},
+		{"13:27 still, then leans back", breath{Breath: 0.64, Other: 0.01, Voice: 0.09, Move: 1.22, Peak: 3.04}, vMovement},
+		{"3:21 really his voice", breath{Breath: 0.00, Other: 0.03, Voice: 1.0, Move: 0.83, Peak: 1.32}, vVoice},
+		{"still, an impact sound", breath{Breath: 0.40, Other: 0.20, Move: 1.0, Peak: 1.5}, vSound},
+		{"still, no clear breath", breath{Breath: 0.12, Other: 0.05, Move: 0.6, Peak: 0.8}, vUnclear},
+		{"mean exactly at the limit moves", breath{Breath: 0.9, Move: stillMean, Peak: 1}, vMovement},
+		{"voice exactly at the limit is allowed", breath{Breath: 0.9, Voice: voiceMax, Move: 1, Peak: 1}, vBreath},
+	}
+	for _, c := range cases {
+		if got := judge(c.b); got != c.want {
+			t.Errorf("%s: judge = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestBreathRegionsCoverTheGapOnTheTimeline(t *testing.T) {
+	ps := []piece{{In: 10, Out: 20, TL: 0}, {In: 30, Out: 40, TL: 10}}
+	ms := breathRegions([]breath{{A: 12, B: 12.8}, {A: 31.5, B: 32}}, ps)
+	if len(ms) != 2 || !near(ms[0].At, 2) || !near(ms[0].Len, 0.8) || !near(ms[1].At, 11.5) || !near(ms[1].Len, 0.5) {
+		t.Fatalf("regions = %+v", ms)
+	}
+	if !strings.HasPrefix(ms[1].Label, "Breath check 2 of 2: 0.5 s") {
+		t.Errorf("label = %q", ms[1].Label)
+	}
+}
+
+func TestBreathSummaryCountsEveryVerdict(t *testing.T) {
+	spots := []breath{
+		{A: 60, B: 60.8, Verdict: vBreath, Breath: 0.6, Move: 0.7},
+		{A: 70, B: 70.5, Verdict: vBreath, Breath: 0.4, Move: 1.1},
+		{A: 80, B: 81, Verdict: vMovement, Move: 2.4, Peak: 4.7},
+		{A: 90, B: 90.4, Verdict: vVoice, Voice: 0.4},
+		{A: 95, B: 95.4, Verdict: vSound, Other: 0.3, OtherLabel: "Generic impact sounds"},
+	}
+	line, details := breathSummary(spots, spots[:1], "")
+	if want := "- **Breath check:** 2 checked breath(s), 1.3 s; 1 marked; nothing was cut. Not breaths: 1 movement, 1 other sound, 1 voice, 0 unclear."; line != want {
+		t.Errorf("line = %q\nwant   %q", line, want)
+	}
+	if len(details) != 5 || details[2] != "- stream 1:20: 1.0 s - movement (picture movement 2.4x his talking, peak 4.7x)" ||
+		details[4] != "- stream 1:35: 0.4 s - other sound (Generic impact sounds 0.30)" {
+		t.Errorf("details = %q", details)
+	}
+	if line, details := breathSummary(spots, nil, "the sound check did not run: x"); !strings.Contains(line, "skipped - the sound check did not run: x") || details != nil {
+		t.Errorf("skipped line = %q, details %q", line, details)
+	}
+}
+
+// Without the sound labeler nothing may be called a breath - never back to
+// loudness alone, which is what put the wrong markers on his timeline.
+func TestCheckBreathsCallsNothingABreathWithoutTheLabeler(t *testing.T) {
+	cfg := config.Config{SoundLabelPython: filepath.Join(t.TempDir(), "no-python.exe")}
+	got, note := checkBreaths(cfg, "x.mp4", t.TempDir(), "x", "x.wav", nil, []breath{{A: 1, B: 2}})
+	if note == "" || len(got) != 1 || got[0].Verdict != vUnclear || len(breathMarks(got)) != 0 {
+		t.Errorf("note %q, spots %+v", note, got)
+	}
+}
+
+func TestMotionScoresAgainstTalkingBaseline(t *testing.T) {
+	const n = motionW * motionH
+	frame := func(v byte) []byte { return slices.Repeat([]byte{v}, n) }
+	var raw []byte
+	for _, v := range []byte{10, 12, 14, 16, 46, 46} { // steady 2/frame, then a jump of 30
+		raw = append(raw, frame(v)...)
+	}
+	sc := frameScores(strings.NewReader(string(raw)))
+	if want := []float64{0, 2, 2, 2, 30, 0}; !slices.Equal(sc, want) {
+		t.Fatalf("scores = %v, want %v", sc, want)
+	}
+	m := motionTrack{FPS: 10, Score: sc}
+	if base := m.baseline([]Word{{Start: 0.1, End: 0.3}}); !near(base, 2) {
+		t.Errorf("baseline = %v, want 2", base)
+	}
+	mean, peak := m.movement(0.3, 0.5, 2)
+	if !near(mean, (2+30+0)/3.0/2) || !near(peak, 15) {
+		t.Errorf("movement = %v / %v", mean, peak)
+	}
+}
+
+// --breaths-only rewrites the breath lines of a finished report (the 10-05
+// format) and nothing else; a second run over its own output changes nothing.
+func TestRewriteBreathReportSwapsOnlyTheBreathLines(t *testing.T) {
+	old := "# Livestream edit - X\n\n## On the timeline for you to look at (12)\n\n" +
+		"- **Loud cuts:** 1 marker(s) where a cut sits inside speech\n" +
+		"- **Breath examples:** 5 marker(s); nothing was cut. In this edit, wordless loud gaps add up to 41 s.\n" +
+		"- **Planned words not heard:** 0 region(s)\n\n## Details\n\n### Loud cuts\n\n- x\n\n" +
+		"### Breath examples\n\n- stream 3:21: 0.9 s, -30 dB\n- stream 12:13: 1.0 s, -33 dB\n\n## Time\n\ntotal 5m\n"
+	details := []string{"- stream 14:07: 1.2 s - breath (breathing 0.52, picture still 1.1x)"}
+	md, err := rewriteBreathReport(old, "- **Breath check:** NEW", details, 5, 2)
+	want := "# Livestream edit - X\n\n## On the timeline for you to look at (9)\n\n" +
+		"- **Loud cuts:** 1 marker(s) where a cut sits inside speech\n" +
+		"- **Breath check:** NEW\n" +
+		"- **Planned words not heard:** 0 region(s)\n\n## Details\n\n### Loud cuts\n\n- x\n\n" +
+		"### Breath check\n\n- stream 14:07: 1.2 s - breath (breathing 0.52, picture still 1.1x)\n\n## Time\n\ntotal 5m\n"
+	if err != nil || md != want {
+		t.Fatalf("err %v\ngot:\n%s\nwant:\n%s", err, md, want)
+	}
+	if again, err := rewriteBreathReport(md, "- **Breath check:** NEW", details, 2, 2); err != nil || again != md {
+		t.Errorf("a re-run changed the report: err %v\n%s", err, again)
+	}
+	if _, err := rewriteBreathReport("# no breath here\n", "x", nil, 0, 0); err == nil {
+		t.Error("a report without breath lines must be refused, not guessed at")
+	}
+}
+
+func TestLastJSONLineSkipsLogLines(t *testing.T) {
+	if got := lastJSONLine("Loading pretrained checkpoint\n{\"ok\": true}\n"); got != `{"ok": true}` {
+		t.Errorf("got %q", got)
 	}
 }
 

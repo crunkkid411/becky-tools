@@ -14,7 +14,7 @@
 //	becky-vegas instances     which VEGAS windows are reachable
 //
 // Plus the client-side verbs in verbs.go (launch, new_project, save,
-// dialog_click, run_script with arguments).
+// dialog_click, open_project, delete_marks, run_script with arguments).
 //
 // key=value arguments: true/false become booleans, numbers become numbers,
 // anything else is a string. --pid N picks a VEGAS when several are open;

@@ -6,13 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — breath or movement: research + test, nothing built (2026-10-06, local)
+### NEW — breath check built, markers only (2026-10-06, local)
 
-No VAD (Silero, TEN VAD, NVIDIA MarbleNet) can say WHAT a non-speech sound is. A sound labeler
-(PretrainedSED `BEATs_strong_1`, MIT, 15 min in 4.3 s) can. On the 27-livestream it found breath sounds
-during big movements, 25 "gaps" that are really his voice, and that most of `breath.go`'s loudness-only
-breath markers are not breaths. Proposal (breath = labeler hears a breath AND the picture is still) is in
-the Awaiting list below. Details: `research/breath-vs-movement-sound-labels.md`.
+Jordan said yes. becky-livestream's breath step now calls a pause a breath only when a sound labeler
+(PretrainedSED `BEATs_strong_1`, MIT) hears breathing AND the picture is still; movement and voice are
+never breaths, and anything unsure stays. Markers only: nothing is cut. `--breaths-only` redid the three
+27-livestream projects: 13 of the 14 old loudness markers were not breaths; the new "Breath check"
+regions are Gemma 1, Qwen 1, Claude 3, each read back from VEGAS. New becky-vegas verbs `open_project`
+and `delete_marks`. Details: top of `HANDOFF-LOG.md`, `research/breath-vs-movement-sound-labels.md`.
 
 ### NEW — `becky-livestream`: a livestream clip-down is one call; transcription fixed (2026-10-05, local)
 
@@ -858,17 +859,10 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
 
 ### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
 
-- **A breath pass for becky-livestream (2026-10-05).** Jordan's idea: a SEPARATE pass, after becky-cut's
-  VAD and never touching it, that finds loud breaths inside kept pieces and treats them as pauses.
-  Built as examples only: `breath.go` puts ~5 markers per edit on loud wordless gaps. Nothing is cut
-  until he judges the markers in the three `27-livestream-*.veg` projects and says yes.
-  **Update 2026-10-06:** those markers are loudness-only and mostly NOT breaths
-  (`research/breath-vs-movement-sound-labels.md`). Proposed instead:
-  - a breath = the PretrainedSED sound labeler hears a breath AND the picture is still;
-  - movement or voice is never cut, and disagreement is left alone;
-  - markers first.
-
-  Waiting for his yes.
+- **Cut the checked breaths? (2026-10-06).** The breath check is built and approved as MARKERS ONLY
+  (sound labeler hears a breath AND the picture is still). Treating those breaths as pauses - cutting
+  them - waits until Jordan has judged the green "Breath check" regions in the three
+  `27-livestream-*.veg` projects (Gemma 1, Qwen 1, Claude 3) and says yes.
 - **Keep whole unsure stretches (2026-10-05).** A stray unsure sentence with nothing confidently kept
   nearby is cut; on the test stream that cut Claude's whole 11:51-12:20 stretch (to-do list intro, "no
   time for the drama and legal stuff"). Option: keep a run of 3+ unsure sentences instead. His call.

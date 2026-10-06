@@ -22,6 +22,8 @@ type Config struct {
 	FFmpeg              string `json:"ffmpeg"`
 	FFprobe             string `json:"ffprobe"`
 	SileroVADModel      string `json:"silero_vad_model"`   // silero_vad.onnx for sherpa-onnx VAD
+	SoundLabelPython    string `json:"sound_label_python"` // anaconda base (torch+CUDA, torchaudio, soundfile): the breath check's sound labeler
+	SoundLabelRepo      string `json:"sound_label_repo"`   // PretrainedSED clone (MIT) with resources\BEATs_strong_1.pt
 	VADScript           string `json:"vad_script"`         // legacy torch Silero analyzer (optional)
 	DiarSegModel        string `json:"diar_seg_model"`     // pyannote-segmentation-3.0 model.onnx (becky-identify only since 2026-09-24)
 	SpeakerEmbModel     string `json:"speaker_emb_model"`  // CAM++ 3D-Speaker embedding onnx
@@ -235,6 +237,8 @@ func defaults() Config {
 			`X:\AI-2\becky-tools\models\silero_vad.onnx`,
 			`C:\Users\only1\.bun\install\cache\@jjhbw\silero-vad@1.0.3@@@1\weights\silero_vad.onnx`,
 		),
+		SoundLabelPython: firstExisting(`C:\ProgramData\anaconda3\python.exe`),
+		SoundLabelRepo:   firstExisting(`X:\AI-2\becky-tools\models\sed\PretrainedSED`),
 		VADScript: firstExisting(
 			`X:\AI-2\content_generators\auto-editor\resources\vad_analyzer.py`,
 		),
@@ -488,6 +492,12 @@ func merge(base, over Config) Config {
 	}
 	if over.SileroVADModel != "" {
 		base.SileroVADModel = over.SileroVADModel
+	}
+	if over.SoundLabelPython != "" {
+		base.SoundLabelPython = over.SoundLabelPython
+	}
+	if over.SoundLabelRepo != "" {
+		base.SoundLabelRepo = over.SoundLabelRepo
 	}
 	if over.VADScript != "" {
 		base.VADScript = over.VADScript

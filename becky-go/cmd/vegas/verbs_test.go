@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,56 @@ func TestPrepareRunScriptWritesFreshArgs(t *testing.T) {
 	}
 	if _, err := prepareRunScript(map[string]any{}); err == nil {
 		t.Fatal("run_script without a path must be refused")
+	}
+}
+
+// A script that throws shows a VEGAS dialog and stalls the run, so both new
+// job scripts must catch and answer through their result file.
+func TestOpenAndDeleteScriptsAnswerThroughAFile(t *testing.T) {
+	open := openProjectScript(`X:\f\a "b".veg`, `C:\t\open.result.txt`)
+	for _, want := range []string{`vegas.OpenProject(@"X:\f\a ""b"".veg")`, `catch (Exception e)`,
+		`System.IO.File.WriteAllText(@"C:\t\open.result.txt", r);`} {
+		if !strings.Contains(open, want) {
+			t.Errorf("open_project script is missing %q:\n%s", want, open)
+		}
+	}
+	del := deleteMarksScript([]string{"Breath example", `Say "hi"`}, `C:\t\del.result.txt`)
+	for _, want := range []string{`string[] prefixes = { @"Breath example", @"Say ""hi""" };`,
+		`StartsWith(p, StringComparison.Ordinal)`, `new UndoBlock("Becky: remove marks")`,
+		`vegas.Project.Markers.Remove(m);`, `vegas.Project.Regions.Remove(g);`, `r = "ok " + ms.Count + " " + rs.Count;`,
+		`catch (Exception e)`} {
+		if !strings.Contains(del, want) {
+			t.Errorf("delete_marks script is missing %q:\n%s", want, del)
+		}
+	}
+	for _, s := range []string{open, del} {
+		if strings.Contains(strings.ReplaceAll(s, "\r\n", ""), "\n") {
+			t.Error("job scripts must use CRLF line endings only")
+		}
+	}
+}
+
+// An empty prefix matches every label, so it must never reach VEGAS.
+func TestSplitPrefixesNeverEmpty(t *testing.T) {
+	cases := map[any][]string{"": nil, " | ": nil, 3.0: nil, "Breath check": {"Breath check"},
+		"Breath example| Breath check |": {"Breath example", "Breath check"}}
+	for in, want := range cases {
+		if got := splitPrefixes(in); !slices.Equal(got, want) {
+			t.Errorf("splitPrefixes(%v) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCountPrefixedReadsTheMarkersVerb(t *testing.T) {
+	var marks any
+	_ = json.Unmarshal([]byte(`[{"kind":"marker","position":11.7,"label":"Breath example 1 of 4: 0.5 s"},
+		{"kind":"marker","position":13,"label":"Cut inside speech, still loud"},
+		{"kind":"region","position":20,"length":0.8,"label":"Breath check 1 of 5: 0.8 s"}]`), &marks)
+	if n := countPrefixed(marks, []string{"Breath example", "Breath check"}); n != 2 {
+		t.Errorf("count = %d, want 2", n)
+	}
+	if n := countPrefixed(marks, []string{"Unsure"}); n != 0 {
+		t.Errorf("count = %d, want 0", n)
 	}
 }
 

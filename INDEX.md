@@ -51,12 +51,15 @@
   via fleet-run) -> audio cut points -> publish check (OCR + Gemma vision) -> VEGAS (`BeckyKeepList.cs`
   + `BeckyCut.cs`) -> edit check (re-transcribe the timeline) -> regions + `becky-edit\report-*.md`.
   Steps, rules and the model comparison: `SKILL.md` "The livestream clip-down is ONE call now", top
-  of `HANDOFF-LOG.md`. New 2026-10-05.
+  of `HANDOFF-LOG.md`. New 2026-10-05. **Breath check (2026-10-06, markers only):** `breath.go` +
+  `motion.go` + `internal/pyhelpers/sound_labels.py` - a gap is a breath only when the BEATs sound
+  labeler hears breathing AND the picture is still; `--breaths-only` redoes it on a saved project.
 - **Transcription fixed at the root (2026-10-05):** `becky-transcribe` builds word times from
   Parakeet-TDT's own durations (no zero-length words), windows start and end in pauses, and every
   run adds a WhisperX second opinion (`cmd/transcribe/secondpass.go`) + Jordan's word list
   (`lexicon.txt`); `--cleanup` adds Gemma-4 proofreading (`cleanup.go`, text only). New
-  `becky-vegas` verbs: launch, new_project, save, dialog_click, script args (`cmd/vegas/verbs.go`).
+  `becky-vegas` verbs: launch, new_project, save, dialog_click, script args (`cmd/vegas/verbs.go`);
+  open_project + delete_marks added 2026-10-06 for the breath-marker swap.
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,
@@ -260,7 +263,8 @@
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
   `HANDOFF-VIDEOAGENT-SEAM.md`.
 - `research/breath-vs-movement-sound-labels.md` (+ `research/breath-sed-probe.py`) — **Breath or
-  movement? (2026-10-06, local; RESEARCH + TEST + PROPOSAL, nothing built).** No VAD names a sound
+  movement? (2026-10-06, local; research + test, then BUILT the same day as becky-livestream's
+  breath check - markers only, see the "Built" section at the end).** No VAD names a sound
   (Silero, TEN VAD - installed in anaconda - and NVIDIA MarbleNet only say talking / not talking).
   The pick is a sound labeler: PretrainedSED `BEATs_strong_1` (MIT), Breathing / Rustle / Creak /
   Thump / Hands... every 40 ms; 15 min in 4.3 s at 0.46 GB VRAM. On the 27-livestream it showed

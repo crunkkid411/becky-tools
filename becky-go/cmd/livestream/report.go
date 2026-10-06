@@ -10,7 +10,7 @@ import (
 
 // report writes becky-edit\report-<model>.md and prints the short version.
 func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []span, loud []string,
-	findings []Finding, pubNotes []string, breaths []breath, breathTotal float64,
+	findings []Finding, pubNotes []string, bc breathResult,
 	ver *Verification, marks []mark, veg string) {
 	var b strings.Builder
 	edit := 0.0
@@ -68,7 +68,8 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		fmt.Fprintf(&b, ", plus %d single-frame maybe(s) listed below", n)
 	}
 	fmt.Fprintf(&b, "\n- **Loud cuts:** %d marker(s) where a cut sits inside speech\n", len(loud))
-	fmt.Fprintf(&b, "- **Breath examples:** %d marker(s); nothing was cut. In this edit, wordless loud gaps add up to %.0f s.\n", len(breaths), breathTotal)
+	breathLine, breathDetails := breathSummary(bc.Spots, bc.Picks, bc.Note)
+	b.WriteString(breathLine + "\n")
 	if ver != nil {
 		n := 0
 		for _, s := range ver.Missing {
@@ -154,10 +155,7 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 			}
 		}
 	}
-	b.WriteString("\n### Breath examples\n\n")
-	for _, x := range breaths {
-		fmt.Fprintf(&b, "- stream %s: %.1f s, %.0f dB\n", clock(x.A), x.B-x.A, x.DB)
-	}
+	b.WriteString(breathSection(breathDetails))
 	r.times = append(r.times, fmt.Sprintf("total %s", time.Since(r.started).Round(time.Second)))
 	fmt.Fprintf(&b, "\n## Time\n\n%s\n", strings.Join(r.times, ", "))
 
@@ -170,8 +168,8 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	if veg != "" {
 		fmt.Printf("  VEGAS project: %s (open in VEGAS now)\n", filepath.Base(veg))
 	}
-	fmt.Printf("  %d things to look at on the timeline (unsure %d, publish %d, loud cuts %d, breath examples %d).\n",
-		len(marks), unsure, regions, len(loud), len(breaths))
+	fmt.Printf("  %d things to look at on the timeline (unsure %d, publish %d, loud cuts %d, breath checks %d).\n",
+		len(marks), unsure, regions, len(loud), len(bc.Picks))
 	fmt.Printf("  Report: %s\n", path)
 }
 
