@@ -15,7 +15,7 @@ It keeps the apology material and what it refers to. It drops the pre-show, the 
 
 | Where | What | Why it matters |
 |---|---|---|
-| 15:42-16:50 | You play John's own video | Copyright: you say on stream (7:44) that he removed two of your copyright strikes |
+| 15:42-16:50 | You play John's own video | Copyright: you say on stream (7:55 in the original video) that he removed two of your copyright strikes |
 | 22:48-38:08 | Evidence documents on screen | Some frames show a home address and people's names (clear at 30:00) |
 | 42:25-42:32 | **Added back:** "Thank you guys for those of you who watched the content for so long. I'm really sorry that I'm doing this. I'm sorry to you guys because I didn't want to do this." | The first transcript had dropped this line completely |
 | 46:19-46:42 | Police report on screen | It names Shelby and mentions a sexual-assault allegation |
@@ -179,7 +179,7 @@ This section records what you said, so it isn't lost.
 **How did I know about the copyright and address problems?**
 - I used my own vision, not a becky-tools vision tool. I pulled one frame for every 10 s of the finished edit (380 frames), tiled them into 10 contact sheets, and looked at all of them.
 - The transcript didn't steer it. It was one even pass over the whole edit, to check what's actually on screen.
-- The transcript then backed up the copyright call. At 7:44 you say John removed two of your copyright strikes, and at 9:23: "I don't want to steal your copyrighted content."
+- The transcript then backed up the copyright call. At 7:55 in the original video you say John removed two of your copyright strikes, and at 9:23: "I don't want to steal your copyrighted content."
 - For the last two flags, I also pulled frames every 2 s, plus three full-size frames, to set exact start and end points and read the text.
 
 **Did I look at other parts of the video?** Yes:
