@@ -259,6 +259,14 @@
   (`BUILD-INPUTS.md:29`'s promised doc): how AI-planned edits land as engine verbs on the
   timeline instead of rendered .mp4s; the H-1..H-7 seam status table. Read WITH
   `HANDOFF-VIDEOAGENT-SEAM.md`.
+- `research/breath-vs-movement-sound-labels.md` (+ `research/breath-sed-probe.py`) — **Breath or
+  movement? (2026-10-06, local; RESEARCH + TEST + PROPOSAL, nothing built).** No VAD names a sound
+  (Silero, TEN VAD - installed in anaconda - and NVIDIA MarbleNet only say talking / not talking).
+  The pick is a sound labeler: PretrainedSED `BEATs_strong_1` (MIT), Breathing / Rustle / Creak /
+  Thump / Hands... every 40 ms; 15 min in 4.3 s at 0.46 GB VRAM. On the 27-livestream it showed
+  breath sounds DURING big movements (so the picture must be checked too), 25 "gaps" that are really
+  his voice, and that `breath.go`'s loudness-only breath markers were mostly not breaths. NVIDIA's
+  and Qwen's new audio models are research-only licenses and/or too big for 8 GB.
 - `research/system-one-models-jev.md` (+ `research/system-one-probe.py`) — **System One models /
   TypeSafe's Jev (2026-09-18, local; RESEARCH + PROPOSAL, nothing built).** Jev = typed
   multiple-choice judgments with real probabilities, no text. Hosted Jev is ruled out for becky

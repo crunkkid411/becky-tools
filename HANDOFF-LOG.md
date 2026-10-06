@@ -12,6 +12,44 @@
 
 ---
 
+## Breath or movement: research + a test on the 27-livestream, nothing built (2026-10-06, local, `master`)
+
+Jordan: *"does silero VAD identify exactly what the non-speech sounds are? If not, then we need a
+dedicated VAD for that second VAD pass. Ten VAD is an option I've explored and might be installed
+locally somewhere already, if that doesn't do it, then please research and propose a current VAD model
+for this speciffic task"* + *"fast movement in my chair does not = breath, and that does change the
+nature of the edit"*.
+
+**Found:**
+- No VAD can name a sound. Silero, TEN VAD (installed: anaconda `ten_vad` 1.0.6.8) and NVIDIA Frame-VAD
+  MarbleNet v2.0 only give "talking / not talking" per frame (each model's own card).
+- Naming a sound is sound event detection. Tested PretrainedSED `BEATs_strong_1` (MIT; AudioSet Strong,
+  447 labels every 40 ms): 15:00 in 4.3 s on the 3070, peak 0.46 GB VRAM.
+- On the 27-livestream's 114 loud wordless gaps (102 s):
+  - 32 are breath sounds and 31 are movement sounds (alone or mixed with a breath);
+  - 25 are really his voice (the transcript's word times are off there);
+  - frame strips show breath sounds DURING big movements (13:36, 0:16), so audio alone would cut
+    movements.
+- `breath.go`'s loudness-only "Breath example" markers in the three projects: only 14:07 (Claude's
+  project) is a clean breath. 3:21 is his voice, 14:20 is hand gestures, and 12:13 and 13:36 are
+  movement.
+
+**Ruled out:**
+- NVIDIA Audio Flamingo Next and the audio-visual Flamingo: noncommercial license, 7B.
+- AudioJev: Qwen Research License.
+- Qwen3-Omni Captioner: 30B.
+- CED: Apache-2.0, but clip-level only.
+
+**Proposed (awaiting his yes):**
+- A breath = the sound labeler hears a breath AND the picture is still.
+- Movement or voice is never cut, and disagreement is left alone.
+- Markers first, replacing the loudness markers.
+
+Full write-up: `research/breath-vs-movement-sound-labels.md`. Probe: `research/breath-sed-probe.py`.
+No Go code changed.
+
+---
+
 ## becky-livestream: the livestream clip-down is one call + transcription fixed at the root (2026-10-05, local, `master`)
 
 Jordan: implement the apology report's "What becky-tools needs" list except #5 (becky-cut's minimum cut -
