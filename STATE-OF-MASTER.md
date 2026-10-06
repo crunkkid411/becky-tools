@@ -6,6 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — first real edit through VEGAS: the apology livestream (2026-10-05, local)
+
+Claude cut Jordan's 1h52m apology livestream to a 63m29s edit in VEGAS (apology only, chat and dead air out)
+with becky-transcribe, becky-cut, BeckyCut.cs and `becky-vegas run_script` job scripts; saved and left open
+with 6 markers (tiny cuts for him to judge) and 5 review regions (copyright/privacy, one added-back line).
+Big finding: Parakeet's zero-length words come from becky's own word builder (`merge_tokens_to_words`), and
+the first pass silently drops whole passages - a second pass found them. Jordan agreed with the report's fix
+list except the becky-cut minimum cut. No becky-tools code changed. Report:
+`vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`; details: top of `HANDOFF-LOG.md`.
+
 ### NEW — `becky-unstick`: a local 4B model clears stuck browser pages (2026-10-05, local)
 
 Microsoft Fara1.5-4B (trained only to use a browser) looks at a screenshot of a stuck page and says where to
@@ -827,6 +837,10 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
   works on a real folder), not "compiles."
 
 ### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
+
+- **becky-cut minimum cut length (2026-10-05).** becky-cut leaves 1-3 frame jump cuts (191 in the apology
+  edit, 12.9 s). Jordan is judging 6 marked examples in `apology-livestream.veg` (orange markers
+  "Tiny cut N of 6") before any fix. Nothing changed until he says so.
 
 - **`becky-decide`, a local Jev-style decision tool (`research/system-one-models-jev.md` section 7,
   2026-09-18).** Typed yes/no / pick-one / score answers with real probabilities from Gemma-4 E4B

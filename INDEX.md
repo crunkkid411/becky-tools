@@ -39,6 +39,11 @@
   `becky-review-index --timeline`. Installed by `Install Vegas Scripts.bat`, which also retires the
   never-working VegasAIBridge. Why OFX could not do this, why the old bridge died, and the measured
   VEGAS 18 API facts are in those two docs. New 2026-09-14.
+- `vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md` — **the first real edit through
+  becky-vegas** (1h52m livestream -> 63m apology edit in VEGAS): what worked, every failure and
+  workaround, the Parakeet word-timing root cause (zero-length words = `merge_tokens_to_words`;
+  window heads drop sentences), and the becky-tools fix list Jordan agreed (all but the min-cut one).
+  Read before building the livestream clip-down workflow. New 2026-10-05.
 - `SKILL.md` `# ROUGH CUT` section + `vegas/BeckyRoughCut.cs` / `vegas/BeckyVerifyProject.cs` —
   **raw takes -> populated Vegas Pro 18 timeline, one dumb call** (`becky-roughcut`,
   `-launch-vegas`): the measured detection recipe for quiet-mic footage, the re-take rules,

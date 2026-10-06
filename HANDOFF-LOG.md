@@ -12,6 +12,52 @@
 
 ---
 
+## VEGAS real-world test — the apology livestream edited end to end (2026-10-05, local, `master`)
+
+Jordan: test the VEGAS tools on a real job. Import the 1h52m vertical livestream into a new project saved per
+`vegas/JORDANS-WORKFLOWS.md`, cut it to the apology narrative only (no chat interaction, no long silences),
+leave it open and saved, and report everything that worked, failed, and what becky-tools needs. No paid models.
+
+**Result:** `X:\Videos\2026\09_sept\30-Apology-livestream\apology-livestream.veg`, 63m29s (from 1h52m),
+1,446 grouped video+audio clips, 720x1280 @ 30 fps. Report with every measurement and the agreed fix list:
+`vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`. No becky-tools code changed; the one-off scripts
+live in the footage folder's `becky-edit\`.
+
+**Pipeline used:** becky-transcribe -> Claude read 1,775 sentences -> keep list (66 sections) -> cut points
+from the AUDIO (becky-cut silence edge, else the quietest frame between words) -> job scripts through
+`becky-vegas run_script` (new project/import/save, keep-only build) -> BeckyCut.cs unchanged in VEGAS (identical
+to its dry run) -> verify (rebuild the edit's audio from the timeline, re-transcribe, diff against the plan;
+380-frame visual pass) -> 2nd transcription pass with windows shifted 15 s -> final touches (missed line
+inserted with ripple, 6 markers, regions, save; 1.1 s).
+
+**Measured (details in the report):**
+- Parakeet zero-length words (52%) are a becky bug, not the 30 s splices (flat 50-52% vs seam distance):
+  `transcribe_parakeet_dml.py` `merge_tokens_to_words` ends each word at its LAST token's START, so one-token
+  words get zero length (1 letter 100%, 5 letters 18%, 8+ ~0%); the late punctuation token stretches
+  sentence-final words (median 0.40 s, p90 1.20 s).
+- Word starts run 0.2-0.35 s early after pauses; becky-cut edges sit within ~1 frame of the true onset.
+- The first pass silently drops whole passages: re-transcribing the edit found 34 in kept parts; the
+  shifted pass found 37 (25 kept, 12 cut), incl. an audience apology that was then added back. Each window
+  keeps its context-free head and discards its context-rich 2 s tail; 7 of 19 drops sat within 2.5 s after
+  a seam.
+- becky-cut leaves 191 joins that remove only 1-3 frames (12.9 s in total).
+- A visual pass over the finished edit (Claude's own vision, contact sheets) found other creators' videos,
+  documents with an address/names and a booking code -> 5 green review regions.
+
+**Jordan's decisions (2026-10-05):** agreed with every recommendation except the becky-cut minimum cut
+length (he is judging 6 marked examples first); fix Parakeet at the ROOT - "the human hunting for missing
+words to add back in is not an option"; the 2nd pass may be a different model (WhisperX); a niche word
+list; one dedicated deterministic workflow per edit type (`.bat` in the footage folder, Gemma-4 only for
+content calls); next test = a shorter livestream, Claude vs local Gemma-4 vs local Qwen3.5. His approval
+of rec #7 is the ask that SKILL.md's "no save verb, on purpose" rule requires.
+
+**Traps:** VEGAS's restore-autosave prompt after an unclean exit (back up, BM_CLICK "No" - files are kept);
+`becky-vegas dialogs` fails while VEGAS is on its splash; "Media Offline" thumbnails while becky-cut reads
+the file are cosmetic; overlap metrics on Parakeet word times give garbage (use an audio onset test);
+regions are green flags and markers orange.
+
+---
+
 ## `becky-unstick` — Fara1.5-4B unsticks the agent browser (2026-10-05, local, `master`)
 
 Jordan: agents get stuck on popups everywhere; use a small local vision model that only checks when a page is

@@ -1200,6 +1200,30 @@ Exit 0 = done, 1 = VEGAS refused/failed (read `error`), 2 = no VEGAS with the ex
 - VEGAS loads extension DLLs from SUBFOLDERS of its extension folders too.
 - OpenFX cannot see the project (no tracks/events/media paths in the OFX kit) - a timeline search
   must be an Application Extension, not an OFX plugin.
+- **Job scripts do what the verbs can't** (2026-10-05): `run_script` runs an `EntryPoint.FromVegas`
+  .cs and blocks until it finishes. It takes no arguments, so generate a one-off .cs per job (data
+  baked in, ASCII, CRLF) and compile-check it with csc against `ScriptPortal.Vegas.dll` first. An
+  insert + ripple of 1,446 clip pairs + markers + regions + `vegas.SaveProject` ran in 1.1 s. Make
+  the script check an anchor event and abort untouched if the timeline is not the planned one.
+- Regions show as GREEN flags in the marker bar, markers ORANGE; both share one numbering.
+- After an unclean exit VEGAS asks to restore autosaves: back them up, then BM_CLICK "No" (the
+  files are kept). `becky-vegas dialogs` cannot connect while VEGAS is still on its splash.
+- Save/new/dialog-click verbs: Jordan approved adding them on 2026-10-05 (report rec #7); not built.
+
+## Editing a long stream down to one story (first real test, 2026-10-05)
+
+Full report: `vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`. Rules it proved:
+- **The transcript picks the WORDS; the audio picks the CUT POINTS** (becky-cut's silence edge,
+  else the quietest frame between words). Never cut on Parakeet word times: starts run 0.2-0.35 s
+  early after pauses, 52% of words have zero length (`merge_tokens_to_words` bug), sentence-final
+  words stretch into the pause.
+- **Run a second transcription pass** (offset windows, ideally a different model) and merge: the
+  first pass silently drops whole passages, and a missing sentence is invisible to every later step.
+- **Verify the edit**: rebuild its audio from the timeline, re-transcribe, diff against the plan.
+- **End with a publish-safety look at the finished edit** (other creators' video, addresses, names,
+  codes) and put a labeled region on each finding - never silently cut them (Jordan loved this).
+- **Edit types are separate workflows** (Jordan 2026-10-05): livestream clip-down (content cuts on
+  request), rough cut (retakes only), shorts from widescreen.
 
 # SYSTEM ONE — cheap typed decisions (Laya) and the playlist reader
 
