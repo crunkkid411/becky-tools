@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestMeasureFindsUniqueRepos(t *testing.T) {
@@ -37,14 +40,66 @@ func TestTempDirForRefusesAnythingElse(t *testing.T) {
 	}
 }
 
-func TestWithTempVideoDeletesOnFailure(t *testing.T) {
+func TestWithTempDirDeletesOnFailure(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "TEMP")
-	t.Setenv("BECKY_YTDLP", "definitely-not-a-real-binary")
-	if err := withTempVideo(root, "GeYevz27gyc", func(string) error { return nil }); err == nil {
-		t.Fatal("expected the fake yt-dlp to fail")
+	err := withTempDir(root, "GeYevz27gyc", func(dir string) error {
+		_ = os.WriteFile(filepath.Join(dir, "x.json3"), []byte("x"), 0o644)
+		return errors.New("download failed")
+	})
+	if err == nil {
+		t.Fatal("expected the failure to come back")
 	}
 	if _, err := os.Stat(filepath.Join(root, "GeYevz27gyc")); !os.IsNotExist(err) {
 		t.Fatal("temp folder survived a failed run")
+	}
+}
+
+// Jordan's rule: one yt-dlp request per 90 seconds.
+func TestYtdlpWaitsNinetySeconds(t *testing.T) {
+	stamp := filepath.Join(t.TempDir(), "ytdlp-last-call.txt")
+	if w := ytdlpWait(stamp); w != 0 {
+		t.Fatalf("no previous call should mean no wait, got %v", w)
+	}
+	_ = os.WriteFile(stamp, nil, 0o644)
+	if w := ytdlpWait(stamp); w < 89*time.Second || w > 90*time.Second {
+		t.Fatalf("call just made: wait %v, want about 90s", w)
+	}
+	old := time.Now().Add(-91 * time.Second)
+	_ = os.Chtimes(stamp, old, old)
+	if w := ytdlpWait(stamp); w != 0 {
+		t.Fatalf("call 91s ago: wait %v, want 0", w)
+	}
+}
+
+func TestJSON3TextMakesTimedParagraphs(t *testing.T) {
+	raw := `{"events":[{"tStartMs":0,"dDurationMs":9},
+	 {"tStartMs":0,"segs":[{"utf8":"Right"},{"utf8":" now,"}]},
+	 {"tStartMs":2590,"aAppend":1,"segs":[{"utf8":"\n"}]},
+	 {"tStartMs":2600,"segs":[{"utf8":"raising"},{"utf8":" money."}]},
+	 {"tStartMs":31000,"segs":[{"utf8":"Done."}]},
+	 {"tStartMs":3725000,"segs":[{"utf8":"Late"}]}]}`
+	got, err := json3Text([]byte(raw))
+	want := "[00:00] Right now, raising money. Done.\n\n[1:02:05] Late"
+	if err != nil || got != want {
+		t.Fatalf("got %q, %v\nwant %q", got, err, want)
+	}
+}
+
+func TestCaptionTrackPrefersCreatorThenOriginal(t *testing.T) {
+	x := json.RawMessage(`[]`)
+	cases := []struct {
+		v    video
+		want string
+	}{
+		{video{Subtitles: map[string]json.RawMessage{"en-US": x}, AutoCaptions: map[string]json.RawMessage{"en-orig": x}}, "en-US"},
+		{video{AutoCaptions: map[string]json.RawMessage{"en": x, "en-orig": x, "fr": x}}, "en-orig"},
+		{video{AutoCaptions: map[string]json.RawMessage{"en": x, "fr": x}}, "en"},
+		{video{Subtitles: map[string]json.RawMessage{"live_chat": x}, AutoCaptions: map[string]json.RawMessage{"fr": x}}, ""},
+	}
+	for i, c := range cases {
+		if got, _ := captionTrack(c.v); got != c.want {
+			t.Errorf("case %d: got %q, want %q", i, got, c.want)
+		}
 	}
 }
 

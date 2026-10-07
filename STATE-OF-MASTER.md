@@ -56,6 +56,14 @@ Verified: it found the X on Manus's real 'Restore your account?' popup (3 px off
 end to end, said 'nothing blocking' on clean pages, and no window flashed. avlm's llama-server now always
 spawns hidden. Details: top of `HANDOFF-LOG.md`.
 
+### becky-intake keeps transcripts, YouTube's first, one yt-dlp call per 90 s (2026-10-07, local)
+
+Each note now has `<note>.transcript.md` beside it, linked at its top. The transcript is YouTube's
+own (creator or automatic captions); local audio download + becky-transcribe only when YouTube has
+none. Every yt-dlp call waits 90 s after the last one, across runs (Jordan's rule, in code).
+`--backfill N` adds transcripts to older notes. Playlist order is newest-added first, so new saves
+are already processed first. The idle task's time limit went from 20 min to 1 h for the waits.
+
 ### NEW — a System One model (Laya) + the playlist reader `becky-intake` (2026-09-25, local)
 
 `becky-decide` runs Laya (open Jev alternative, ONNX, CPU, 0 VRAM) for typed decisions.

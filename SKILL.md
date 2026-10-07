@@ -1397,3 +1397,10 @@ Rules that are law here (measured 2026-09-25, `research/playlist-intake/README.m
 the "ai-useful" playlist into Obsidian notes (see top of `HANDOFF-LOG.md`). `--dry-run` only shows
 each video's route. Downloads live in `research/playlist-intake/TEMP` and are deleted by code.
 Jordan's pain list is `research/playlist-intake/pains.json`.
+- **YouTube's transcript first** (creator captions, else automatic `en-orig`, ONE track per call);
+  audio download + `becky-transcribe` ONLY when YouTube has none. Saved as `<note>.transcript.md`
+  beside the note (the becky-ask `.transcript.md` standard), linked at the top of the note.
+- **One yt-dlp request per 90 s, mandatory** (Jordan, 2026-10-07). `ytdlp()` is the only caller
+  and gates every call across processes (`ytdlp.lock` + `ytdlp-last-call.txt` in
+  `research/playlist-intake`). Never call yt-dlp around it.
+- `--backfill N` adds YouTube transcripts to up to N existing notes that lack one (captions only).

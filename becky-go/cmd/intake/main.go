@@ -7,13 +7,20 @@
 //  1. code measures the facts (length, links, GitHub repos, chapters) from yt-dlp metadata;
 //  2. Laya (becky-decide) picks the route: links or speech, and code vetoes a shaky "links";
 //  3. every linked repo is read (gh api); a local embedding model matches video + repos to pains.json;
-//     the speech route downloads the AUDIO to TEMP\<id>, becky-transcribe it, and local Gemma-4
-//     E4B writes the step list; the TEMP folder is then deleted by code, success or failure;
-//  4. one Obsidian note per video + one line in the state file so it is never redone.
+//     the speech route takes YouTube's own transcript (creator captions, else automatic
+//     captions) into TEMP\<id>; ONLY when YouTube has none does it download the audio and
+//     becky-transcribe it. Local Gemma-4 E4B writes the step list; the TEMP folder is then
+//     deleted by code, success or failure;
+//  4. one Obsidian note per video, its transcript beside it as <note>.transcript.md, and
+//     one line in the state file so it is never redone.
 //
-// No video file is kept. Jordan's global yt-dlp.conf is never read or changed
-// (every call passes --ignore-config). Exit codes: 0 ok (even if some videos
-// degraded), 1 error, 2 usage.
+// --backfill N instead adds YouTube's transcript to up to N existing notes that
+// have none (captions only: no audio download, no local transcription).
+//
+// At most ONE yt-dlp request per 90 seconds, across all runs (Jordan's rule,
+// enforced in ytdlp()). No video file is kept. Jordan's global yt-dlp.conf is
+// never read or changed (every call passes --ignore-config). Exit codes: 0 ok
+// (even if some videos degraded), 1 error, 2 usage.
 package main
 
 import (
@@ -26,7 +33,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
@@ -43,15 +49,19 @@ const (
 )
 
 type result struct {
-	ID       string        `json:"id"`
-	Title    string        `json:"title"`
-	Facts    facts         `json:"facts"`
-	Route    routeDecision `json:"route"`
-	Why      *painMatch    `json:"why,omitempty"` // the pain this video most likely speaks to
-	Repos    []repo        `json:"repos,omitempty"`
-	Steps    string        `json:"steps,omitempty"`
-	Note     string        `json:"note_path,omitempty"`
-	Degraded []string      `json:"degraded,omitempty"`
+	ID    string        `json:"id"`
+	Title string        `json:"title"`
+	Facts facts         `json:"facts"`
+	Route routeDecision `json:"route"`
+	Why   *painMatch    `json:"why,omitempty"` // the pain this video most likely speaks to
+	Repos []repo        `json:"repos,omitempty"`
+	Steps string        `json:"steps,omitempty"`
+	// Transcript is saved beside the note as <note>.transcript.md (the
+	// becky-ask standard), never printed in the JSON.
+	Transcript     string   `json:"-"`
+	TranscriptFrom string   `json:"transcript_from,omitempty"`
+	Note           string   `json:"note_path,omitempty"`
+	Degraded       []string `json:"degraded,omitempty"`
 }
 
 func main() {
@@ -62,6 +72,7 @@ func main() {
 	temp := flag.String("temp", defaultTemp, "folder named TEMP for downloads (emptied by code)")
 	asJSON := flag.Bool("json", false, "print the full JSON result")
 	dryRun := flag.Bool("dry-run", false, "only decide each video's route; no downloads, notes or state")
+	backfillN := flag.Int("backfill", 0, "add YouTube's transcript to up to N existing notes that have none, then exit")
 	pick := flag.String("ids", "", "comma-separated video ids to process instead of the unseen ones (for testing)")
 	// Accept the URL before or after the flags (becky-scout's calling style).
 	args := os.Args[1:]
@@ -69,6 +80,14 @@ func main() {
 		args = append(args[1:], args[0])
 	}
 	_ = flag.CommandLine.Parse(args)
+	if *backfillN > 0 {
+		if _, err := tempDirFor(*temp, "aaaaaaaaaaa"); err != nil {
+			beckyio.Fatalf("%v", err)
+		}
+		sweepTemp(*temp)
+		backfill(*vault, *temp, *backfillN)
+		return
+	}
 	if flag.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: becky-intake <playlist-or-video-url> [--limit N] [--state F] [--vault DIR] [--temp DIR] [--json]")
 		os.Exit(2)
@@ -104,10 +123,7 @@ func main() {
 	cfg := config.Load()
 	ctx := context.Background()
 	var results []result
-	for i, id := range todo {
-		if i > 0 {
-			time.Sleep(5 * time.Second) // gentle on YouTube
-		}
+	for _, id := range todo {
 		if *dryRun {
 			res := result{ID: id}
 			if v, err := fetchVideo(id); err != nil {
@@ -150,8 +166,8 @@ func processVideo(ctx context.Context, cfg config.Config, sys1 systemone.Runner,
 	}
 
 	if res.Route.Route == routeSpeech {
-		err := withTempVideo(temp, id, func(audio string) error {
-			text, err := transcribe(audio)
+		err := withTempDir(temp, id, func(dir string) error {
+			text, err := videoTranscript(dir, v, &res)
 			if err != nil {
 				return err
 			}
@@ -207,6 +223,32 @@ func videoText(v video, steps string) string {
 		s = s[:2000]
 	}
 	return s
+}
+
+// videoTranscript gets the video's transcript, YouTube's own first. becky only
+// downloads the audio and transcribes it locally when YouTube has none (or will
+// not hand it over). The transcript and where it came from go on res.
+func videoTranscript(dir string, v video, res *result) (string, error) {
+	if lang, from := captionTrack(v); lang != "" {
+		text, err := fetchCaptions(dir, v, lang)
+		if err == nil && text != "" {
+			res.Transcript, res.TranscriptFrom = text, from
+			return text, nil
+		}
+		if err != nil {
+			res.Degraded = append(res.Degraded, "YouTube has a transcript but would not hand it over ("+err.Error()+"), so becky transcribed the audio itself.")
+		}
+	}
+	audio, err := downloadAudio(dir, v.ID)
+	if err != nil {
+		return "", err
+	}
+	text, err := transcribe(audio)
+	if err != nil {
+		return "", err
+	}
+	res.Transcript, res.TranscriptFrom = text, "becky-transcribe on this PC (YouTube had no transcript)"
+	return text, nil
 }
 
 func transcribe(audio string) (string, error) {

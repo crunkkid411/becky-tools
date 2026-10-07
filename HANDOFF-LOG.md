@@ -12,6 +12,35 @@
 
 ---
 
+## becky-intake: transcripts saved, YouTube's captions first, one yt-dlp call per 90 s (2026-10-07, local, `master`)
+
+Jordan could not find the transcripts the notes talked about: they were used for Gemma's how-to and
+then thrown away. He asked for (his words): YouTube's transcript when available, local transcription
+"a fallback ONLY when YouTube does not provide one"; the transcript as a separate, linked file with
+the same name so it sorts next to the note; "one yt-dlp request per 90 seconds - that needs to be
+mandatory"; most recently added videos first.
+
+**Built (`cmd/intake`):**
+- `youtube.go`: `ytdlp()` gate (lock file + stamp file in `research/playlist-intake`, 90 s between
+  calls across processes, stale lock cleared after 15 min). `captionTrack` picks creator captions,
+  else automatic `en-orig`, else automatic `en`; `fetchCaptions` downloads ONE json3 track
+  (asking for `en` and `en-orig` together got HTTP 429); `json3Text` makes `[mm:ss]` paragraphs.
+- `main.go` `videoTranscript`: captions first, audio + becky-transcribe only when YouTube has none
+  or refuses (that reason goes in the note). The old 5 s sleep is gone (the gate replaces it).
+- `note.go`: `<date>_<id>.transcript.md` beside the note (becky-ask's `.transcript.md` standard),
+  linked under the title. `backfill.go`: `--backfill N` for existing notes, captions only.
+- Priority: the playlist lists newest-added first (8 videos added 2026-10-07 sat at positions 0-7),
+  and becky-intake already took unseen ids from the top. No change needed.
+- Task "Becky Playlist Scout (idle)": time limit 20 min -> 1 h (a run is now about 7 gated calls).
+
+**Verified:** 9 unit tests (gate wait, json3 paragraphs, track choice, temp cleanup). Real run on
+ICtPrhMBUKA + _qg8viUvLDo: both notes + transcripts from YouTube's automatic captions, 4 calls in
+4 min 55 s. `--backfill` on a copy of 2026-04-20_XSmI7OYd7iM.md added the transcript and the link.
+**Not verified live:** the local fallback (both test videos had captions); it is the unchanged
+pre-existing download + becky-transcribe path, only moved behind the caption check.
+
+---
+
 ## Breath check v2: frame-exact, word-safe regions; every small model reads the picture (2026-10-06, local, `master`)
 
 Jordan's feedback on v1 ("It's not there yet"): regions between frames (he ripple-deletes inside

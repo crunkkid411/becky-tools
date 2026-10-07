@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-// writeNote writes one Obsidian note per video: <upload date>_<id>.md.
+// writeNote writes one Obsidian note per video: <upload date>_<id>.md, plus
+// <upload date>_<id>.transcript.md beside it when there is a transcript (the
+// becky-ask naming standard; it sorts right under its note).
 func writeNote(vault string, v video, res result) (string, error) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		return "", err
@@ -17,10 +19,18 @@ func writeNote(vault string, v video, res result) (string, error) {
 	if len(date) == 8 {
 		date = date[:4] + "-" + date[4:6] + "-" + date[6:]
 	}
+	base := fmt.Sprintf("%s_%s", date, v.ID)
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\nsource: %s\nchannel: %q\nuploaded: %s\nprocessed: %s\nroute: %s\nroute_confidence: %.2f\ntool: becky-intake\n---\n\n",
 		v.URL, v.Channel, date, time.Now().Format("2006-01-02 15:04"), res.Route.Route, res.Route.Confidence)
 	fmt.Fprintf(&b, "# %s\n\n", v.Title)
+	if res.Transcript != "" {
+		if err := writeTranscript(vault, base, v.Title, v.URL, res.TranscriptFrom, res.Transcript); err != nil {
+			res.Degraded = append(res.Degraded, "transcript file: "+err.Error())
+		} else {
+			b.WriteString(transcriptLink(base, res.TranscriptFrom) + "\n\n")
+		}
+	}
 	fmt.Fprintf(&b, "**How becky handled it:** %s. Length: %s, %d links, %d GitHub repos, %d chapters.\n",
 		routeWords(res.Route.Route, res.Steps != ""), lengthWords(res.Facts.Minutes), res.Facts.Links, len(res.Facts.Repos), res.Facts.Chapters)
 	fmt.Fprintf(&b, "Route odds (Laya): %s", probsLine(res.Route.Probabilities))
@@ -56,8 +66,18 @@ func writeNote(vault string, v video, res result) (string, error) {
 		}
 		b.WriteString("\n")
 	}
-	path := filepath.Join(vault, fmt.Sprintf("%s_%s.md", date, v.ID))
+	path := filepath.Join(vault, base+".md")
 	return path, os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+func transcriptLink(base, from string) string {
+	return fmt.Sprintf("**Full transcript:** [%s.transcript.md](%s.transcript.md) (from %s)", base, base, from)
+}
+
+func writeTranscript(vault, base, title, url, from, text string) error {
+	body := fmt.Sprintf("---\nsource: %s\ntranscript_from: %q\ntool: becky-intake\n---\n\n# Transcript: %s\n\nNote: [%s.md](%s.md)\n\n%s\n",
+		url, from, title, base, base, strings.TrimSpace(text))
+	return os.WriteFile(filepath.Join(vault, base+".transcript.md"), []byte(body), 0o644)
 }
 
 func routeWords(route string, haveSteps bool) string {
@@ -65,7 +85,7 @@ func routeWords(route string, haveSteps bool) string {
 	case route == routeLinks:
 		return "The description lists what the video covers, so becky read the links instead of downloading it"
 	case haveSteps:
-		return "The value is in what is said, so becky transcribed it and wrote out what it teaches"
+		return "The value is in what is said, so becky read its transcript and wrote out what it teaches"
 	default:
 		return "becky tried to transcribe it, but got no usable text (see below)"
 	}

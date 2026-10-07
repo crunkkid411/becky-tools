@@ -7,7 +7,8 @@
   (`models\laya\`, CPU, 0 VRAM, ~0.5s) answers choice/score/yes-no questions with probabilities, no
   text. Rule: the model picks, code computes and guards. `--selftest` must pass. First user:
   **`becky-intake`** (`cmd/intake`) turns the "ai-useful" YouTube playlist into Obsidian notes, routing
-  each video links-vs-speech. Research + measured limits: `research/playlist-intake/README.md`.
+  each video links-vs-speech, with each transcript saved beside its note (YouTube's captions first,
+  one yt-dlp call per 90 s). Research + measured limits: `research/playlist-intake/README.md`.
   New 2026-09-25.
 - **Browser unsticker = `becky-unstick`** (`cmd/unstick`): Microsoft **Fara1.5-4B** (Qwen3.5-4B fine-tuned only
   for browser control; `models\fara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and

@@ -12,7 +12,8 @@ gets deleted.
 |---|---|
 | `pains.json` | Jordan's pain points, one line each with where it came from. Edit freely; becky-intake matches against it. |
 | `seen.json` | Video ids already turned into notes (never redone). Machine state, not committed. |
-| `TEMP\` | Audio downloads during a run. Emptied by code; also swept at start-up. Not committed. |
+| `TEMP\` | Caption and audio downloads during a run. Emptied by code; also swept at start-up. Not committed. |
+| `ytdlp.lock`, `ytdlp-last-call.txt` | The 90-second yt-dlp gate (one request per 90 s across all runs). Not committed. |
 | `qwen-skill\system-one-intake\` | The skill Qwen3.8-omni-flash (paid, one-time) extracted from GitHub Trending Weekly #50. |
 
 ## Qwen (paid, cloud) vs becky-intake (local)
