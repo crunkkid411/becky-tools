@@ -6,6 +6,19 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — visual moments: the small vision models + Gemma 12B decide which cut gestures go back; checked breaths are cut (2026-10-07, local)
+
+Jordan: the edit cut his head drop after "but not all of them", the thumbs up after "still allowed to
+livestream" and the wave after "Hair Jordan, hi" as silence - "CONTEXT based editing is critical".
+`becky-livestream`'s new `moments.go` measures every stretch the edit cuts next to his words with the
+small models (MediaPipe pose motion, the Gesture Recognizer, face mesh lost = head down, expression
+scores, insightface mouth); where they see something, Gemma-4 12B watches (frames + audio + the words
+around it) and labels each action; Go puts back reactions, gestures and acting-out that fit the line.
+Gemma E4B could not see these details, so moments use 12B on the processor (8192 context - 16384 ran
+the PC out of memory twice). The checked breaths are now cut (Jordan approved). Dry runs got the two
+excited faces, the head drop and the thumbs up right; a full checked run and the VEGAS build are
+still to do. Details: `research/visual-moments-2026-10.md`, top of `HANDOFF-LOG.md`.
+
 ### NEW — breath check v2: all 10 of his breaths, frame-exact regions, the picture decides (2026-10-06, local)
 
 Jordan's feedback on v1 is built. On the 27-livestream the Claude project now has 22 "Breath check"
@@ -878,11 +891,6 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
 
 ### Awaiting Jordan's go/no-go (spec landed, NOT yet built)
 
-- **Cut the checked breaths? (2026-10-06).** The breath check is built and approved as MARKERS ONLY
-  (sound labeler hears a breath AND the picture is still). Treating those breaths as pauses - cutting
-  them - waits until Jordan has judged the v2 regions in `27-livestream-claude (2).veg` (22 regions,
-  all 10 of his breaths) and says yes. Also his call: which delete script - VEGAS's
-  `Delete_Regions.cs` shifts edges 4/5 frames, does not ripple and hits the Unsure regions too.
 - **Keep whole unsure stretches (2026-10-05).** A stray unsure sentence with nothing confidently kept
   nearby is cut; on the test stream that cut Claude's whole 11:51-12:20 stretch (to-do list intro, "no
   time for the drama and legal stuff"). Option: keep a run of 3+ unsure sentences instead. His call.

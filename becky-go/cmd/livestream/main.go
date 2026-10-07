@@ -16,7 +16,9 @@
 //     reviews, or Claude through Jordan's subscription
 //  4. cut points from the audio (edges.go), loud cuts flagged
 //  5. publish check on the kept frames (publish.go)
-//  6. breath check (breath.go): a sound labeler + the picture; markers only, nothing is cut
+//  4b. visual moments (moments.go): the small vision models + Gemma put back a
+//     gesture, face or movement the edit cut that goes with his line
+//  6. breath check (breath.go): a sound labeler + the picture; every checked breath is cut
 //  7. VEGAS: new project, keep list, BeckyCut.cs for the dead air, save as
 //     <folder name>-<model>.veg (an existing project is never overwritten)
 //  8. edit check (verify.go): the timeline vs the plan, re-transcribed
@@ -304,10 +306,10 @@ func (r *run) workflow(fresh, noVegas bool) {
 	loud := loudEdges(ranges, cr.ThresholdDB)
 	r.logf("%d kept sections, %.1f of %.1f minutes before the dead air comes out", len(ranges), sumRanges(ranges)/60, r.duration/60)
 
-	// 4b. his face: a short pause becky-cut took out goes back when his face is the moment
+	// 4b. visual moments: a gesture, face or movement that goes with his line comes back
 	t0 = time.Now()
-	predicted, faces, faceNote := keepExpressions(r.cfg, r.media, r.work, r.stem, ranges, predicted, r.logf)
-	r.step("face check", t0)
+	predicted, faces, faceNote := keepMoments(r.cfg, r.media, r.work, r.stem, ranges, predicted, words, r.fps, r.logf)
+	r.step("visual moments", t0)
 
 	// 5. publish check (before VEGAS: Gemma's vision model and VEGAS never share the GPU)
 	t0 = time.Now()
@@ -315,13 +317,15 @@ func (r *run) workflow(fresh, noVegas bool) {
 	findings, pubNotes := publishCheck(r.media, r.cfg.FFmpeg, r.cfg.FFprobe, gm, gp, r.cfg.LlamaServer, predicted, r.work, r.logf)
 	r.step("publish check", t0)
 
-	// 6. breath check (regions only)
+	// 6. breath check: every checked breath is cut (Jordan, 2026-10-07: "the breaths
+	// identified are spot on - definitely those should all be removed")
 	t0 = time.Now()
 	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, au, r.threshold, r.fps, predicted, r.logf)
+	predicted = cutBreaths(predicted, bc.Spots)
 	r.step("breath check", t0)
 
 	plan := map[string]any{"model": r.label, "guidance": r.guidance, "ranges": ranges, "predicted_pieces": predicted,
-		"loud_edges": loud, "findings": findings, "fps": r.fps, "restored": faces, "breaths": bc.Spots}
+		"loud_edges": loud, "findings": findings, "fps": r.fps, "moments": faces, "breaths": bc.Spots}
 	writeJSON(filepath.Join(r.work, "plan-"+r.tag+".json"), plan)
 	if noVegas {
 		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, faces, faceNote, nil, nil, "")
@@ -415,7 +419,7 @@ func short(s string, n int) string {
 }
 
 // marks builds every region and marker on the finished timeline.
-func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Finding, breaths []breath, faces []restored, ver *Verification, ps []piece) []mark {
+func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Finding, breaths []breath, faces []moment, ver *Verification, ps []piece) []mark {
 	var ms []mark
 	// unsure chat replies the model said to cut: a marker where each was cut
 	for _, d := range sel.Decisions {
@@ -425,7 +429,7 @@ func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Fin
 			}
 		}
 	}
-	ms = append(ms, expressionMarks(faces, ps)...)
+	ms = append(ms, momentMarks(faces, ps)...)
 	// unsure content calls (runs of consecutive unsure sentences that were kept)
 	for i := 0; i < len(sel.Decisions); i++ {
 		d := sel.Decisions[i]
@@ -456,7 +460,7 @@ func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Fin
 		}
 	}
 	ms = append(ms, loudEdgeMarks(ranges, ps, r.threshold)...)
-	return append(ms, breathRegions(breaths, ps)...)
+	return ms // the checked breaths are cut (cutBreaths), so they get no region
 }
 
 // cutPoint is where source time t lands on the timeline: inside a piece, or at

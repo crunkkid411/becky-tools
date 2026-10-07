@@ -151,6 +151,7 @@ type Runner struct {
 	FFmpeg    string // ffmpeg.exe
 	FFprobe   string // ffprobe.exe
 	NGL       int    // GPU layers to offload (99 = full)
+	CtxSize   int    // server context in tokens (0 = 16384); smaller saves memory on big models
 	Logf      func(format string, a ...any)
 }
 
@@ -472,4 +473,14 @@ func freePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// ctxSize is the server context: CtxSize, else 16384. Gemma-4 12B's cache at
+// 16384 is several GB of RAM on the processor; a caller with short windows
+// (becky-livestream's visual moments: at most ~22 frames) asks for less.
+func (r *Runner) ctxSize() int {
+	if r.CtxSize > 0 {
+		return r.CtxSize
+	}
+	return 16384
 }

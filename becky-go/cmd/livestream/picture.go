@@ -74,6 +74,9 @@ type picFrame struct {
 	Body  map[string][]float64 `json:"body,omitempty"` // ls rs lw rw: x, y, visibility
 	Jaw   float64              `json:"jaw,omitempty"`  // MediaPipe jawOpen
 	Objs  []picObj             `json:"objs,omitempty"` // MediaPipe drink boxes
+	Gest  [][]any              `json:"gest,omitempty"` // MediaPipe gestures: [name, score] per hand
+	Expr  map[string]float64   `json:"expr,omitempty"` // MediaPipe expression scores (brow, eyes, smile, ...)
+	Head  []float64            `json:"head,omitempty"` // MediaPipe head [pitch, yaw] in degrees
 }
 
 type picObj struct {
@@ -87,9 +90,10 @@ func (o picObj) raised() bool {
 	return o.Score >= raisedScore && o.Area >= raisedArea && o.CY < raisedTop
 }
 
-// picCache is where the measured frames are kept (v2: with the MediaPipe face
-// and drink signals; frames measured before them are measured again).
-func picCache(work, stem string) string { return filepath.Join(work, stem+".picture-v2.json") }
+// picCache is where the measured frames are kept (v3: with gestures, expression
+// scores, head angle, nose and elbows; frames measured before them are measured
+// again).
+func picCache(work, stem string) string { return filepath.Join(work, stem+".picture-v3.json") }
 
 // mediapipeModel is a MediaPipe model next to the pose model.
 func mediapipeModel(cfg config.Config, name string) string {
@@ -134,7 +138,8 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 		return p, nil
 	}
 	mesh, objects := mediapipeModel(cfg, "face_landmarker.task"), mediapipeModel(cfg, "efficientdet_lite0_int8.tflite")
-	for _, f := range []string{cfg.FacePython, poseModel(cfg), mesh, objects, filepath.Join(cfg.FaceModelRoot, "models", "buffalo_l")} {
+	gestures := mediapipeModel(cfg, "gesture_recognizer.task")
+	for _, f := range []string{cfg.FacePython, poseModel(cfg), mesh, objects, gestures, filepath.Join(cfg.FaceModelRoot, "models", "buffalo_l")} {
 		if _, err := os.Stat(f); err != nil {
 			return p, fmt.Errorf("the picture models are missing (%s)", f)
 		}
@@ -151,7 +156,7 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 	writeJSON(spanFile, js)
 	defer os.Remove(spanFile)
 	cmd := exec.Command(cfg.FacePython, script, "--video", media, "--spans", spanFile,
-		"--face-root", cfg.FaceModelRoot, "--pose", poseModel(cfg), "--face-mesh", mesh, "--objects", objects, "--ffmpeg", cfg.FFmpeg)
+		"--face-root", cfg.FaceModelRoot, "--pose", poseModel(cfg), "--face-mesh", mesh, "--objects", objects, "--gestures", gestures, "--ffmpeg", cfg.FFmpeg)
 	cmd.Env = crop.ChildEnv(cfg)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

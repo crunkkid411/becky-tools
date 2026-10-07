@@ -10,7 +10,7 @@ import (
 
 // report writes becky-edit\report-<model>.md and prints the short version.
 func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []span, loud []string,
-	findings []Finding, pubNotes []string, bc breathResult, faces []restored, faceNote string,
+	findings []Finding, pubNotes []string, bc breathResult, faces []moment, faceNote string,
 	ver *Verification, marks []mark, veg string) {
 	var b strings.Builder
 	edit := 0.0
@@ -67,11 +67,7 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	fmt.Fprintf(&b, "\n## On the timeline for you to look at (%d)\n\n", len(marks))
 	fmt.Fprintf(&b, "- **Unsure calls:** %d kept and marked with an \"Unsure\" region\n", unsure)
 	fmt.Fprintf(&b, "- **Unsure chat replies:** %d cut, as the model said, with a marker at each cut\n", chats)
-	if faceNote != "" {
-		fmt.Fprintf(&b, "- **Kept for the picture:** skipped - %s\n", faceNote)
-	} else {
-		fmt.Fprintf(&b, "- **Kept for the picture:** %d short pause(s) becky-cut took out put back, because his face holds an expression (a marker on each)\n", len(faces))
-	}
+	b.WriteString(momentLine(faces, faceNote) + "\n")
 	fmt.Fprintf(&b, "- **Publish check:** %d region(s)", regions)
 	if n := len(findings) - regions; n > 0 {
 		fmt.Fprintf(&b, ", plus %d single-frame maybe(s) listed below", n)

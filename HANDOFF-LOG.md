@@ -41,6 +41,61 @@ pre-existing download + becky-transcribe path, only moved behind the caption che
 
 ---
 
+## Visual moments + breaths cut: context-based cuts in becky-livestream (2026-10-07, local, `master`, IN PROGRESS)
+
+Jordan, reviewing `27-livestream-claude (2).veg`: the breath regions now sit on frames and "the
+breaths identified are spot on - definitely those should all be removed". But "the overall context
+of the cuts are still not understood": the head drop after "but not all of them" (3:17.6-3:18.6),
+the thumbs up after "still allowed to livestream" (3:22.2-3:23.0) and the awkward wave after "Hair
+Jordan, hi" (14:56.0-14:56.8) were cut as silence. "Start by identifying extreme movement and
+facial expressions, then corroborate. Escalate to a Qwen VL model or Gemma4." "If there's a TYPE of
+model which would help ... just integrate it (make sure it's up to date) - or ask me."
+
+**Built (uncommitted at the time of writing - see "State" below):**
+- `cmd/livestream/moments.go` (replaces `expressions.go`, deleted): candidates = every stretch the
+  edit cuts next to his words (becky-cut pauses inside a section, 2.5 s after, 2 s before; never past
+  a cut word). Trigger = `momentSignals` on the per-frame picture data. Gemma-4 12B (`momentRunner`,
+  processor, `CtxSize` 8192, <= 20 frames) describes each frame, then lists actions with a label +
+  `fits_line` + from/to (`momentPrompt`, `parseActions`); `judgeActions` puts back reaction /
+  gesture / acting that fits (`putBack`, `addPieces`); markers `momentMarks`; report `momentLine`;
+  cache `becky-edit\moments-cache.json` (key prefix `v5|`).
+- `internal/pyhelpers/picture_signals.py`: `--gestures` (MediaPipe Gesture Recognizer), `expr`
+  (expression scores), `head` (pitch/yaw), pose nose + elbows. `picture.go`: new picFrame fields,
+  cache `picture-v3.json`, passes the gesture model.
+- `breath.go` `cutBreaths`: every verdict-"breath" region is cut out of the pieces before VEGAS;
+  `main.go` no longer places breath regions on a normal run (`--breaths-only` still does).
+- `internal/avlm`: `Runner.CtxSize` (0 = 16384) -> `ctxSize()` in the server args.
+- Tests: `TestMomentCandidates`, `TestMomentSignals`, `TestPutBack`, `TestCutBreaths`,
+  `TestSecondsParse`, `TestJudgeActions` (all pass). Scratch probe `cmd/_momentprobe` (do not ship
+  as a tool; underscore dir).
+- Docs: `SKILL.md` step 4 "Visual moments" + step 6 (breaths cut), `INDEX.md`,
+  `STATE-OF-MASTER.md`, new `research/visual-moments-2026-10.md` (all measurements + lessons).
+
+**Measured / learned:** Gemma E4B called the head drop and the faces "head level, neutral" frame by
+frame - 12B got them right at the same speed on the processor. "Keep or cut?" asked directly cuts
+every silent moment; one label per stretch lost the thumbs up to the water grab; label alone put
+back hair fixing ("raising both hands near his head") -> `fits_line`. Claude Code killed two dry
+runs for low memory (12B at 16384 context) -> 8192. Dry run 5: both faces, head drop, thumbs up
+(3:22.27-3:22.9 only) right; hair fix at 3:05 wrong (fixed since); 11:19.3 and 12:59.8 put back,
+not yet checked by eye. Facial-emotion models on HF checked and skipped (2024 hobby fine-tunes).
+
+**State when this was written (2026-10-07 ~15:35):** dry run 6 (`becky-livestream --model claude
+--no-vegas` on the 27-livestream, log `scratchpad\ctx\dry6.log`) running. Backups made before the
+dry runs: `becky-edit\report-claude.v1-backup.md`, `becky-edit\plan-claude.v2-run.json`.
+VEGAS is closed (Jordan closed it for memory); his `27-livestream-claude.veg` and
+`27-livestream-claude (2).veg` are untouched.
+
+**Next, in order:**
+1. Read dry run 6's decisions; frame-strip every PUT BACK (esp. 11:19.3, 12:59.8, the wave 14:56)
+   and confirm by eye; fix anything wrong.
+2. `go build/vet/test ./...`, `build-all-tools.bat`, commit on a branch (do NOT commit
+   `cmd/_momentprobe` or `native/becky-review/*`), ff-merge, push.
+3. Real run into VEGAS (`becky-livestream --model claude`; answers cached -> fast) -> new
+   `27-livestream-claude (3).veg`; read regions/markers back; leave it open and saved for Jordan.
+4. Report in plain words: what came back, what stayed cut, breaths cut.
+
+---
+
 ## Breath check v2: frame-exact, word-safe regions; every small model reads the picture (2026-10-06, local, `master`)
 
 Jordan's feedback on v1 ("It's not there yet"): regions between frames (he ripple-deletes inside

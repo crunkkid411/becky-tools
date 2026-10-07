@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -625,24 +626,85 @@ func TestRunBreathCheckPlacesNothingWithoutTheLabeler(t *testing.T) {
 	}
 }
 
-// Jordan's held expression after "Some of my videos got restored": becky-cut
-// took out the pause; only pauses inside one kept section, up to 2 s, can come back.
-func TestExpressionGapsAndRestore(t *testing.T) {
-	ranges := []Range{{In: 0, Out: 10}, {In: 20, Out: 30}}
-	pieces := []span{{0, 2}, {2.5, 5}, {8, 10}, {20, 25}, {25.4, 30}}
-	gaps := expressionGaps(ranges, pieces)
-	if len(gaps) != 2 || !near(gaps[0].A, 2) || !near(gaps[0].B, 2.5) || !near(gaps[1].A, 25) || !near(gaps[1].B, 25.4) {
-		t.Fatalf("gaps = %+v (the 3 s pause and the cut between sections never come back)", gaps)
+// The stretches the edit cuts next to his words: a pause inside a section, the
+// 2.5 s after one (thumbs up after "still allowed to livestream"), the 2 s
+// before one - never past a word the content decision left out.
+func TestMomentCandidates(t *testing.T) {
+	words := []Word{{Word: "a", Start: 0.5, End: 1}, {Word: "b", Start: 1.2, End: 2}, {Word: "cut", Start: 3, End: 3.5}, {Word: "c", Start: 10.2, End: 11}, {Word: "d", Start: 11.5, End: 12}}
+	ranges := []Range{{In: 0.4, Out: 2.1, W0: 0, W1: 1}, {In: 10.1, Out: 12.1, W0: 3, W1: 4}}
+	pieces := []span{{0.4, 1.05}, {1.15, 2.1}, {10.1, 12.1}}
+	got := momentCandidates(ranges, pieces, words)
+	want := []moment{{A: 0, B: 0.4, Kind: "before"}, {A: 1.05, B: 1.15, Kind: "pause"}, {A: 2.1, B: 2.96, Kind: "after"},
+		{A: 8.1, B: 10.1, Kind: "before"}, {A: 12.1, B: 14.6, Kind: "after"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
 	}
-	got := restoreGaps(pieces, []restored{{A: 2, B: 2.5}})
-	want := []span{{0, 5}, {8, 10}, {20, 25}, {25.4, 30}}
-	if !slices.Equal(got, want) {
-		t.Errorf("restored = %+v, want %+v", got, want)
+	for i := range want {
+		if got[i].Kind != want[i].Kind || !near(got[i].A, want[i].A) || !near(got[i].B, want[i].B) {
+			t.Errorf("candidate %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
-	ms := expressionMarks([]restored{{A: 2, B: 2.5, Look: picLook{MouthHeld: 6, JawHeld: 7}}}, []piece{{In: 0, Out: 5, TL: 0}})
-	if len(ms) != 1 || !near(ms[0].At, 2) || ms[0].Len != 0 ||
-		ms[0].Label != "Kept for the picture - his face (insightface: mouth open 0.6 s; MediaPipe: jaw open 0.7 s); becky-cut had cut this 0.5 s pause" {
-		t.Errorf("marker = %+v", ms)
+}
+
+// What the small models see: the wave (fast movement + an open palm) wakes
+// Gemma; one twitch alone does not; a gesture alone does.
+func TestMomentSignals(t *testing.T) {
+	body := func(x float64) map[string][]float64 {
+		return map[string][]float64{"n": {0.5, 0.3, 1}, "ls": {0.3, 0.5, 1}, "rs": {0.7, 0.5, 1}, "lw": {x, 0.8, 1}, "rw": {0.7, 0.8, 1}}
+	}
+	head := []float64{-8, 0}
+	p := &pictures{frames: map[int]picFrame{}}
+	for k, x := range []float64{0.3, 0.3, 0.5, 0.3, 0.3} { // 0.2 / 0.4 shoulder widths = 0.5 each
+		p.frames[100+k] = picFrame{T: float64(100+k) / 10, Body: body(x), Head: head}
+	}
+	f := p.frames[103]
+	f.Gest = [][]any{{"Open_Palm", 0.57}}
+	p.frames[103] = f
+	got := momentSignals(p, 10.0, 10.4)
+	if len(got) != 2 || got[0] != "fast movement (MediaPipe pose) x2" || got[1] != "Open Palm (MediaPipe gesture) x1" {
+		t.Errorf("wave signals = %q", got)
+	}
+	q := &pictures{frames: map[int]picFrame{}}
+	for k, x := range []float64{0.3, 0.5, 0.5} {
+		q.frames[200+k] = picFrame{Body: body(x), Head: head}
+	}
+	if got := momentSignals(q, 20.0, 20.2); got != nil {
+		t.Errorf("one twitch woke Gemma: %q", got)
+	}
+	f = q.frames[202]
+	f.Gest = [][]any{{"Thumb_Up", 0.61}}
+	q.frames[202] = f
+	if got := momentSignals(q, 20.0, 20.2); len(got) != 2 {
+		t.Errorf("a thumbs up must wake Gemma: %q", got)
+	}
+}
+
+// What goes back: Gemma's span padded and on the grid, inside the stretch,
+// slivers absorbed; the 27-livestream wave inside becky-cut's 896.27-896.9.
+func TestPutBack(t *testing.T) {
+	lo, hi, ok := putBack(896.2667, 896.9, 896.2, 896.8, 30)
+	if !ok || !near(lo, 896.2667) || !near(hi, 896.9) {
+		t.Errorf("wave = %.4f-%.4f %v (whole stretch: what is left is a sliver)", lo, hi, ok)
+	}
+	lo, hi, ok = putBack(202.2667, 204.7667, 202.2, 203.0, 30)
+	if !ok || !near(lo, 202.2667) || !near(hi, 203.1) {
+		t.Errorf("thumbs up = %.4f-%.4f %v", lo, hi, ok)
+	}
+	if _, _, ok := putBack(10, 10.1, 10, 10.1, 30); ok {
+		t.Error("3 frames is too short to put back")
+	}
+	got := addPieces([]span{{0, 2}, {3, 5}}, []span{{2, 2.5}, {6, 7}})
+	if !slices.Equal(got, []span{{0, 2.5}, {3, 5}, {6, 7}}) {
+		t.Errorf("addPieces = %+v", got)
+	}
+}
+
+// Every checked breath is cut; unchecked ones stay.
+func TestCutBreaths(t *testing.T) {
+	got := cutBreaths([]span{{0, 5}, {6, 9}}, []breath{{A: 1, B: 1.5, Verdict: vBreath}, {A: 4.5, B: 5, Verdict: vBreath},
+		{A: 7, B: 7.5, Verdict: vMovement}})
+	if !slices.Equal(got, []span{{0, 1}, {1.5, 4.5}, {6, 9}}) {
+		t.Errorf("cutBreaths = %+v", got)
 	}
 }
 
@@ -727,5 +789,47 @@ func TestPickMessageBoxIgnoresProgressWindow(t *testing.T) {
 	}
 	if got := pickMessageBox([]byte("[" + progress + "," + box + "]")); got != "Becky Cut: The cut worked, but rebuilding the clip grouping did not." {
 		t.Errorf("message box = %q", got)
+	}
+}
+
+// Gemma writes times as numbers, strings or "185.2s".
+func TestSecondsParse(t *testing.T) {
+	var v struct{ A, B, C, D seconds }
+	if err := json.Unmarshal([]byte(`{"A": 185.2, "B": "185.2", "C": "185.2s", "D": "soon"}`), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.A != 185.2 || v.B != 185.2 || v.C != 185.2 || v.D != 0 {
+		t.Errorf("parsed %+v", v)
+	}
+}
+
+// The thumbs up and THEN the water bottle: only the thumbs up goes back.
+func TestJudgeActions(t *testing.T) {
+	text := "[202.3s] head level, thumbs up\n[203.4s] reaching for bottle\n" +
+		`{"actions": [{"label": "Gesture", "what": "thumbs up", "fits_line": true, "from": "202.2s", "to": 203.0}, {"label": "object", "what": "reaches for water", "fits_line": false, "from": 203.0, "to": 204.2}]}`
+	acts, err := parseActions(text, 200.77, 204.77)
+	if err != nil || len(acts) != 2 {
+		t.Fatalf("parse: %v %+v", err, acts)
+	}
+	c := moment{A: 202.2667, B: 204.2667}
+	judgeActions(&c, acts, 30)
+	if !c.Keep || len(c.Back) != 1 || !near(c.Back[0].A, 202.2667) || !near(c.Back[0].B, 203.1) ||
+		c.Label != "gesture, object" || c.Gemma != "thumbs up; then reaches for water" {
+		t.Errorf("judged %+v", c)
+	}
+	// a "gesture" that has nothing to do with his words (hands to his hair) stays cut
+	c = moment{A: 185.15, B: 186.87}
+	judgeActions(&c, []action{{Label: "gesture", What: "hands near his head", From: 185.2, To: 185.9}}, 30)
+	if c.Keep {
+		t.Errorf("an action that does not fit the line was put back: %+v", c)
+	}
+	// a kept action Gemma could not place, next to other actions: none of it goes back
+	c = moment{A: 185.15, B: 186.87}
+	judgeActions(&c, []action{{Label: "gesture", Fits: true}, {Label: "grooming"}}, 30)
+	if c.Keep {
+		t.Errorf("an unplaced action took the whole stretch back: %+v", c)
+	}
+	if _, err := parseActions("no json here", 0, 1); err == nil {
+		t.Error("an answer without actions must be an error")
 	}
 }

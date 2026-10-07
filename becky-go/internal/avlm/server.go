@@ -229,7 +229,7 @@ func (r *Runner) spawnServer(ctx context.Context) (string, func(), error) {
 		"-m", r.Model,
 		"--mmproj", r.MMProj,
 		"-ngl", itoa(r.NGL),
-		"-c", "16384", // must fit frames (~256 tok each) + audio + prompt; 8192 overflowed the default ~30-frame window (HTTP 400)
+		"-c", itoa(r.ctxSize()), // must fit frames (~256 tok each) + audio + prompt; 8192 overflowed the default ~30-frame window (HTTP 400)
 		"-fa", "off",
 		"--no-warmup",
 		"--host", "127.0.0.1",

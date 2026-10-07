@@ -49,8 +49,8 @@
   Jordan's launchers `workflows/livestream/Livestream Edit - *.bat`): transcript -> becky-cut ->
   ONE model step (what stays: Gemma/Qwen name each sentence's wanted topic + label and becky
   applies the keep rule, the other local model re-checks topic edges and unsure calls; Claude
-  via fleet-run) -> audio cut points -> face check (`expressions.go`) -> publish check (OCR + Gemma
-  vision) -> breath check -> VEGAS (`BeckyKeepList.cs` places the final pieces) -> edit check
+  via fleet-run) -> audio cut points -> visual moments (`moments.go`) -> publish check (OCR + Gemma
+  vision) -> breath check (checked breaths CUT) -> VEGAS (`BeckyKeepList.cs` places the final pieces) -> edit check
   (re-transcribe the timeline) -> regions + markers in frames (`vegas/BeckyMarks.cs`) +
   `becky-edit\report-*.md`. Steps, rules and the model comparison: `SKILL.md` "The livestream
   clip-down is ONE call now", top of `HANDOFF-LOG.md`. New 2026-10-05. **Breath check v2
@@ -59,7 +59,15 @@
   found in the BEATs sound labeler's 40 ms frames over every kept piece, word-safe margins, every
   edge on the frame grid; ruled out by insightface + MediaPipe (jawOpen, a drink held up, body),
   Falcon-Perception + Gemma-4 (held up toward the camera). `--breaths-only` redoes it on a saved
-  project. `motion.go` (whole-frame change) is gone.
+  project. `motion.go` (whole-frame change) is gone. **Checked breaths are CUT since 2026-10-07**
+  (Jordan: "the breaths identified are spot on - definitely those should all be removed").
+  **Visual moments (2026-10-07, `moments.go`, replaced `expressions.go`):** every stretch the edit
+  cuts next to his words is measured by the small vision models (MediaPipe pose motion, Gesture
+  Recognizer, face mesh lost = head down, expression scores, insightface mouth); a stretch where they
+  see something is WATCHED by Gemma-4 12B (frames + audio + the words around it), which labels each
+  action (reaction / gesture / acting / grooming / looking away / object / still) and whether it fits
+  the line; Go puts back reaction/gesture/acting that fits. Research + measurements:
+  `research/visual-moments-2026-10.md`.
 - **Transcription fixed at the root (2026-10-05):** `becky-transcribe` builds word times from
   Parakeet-TDT's own durations (no zero-length words), windows start and end in pauses, and every
   run adds a WhisperX second opinion (`cmd/transcribe/secondpass.go`) + Jordan's word list
@@ -278,13 +286,20 @@
   his voice, and that `breath.go`'s loudness-only breath markers were mostly not breaths. NVIDIA's
   and Qwen's new audio models are research-only licenses and/or too big for 8 GB. Its "v2" section
   (2026-10-06) is the calibration on Jordan's own list of missed breaths and the picture signals.
+- `research/visual-moments-2026-10.md` — **Context-based cuts: gestures, faces and movements the edit
+  cut (2026-10-07, local; measured + BUILT as `moments.go`).** Jordan's three misses on the
+  27-livestream (head drop, thumbs up, "hi" wave) and what each small model saw; why Gemma-4 E4B
+  cannot judge these (calls a head drop "level, neutral") and 12B can; why Gemma only LABELS and Go
+  decides; the memory limit (8192 context); dry-run results; facial-emotion models checked and
+  skipped.
 - `research/mediapipe-capabilities-2026-10.md` — **What MediaPipe can do, October 2026 (local;
   research + a test on the 27-livestream).** Which MediaPipe tasks are current, which models are in
   `models\mediapipe\`, and what each one measured on Jordan's breaths, movements, toast and faces:
   Face Landmarker `jawOpen` and the Object Detector (a drink held up) help and are wired into the
   breath check; pose hands-above-shoulders separates movement but also fires on real breaths, so it
   is wired only as "a hand up needs a clear breath (0.5+)"; gestures, head-turn speed, eye/brow
-  scores and YAMNet do not help.
+  scores and YAMNet do not help THE BREATH CHECK (gestures, head angle and expression scores now
+  drive the visual-moments step, `research/visual-moments-2026-10.md`).
 - `research/system-one-models-jev.md` (+ `research/system-one-probe.py`) — **System One models /
   TypeSafe's Jev (2026-09-18, local; RESEARCH + PROPOSAL, nothing built).** Jev = typed
   multiple-choice judgments with real probabilities, no text. Hosted Jev is ruled out for becky

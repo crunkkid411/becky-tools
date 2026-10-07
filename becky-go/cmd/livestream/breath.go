@@ -613,3 +613,36 @@ func lastJSONLine(s string) string {
 	}
 	return strings.TrimSpace(s)
 }
+
+// cutBreaths takes every checked breath (verdict "breath": the sound labeler
+// heard it and the picture is still) out of the pieces. The regions are already
+// on the frame grid and inside one piece each (breathRegion/gridRegion), so the
+// pieces left keep frame-exact edges. Jordan, 2026-10-07, after judging the 22
+// regions on the 27-livestream: "the breaths identified are spot on -
+// definitely those should all be removed".
+func cutBreaths(pieces []span, spots []breath) []span {
+	var cuts []span
+	for _, b := range spots {
+		if b.Verdict == vBreath {
+			cuts = append(cuts, span{b.A, b.B})
+		}
+	}
+	out := append([]span{}, pieces...)
+	for _, c := range cuts {
+		var next []span
+		for _, p := range out {
+			if c.B <= p.A+1e-6 || c.A >= p.B-1e-6 {
+				next = append(next, p)
+				continue
+			}
+			if c.A > p.A+1e-6 {
+				next = append(next, span{p.A, c.A})
+			}
+			if c.B < p.B-1e-6 {
+				next = append(next, span{c.B, p.B})
+			}
+		}
+		out = next
+	}
+	return out
+}

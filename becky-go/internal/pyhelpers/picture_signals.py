@@ -16,6 +16,14 @@ still face. This samples each span at --fps and reports, per frame:
          VIDEO mode inside a span)
   jaw    MediaPipe Face Landmarker's jawOpen expression score (0-1): a second,
          independent face model for the held-open mouth
+  gest   MediaPipe Gesture Recognizer, per hand seen: [name, score] (Thumb_Up, Open_Palm,
+         Victory, Pointing_Up, Thumb_Down, ILoveYou, Closed_Fist; "None" is left out) - the
+         thumbs up and the wave that go with a line
+  expr   MediaPipe face expression scores 0-1 (both sides averaged): brow (browInnerUp /
+         browOuterUp), eyes (eyeWide), smile (mouthSmile), frown (mouthFrown), pucker
+         (mouthPucker), funnel (mouthFunnel), puff (cheekPuff)
+  head   [pitch, yaw] in degrees from the face mesh (looking down makes pitch more negative;
+         when his head drops far the face mesh loses him and "head" is missing)
   objs   MediaPipe Object Detector (EfficientDet-Lite0) boxes for a bottle, cup
          or wine glass scoring 0.1+: {"what", "score", "area" (share of the
          frame), "cy" (box centre, 0 = top)} - the toast after "cheers"
@@ -44,7 +52,10 @@ import subprocess
 import sys
 import time
 
-BODY = (("ls", 11), ("rs", 12), ("lw", 15), ("rw", 16))
+BODY = (("n", 0), ("ls", 11), ("rs", 12), ("le", 13), ("re", 14), ("lw", 15), ("rw", 16))
+EXPR = {"brow": ("browInnerUp", "browOuterUpLeft", "browOuterUpRight"), "eyes": ("eyeWideLeft", "eyeWideRight"),
+        "smile": ("mouthSmileLeft", "mouthSmileRight"), "frown": ("mouthFrownLeft", "mouthFrownRight"),
+        "pucker": ("mouthPucker",), "funnel": ("mouthFunnel",), "puff": ("cheekPuff",)}
 LONG_SIDE = 640  # frames are scaled so the long side is 640 px; detection runs at 320
 HELD = ("bottle", "cup", "wine glass")  # COCO names a raised drink can come back as
 
@@ -83,6 +94,7 @@ def main():
     ap.add_argument("--pose", required=True)
     ap.add_argument("--face-mesh", required=True)
     ap.add_argument("--objects", required=True)
+    ap.add_argument("--gestures", default="")
     ap.add_argument("--ffmpeg", default="ffmpeg")
     ap.add_argument("--fps", type=float, default=10.0)
     a = ap.parse_args()
@@ -107,7 +119,11 @@ def main():
             base_options=mpt.BaseOptions(model_asset_path=a.pose), running_mode=video, num_poses=1))
         mesh = mpv.FaceLandmarker.create_from_options(mpv.FaceLandmarkerOptions(
             base_options=mpt.BaseOptions(model_asset_path=a.face_mesh), running_mode=video, num_faces=1,
-            output_face_blendshapes=True))
+            output_face_blendshapes=True, output_facial_transformation_matrixes=True))
+        gest = None
+        if a.gestures:
+            gest = mpv.GestureRecognizer.create_from_options(mpv.GestureRecognizerOptions(
+                base_options=mpt.BaseOptions(model_asset_path=a.gestures), running_mode=video, num_hands=2))
         objects = mpv.ObjectDetector.create_from_options(mpv.ObjectDetectorOptions(
             base_options=mpt.BaseOptions(model_asset_path=a.objects), running_mode=video,
             score_threshold=0.1, max_results=15))
@@ -118,7 +134,7 @@ def main():
     rows = []
     ts_ms = 0
     step = int(round(1000 / a.fps))
-    with pose, mesh, objects:
+    with pose, mesh, objects, (gest or contextlib.nullcontext()):
         for s0, s1 in spans:
             try:
                 frames = decode(a.ffmpeg, a.video, s0, s1, a.fps)
@@ -147,9 +163,19 @@ def main():
                     r["body"] = {k: [round(lms[j].x, 4), round(lms[j].y, 4), round(lms[j].visibility, 2)] for k, j in BODY}
                 fm = mesh.detect_for_video(rgb, ts_ms)
                 if fm.face_blendshapes:
-                    jaw = [c.score for c in fm.face_blendshapes[0] if c.category_name == "jawOpen"]
-                    if jaw:
-                        r["jaw"] = round(float(jaw[0]), 3)
+                    bs = {c.category_name: float(c.score) for c in fm.face_blendshapes[0]}
+                    if "jawOpen" in bs:
+                        r["jaw"] = round(bs["jawOpen"], 3)
+                    r["expr"] = {k: round(sum(bs.get(n, 0.0) for n in ns) / len(ns), 3) for k, ns in EXPR.items()}
+                if fm.facial_transformation_matrixes:
+                    m = np.array(fm.facial_transformation_matrixes[0])[:3, :3]
+                    r["head"] = [round(float(np.degrees(np.arctan2(-m[2, 1], m[2, 2]))), 1),
+                                 round(float(np.degrees(np.arcsin(np.clip(m[2, 0], -1, 1)))), 1)]
+                if gest is not None:
+                    g = [[h[0].category_name, round(float(h[0].score), 3)]
+                         for h in gest.recognize_for_video(rgb, ts_ms).gestures if h and h[0].category_name != "None"]
+                    if g:
+                        r["gest"] = g
                 objs = []
                 for d in objects.detect_for_video(rgb, ts_ms).detections:
                     c, bb = d.categories[0], d.bounding_box

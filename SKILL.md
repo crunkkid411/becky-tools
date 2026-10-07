@@ -1304,18 +1304,39 @@ Every step runs, in this order, every time (`cmd/livestream/`):
 4. Cut points from the audio (`edges.go`, the apology rules): becky-cut's edge when a pause is
    there, else the quietest frame between the two words; a cut inside speech that is still above
    becky-cut's silence threshold gets a "loud cut" marker.
-   **Face check** (`expressions.go`, 2026-10-06): a pause of up to 2 s that becky-cut took out INSIDE
-   one kept section goes back in when BOTH face models see his mouth held open - insightface (mouth
-   0.22+ for 0.4 s) AND MediaPipe Face Landmarker (jawOpen 0.6+ for 0.3 s) - with a "Kept for the
-   picture" marker. Jordan: "'Some of my videos got restored' Then I made a really eggadurated facial
-   expression - it was visually obvious"; becky-cut had cut it as silence.
+   **Visual moments** (`moments.go`, 2026-10-07; replaced the face-only check). Jordan: "the
+   overall context of the cuts are still not understood" - the head drop after "but not all of
+   them", the thumbs up after "still allowed to livestream", the wave after "Hair Jordan, hi" were
+   all cut as silence. "that 'hi' followed by a hand wave should have been enough motion to trigger
+   a bunch of small vision models to determine what is going on specifically, and then have gemma or
+   qwen decide to leave it or cut it."
+   - **Watched:** every stretch the edit cuts next to his words - a becky-cut pause inside a kept
+     section, the 2.5 s after a section, the 2 s before one (never past a word the content decision
+     cut).
+   - **The small models trigger:** per 0.1 s frame (`picture_signals.py`) - MediaPipe pose motion
+     0.3+ shoulder widths (talking stays under 0.2), the Gesture Recognizer (Thumb_Up, Open_Palm,
+     Pointing_Up ... 0.5+), face mesh lost while pose still has him (head down / turned away), the
+     expression scores (jawOpen 0.6, smile/brow 0.5, eyes 0.4, pucker 0.6), insightface + MediaPipe
+     held-open mouth. 2+ active frames or any gesture = Gemma watches.
+   - **Gemma-4 12B watches** (frames at up to 4 fps + audio, the words before and after, the small
+     models' findings), always on the processor with an 8192 context (16384 made Claude Code stop the
+     run twice for low memory). It describes each frame, then lists each separate action with a label
+     (reaction / gesture / acting / grooming / looking away / object / still), whether it fits the
+     line, and when. **Go applies the rule:** reaction, gesture or acting that fits the line goes back
+     (padded 0.1 s, on the frame grid, slivers absorbed) with a "Kept for the picture" marker; the rest
+     stays cut. **E4B cannot do this:** it called the head drop, both excited faces and the wave "head
+     level, neutral" frame after frame (it sees "bright green hair, black t-shirt"); 12B called them
+     right in the same ~1.5 min per moment on the processor. Asked "keep or cut?" directly, it cut
+     every silent moment; one label per stretch lost the thumbs up to the water grab after it.
+   - Cache: `becky-edit\moments-cache.json` (by stretch + signals + prompt version).
 5. Publish check on the kept frames (`publish.go`): a frame every 2 s -> becky-ocr (address, phone,
    email, ID and booking-code patterns = region) + Gemma-4 vision on new pictures (another
    creator's content / documents with names / private details; 2+ frames in a row = region, one
    frame = report only).
 6. Breath check v2 (`breath.go` + `picture.go` + `pyhelpers/sound_labels.py --frames` +
-   `pyhelpers/picture_signals.py`) - **REGIONS ONLY, nothing is cut; cutting breaths is NOT
-   approved.** Rebuilt 2026-10-06 after Jordan's review of v1 ("It's not there yet"):
+   `pyhelpers/picture_signals.py`) - **every checked breath is CUT** (`cutBreaths`; Jordan,
+   2026-10-07, after judging the 22 regions: "the breaths identified are spot on - definitely those
+   should all be removed"). Rebuilt 2026-10-06 after Jordan's review of v1 ("It's not there yet"):
    - **Found in the sound, over every kept piece** (v1 only looked in the transcript's gaps, and the
      piece edges - where half his breaths were - were skipped): PretrainedSED `BEATs_strong_1`
      (MIT, `models\sed\PretrainedSED`, anaconda Python on the GPU, ~10 s, never downloads), every
@@ -1342,17 +1363,18 @@ Every step runs, in this order, every time (`cmd/livestream/`):
      under 75% of the frames, face size changing 1.3x+, shoulders moving 0.2+ shoulder widths; **a hand
      up with only a faint breath** - a MediaPipe pose wrist above his shoulders AND the breath score
      under 0.5 (hands in his hair rustle at 0.32/0.43; his real hands-to-head breaths score 0.57-0.67,
-     so those still get a region - a hand is never a veto on its own). The gesture model, head-turn
-     speed, eye/brow scores and YAMNet were measured and do NOT help
+     so those still get a region - a hand is never a veto on its own). For the BREATH check the
+     gesture model, head-turn speed, eye/brow scores and YAMNet were measured and do NOT help (they
+     do drive the visual-moments step above)
      (`research/mediapipe-capabilities-2026-10.md`). Known Falcon misreads (safe side, the breath just
      gets no region): his blurred hand as a "cup" at 13:14, his forearm as a "bottle" at 14:13.
-   - Every passing breath becomes a region "Breath check N of M (x.x s)"; the report lists every
-     breath heard with its verdict. If the labeler or the picture check cannot run, NO region is
+   - Every passing breath is cut out of the pieces before VEGAS (no region on the main run; the
+     report lists every breath heard with its verdict). If the labeler or the picture check cannot run, NO region is
      placed and the report says why - never back to loudness.
    - Gemma runs on the processor whenever any VEGAS is open (`tasklist` vegas180.exe; avlm adds
      `--no-mmproj-offload` at NGL 0): VEGAS ~3 GB + Gemma ~5.2 GB does not fit 8 GB, and an
      out-of-memory VEGAS would lose his unsaved work. ~7 s a frame.
-   - Caches in `becky-edit\`: `<video>.picture-v2.json` (frames by 0.1 s), `held-cache.json` +
+   - Caches in `becky-edit\`: `<video>.picture-v3.json` (frames by 0.1 s, with gestures/expressions/head), `held-cache.json` +
      `held-frames\`.
    - `--breaths-only` opens the saved `<folder>-<model>.veg`, removes the old "Breath example" /
      "Breath check" marks, adds the new regions (frame-exact), saves, and rewrites only the breath
@@ -1365,7 +1387,7 @@ Every step runs, in this order, every time (`cmd/livestream/`):
    pid launch answered with, so nothing follows him to another VEGAS), `new_project`,
    `BeckyKeepList.cs` places the FINAL pieces directly (dead air already out: BeckyCut.cs is no longer
    run - its result was exactly these pieces on every test, 43 of 43 frame for frame, and placing them
-   directly lets the face check put a pause back), save as `<folder>-<gemma4|qwen3.5|claude>.veg`
+   directly lets the visual-moments step put a pause back), save as `<folder>-<gemma4|qwen3.5|claude>.veg`
    (or `... (2).veg`, never over an existing file).
 8. Edit check (`verify.go`): timeline vs the predicted pieces, then the edit's audio rebuilt from
    the timeline, re-transcribed and lined up with the planned words BY TIMELINE TIME. A word is
