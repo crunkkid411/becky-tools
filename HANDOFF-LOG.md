@@ -12,6 +12,51 @@
 
 ---
 
+## Breath check v2: frame-exact, word-safe regions; every small model reads the picture (2026-10-06, local, `master`)
+
+Jordan's feedback on v1 ("It's not there yet"): regions between frames (he ripple-deletes inside
+regions with one script), margins "like auto-editor" after a second VAD pass, 6+ of his listed
+breaths missed, the toast after "cheers, water cheers" and the exaggerated face after "Some of my
+videos got restored" cut, "Yeah I exist" kept, and "use lrasd/mediapipe/falcon/buffalo". Then: Falcon
+and MediaPipe are used WITH Gemma, each for what it measures best (new LESSON in `X:\AI-2\CLAUDE.md`).
+
+**Built (`cmd/livestream`):**
+- `breath.go`: breaths from BEATs `--frames` (40 ms) over whole pieces, not only becky-cut's gaps.
+  Region = voice end + 0.05 s .. next word onset - 0.04 s (each at most 0.15 s from the breath);
+  "voice" = 10 dB over the threshold AND BEATs voice 0.3+. Edges rounded inward to the frame grid,
+  slivers of 2 frames or less at a piece edge absorbed, under 4 frames dropped. With no word before
+  the piece edge the region runs there through QUIET ONLY (`loudAfter`/`loudBefore`) - a 1.23 s
+  region at 14:12 had swallowed 0.5 s of phone handling.
+- `picture.go` + `internal/pyhelpers/picture_signals.py`: per 0.1 s frame - insightface mouth,
+  MediaPipe jawOpen, Object Detector (drink held up), pose shoulders and wrists. `pictureVerdict`:
+  held drink / held face / big movement = no region; a wrist above the shoulders needs breath 0.5+
+  (hands in hair 0.32/0.43, his real hands-to-head breaths 0.57-0.67); then Falcon OR Gemma "held"
+  on the middle frame vetoes. Gemma on the CPU whenever any VEGAS is open.
+- `expressions.go`: becky-cut pauses of 2 s or less come back when BOTH face models see a held face.
+- Content rules v2: an unsure chat reply the model said to cut stays cut, with a marker.
+- `verify.go`: two VEGAS open -> the edit check runs Parakeet only (`--single-pass`).
+- `vegas/BeckyMarks.cs` + `cmd/vegas`: regions and markers placed in frames; `BECKY_VEGAS_PID` pins
+  every command of a run to one VEGAS.
+
+**Verified on the 27-livestream (Claude project):** 22 breath regions + 3 Unsure + 7 markers, read
+back from VEGAS: every edge on the 30 fps grid, none under 4 frames. All 10 of Jordan's breaths
+(B0-B9) covered. Region end to the next word's first sound: 0.037-0.08 s (his marks 0.004-0.104 s).
+Cut every region and re-transcribed: all 7 differences explained (early word stamps, ASR wording,
+Parakeet hearing a breath as "Um"). Toast vetoed by MediaPipe; both faces restored; "Oh my yeah, I
+exist" cut. Hands rule dropped 13:36 and 14:25 (hands in his hair, checked on frames). Silero is NOT
+a valid referee for edges: it calls the first 0.13-0.26 s of his own marked breaths speech.
+Falcon misreads (safe side): hand as "cup" 13:14, forearm as "bottle" 14:13.
+
+**Output:** `X:\Videos\2026\09_sept\27-livestream\27-livestream-claude (2).veg` + `becky-edit\report-claude (2).md`;
+his own `27-livestream-claude.veg` untouched. Left open in VEGAS for him.
+
+**Not done / his call:** cutting the breaths (regions only). Which delete script: VEGAS's
+`Delete_Regions.cs` shifts edges +4/-5 frames, does not ripple, and deletes inside ALL regions.
+Pre-existing failing tests, not from this branch: `cmd/tts TestRun_DegradesWhenNoModel`,
+`internal/assistant TestHandleTier2Funnel`.
+
+---
+
 ## Breath check built: a sound labeler + the picture, markers only (2026-10-06, local, `master`)
 
 Jordan said **"yes"** to the proposal below: *"a gap counts as a breath only when the sound labeler

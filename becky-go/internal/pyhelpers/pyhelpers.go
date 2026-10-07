@@ -58,6 +58,9 @@ var LayaDecide []byte
 //go:embed sound_labels.py
 var SoundLabels []byte
 
+//go:embed picture_signals.py
+var PictureSignals []byte
+
 // Materialize writes an embedded script to a stable temp path and returns it.
 func Materialize(name string, content []byte) (string, error) {
 	dir := filepath.Join(os.TempDir(), "becky-pyhelpers")

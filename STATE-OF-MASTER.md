@@ -6,6 +6,17 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — breath check v2: all 10 of his breaths, frame-exact regions, the picture decides (2026-10-06, local)
+
+Jordan's feedback on v1 is built. On the 27-livestream the Claude project now has 22 "Breath check"
+regions covering all 10 breaths he listed, every edge on the 30 fps grid, each ending 0.04-0.08 s
+before his next word (his own marks: 0.004-0.10 s). The picture is read by every small model together:
+MediaPipe (drink held up, jawOpen, pose hands), insightface (mouth), Falcon + Gemma (held object). The
+toast and both exaggerated faces are kept; "Oh my yeah, I exist" is cut as a chat reply. A hand up only
+gets a region with a clear breath (0.5+). Regions only, nothing cut. Saved as
+`27-livestream-claude (2).veg` (Jordan's own `27-livestream-claude.veg` untouched); report
+`report-claude (2).md`. Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — breath check built, markers only (2026-10-06, local)
 
 Jordan said yes. becky-livestream's breath step now calls a pause a breath only when a sound labeler
@@ -861,8 +872,9 @@ Full detail in `HANDOFF-LOG.md` (top entry). In brief:
 
 - **Cut the checked breaths? (2026-10-06).** The breath check is built and approved as MARKERS ONLY
   (sound labeler hears a breath AND the picture is still). Treating those breaths as pauses - cutting
-  them - waits until Jordan has judged the green "Breath check" regions in the three
-  `27-livestream-*.veg` projects (Gemma 1, Qwen 1, Claude 3) and says yes.
+  them - waits until Jordan has judged the v2 regions in `27-livestream-claude (2).veg` (22 regions,
+  all 10 of his breaths) and says yes. Also his call: which delete script - VEGAS's
+  `Delete_Regions.cs` shifts edges 4/5 frames, does not ripple and hits the Unsure regions too.
 - **Keep whole unsure stretches (2026-10-05).** A stray unsure sentence with nothing confidently kept
   nearby is cut; on the test stream that cut Claude's whole 11:51-12:20 stretch (to-do list intro, "no
   time for the drama and legal stuff"). Option: keep a run of 3+ unsure sentences instead. His call.

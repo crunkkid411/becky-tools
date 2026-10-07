@@ -235,6 +235,11 @@ func (r *Runner) spawnServer(ctx context.Context) (string, func(), error) {
 		"--host", "127.0.0.1",
 		"--port", itoa(port),
 	}
+	if r.NGL == 0 {
+		// CPU only means the vision projector too: llama-server offloads it to
+		// the GPU by default (~1 GB), which is exactly what NGL 0 is avoiding.
+		args = append(args, "--no-mmproj-offload")
+	}
 	r.Logf("avlm: spawning llama-server on %s (-ngl %d)...", url, r.NGL)
 
 	cmd := exec.Command(r.Server, args...)

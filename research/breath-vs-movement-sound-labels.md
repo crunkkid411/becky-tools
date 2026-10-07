@@ -147,3 +147,16 @@ saw them.
 Every new region was read back from VEGAS and mapped to the stream time of its breath. The
 projects were saved, and backups of the 2026-10-05 versions are in
 `X:\Videos\2026\09_sept\27-livestream\becky-edit\veg-backup-2026-10-06\`.
+
+## v2 (2026-10-06 evening): what changed after Jordan's feedback
+
+- **The labeler runs on whole pieces, every 40 ms** (`--frames`), not only on becky-cut's gaps: half
+  his breaths sat at piece edges, inside no gap.
+- **Edges come from loudness + the labeler's voice score**, not from Silero or transcript word times.
+  Silero calls the first 0.13-0.26 s of his own marked breaths speech, and Parakeet word starts run
+  early after a pause, so neither can referee an edge.
+- **The picture is every small model together:** MediaPipe drink-held-up, jawOpen and pose hands;
+  insightface mouth; Falcon and Gemma on the middle frame. A hand above the shoulders alone is not a
+  veto (his real hands-to-head breaths score 0.57-0.67); it only demands a clear breath (0.5+).
+- **Result on the 27-livestream:** 22 regions, all 10 of his listed breaths, frame-exact, ending
+  0.04-0.08 s before the next word. Details: `HANDOFF-LOG.md` top entry.

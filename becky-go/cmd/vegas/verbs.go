@@ -358,7 +358,17 @@ func vegasExe() string {
 // until one does. The one known startup dialog - "restore the autosaved
 // project?" - is answered No AFTER the autosave files are copied to a backup
 // folder (nothing is deleted); any other dialog stops the launch with its text.
-func launch(timeout time.Duration) (any, error) {
+// With a pid (--pid / BECKY_VEGAS_PID) only that VEGAS counts: it must answer,
+// and no other VEGAS is used or started. The status it returns carries "pid",
+// so a caller can pin the rest of its run to the same VEGAS.
+func launch(pid int, timeout time.Duration) (any, error) {
+	if pid > 0 {
+		inst, ok := answering(pid)
+		if !ok {
+			return nil, fmt.Errorf("no VEGAS with the BeckyVegas extension answers as pid %d", pid)
+		}
+		return answerStartup(inst)
+	}
 	if inst, ok := firstAnswering(); ok {
 		return answerStartup(inst) // it may still be showing the restore question
 	}
@@ -366,19 +376,19 @@ func launch(timeout time.Duration) (any, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("could not start VEGAS: %w", err)
 	}
-	pid := cmd.Process.Pid
+	started := cmd.Process.Pid
 	_ = cmd.Process.Release()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(2 * time.Second)
-		inst, ok := answering(pid)
+		inst, ok := answering(started)
 		if !ok {
 			continue
 		}
 		time.Sleep(3 * time.Second) // let startup dialogs appear
 		return answerStartup(inst)
 	}
-	return nil, fmt.Errorf("VEGAS (pid %d) did not answer within %s", pid, timeout)
+	return nil, fmt.Errorf("VEGAS (pid %d) did not answer within %s", started, timeout)
 }
 
 // answerStartup answers the restore-autosave question if it is showing, then
@@ -399,7 +409,11 @@ func answerStartup(inst instance) (any, error) {
 			return nil, err
 		}
 	}
-	return send(inst, "status", nil, 30*time.Second)
+	st, err := send(inst, "status", nil, 30*time.Second)
+	if m, ok := st.(map[string]any); ok {
+		m["pid"] = inst.PID
+	}
+	return st, err
 }
 
 // isAutosaveQuestion: VEGAS's "restore the autosaved project?" startup question

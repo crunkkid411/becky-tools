@@ -48,12 +48,17 @@
   Jordan's launchers `workflows/livestream/Livestream Edit - *.bat`): transcript -> becky-cut ->
   ONE model step (what stays: Gemma/Qwen name each sentence's wanted topic + label and becky
   applies the keep rule, the other local model re-checks topic edges and unsure calls; Claude
-  via fleet-run) -> audio cut points -> publish check (OCR + Gemma vision) -> VEGAS (`BeckyKeepList.cs`
-  + `BeckyCut.cs`) -> edit check (re-transcribe the timeline) -> regions + `becky-edit\report-*.md`.
-  Steps, rules and the model comparison: `SKILL.md` "The livestream clip-down is ONE call now", top
-  of `HANDOFF-LOG.md`. New 2026-10-05. **Breath check (2026-10-06, markers only):** `breath.go` +
-  `motion.go` + `internal/pyhelpers/sound_labels.py` - a gap is a breath only when the BEATs sound
-  labeler hears breathing AND the picture is still; `--breaths-only` redoes it on a saved project.
+  via fleet-run) -> audio cut points -> face check (`expressions.go`) -> publish check (OCR + Gemma
+  vision) -> breath check -> VEGAS (`BeckyKeepList.cs` places the final pieces) -> edit check
+  (re-transcribe the timeline) -> regions + markers in frames (`vegas/BeckyMarks.cs`) +
+  `becky-edit\report-*.md`. Steps, rules and the model comparison: `SKILL.md` "The livestream
+  clip-down is ONE call now", top of `HANDOFF-LOG.md`. New 2026-10-05. **Breath check v2
+  (2026-10-06, regions only - cutting is NOT approved):** `breath.go` + `picture.go` +
+  `internal/pyhelpers/sound_labels.py --frames` + `internal/pyhelpers/picture_signals.py` - breaths
+  found in the BEATs sound labeler's 40 ms frames over every kept piece, word-safe margins, every
+  edge on the frame grid; ruled out by insightface + MediaPipe (jawOpen, a drink held up, body),
+  Falcon-Perception + Gemma-4 (held up toward the camera). `--breaths-only` redoes it on a saved
+  project. `motion.go` (whole-frame change) is gone.
 - **Transcription fixed at the root (2026-10-05):** `becky-transcribe` builds word times from
   Parakeet-TDT's own durations (no zero-length words), windows start and end in pauses, and every
   run adds a WhisperX second opinion (`cmd/transcribe/secondpass.go`) + Jordan's word list
@@ -270,7 +275,15 @@
   Thump / Hands... every 40 ms; 15 min in 4.3 s at 0.46 GB VRAM. On the 27-livestream it showed
   breath sounds DURING big movements (so the picture must be checked too), 25 "gaps" that are really
   his voice, and that `breath.go`'s loudness-only breath markers were mostly not breaths. NVIDIA's
-  and Qwen's new audio models are research-only licenses and/or too big for 8 GB.
+  and Qwen's new audio models are research-only licenses and/or too big for 8 GB. Its "v2" section
+  (2026-10-06) is the calibration on Jordan's own list of missed breaths and the picture signals.
+- `research/mediapipe-capabilities-2026-10.md` — **What MediaPipe can do, October 2026 (local;
+  research + a test on the 27-livestream).** Which MediaPipe tasks are current, which models are in
+  `models\mediapipe\`, and what each one measured on Jordan's breaths, movements, toast and faces:
+  Face Landmarker `jawOpen` and the Object Detector (a drink held up) help and are wired into the
+  breath check; pose hands-above-shoulders separates movement but also fires on real breaths, so it
+  is wired only as "a hand up needs a clear breath (0.5+)"; gestures, head-turn speed, eye/brow
+  scores and YAMNet do not help.
 - `research/system-one-models-jev.md` (+ `research/system-one-probe.py`) — **System One models /
   TypeSafe's Jev (2026-09-18, local; RESEARCH + PROPOSAL, nothing built).** Jev = typed
   multiple-choice judgments with real probabilities, no text. Hosted Jev is ruled out for becky

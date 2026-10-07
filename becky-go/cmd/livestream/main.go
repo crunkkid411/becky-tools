@@ -304,29 +304,34 @@ func (r *run) workflow(fresh, noVegas bool) {
 	loud := loudEdges(ranges, cr.ThresholdDB)
 	r.logf("%d kept sections, %.1f of %.1f minutes before the dead air comes out", len(ranges), sumRanges(ranges)/60, r.duration/60)
 
+	// 4b. his face: a short pause becky-cut took out goes back when his face is the moment
+	t0 = time.Now()
+	predicted, faces, faceNote := keepExpressions(r.cfg, r.media, r.work, r.stem, ranges, predicted, r.logf)
+	r.step("face check", t0)
+
 	// 5. publish check (before VEGAS: Gemma's vision model and VEGAS never share the GPU)
 	t0 = time.Now()
 	gm, gp, _ := r.cfg.GemmaAVLM()
 	findings, pubNotes := publishCheck(r.media, r.cfg.FFmpeg, r.cfg.FFprobe, gm, gp, r.cfg.LlamaServer, predicted, r.work, r.logf)
 	r.step("publish check", t0)
 
-	// 6. breath check (markers only)
+	// 6. breath check (regions only)
 	t0 = time.Now()
-	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, words, predicted, r.logf)
+	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, au, r.threshold, r.fps, predicted, r.logf)
 	r.step("breath check", t0)
 
 	plan := map[string]any{"model": r.label, "guidance": r.guidance, "ranges": ranges, "predicted_pieces": predicted,
-		"loud_edges": loud, "findings": findings, "fps": r.fps}
+		"loud_edges": loud, "findings": findings, "fps": r.fps, "restored": faces, "breaths": bc.Spots}
 	writeJSON(filepath.Join(r.work, "plan-"+r.tag+".json"), plan)
 	if noVegas {
-		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, nil, nil, "")
+		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, faces, faceNote, nil, nil, "")
 		return
 	}
 
 	// 7. VEGAS
 	t0 = time.Now()
 	veg := freeVegName(filepath.Join(filepath.Dir(r.media), filepath.Base(filepath.Dir(r.media))+"-"+r.tag+".veg"))
-	ps, health, err := buildInVegas(r.media, r.work, veg, ranges, r.fps, r.logf)
+	ps, health, err := buildInVegas(r.media, r.work, veg, predicted, r.fps, r.logf)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -338,11 +343,11 @@ func (r *run) workflow(fresh, noVegas bool) {
 	r.step("edit check", t0)
 
 	// 9. regions and markers, save, report
-	marks := r.marks(sel, ss, ranges, findings, bc.Picks, &ver, ps)
-	if err := addMarks(marks, r.logf); err != nil {
+	marks := r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps)
+	if err := addMarks(marks, r.fps, r.work, r.logf); err != nil {
 		fatal("the edit is saved, but the regions could not be added: " + err.Error())
 	}
-	r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, &ver, marks, veg)
+	r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, faces, faceNote, &ver, marks, veg)
 }
 
 // decide runs (or reuses) this model's content decision.
@@ -351,8 +356,21 @@ func (r *run) decide(ss []Sentence, fresh bool) (Selection, error) {
 	var old Selection
 	if b, err := os.ReadFile(path); err == nil && !fresh && json.Unmarshal(b, &old) == nil &&
 		old.Guidance == r.guidance && len(old.Decisions) == len(ss) {
-		r.logf("content decision: using %s's earlier decision (same guidance; --fresh decides again)", r.tag)
-		return old, nil
+		if old.Rules == rulesVersion {
+			r.logf("content decision: using %s's earlier decision (same guidance; --fresh decides again)", r.tag)
+			return old, nil
+		}
+		// becky's rules changed since: Claude's own calls are on disk, so they are
+		// concluded again without a new Claude session (no usage spent). The local
+		// models decide again (free, on this PC).
+		if r.tag == "claude" {
+			if ds, err := parseClaude(filepath.Join(r.work, "claude-decisions.txt"), len(ss)); err == nil {
+				old.Decisions, old.Rules = conclude(ds, nil, "claude"), rulesVersion
+				writeJSON(path, old)
+				r.logf("content decision: Claude's earlier calls, with becky's new rules (no new Claude session)")
+				return old, nil
+			}
+		}
 	}
 	gm, _, _ := r.cfg.GemmaAVLM()
 	qm, _, _ := r.cfg.Qwen()
@@ -397,8 +415,17 @@ func short(s string, n int) string {
 }
 
 // marks builds every region and marker on the finished timeline.
-func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Finding, breaths []breath, ver *Verification, ps []piece) []mark {
+func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Finding, breaths []breath, faces []restored, ver *Verification, ps []piece) []mark {
 	var ms []mark
+	// unsure chat replies the model said to cut: a marker where each was cut
+	for _, d := range sel.Decisions {
+		if chatCut(d) && d.ID < len(ss) {
+			if t, ok := cutPoint(ps, ss[d.ID].Start); ok {
+				ms = append(ms, mark{At: t, Label: short(fmt.Sprintf("Cut - a chat reply (%s said cut, %d%%): \"%s\"", r.tag, d.Confidence, ss[d.ID].Text), 230)})
+			}
+		}
+	}
+	ms = append(ms, expressionMarks(faces, ps)...)
 	// unsure content calls (runs of consecutive unsure sentences that were kept)
 	for i := 0; i < len(sel.Decisions); i++ {
 		d := sel.Decisions[i]
@@ -430,6 +457,24 @@ func (r *run) marks(sel Selection, ss []Sentence, ranges []Range, findings []Fin
 	}
 	ms = append(ms, loudEdgeMarks(ranges, ps, r.threshold)...)
 	return append(ms, breathRegions(breaths, ps)...)
+}
+
+// cutPoint is where source time t lands on the timeline: inside a piece, or at
+// the cut where it was taken out (the start of the next piece).
+func cutPoint(ps []piece, t float64) (float64, bool) {
+	next := -1
+	for i, p := range ps {
+		if t >= p.In && t < p.Out {
+			return p.TL + (t - p.In), true
+		}
+		if p.In >= t && (next < 0 || p.In < ps[next].In) {
+			next = i
+		}
+	}
+	if next < 0 {
+		return 0, false
+	}
+	return ps[next].TL, true
 }
 
 // loudEdgeMarks: a marker on every cut that sits inside speech and is still loud.

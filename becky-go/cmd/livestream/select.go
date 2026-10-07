@@ -56,6 +56,7 @@ type Decision struct {
 	Note       string  `json:"note,omitempty"`
 	Review     *Review `json:"review,omitempty"`
 	Unsure     bool    `json:"unsure,omitempty"`
+	Said       bool    `json:"said"` // the lead model's own call (Keep is after becky's rules)
 }
 
 // Review is the second model's independent call on the same sentence.
@@ -77,7 +78,13 @@ type Selection struct {
 	Decisions []Decision `json:"decisions"`
 	Seconds   float64    `json:"seconds"`
 	Notes     []string   `json:"notes,omitempty"`
+	Rules     int        `json:"rules,omitempty"` // which version of conclude() made Decisions
 }
+
+// rulesVersion is bumped whenever conclude() changes, so a saved decision is
+// concluded again (2: chat replies the model cut stay cut; the stray-fragment
+// rule only cuts what the model itself said to cut).
+const rulesVersion = 2
 
 // editorRole is what every model is told; the local models then get topicRule
 // (systemPrompt), Claude gets keepRule (claudeOrder).
@@ -420,11 +427,20 @@ func (m localModel) review(ss []Sentence, ws [][2]int, brief string, nTopics int
 
 // conclude applies the reviews and the unsure rule. Every sentence ends up
 // keep/cut; Unsure marks the ones that need Jordan's eyes.
+//
+// Rules version 2 (2026-10-06, the 27-livestream review): becky's own rules had
+// overruled Claude twice. "Oh my yeah, I exist" (Claude: chat reply, cut, 60%)
+// was kept by the unsure rule - Jordan: "'Yeah I exist' is just me responding to
+// chat". "Yes, so there we go" (Claude: keep, 65%) was cut by the stray-fragment
+// rule, and with it the end of his toast after "cheers, water cheers". So an
+// unsure chat reply the model itself said to cut stays cut (with a marker at the
+// cut), and the stray-fragment rule only cuts what the model said to cut.
 func conclude(ds []Decision, reviews map[int]Review, lead string) []Decision {
 	out := make([]Decision, len(ds))
 	copy(out, ds)
 	for i := range out {
 		d := &out[i]
+		d.Said = d.Keep
 		if r, ok := reviews[d.ID]; ok {
 			rv := r
 			d.Review = &rv
@@ -435,25 +451,29 @@ func conclude(ds []Decision, reviews map[int]Review, lead string) []Decision {
 			d.Unsure = true
 			d.Note = fmt.Sprintf("%s said %s (%s), %s said %s (%s)",
 				lead, verdict(d.Keep), why(d.Topic, d.Label), r.Model, verdict(r.Keep), why(r.Topic, r.Label))
-			d.Keep = true
-			continue
-		}
-		if d.Confidence < sureConfidence {
+		} else if d.Confidence < sureConfidence {
 			d.Unsure = true
 			if d.Note == "" {
 				d.Note = fmt.Sprintf("%s was unsure (%d%%) whether to %s it", lead, d.Confidence, verdict(d.Keep))
 			}
-			d.Keep = true
+		} else {
+			continue
 		}
+		if chatCut(*d) {
+			d.Note += " - cut: a chat reply, as " + lead + " said"
+			continue
+		}
+		d.Keep = true
 	}
 	// An unsure sentence far from anything confidently kept would be a stray
-	// fragment on the timeline: cut it, but say so in the report.
+	// fragment on the timeline: cut it, but say so in the report - unless the
+	// model itself said to keep it.
 	sure := make([]bool, len(out))
 	for i, d := range out {
 		sure[i] = d.Keep && !d.Unsure
 	}
 	for i := range out {
-		if !out[i].Unsure || !out[i].Keep {
+		if !out[i].Unsure || !out[i].Keep || out[i].Said {
 			continue
 		}
 		near := false
@@ -469,6 +489,12 @@ func conclude(ds []Decision, reviews map[int]Review, lead string) []Decision {
 		}
 	}
 	return out
+}
+
+// chatCut: an unsure chat reply or super chat that the lead model itself said
+// to cut - it stays cut.
+func chatCut(d Decision) bool {
+	return d.Unsure && !d.Said && (d.Label == "chat_reply" || d.Label == "super_chat")
 }
 
 func verdict(keep bool) string {
@@ -519,7 +545,7 @@ func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance string, log
 			logf("  review incomplete: %v", rerr)
 		}
 	}
-	sel.Decisions = conclude(ds, reviews, lead.name)
+	sel.Decisions, sel.Rules = conclude(ds, reviews, lead.name), rulesVersion
 	sel.Seconds = time.Since(start).Seconds()
 	return sel, nil
 }

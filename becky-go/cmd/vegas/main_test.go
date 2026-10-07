@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseArgsTypesValues(t *testing.T) {
@@ -51,5 +53,23 @@ func TestLoadInstancesAndChoose(t *testing.T) {
 	}
 	if _, err := choose(nil, 0); err == nil {
 		t.Fatal("no running VEGAS must be an error")
+	}
+}
+
+// BECKY_VEGAS_PID pins every command to one VEGAS (becky-livestream sets it so
+// nothing it does can reach a VEGAS Jordan is working in).
+func TestEnvPIDPinsOneVegas(t *testing.T) {
+	for in, want := range map[string]int{"19228": 19228, " 42 ": 42, "": 0, "abc": 0, "-5": 0} {
+		t.Setenv("BECKY_VEGAS_PID", in)
+		if got := envPID(); got != want {
+			t.Errorf("BECKY_VEGAS_PID=%q -> %d, want %d", in, got, want)
+		}
+	}
+}
+
+// launch with a pid never falls back to another VEGAS or starts a new one.
+func TestLaunchWithPIDNeverTakesAnotherVegas(t *testing.T) {
+	if _, err := launch(987654321, time.Second); err == nil || !strings.Contains(err.Error(), "pid 987654321") {
+		t.Errorf("launch(unknown pid) = %v, want an error naming the pid", err)
 	}
 }

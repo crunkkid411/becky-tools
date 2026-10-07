@@ -1290,42 +1290,93 @@ Every step runs, in this order, every time (`cmd/livestream/`):
    cut within 4 sentences of a kept one, and every call below 70% (Gemma-4 rates nearly everything
    100, so confidence alone never fires). Agree = done; disagree or unreviewed-and-unsure = KEPT and
    marked "Unsure" (a stray unsure sentence 3+ sentences from anything confidently kept is cut and
-   listed). Claude decides keep/cut itself for the whole stream in one headless call through
-   `fleet-run.ps1` (Jordan's subscription). Saved as `selection-<model>.json` and reused while the
-   guidance is the same (`--fresh` decides again). Every local request ends "Write the JSON
-   compactly, on one line": under a schema Gemma-4 pretty-prints and ran out of tokens.
+   listed - but only when the model itself said cut). Rules v2 (2026-10-06, Jordan's review of the
+   27-livestream): an unsure chat_reply / super_chat that the model itself said to CUT stays cut,
+   with a marker at the cut ("Yeah I exist is just me responding to chat"); and the stray-fragment
+   rule never overrides the model's own keep (it had cut "Yes, so there we go" - and with it the end
+   of his toast after "cheers, water cheers"). Claude decides keep/cut itself for the whole stream in
+   one headless call through `fleet-run.ps1` (Jordan's subscription). Saved as
+   `selection-<model>.json` (with `rules`) and reused while the guidance is the same (`--fresh`
+   decides again); when `rulesVersion` changes, Claude's saved calls are concluded again from
+   `claude-decisions.txt` - no new Claude session - and the local models decide again. Every local
+   request ends "Write the JSON compactly, on one line": under a schema Gemma-4 pretty-prints and
+   ran out of tokens.
 4. Cut points from the audio (`edges.go`, the apology rules): becky-cut's edge when a pause is
    there, else the quietest frame between the two words; a cut inside speech that is still above
    becky-cut's silence threshold gets a "loud cut" marker.
+   **Face check** (`expressions.go`, 2026-10-06): a pause of up to 2 s that becky-cut took out INSIDE
+   one kept section goes back in when BOTH face models see his mouth held open - insightface (mouth
+   0.22+ for 0.4 s) AND MediaPipe Face Landmarker (jawOpen 0.6+ for 0.3 s) - with a "Kept for the
+   picture" marker. Jordan: "'Some of my videos got restored' Then I made a really eggadurated facial
+   expression - it was visually obvious"; becky-cut had cut it as silence.
 5. Publish check on the kept frames (`publish.go`): a frame every 2 s -> becky-ocr (address, phone,
    email, ID and booking-code patterns = region) + Gemma-4 vision on new pictures (another
    creator's content / documents with names / private details; 2+ frames in a row = region, one
    frame = report only).
-6. Breath check (`breath.go` + `motion.go` + `pyhelpers/sound_labels.py`; Jordan approved it
-   2026-10-06 as MARKERS ONLY - nothing is cut). Every wordless gap of 0.35 s+ inside one kept piece
-   gets two independent signals: a sound labeler (PretrainedSED `BEATs_strong_1`, MIT, installed in
-   `models\sed\PretrainedSED`, run with anaconda Python on the GPU, ~10 s, never downloads) and the
-   picture (whole-frame change 10x a second against his own median while talking; cached as
-   `becky-edit\<video>.motion.json`). A gap is a BREATH only when the labeler hears breathing
-   (>= 0.30), no other sound (< 0.15; room tone and sigh/gasp/sniff do not count as other), a voice
-   in at most 20% of it, AND the picture is still (< 1.5x mean, < 2.5x peak). Movement and voice are
-   never breaths; anything unsure stays. Up to 5 checked breaths become green "Breath check" regions
-   over the gap; the report lists every gap with its verdict. There is NO loudness test: 13 of the 14
-   old loudness-only "Breath example" markers were not breaths, and two real breaths sat under
-   becky-cut's threshold. If the labeler or the picture check cannot run, NO breath region is placed
-   and the report says why - never back to loudness. Known limit: a slow hand movement can pass as
-   still (1 of 20 gaps checked by eye). `--breaths-only` opens the saved `<folder>-<model>.veg`,
-   removes the old "Breath example"/"Breath check" marks, adds the new regions, saves, and rewrites
-   only the breath lines of `report-<model>.md`. Research: `research/breath-vs-movement-sound-labels.md`.
-7. VEGAS: `launch`, `new_project`, `BeckyKeepList.cs` (grouped pairs, butt-joined), save as
-   `<folder>-<gemma4|qwen3.5|claude>.veg` (never over an existing file), `BeckyCut.cs` unchanged.
+6. Breath check v2 (`breath.go` + `picture.go` + `pyhelpers/sound_labels.py --frames` +
+   `pyhelpers/picture_signals.py`) - **REGIONS ONLY, nothing is cut; cutting breaths is NOT
+   approved.** Rebuilt 2026-10-06 after Jordan's review of v1 ("It's not there yet"):
+   - **Found in the sound, over every kept piece** (v1 only looked in the transcript's gaps, and the
+     piece edges - where half his breaths were - were skipped): PretrainedSED `BEATs_strong_1`
+     (MIT, `models\sed\PretrainedSED`, anaconda Python on the GPU, ~10 s, never downloads), every
+     40 ms: Breathing/Pant 0.25+ with voice under 0.5, a dip of up to 2 frames is the same breath,
+     0.12 s or longer.
+   - **Word-safe margins after this second pass, like auto-editor's:** a region starts 0.05 s after
+     his voice ends (at most 0.15 s before the breath) and ends 0.04 s before his next word (at most
+     0.15 s after it). "His voice" = 10 dB+ over becky-cut's threshold AND the labeler hears a voice
+     within 0.12 s. No word between the breath and a piece edge: it runs to the edge THROUGH QUIET
+     ONLY - any sound 10 dB+ over the threshold (phone handling at 14:12 was 0.5 s of it) stops it
+     there, minus the same margin. v1's region at timeline 54.15 clipped the start of his next word.
+   - **Every edge ON the timeline's frame grid** ("everything needs to honor the timeline's frame
+     rate" - he ripple-deletes inside regions; an edge between frames flashes a black frame):
+     rounded inward; a sliver of 2 frames or less at a piece edge goes with the region; under 4
+     frames is dropped; touching regions merge.
+   - **Not a breath - no region** (any one model is enough; the safe side for a moment): a laugh,
+     cough or other mouth sound (BEATs vocal classes 0.30+); **a drink held up** - MediaPipe Object
+     Detector (`efficientdet_lite0_int8.tflite`) on every frame: a bottle/cup/wine glass 0.3+ sure,
+     5%+ of the frame, centred in the top half (the toast 0.43-0.48 and 12-19%; breaths 0.13 or less;
+     the bottle held at his chest sits at 0.70 and is ignored), then Falcon-Perception (a
+     bottle/cup/phone box 0.9+ sure and 20%+ of the frame tall) and Gemma-4 ("holding something up
+     toward the camera?") on the region's middle frame; **a held facial expression** - insightface
+     mouth 0.22+ for 0.4 s OR MediaPipe jawOpen 0.6+ for 0.3 s; **a big movement** - his face in
+     under 75% of the frames, face size changing 1.3x+, shoulders moving 0.2+ shoulder widths; **a hand
+     up with only a faint breath** - a MediaPipe pose wrist above his shoulders AND the breath score
+     under 0.5 (hands in his hair rustle at 0.32/0.43; his real hands-to-head breaths score 0.57-0.67,
+     so those still get a region - a hand is never a veto on its own). The gesture model, head-turn
+     speed, eye/brow scores and YAMNet were measured and do NOT help
+     (`research/mediapipe-capabilities-2026-10.md`). Known Falcon misreads (safe side, the breath just
+     gets no region): his blurred hand as a "cup" at 13:14, his forearm as a "bottle" at 14:13.
+   - Every passing breath becomes a region "Breath check N of M (x.x s)"; the report lists every
+     breath heard with its verdict. If the labeler or the picture check cannot run, NO region is
+     placed and the report says why - never back to loudness.
+   - Gemma runs on the processor whenever any VEGAS is open (`tasklist` vegas180.exe; avlm adds
+     `--no-mmproj-offload` at NGL 0): VEGAS ~3 GB + Gemma ~5.2 GB does not fit 8 GB, and an
+     out-of-memory VEGAS would lose his unsaved work. ~7 s a frame.
+   - Caches in `becky-edit\`: `<video>.picture-v2.json` (frames by 0.1 s), `held-cache.json` +
+     `held-frames\`.
+   - `--breaths-only` opens the saved `<folder>-<model>.veg`, removes the old "Breath example" /
+     "Breath check" marks, adds the new regions (frame-exact), saves, and rewrites only the breath
+     lines of the report. Research: `research/breath-vs-movement-sound-labels.md`.
+   - **Warning about his delete script:** VEGAS's own `Script Menu\Delete_Regions.cs` moves every
+     region's start 4 frames later and its end 5 frames earlier, deletes inside EVERY region on the
+     selected tracks without rippling, then clears all regions - it would also delete the "Unsure",
+     "Publish check" and "Check" regions. Never tell him to run it on these projects.
+7. VEGAS: `launch` (BECKY_VEGAS_PID picks the VEGAS; every later command of the run is pinned to the
+   pid launch answered with, so nothing follows him to another VEGAS), `new_project`,
+   `BeckyKeepList.cs` places the FINAL pieces directly (dead air already out: BeckyCut.cs is no longer
+   run - its result was exactly these pieces on every test, 43 of 43 frame for frame, and placing them
+   directly lets the face check put a pause back), save as `<folder>-<gemma4|qwen3.5|claude>.veg`
+   (or `... (2).veg`, never over an existing file).
 8. Edit check (`verify.go`): timeline vs the predicted pieces, then the edit's audio rebuilt from
    the timeline, re-transcribed and lined up with the planned words BY TIMELINE TIME. A word is
    "lost" only when its whole span was cut AND it was not heard: Parakeet puts the first word after
    a pause ~0.3 s early, inside the silence BeckyCut removed, so a span check alone reported 14-18
    false losses per edit ("I have hair", which every edit plays).
-9. Regions/markers, save, `becky-edit\report-<model>.md`.
-VRAM: every model step runs alone and before VEGAS opens (8 GB ceiling).
+9. Regions/markers through `vegas/BeckyMarks.cs` (frame numbers -> `Timecode.FromFrames`, the same
+   timecodes as the event edges; one undo step), save, `becky-edit\report-<model>.md` (or
+   `report-<model> (2).md` for the `(2)` project - a new version never overwrites the last report).
+VRAM: every model step runs alone and before this run's VEGAS build (8 GB ceiling); Gemma runs on the
+processor whenever any VEGAS is open.
 
 # SYSTEM ONE — cheap typed decisions (Laya) and the playlist reader
 

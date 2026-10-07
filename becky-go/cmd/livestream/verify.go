@@ -55,6 +55,7 @@ type Verification struct {
 	Missing         []Spot  `json:"not_heard,omitempty"` // planned, on the timeline, not heard
 	Extra           []Spot  `json:"unplanned,omitempty"` // heard, not planned
 	Note            string  `json:"note,omitempty"`
+	OnePass         bool    `json:"parakeet_only,omitempty"` // another VEGAS was open: no WhisperX pass
 }
 
 func normWord(s string) string {
@@ -256,7 +257,15 @@ func verifyEdit(ps []piece, predicted []span, fps float64, au *audio, words []Wo
 	}
 	out := filepath.Join(work, "edit-"+tag+".transcript.json")
 	logf("checking the edit: re-transcribing its %.1f minutes of audio...", v.EditSeconds/60)
-	if res, err := exec.Command(bin, wav, "--output", out).CombinedOutput(); err != nil {
+	args := []string{wav, "--output", out}
+	if vegasCount() > 1 {
+		// Another VEGAS - maybe with unsaved work - shares the 8 GB graphics card
+		// with this run's: WhisperX's second opinion (~4.5 GB) is skipped.
+		v.OnePass = true
+		args = append(args, "--single-pass")
+		logf("  (another VEGAS is open, so only Parakeet listens - the second opinion would crowd the graphics card)")
+	}
+	if res, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
 		v.Note = fmt.Sprintf("the edit could not be re-transcribed: %v (%s)", err, lastLines(string(res), 2))
 		return v
 	}

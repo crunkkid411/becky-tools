@@ -2,18 +2,30 @@ package main
 
 // vegas.go - build the edit in the running VEGAS through becky-vegas (report
 // item #7's verbs): launch, new_project, the keep-list applicator script
-// (BeckyKeepList.cs), BeckyCut.cs UNCHANGED for the dead air (exactly what
-// Jordan runs by hand), regions and markers, save. VEGAS is never force-killed
-// and a dialog is never answered blind: its text goes into the report first.
+// (BeckyKeepList.cs), regions and markers (BeckyMarks.cs), save. VEGAS is never
+// force-killed and a dialog is never answered blind: its text goes into the
+// report first.
+//
+// The kept pieces go in DIRECTLY, dead air already out. Until 2026-10-06 the
+// content ranges went in and BeckyCut.cs (Jordan's own one-click tool, never
+// changed) took the dead air out; on every test its result was exactly
+// finalPieces (27-livestream: 43 of 43 pieces, frame for frame). Placing them
+// directly lets the picture check put back a silence becky-cut took out - his
+// held facial expression after "Some of my videos got restored" (expressions.go).
+//
+// Every command of a run goes to ONE VEGAS (vegasPID, from launch; or
+// BECKY_VEGAS_PID): if Jordan clicks another VEGAS mid-run, nothing follows him.
 
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -54,6 +66,9 @@ type vegasReply struct {
 	Error  string          `json:"error"`
 }
 
+// vegasPID pins every command of this run to the VEGAS that launch answered with.
+var vegasPID int
+
 // vegas runs one becky-vegas command.
 func vegas(timeout time.Duration, args ...string) (vegasReply, error) {
 	var r vegasReply
@@ -61,7 +76,11 @@ func vegas(timeout time.Duration, args ...string) (vegasReply, error) {
 	if err != nil {
 		return r, err
 	}
-	full := append([]string{"--timeout", timeout.String()}, args...)
+	full := []string{"--timeout", timeout.String()}
+	if vegasPID > 0 {
+		full = append(full, "--pid", strconv.Itoa(vegasPID))
+	}
+	full = append(full, args...)
 	out, runErr := exec.Command(bin, full...).Output()
 	if jerr := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &r); jerr != nil {
 		return r, fmt.Errorf("becky-vegas %s: %v (%s)", args[0], runErr, lastLines(string(out), 3))
@@ -218,74 +237,98 @@ type mark struct {
 	Label string  `json:"label"`
 }
 
-// buildInVegas assembles the edit and returns the timeline VEGAS actually made.
-func buildInVegas(media, work, veg string, ranges []Range, fps float64, logf func(string, ...any)) ([]piece, string, error) {
+// launchVegas starts VEGAS (or uses the open one - BECKY_VEGAS_PID picks which)
+// and pins the rest of the run to it.
+func launchVegas() error {
+	r, err := vegas(6*time.Minute, "launch")
+	if err != nil {
+		return err
+	}
+	var st struct {
+		PID int `json:"pid"`
+	}
+	if json.Unmarshal(r.Result, &st) == nil && st.PID > 0 {
+		vegasPID = st.PID
+	}
+	return nil
+}
+
+// runJob runs one of becky's VEGAS scripts on a job file and returns its result
+// line ("ok ..."), or why it failed.
+func runJob(script, job, body string, timeout time.Duration) (string, error) {
+	if err := os.WriteFile(job, []byte(body), 0o644); err != nil {
+		return "", err
+	}
+	_ = os.Remove(job + ".result.txt")
+	if d, err := runScriptWatched(timeout, "path="+filepath.Join(vegasScripts(), script), "job="+job); err != nil || d != "" {
+		return "", fmt.Errorf("%s failed: %v %s", script, err, d)
+	}
+	res, _ := os.ReadFile(job + ".result.txt")
+	if !strings.HasPrefix(string(res), "ok") {
+		return "", fmt.Errorf("%s did not finish: %s", script, strings.TrimSpace(string(res)))
+	}
+	return strings.TrimSpace(string(res)), nil
+}
+
+// buildInVegas assembles the edit from the final pieces and returns the
+// timeline VEGAS actually made.
+func buildInVegas(media, work, veg string, pieces []span, fps float64, logf func(string, ...any)) ([]piece, string, error) {
 	logf("VEGAS: starting it (or using the open one)...")
-	if _, err := vegas(6*time.Minute, "launch"); err != nil {
+	if err := launchVegas(); err != nil {
 		return nil, "", err
 	}
 	if _, err := vegas(2*time.Minute, "new_project"); err != nil {
 		return nil, "", err
 	}
-	job := filepath.Join(work, "vegas-job.txt")
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "media\t%s\n", media)
-	for _, r := range ranges {
-		fmt.Fprintf(&sb, "range\t%d\t%d\n", int64(r.In*fps+0.5), int64(r.Out*fps+0.5))
+	for _, p := range pieces {
+		fmt.Fprintf(&sb, "range\t%d\t%d\n", int64(math.Round(p.A*fps)), int64(math.Round(p.B*fps)))
 	}
-	if err := os.WriteFile(job, []byte(sb.String()), 0o644); err != nil {
+	logf("VEGAS: placing %d kept pieces...", len(pieces))
+	res, err := runJob("BeckyKeepList.cs", filepath.Join(work, "vegas-job.txt"), sb.String(), 5*time.Minute)
+	if err != nil {
 		return nil, "", err
 	}
-	_ = os.Remove(job + ".result.txt")
-	logf("VEGAS: placing %d kept sections...", len(ranges))
-	if d, err := runScriptWatched(5*time.Minute, "path="+filepath.Join(vegasScripts(), "BeckyKeepList.cs"), "job="+job); err != nil || d != "" {
-		return nil, "", fmt.Errorf("the keep-list script failed: %v %s", err, d)
-	}
-	res, _ := os.ReadFile(job + ".result.txt")
-	if !strings.HasPrefix(string(res), "ok") {
-		return nil, "", fmt.Errorf("the keep-list script did not finish: %s", strings.TrimSpace(string(res)))
-	}
-	logf("  %s", strings.TrimSpace(string(res)))
+	logf("  %s", res)
 	if _, err := vegas(2*time.Minute, "save", "path="+veg); err != nil {
 		return nil, "", err
 	}
-	logf("VEGAS: BeckyCut is taking the dead air out (same as clicking it yourself)...")
-	dialog, err := runScriptWatched(30*time.Minute, "path="+filepath.Join(vegasScripts(), "BeckyCut.cs"))
-	if err != nil {
-		return nil, dialog, fmt.Errorf("BeckyCut did not finish: %v", err)
-	}
-	if dialog != "" && !strings.Contains(strings.ToLower(dialog), "grouping") {
-		return nil, dialog, fmt.Errorf("BeckyCut stopped with a message: %s", dialog)
-	}
 	ps, health, err := readTimeline()
 	if err != nil {
-		return nil, dialog, err
+		return nil, "", err
 	}
 	logf("  timeline: %s", health)
-	return ps, health + dialogNote(dialog), nil
+	return ps, health, nil
 }
 
-func dialogNote(d string) string {
-	if d == "" {
-		return ""
+// markJob is BeckyMarks.cs's job file: every position in whole frames of the
+// timeline, so a region edge sits exactly where an event edge can (the pieces
+// are placed with Timecode.FromFrames too).
+func markJob(ms []mark, fps float64) string {
+	clean := strings.NewReplacer("\t", " ", "\r", " ", "\n", " ")
+	var sb strings.Builder
+	for _, m := range ms {
+		f0 := int64(math.Round(m.At * fps))
+		if m.Len > 0 {
+			n := max(int64(math.Round((m.At+m.Len)*fps))-f0, 1)
+			fmt.Fprintf(&sb, "region\t%d\t%d\t%s\n", f0, n, clean.Replace(m.Label))
+		} else {
+			fmt.Fprintf(&sb, "marker\t%d\t%s\n", f0, clean.Replace(m.Label))
+		}
 	}
-	return "; BeckyCut said: " + d
+	return sb.String()
 }
 
 // addMarks puts the regions and markers on the timeline, then saves.
-func addMarks(ms []mark, logf func(string, ...any)) error {
-	for _, m := range ms {
-		var err error
-		if m.Len > 0 {
-			_, err = vegas(time.Minute, "add_region", fmt.Sprintf("start=%.4f", m.At), fmt.Sprintf("end=%.4f", m.At+m.Len), "label="+m.Label)
-		} else {
-			_, err = vegas(time.Minute, "add_marker", fmt.Sprintf("seconds=%.4f", m.At), "label="+m.Label)
-		}
+func addMarks(ms []mark, fps float64, work string, logf func(string, ...any)) error {
+	if len(ms) > 0 {
+		res, err := runJob("BeckyMarks.cs", filepath.Join(work, "vegas-marks.txt"), markJob(ms, fps), 5*time.Minute)
 		if err != nil {
 			return err
 		}
+		logf("VEGAS: %s (every edge on a frame); saving...", res)
 	}
-	logf("VEGAS: %d regions/markers added; saving...", len(ms))
 	_, err := vegas(2*time.Minute, "save")
 	return err
 }

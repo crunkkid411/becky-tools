@@ -52,7 +52,7 @@ type instance struct {
 }
 
 func main() {
-	pid := flag.Int("pid", 0, "talk to this VEGAS process (default: the one focused most recently)")
+	pid := flag.Int("pid", envPID(), "talk to this VEGAS process (default: BECKY_VEGAS_PID, else the one focused most recently)")
 	timeout := flag.Duration("timeout", 10*time.Minute, "give up waiting for VEGAS after this long")
 	flag.Parse()
 	if flag.NArg() == 0 {
@@ -71,7 +71,7 @@ func main() {
 		fail(2, err.Error())
 	}
 	if cmd == "launch" {
-		res, err := launch(*timeout)
+		res, err := launch(*pid, *timeout)
 		if err != nil {
 			fail(1, err.Error())
 		}
@@ -114,6 +114,18 @@ func main() {
 		return
 	}
 	fail(2, lastErr.Error())
+}
+
+// envPID is BECKY_VEGAS_PID: a caller that started its own VEGAS (or must never
+// touch the one Jordan is working in) pins every command to one process. Without
+// a pin, "the one focused most recently" changes the moment he clicks another
+// VEGAS - mid-run.
+func envPID() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("BECKY_VEGAS_PID")))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func instancesDir() string {

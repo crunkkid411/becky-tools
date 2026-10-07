@@ -125,7 +125,7 @@ func Run(cfg config.Config, opt Options) (Path, error) {
 	}
 
 	cmd := exec.Command(pythonFor(cfg), args...)
-	cmd.Env = childEnv(cfg)
+	cmd.Env = ChildEnv(cfg)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -400,7 +400,8 @@ func pythonFor(cfg config.Config) string {
 	return cfg.Python
 }
 
-// childEnv builds a DETERMINISTIC environment for the pose helper.
+// ChildEnv builds a DETERMINISTIC environment for the pose helper (also used by
+// becky-livestream's picture check, which runs the same face + pose stack).
 //
 // This machine sets PIP_TARGET and PYTHONUSERBASE globally, both pointing at
 // X:\PythonUserBase — the same tree becky puts on PYTHONPATH for mediapipe and
@@ -421,7 +422,7 @@ func pythonFor(cfg config.Config) string {
 //
 // This cannot repair an already-broken tree — see framing.go for why a pose
 // failure no longer costs the clip either way.
-func childEnv(cfg config.Config) []string {
+func ChildEnv(cfg config.Config) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		switch {

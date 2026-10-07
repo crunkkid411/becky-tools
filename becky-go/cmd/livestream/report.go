@@ -10,7 +10,7 @@ import (
 
 // report writes becky-edit\report-<model>.md and prints the short version.
 func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []span, loud []string,
-	findings []Finding, pubNotes []string, bc breathResult,
+	findings []Finding, pubNotes []string, bc breathResult, faces []restored, faceNote string,
 	ver *Verification, marks []mark, veg string) {
 	var b strings.Builder
 	edit := 0.0
@@ -20,12 +20,15 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	if ver != nil && ver.EditSeconds > 0 {
 		edit = ver.EditSeconds
 	}
-	unsure, reviewed, agreed := 0, 0, 0
+	unsure, reviewed, agreed, chats := 0, 0, 0, 0
 	labelCount := map[string]int{}
 	for _, d := range sel.Decisions {
 		labelCount[d.Label]++
 		if d.Unsure && d.Keep {
 			unsure++
+		}
+		if chatCut(d) {
+			chats++
 		}
 		if d.Review != nil {
 			reviewed++
@@ -63,12 +66,18 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 
 	fmt.Fprintf(&b, "\n## On the timeline for you to look at (%d)\n\n", len(marks))
 	fmt.Fprintf(&b, "- **Unsure calls:** %d kept and marked with an \"Unsure\" region\n", unsure)
+	fmt.Fprintf(&b, "- **Unsure chat replies:** %d cut, as the model said, with a marker at each cut\n", chats)
+	if faceNote != "" {
+		fmt.Fprintf(&b, "- **Kept for the picture:** skipped - %s\n", faceNote)
+	} else {
+		fmt.Fprintf(&b, "- **Kept for the picture:** %d short pause(s) becky-cut took out put back, because his face holds an expression (a marker on each)\n", len(faces))
+	}
 	fmt.Fprintf(&b, "- **Publish check:** %d region(s)", regions)
 	if n := len(findings) - regions; n > 0 {
 		fmt.Fprintf(&b, ", plus %d single-frame maybe(s) listed below", n)
 	}
 	fmt.Fprintf(&b, "\n- **Loud cuts:** %d marker(s) where a cut sits inside speech\n", len(loud))
-	breathLine, breathDetails := breathSummary(bc.Spots, bc.Picks, bc.Note)
+	breathLine, breathDetails := breathSummary(bc.Spots, bc.Note, bc.Notes)
 	b.WriteString(breathLine + "\n")
 	if ver != nil {
 		n := 0
@@ -92,8 +101,8 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		if ver.Note != "" {
 			fmt.Fprintf(&b, "- Re-transcription: %s\n", ver.Note)
 		} else if ver.PlannedWords > 0 {
-			fmt.Fprintf(&b, "- Re-transcribed edit: %d words heard; %d of the %d planned words heard again (%.1f%%)\n",
-				ver.HeardWords, ver.MatchedWords, ver.PlannedWords, 100*float64(ver.MatchedWords)/float64(ver.PlannedWords))
+			fmt.Fprintf(&b, "- Re-transcribed edit: %d words heard; %d of the %d planned words heard again (%.1f%%)%s\n",
+				ver.HeardWords, ver.MatchedWords, ver.PlannedWords, 100*float64(ver.MatchedWords)/float64(ver.PlannedWords), onePassNote(ver.OnePass))
 			fmt.Fprintf(&b, "- %d spot(s) of 2+ planned words not heard; %d spot(s) of 2+ unplanned words heard (listed below)\n", len(ver.Missing), len(ver.Extra))
 		}
 	}
@@ -159,7 +168,7 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	r.times = append(r.times, fmt.Sprintf("total %s", time.Since(r.started).Round(time.Second)))
 	fmt.Fprintf(&b, "\n## Time\n\n%s\n", strings.Join(r.times, ", "))
 
-	path := filepath.Join(r.work, "report-"+r.tag+".md")
+	path := reportPath(r.work, r.tag, r.media, veg)
 	_ = os.WriteFile(path, []byte(b.String()), 0o644)
 
 	fmt.Println()
@@ -169,11 +178,30 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		fmt.Printf("  VEGAS project: %s (open in VEGAS now)\n", filepath.Base(veg))
 	}
 	fmt.Printf("  %d things to look at on the timeline (unsure %d, publish %d, loud cuts %d, breath checks %d).\n",
-		len(marks), unsure, regions, len(loud), len(bc.Picks))
+		len(marks), unsure, regions, len(loud), countVerdict(bc.Spots, vBreath))
 	fmt.Printf("  Report: %s\n", path)
 }
 
 func mdCell(s string) string { return strings.ReplaceAll(s, "|", "/") }
+
+// reportPath is becky-edit\report-<model>.md, or report-<model> (2).md for the
+// project "<folder>-<model> (2).veg": a new version never overwrites the report
+// of the project before it.
+func reportPath(work, tag, media, veg string) string {
+	def := filepath.Base(filepath.Dir(media)) + "-" + tag
+	suffix := strings.TrimPrefix(strings.TrimSuffix(filepath.Base(veg), ".veg"), def)
+	if veg == "" || suffix == filepath.Base(veg) {
+		suffix = ""
+	}
+	return filepath.Join(work, "report-"+tag+suffix+".md")
+}
+
+func onePassNote(one bool) string {
+	if one {
+		return " - Parakeet only: another VEGAS was open, so the WhisperX second opinion was left out"
+	}
+	return ""
+}
 
 func joinTag(near bool) string {
 	if near {

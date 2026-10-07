@@ -128,7 +128,7 @@ func runClaude(ss []Sentence, guidance, work string, logf func(string, ...any)) 
 	if perr != nil {
 		return sel, fmt.Errorf("the Claude run gave no usable answer: %v (fleet-run said: %s)", perr, lastLines(string(res), 3))
 	}
-	sel.Decisions = conclude(ds, nil, "claude")
+	sel.Decisions, sel.Rules = conclude(ds, nil, "claude"), rulesVersion
 	sel.Seconds = time.Since(start).Seconds()
 	return sel, nil
 }

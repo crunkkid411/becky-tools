@@ -16,12 +16,20 @@ hold a span, and reports for each span:
 
 The numbers are measured on the span minus --trim seconds at each end: the
 transcript's word edges are not exact, so the edges carry speech.
+
+--frames (becky-livestream's breath check v2) reports every 40 ms frame of each
+whole span instead, so Go can find the breath inside a kept piece itself:
+  {"f0": first frame (t = f0 * 0.04), "breath": [...], "voice": [...],
+   "vocal": [...], "vocal_k": [...]}
+  breath  Breathing / Pant;  voice  the strongest speech class;
+  vocal   the strongest non-speech mouth sound - laughter, cough, throat
+          clearing, humming, a shout... (VOCAL below); vocal_k  its index there.
 Research + the test on Jordan's footage: research/breath-vs-movement-sound-labels.md.
 
 Offline: the checkpoint must already be at <repo>/resources/BEATs_strong_1.pt.
 The helper refuses rather than let PretrainedSED download it.
 
-Input:  --wav <16 kHz mono WAV> --repo <PretrainedSED dir> --spans <JSON file: [[a, b], ...]>
+Input:  --wav <16 kHz mono WAV> --repo <PretrainedSED dir> --spans <JSON file: [[a, b], ...]> [--frames]
 Output: ONE JSON line on stdout:
   {"ok": true, "device": "cuda", "chunks": 12, "seconds": 3.9,
    "spans": [{"breath": 0.52, "other": 0.08, "other_label": "Surface contact", "voice": 0.0}, ...]}
@@ -56,6 +64,11 @@ IGNORE = ("Background noise", "Mechanisms", "Channel, environment and background
 # or sniff is still breathing - unlike a cough, a laugh or a bump, which stay
 # "other" and stop a gap from being called a breath.
 BREATH_KIN = ("Gasp", "Sigh", "Sniff", "Snort", "Wheeze", "Snoring")
+# Mouth sounds that are not speech and not a breath: a laugh or a cough in a
+# pause is part of the moment, never a breath to cut (--frames only).
+VOCAL = ("Laughter", "Baby laughter", "Belly laugh", "Chuckle, chortle", "Giggle", "Snicker", "Cough", "Sneeze",
+         "Throat clearing", "Hiccup", "Burping, eructation", "Groan", "Grunt", "Humming", "Singing", "Male singing",
+         "Whistling", "Screaming", "Shout", "Yell", "Crying, sobbing", "Chewing, mastication", "Slurp, drinking straw")
 
 
 def fail(reason):
@@ -95,7 +108,10 @@ def main():
     ap.add_argument("--spans", required=True)
     ap.add_argument("--trim", type=float, default=0.1)
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--frames", action="store_true", help="every 40 ms frame of each whole span")
     a = ap.parse_args()
+    if a.frames:
+        a.trim = 0.0
 
     ckpt = os.path.join(a.repo, "resources", "BEATs_strong_1.pt")
     if not os.path.isfile(ckpt):
@@ -148,12 +164,27 @@ def main():
         fail("the sound labeler failed: %s" % e)
 
     idx = {c: i for i, c in enumerate(classes)}
-    missing = [c for c in BREATH + VOICE if c not in idx]
+    missing = [c for c in BREATH + VOICE + (VOCAL if a.frames else ()) if c not in idx]
     if missing:
         fail("labels missing from the model: %s" % ", ".join(missing))
     bi = [idx[c] for c in BREATH]
     vi = [idx[c] for c in VOICE]
     oi = [i for c, i in idx.items() if c not in BREATH + VOICE + IGNORE + BREATH_KIN]
+
+    if a.frames:
+        ki = [idx[c] for c in VOCAL]
+        res = []
+        for f0, f1 in windows:
+            rows = [probs[f // 250][f % 250] if f // 250 in probs and f % 250 < len(probs[f // 250])
+                    else np.zeros(len(classes), dtype=np.float32) for f in range(f0, f1)]
+            m = np.stack(rows)
+            res.append({"f0": f0, "breath": np.round(m[:, bi].max(axis=1), 2).tolist(),
+                        "voice": np.round(m[:, vi].max(axis=1), 2).tolist(),
+                        "vocal": np.round(m[:, ki].max(axis=1), 2).tolist(),
+                        "vocal_k": m[:, ki].argmax(axis=1).tolist()})
+        print(json.dumps({"ok": True, "device": device, "chunks": len(chunks), "vocal_names": list(VOCAL),
+                          "seconds": round(time.time() - t0, 1), "spans": res}))
+        return
 
     res = []
     for f0, f1 in windows:
