@@ -604,7 +604,7 @@ func TestBreathSummaryCountsEveryVerdict(t *testing.T) {
 		{A: 99, B: 99.5, Verdict: vHeld, Why: "Falcon: a bottle"},
 	}
 	line, details := breathSummary(spots, "", []string{"Gemma did not run: x"})
-	if want := "- **Breath check:** 2 breath region(s), 1.3 s, every edge on a frame; nothing was cut. Heard but left alone: 1 movement, 1 facial expression, 1 holding something up, 1 laugh or cough, 0 not checked. (Gemma did not run: x)"; line != want {
+	if want := "- **Breath check:** 2 checked breath(s), 1.3 s, every edge on a frame. Heard but left alone: 1 movement, 1 facial expression, 1 holding something up, 1 laugh or cough, 0 not checked. (Gemma did not run: x)"; line != want {
 		t.Errorf("line = %q\nwant   %q", line, want)
 	}
 	if len(details) != 6 || details[0] != "- stream 1:00: 0.80 s - breath (breathing 0.60; picture still)" ||

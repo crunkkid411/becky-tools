@@ -407,7 +407,7 @@ func runBreathCheck(cfg config.Config, media, work, stem, wav string, au *audio,
 			spots[i].Verdict = vBreath
 		}
 	}
-	logf("  %d breaths heard, %d regions placed", len(spots), countVerdict(spots, vBreath))
+	logf("  %d breaths heard, %d checked as breaths", len(spots), countVerdict(spots, vBreath))
 	return res
 }
 
@@ -449,7 +449,7 @@ func breathRegions(spots []breath, ps []piece) []mark {
 // breathSummary is the report's one-line summary and its detail list.
 func breathSummary(spots []breath, note string, notes []string) (line string, details []string) {
 	if note != "" {
-		return fmt.Sprintf("- **Breath check:** skipped - %s. No breath regions; nothing was cut.", note), nil
+		return fmt.Sprintf("- **Breath check:** skipped - %s. No breaths were checked.", note), nil
 	}
 	n := map[string]int{}
 	secs := 0.0
@@ -459,7 +459,7 @@ func breathSummary(spots []breath, note string, notes []string) (line string, de
 			secs += s.B - s.A
 		}
 	}
-	line = fmt.Sprintf("- **Breath check:** %d breath region(s), %.1f s, every edge on a frame; nothing was cut. Heard but left alone: %d movement, %d facial expression, %d holding something up, %d laugh or cough, %d not checked.",
+	line = fmt.Sprintf("- **Breath check:** %d checked breath(s), %.1f s, every edge on a frame. Heard but left alone: %d movement, %d facial expression, %d holding something up, %d laugh or cough, %d not checked.",
 		n[vBreath], secs, n[vMovement], n[vFace], n[vHeld], n[vSound], n[vUnclear])
 	if len(notes) > 0 {
 		line += " (" + strings.Join(notes, "; ") + ")"

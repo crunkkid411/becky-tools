@@ -173,7 +173,7 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	if veg != "" {
 		fmt.Printf("  VEGAS project: %s (open in VEGAS now)\n", filepath.Base(veg))
 	}
-	fmt.Printf("  %d things to look at on the timeline (unsure %d, publish %d, loud cuts %d, breath checks %d).\n",
+	fmt.Printf("  %d things to look at on the timeline (unsure %d, publish %d, loud cuts %d, checked breaths %d, cut).\n",
 		len(marks), unsure, regions, len(loud), countVerdict(bc.Spots, vBreath))
 	fmt.Printf("  Report: %s\n", path)
 }
