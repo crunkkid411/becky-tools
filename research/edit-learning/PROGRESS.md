@@ -59,3 +59,23 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
 - **In progress:** transcribing SNOW-2/5/6 to label every raw sentence keep/cut against the .veg.
   Space Bunny is reading Albert's skills and hermes/HyperEdit (OpenCode blocks paths outside its
   folder, so it works on copies).
+- **21:45 Answer key #1 loaded:** `scripts/editlearn.py` labels every raw word/sentence kept or cut
+  against the exported edit and stores it in `X:\AI-2\edit-learning-work\edits.db` (sqlite, outside
+  the repo: tables projects, pieces, sentences, removed). human-brain-robot: 113 raw sentences ->
+  54 kept, 30 partly, 29 cut; 63 removed stretches contained words (retakes, false starts, a whole
+  affiliate pitch), only 6 were pure pauses. His pattern = Paul Borg's: keep the LAST good attempt.
+- **22:00 `becky-besttake` (new tool, `cmd/besttake`):** Paul Borg's take picker with two signals per
+  decision (System One model + plain-code word match), plus two fixes found on Jordan's footage:
+  split a line where it restarts itself ("Do not buy one of the Do not buy one of the AI..."), and
+  only cut lines of a dropped attempt that the kept take actually repeats (decision model +
+  word containment). Scored on the 3 raw clips vs Jordan's real cut (`scripts/besttake_score.py`):
+
+  | Clip | Perplexity Decider | Jev | baseline (cut only 1-2 word noise) |
+  |---|---|---|---|
+  | SNOW-2 | 77.5% agree | 80.0% | 62.5% |
+  | SNOW-5 | 90.0% | 87.5% | 80.0% |
+  | SNOW-6 | 73.3% | 77.8% | 71.1% |
+
+  It catches ~60% of his cuts (baseline ~12%). Total spend for every test run tonight: $0.0067.
+  Too little data (125 lines, one video) to keep tuning or to pick a model: more answer keys first.
+  Not yet on the VEGAS timeline: it outputs keep/cut per line (JSON).

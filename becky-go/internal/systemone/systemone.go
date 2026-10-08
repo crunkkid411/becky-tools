@@ -36,7 +36,7 @@ const DefaultPython = `X:\AI-2\becky-tools\models\asr\venv-dml\Scripts\python.ex
 // Score or Noul.
 type Question struct {
 	Type         string          `json:"type"`
-	Instructions string          `json:"instructions"`
+	Instructions any             `json:"instructions"` // string, or an object holding the question plus the data it names (hosted models)
 	Criteria     json.RawMessage `json:"criteria,omitempty"`
 }
 
@@ -74,6 +74,18 @@ func Score(instructions string, levels ...string) Question {
 // Noul asks for P(true) of a yes/no statement.
 func Noul(instructions string) Question {
 	return Question{Type: "noul", Instructions: instructions}
+}
+
+// NoulWith asks a yes/no question about data passed inline as named fields,
+// e.g. NoulWith("`later` repeats `earlier`", map[string]any{"earlier": a, "later": b}).
+// Paul Borg's take picker found Jev ignores index references into the state,
+// so the text the question is about goes in the question itself.
+func NoulWith(question string, fields map[string]any) Question {
+	obj := map[string]any{"question": question}
+	for k, v := range fields {
+		obj[k] = v
+	}
+	return Question{Type: "noul", Instructions: obj}
 }
 
 // Request is one state plus its questions (Jev's system_one request body).
