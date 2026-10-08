@@ -79,3 +79,27 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   It catches ~60% of his cuts (baseline ~12%). Total spend for every test run tonight: $0.0067.
   Too little data (125 lines, one video) to keep tuning or to pick a model: more answer keys first.
   Not yet on the VEGAS timeline: it outputs keep/cut per line (JSON).
+- **22:20 VEGAS effect writer `vegas/BeckyFX.cs` - zooms, censoring, bleeps ON THE TIMELINE.**
+  Jordan's own `HJ Scripts` (Documents\Vegas_Assets\Scripts\HJ Scripts) all put one plug-in +
+  HIS preset on a split event: CENSOR = VEGAS Pixelate "CENSOR", CUT IN / IN EXTREME / OUT /
+  1-5 JUMP / up-down-left-right = VEGAS Picture In Picture presets, BIG HEAD = Spherize, DRAMA /
+  HORROR / NEON = Color Corrector, MEME SWIRL / WAVE, TV, ... BeckyFX does exactly that on a frame
+  range (`fx`), plus `zoom` (Pan/Crop push-in held across jump cuts), `duck` (volume envelope) and
+  `audio` (e.g. a 1 kHz bleep). His 23 filter packages ("ZOOM FAST", "SAD ZOOM", ...) CANNOT be
+  added by a script: VEGAS 18's API shows them as empty shells (no id, no contents; AddEffect
+  fails). Verified on a copy of human-brain-robot by VEGAS's OWN render (`BeckyRenderRanges.cs`):
+  pixelated only inside the range; zoom pushes in on his face, holds across a cut, returns after;
+  "IN" punch-in only inside; bleep range: voice -54 dB, tone on top. Fixed on the way: a 1-frame
+  sliver (ranges now snap to a cut within 3 frames) and the zoom restarting at each jump cut.
+- **22:20 Research memory:** qmd (sqlite, keyword + vector, already installed, already uses
+  EmbeddingGemma-300M) now also indexes `becky-tools/research`, the becky canon docs and the
+  Obsidian YouTube notes + transcripts (`qmd query "<question>"`). EmbeddingGemma 2 and the 4B
+  DiarizationLM: not worth switching now (report in the night's scratchpad; numbers in
+  `research/jev-integration-plan.md` follow-up).
+- **22:20 Repos triage (Hermes, HyperEdit, Albert Olgaard's skills):** none worth installing (they
+  render their own MP4s, overwrite originals, call paid APIs, or skip the yt-dlp gate). Ideas worth
+  taking: Albert's Jev "said twice" question (its "false" option protects deliberate emphasis),
+  re-transcribe after a cut to prove no word was clipped, and the VEGAS writer (now built).
+- **22:20 Batch export:** `scripts/veg_export_all.py` answers VEGAS's "media not found" (old
+  projects point at the external D: drive) and "plug-in not installed" dialogs, retries anything
+  not ok, and only closes its own VEGAS. Running over all 91 projects.

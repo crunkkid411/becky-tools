@@ -69,6 +69,12 @@ Verified: it found the X on Manus's real 'Restore your account?' popup (3 px off
 end to end, said 'nothing blocking' on clean pages, and no window flashed. avlm's llama-server now always
 spawns hidden. Details: top of `HANDOFF-LOG.md`.
 
+### VEGAS effect writer `vegas/BeckyFX.cs` (2026-10-07, local)
+
+Jordan's own effects on a frame range of the open project (or a copy): plug-in + his preset (CENSOR,
+IN / IN EXTREME / OUT punch-ins, BIG HEAD, DRAMA...), Pan/Crop zoom, volume duck, bleep tone. Verified
+by VEGAS's own render. Filter packages are not scriptable in VEGAS 18.
+
 ### Learning Jordan's edits from his VEGAS projects (2026-10-07, local)
 
 Read-only: `vegas/BeckyDumpProject.cs` exports a COPY of a project, never saves;

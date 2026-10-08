@@ -1431,6 +1431,13 @@ downloads only the chat replay (through `internal/ytdlp`), each message timed in
 super chats marked. With `--transcript` it finds where Jordan read a message aloud (`read_at`) and the
 median chat delay. One signal for "talking to chat", next to gaze/posture and the transcript.
 
+**Zooms, censoring, bleeps in VEGAS = `vegas/BeckyFX.cs`** (job file of frame ranges; open project via
+`becky-vegas run_script path=vegas\BeckyFX.cs job=<job.txt>`). Use HIS presets, never invented looks:
+`fx <first> <len> VEGAS Pixelate CENSOR`, `fx ... VEGAS Picture In Picture IN` (punch-in; also
+`IN EXTREME`, `OUT`, `1 JUMP`..`5 JUMP`), `zoom <first> <len> <scale> <cx> <cy> <ramp>`,
+`duck <first> <len> -60`, `audio <first> <bleep.wav> <track>`. Check the result by rendering the
+ranges (`vegas/BeckyRenderRanges.cs`) and LOOKING at them. His filter packages cannot be scripted.
+
 **Never alter Jordan's originals.** VEGAS projects are read through `scripts/veg_export_all.py` /
 `vegas/BeckyDumpProject.cs` on a COPY only (SHA-256 checked before and after, nothing saved).
 

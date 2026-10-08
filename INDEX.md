@@ -11,6 +11,8 @@
   one yt-dlp call per 90 s). Research + measured limits: `research/playlist-intake/README.md`.
   **Jev plan:** `research/jev-integration-plan.md` (paid Jev + trained Laya + ImaJev 4B, pilot first).
   New 2026-09-25.
+- **VEGAS effects writer** (2026-10-07): `vegas/BeckyFX.cs` (Jordan's presets on a range, zoom,
+  duck, bleep) + `vegas/BeckyRenderRanges.cs` (render ranges to look at). Table: `vegas/README.md`.
 - **Learning Jordan's edits** (2026-10-07): `research/edit-learning/PROGRESS.md` (night log +
   answer keys). Read-only VEGAS export `vegas/BeckyDumpProject.cs` + `scripts/veg_export_all.py`;
   labels `scripts/editlearn.py`; take picker **`becky-besttake`** (`cmd/besttake`, scored by

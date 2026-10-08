@@ -157,11 +157,17 @@ public class EntryPoint
         try { name = e.PlugIn != null ? e.PlugIn.Name : e.Description; } catch { }
         sb.Append("{\"name\":").Append(Str(name)).Append(",\"bypass\":").Append(e.Bypass ? "true" : "false");
         sb.Append(",\"keyframes\":").Append(e.Keyframes.Count);
+        // A plug-in that is not installed on this PC throws on OFXEffect: record
+        // it as missing and keep exporting the rest of the project.
+        OFXEffect ofx = null;
+        bool missing = false;
+        try { if (e.IsOFX) ofx = e.OFXEffect; } catch { missing = true; }
+        if (missing) sb.Append(",\"missing\":true");
         sb.Append(",\"params\":{");
-        if (e.IsOFX && e.OFXEffect != null)
+        if (ofx != null)
         {
             bool first = true;
-            foreach (OFXParameter prm in e.OFXEffect.Parameters)
+            foreach (OFXParameter prm in ofx.Parameters)
             {
                 string v = ParamValue(prm);
                 if (v == null) continue;

@@ -34,13 +34,14 @@ def sha(path):
 
 user32 = ctypes.windll.user32
 BM_CLICK = 0x00F5
+WM_COMMAND, IDCANCEL = 0x0111, 2
 ENUM = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 
 
 def _text(h):
     buf = ctypes.create_unicode_buffer(512)
     user32.GetWindowTextW(h, buf, 512)
-    return buf.value
+    return buf.value.replace("&", "")  # drop keyboard-shortcut marks ("Ignore &all ...")
 
 
 def _children(h):
@@ -60,9 +61,19 @@ def answer_missing_media(pid):
     for h in tops:
         owner = wt.DWORD()
         user32.GetWindowThreadProcessId(h, ctypes.byref(owner))
-        if owner.value != pid or not user32.IsWindowVisible(h) or _text(h) != "VEGAS Pro 18.0":
+        if owner.value != pid or not user32.IsWindowVisible(h):
             continue
         kids = {c: _text(c) for c in _children(h)}
+        if _text(h) == "Search for Missing Files":  # opened by a wrong answer: back out
+            user32.PostMessageW(h, WM_COMMAND, IDCANCEL, 0)
+            continue
+        if _text(h) != "VEGAS Pro 18.0":
+            continue
+        if any(t.startswith("Warning: An error occurred while loading") for t in kids.values()):
+            for c, t in kids.items():  # a plug-in not installed here: VEGAS still opens the project
+                if t == "OK":
+                    user32.SendMessageW(c, BM_CLICK, 0, 0)
+            continue
         if not any("could not be found" in t for t in kids.values()):
             other = " | ".join(t for t in kids.values() if t)[:300]
             continue
@@ -75,9 +86,12 @@ def answer_missing_media(pid):
     return other
 
 
-def kill_vegas():
-    for exe in ("vegas180.exe", "ErrorReportClient.exe"):
-        subprocess.run(["taskkill", "/F", "/IM", exe], capture_output=True)
+def kill_vegas(pid=None):
+    """Close this run's VEGAS (and its crash reporter); never another VEGAS
+    someone has open. With no pid (start of a run), nothing is killed."""
+    if pid:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "ErrorReportClient.exe"], capture_output=True)
 
 
 def export_one(src, out_dir):
@@ -85,6 +99,8 @@ def export_one(src, out_dir):
     copy = os.path.join(out_dir, before[:16] + ".veg")
     shutil.copyfile(src, copy)
     out_json = copy + ".edits.json"
+    if os.path.exists(out_json):
+        os.remove(out_json)  # a killed earlier run's file must not count as this run's export
     env = dict(os.environ, BECKY_DUMP_VEG=copy, BECKY_DUMP_OUT=out_json)
     t0 = time.time()
     proc = subprocess.Popen([VEGAS, "-SCRIPT:" + os.path.abspath(SCRIPT)], env=env)
@@ -103,7 +119,7 @@ def export_one(src, out_dir):
             proc.wait(timeout=60)  # let VEGAS exit by itself
         except subprocess.TimeoutExpired:
             pass
-    kill_vegas()
+    kill_vegas(proc.pid)
     if status == "ok":
         with open(out_json, encoding="utf-8") as f:
             if "error" in json.load(f):
@@ -123,9 +139,8 @@ def main():
     done = set()
     if os.path.exists(index):
         with open(index, encoding="utf-8") as f:
-            done = {r["veg"] for r in map(json.loads, filter(str.strip, f)) if r["status"] != "timeout"}
+            done = {r["veg"] for r in map(json.loads, filter(str.strip, f)) if r["status"] == "ok"}
     vegs = sorted(os.path.join(d, n) for d, _, files in os.walk(a.root) for n in files if n.lower().endswith(".veg"))
-    kill_vegas()
     for i, src in enumerate(vegs, 1):
         if src in done:
             continue

@@ -12,6 +12,20 @@
 
 ---
 
+## VEGAS effect writer: zooms, censoring, bleeps on the timeline (2026-10-07, local, `master`)
+
+Jordan: "they cover zooms and censoring - do we have the tools to do that in Vegas Pro? If not, we
+need it." `vegas/BeckyFX.cs` does what his own `HJ Scripts` do by hand - one plug-in + HIS preset on
+a split event (CENSOR = VEGAS Pixelate "CENSOR", punch-ins = Picture In Picture "IN"/"IN EXTREME"/
+"OUT"/"1 JUMP"..., BIG HEAD, DRAMA, ...) - on a frame range, plus `zoom` (Pan/Crop push-in, held
+across his jump cuts), `duck` (volume envelope) and `audio` (a bleep tone on a named track). Ranges
+snap to a cut within 3 frames (no slivers). Filter packages cannot be scripted (VEGAS 18 shows them as
+empty shells). Proof: `vegas/BeckyRenderRanges.cs` had VEGAS render each range of a test copy; frames
+and audio levels checked (pixelated only inside, zoom held across a cut, bleep = voice -54 dB + tone).
+Not yet wired into a Go tool: a job file is written by hand or by the caller.
+
+---
+
 ## Learning Jordan's edits: read-only VEGAS export, `becky-besttake`, `becky-livechat` (2026-10-07, local, `master`)
 
 Jordan (night of 2026-10-07): "we should be able to systematically extract all my edit decisions
