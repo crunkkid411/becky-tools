@@ -12,6 +12,10 @@ const (
 	readWindow   = 90.0 // seconds after a message in which reading it aloud counts
 	minReadWords = 3    // content words of a message he must say for it to count as read
 	minReadShare = 0.6  // ...and at least this share of the message's content words
+	// ...of which at least minRare are words he says rarely in this stream: in the
+	// apology stream "sorry" (248x) and "john" (45x) made coincidental matches.
+	rareMax = 15
+	minRare = 2
 )
 
 type message struct {
@@ -125,12 +129,14 @@ func contentWords(s string) []string {
 
 // matchReadAloud finds, for each message, the first moment within readWindow
 // after it arrived where Jordan's next words contain most of its content
-// words (or the author's name plus some of it). Plain code, no model: one
+// words, at least two of them words he rarely says. Plain code, no model: one
 // signal about "talking to chat", alongside gaze/posture and the transcript.
 func matchReadAloud(msgs []message, ws []word) delay {
 	norm := make([]string, len(ws))
+	said := map[string]int{}
 	for i, w := range ws {
 		norm[i] = strings.Join(contentWords(w.Word), "")
+		said[norm[i]]++
 	}
 	var lags []float64
 	for mi := range msgs {
@@ -150,7 +156,13 @@ func matchReadAloud(msgs []message, ws []word) delay {
 					got[norm[k]] = true
 				}
 			}
-			if len(got) >= minReadWords && float64(len(got)) >= minReadShare*float64(len(uniq(want))) {
+			rare := 0
+			for g := range got {
+				if said[g] <= rareMax {
+					rare++
+				}
+			}
+			if len(got) >= minReadWords && rare >= minRare && float64(len(got)) >= minReadShare*float64(len(uniq(want))) {
 				t := ws[i].Start
 				m.ReadAt, m.ReadWords = &t, len(got)
 				lags = append(lags, t-m.T)

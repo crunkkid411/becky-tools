@@ -103,3 +103,14 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
 - **22:20 Batch export:** `scripts/veg_export_all.py` answers VEGAS's "media not found" (old
   projects point at the external D: drive) and "plug-in not installed" dialogs, retries anything
   not ok, and only closes its own VEGAS. Running over all 91 projects.
+- **22:25 Live chat, first real run (apology stream 9T7Me7-2Aec):** 2,477 messages (16 super
+  chats). `becky-livechat --transcript` finds 14 messages Jordan read aloud; 4 spot-checked against
+  the transcript, all real (he paraphrases: "pretty much the same room"). Read 2-26 s after the
+  message arrived, median 14.6 s (= YouTube's chat delay + his reading time). First version also
+  matched 2 coincidences built from words he says all the time ("sorry" 248x, "john" 45x in this
+  stream): a match now needs 2+ words he rarely says.
+- **22:25 Albert's "said twice" wording tried in becky-besttake's coverage check:** 80.0 / 87.5 /
+  73.3% vs 77.5 / 90.0 / 73.3% - no real difference on 125 lines; original kept. Spend so far
+  this month: $0.0089 of $5.
+- **22:25 yt-dlp gate is now first come, first served** (the backfill starved the chat download
+  for 40 min).
