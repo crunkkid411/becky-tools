@@ -11,6 +11,11 @@
   one yt-dlp call per 90 s). Research + measured limits: `research/playlist-intake/README.md`.
   **Jev plan:** `research/jev-integration-plan.md` (paid Jev + trained Laya + ImaJev 4B, pilot first).
   New 2026-09-25.
+- **Learning Jordan's edits** (2026-10-07): `research/edit-learning/PROGRESS.md` (night log +
+  answer keys). Read-only VEGAS export `vegas/BeckyDumpProject.cs` + `scripts/veg_export_all.py`;
+  labels `scripts/editlearn.py`; take picker **`becky-besttake`** (`cmd/besttake`, scored by
+  `scripts/besttake_score.py`); chat replay **`becky-livechat`** (`cmd/livechat`). Every yt-dlp
+  call goes through `internal/ytdlp` (90 s gate, `--ignore-config`).
 - **Browser unsticker = `becky-unstick`** (`cmd/unstick`): Microsoft **Fara1.5-4B** (Qwen3.5-4B fine-tuned only
   for browser control; `models\fara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and
   returns the click that clears the popup/banner, or `terminate` if nothing blocks. Hidden llama-server, ~4s warm /

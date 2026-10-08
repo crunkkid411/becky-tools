@@ -1419,6 +1419,21 @@ Rules that are law here (measured 2026-09-25, `research/playlist-intake/README.m
 - **Not for nuanced relevance.** "Is this useful to Jordan?" saturates at yes. Use embeddings.
 - Check with `becky-decide --selftest`; do not trust published example numbers.
 
+**`becky-besttake <transcript.json> [--model id] [--window 6] [--out picks.json]`** marks retakes in
+a raw recording and keeps the LAST finished attempt (Paul Borg's method). Two signals per decision:
+a System One model (paid, capped, `internal/systemone` `Hosted`; default Perplexity Decider, `--model
+~typesafe/jev-latest` for Jev) and a plain word match; a dropped attempt's line is only cut when the
+kept take repeats it. Output: per line `keep`, `unsure`, `group`, the model and text scores. Not on
+the VEGAS timeline yet. Score against a real edit with `scripts/besttake_score.py`.
+
+**`becky-livechat <youtube id | url | file with [id]> [--transcript t.json] [--out chat.json]`**
+downloads only the chat replay (through `internal/ytdlp`), each message timed in stream seconds,
+super chats marked. With `--transcript` it finds where Jordan read a message aloud (`read_at`) and the
+median chat delay. One signal for "talking to chat", next to gaze/posture and the transcript.
+
+**Never alter Jordan's originals.** VEGAS projects are read through `scripts/veg_export_all.py` /
+`vegas/BeckyDumpProject.cs` on a COPY only (SHA-256 checked before and after, nothing saved).
+
 **`becky-intake <playlist-or-video-url> [--limit 3] [--dry-run] [--ids a,b]`** reads new videos of
 the "ai-useful" playlist into Obsidian notes (see top of `HANDOFF-LOG.md`). `--dry-run` only shows
 each video's route. Downloads live in `research/playlist-intake/TEMP` and are deleted by code.
@@ -1426,7 +1441,7 @@ Jordan's pain list is `research/playlist-intake/pains.json`.
 - **YouTube's transcript first** (creator captions, else automatic `en-orig`, ONE track per call);
   audio download + `becky-transcribe` ONLY when YouTube has none. Saved as `<note>.transcript.md`
   beside the note (the becky-ask `.transcript.md` standard), linked at the top of the note.
-- **One yt-dlp request per 90 s, mandatory** (Jordan, 2026-10-07). `ytdlp()` is the only caller
-  and gates every call across processes (`ytdlp.lock` + `ytdlp-last-call.txt` in
+- **One yt-dlp request per 90 s, mandatory** (Jordan, 2026-10-07). `internal/ytdlp` `Run` is the
+  only caller for every becky tool and gates every call across processes (`ytdlp.lock` + `ytdlp-last-call.txt` in
   `research/playlist-intake`). Never call yt-dlp around it.
 - `--backfill N` adds YouTube transcripts to up to N existing notes that lack one (captions only).

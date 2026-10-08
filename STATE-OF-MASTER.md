@@ -69,6 +69,15 @@ Verified: it found the X on Manus's real 'Restore your account?' popup (3 px off
 end to end, said 'nothing blocking' on clean pages, and no window flashed. avlm's llama-server now always
 spawns hidden. Details: top of `HANDOFF-LOG.md`.
 
+### Learning Jordan's edits from his VEGAS projects (2026-10-07, local)
+
+Read-only: `vegas/BeckyDumpProject.cs` exports a COPY of a project, never saves;
+`scripts/veg_export_all.py` does all of `X:\Videos` and checks each original's SHA-256 before and
+after. `scripts/editlearn.py` turns an export + raw transcript into kept/cut labels (sqlite, outside
+the repo). `becky-besttake` picks the finished take (System One model + word match), 73-90%
+agreement with Jordan's real cut. `becky-livechat` gets a stream's chat replay and finds where he
+read messages aloud. yt-dlp's 90-second gate now lives in `internal/ytdlp` for every tool.
+
 ### Paid Jev client with a $5/month cap (2026-10-07, local)
 
 `internal/systemone` `Hosted` calls Jev through Jordan's OpenRouter key with the same request/answer

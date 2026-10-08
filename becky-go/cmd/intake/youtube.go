@@ -1,15 +1,14 @@
 package main
 
 import (
+	"becky-go/internal/ytdlp"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
 
 // Every yt-dlp call passes --ignore-config: Jordan's global yt-dlp.conf (used
@@ -35,80 +34,9 @@ type chapter struct {
 	Start float64 `json:"start_time"`
 }
 
-// Jordan's rule (2026-10-07): at most ONE yt-dlp request per 90 seconds, across
-// every becky-intake process. ytdlp() is the only place yt-dlp runs, and it
-// always goes through this gate: a lock file so two runs never call at once,
-// and a stamp file whose time is the last call's start and end.
-const (
-	ytdlpGap  = 90 * time.Second
-	staleLock = 15 * time.Minute // a run killed mid-call leaves its lock behind
-)
-
-var gateDir = `X:\AI-2\becky-tools\research\playlist-intake` // tests point this elsewhere
-
-func waitYtdlpTurn() (done func(), err error) {
-	if err := os.MkdirAll(gateDir, 0o755); err != nil {
-		return nil, fmt.Errorf("yt-dlp gate: %w", err)
-	}
-	lock, stamp := filepath.Join(gateDir, "ytdlp.lock"), filepath.Join(gateDir, "ytdlp-last-call.txt")
-	for {
-		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err == nil {
-			f.Close()
-			break
-		}
-		if !os.IsExist(err) {
-			return nil, fmt.Errorf("yt-dlp gate: %w", err)
-		}
-		if fi, e := os.Stat(lock); e == nil && time.Since(fi.ModTime()) > staleLock {
-			_ = os.Remove(lock)
-		}
-		time.Sleep(2 * time.Second)
-	}
-	time.Sleep(ytdlpWait(stamp))
-	touch := func() { _ = os.WriteFile(stamp, []byte(time.Now().Format(time.RFC3339)), 0o644) }
-	touch() // counts even if this process is killed mid-call
-	return func() { touch(); _ = os.Remove(lock) }, nil
-}
-
-// ytdlpWait is how long to wait so 90 s pass since the last call's stamp.
-func ytdlpWait(stamp string) time.Duration {
-	fi, err := os.Stat(stamp)
-	if err != nil {
-		return 0
-	}
-	if w := ytdlpGap - time.Since(fi.ModTime()); w > 0 {
-		return w
-	}
-	return 0
-}
-
-func ytdlp(args ...string) ([]byte, error) {
-	done, err := waitYtdlpTurn()
-	if err != nil {
-		return nil, err
-	}
-	defer done()
-	bin := os.Getenv("BECKY_YTDLP")
-	if bin == "" {
-		bin = "yt-dlp"
-	}
-	cmd := exec.Command(bin, append([]string{"--ignore-config"}, args...)...)
-	out, err := cmd.Output()
-	if err != nil {
-		msg := err.Error()
-		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
-			lines := strings.Split(strings.TrimSpace(string(ee.Stderr)), "\n")
-			msg = lines[len(lines)-1]
-		}
-		return nil, fmt.Errorf("yt-dlp: %s", msg)
-	}
-	return out, nil
-}
-
 // playlistIDs lists video ids in playlist order (one cheap flat call).
 func playlistIDs(ref string) (string, []string, error) {
-	raw, err := ytdlp("--flat-playlist", "-J", ref)
+	raw, err := ytdlp.Run("--flat-playlist", "-J", ref)
 	if err != nil {
 		return "", nil, err
 	}
@@ -133,7 +61,7 @@ func playlistIDs(ref string) (string, []string, error) {
 }
 
 func fetchVideo(id string) (video, error) {
-	raw, err := ytdlp("-J", "--skip-download", "--no-playlist", "https://www.youtube.com/watch?v="+id)
+	raw, err := ytdlp.Run("-J", "--skip-download", "--no-playlist", "https://www.youtube.com/watch?v="+id)
 	if err != nil {
 		return video{}, err
 	}
@@ -200,7 +128,7 @@ func withTempDir(tempRoot, id string, fn func(dir string) error) (err error) {
 
 // downloadAudio fetches one video's audio into dir (a withTempDir folder).
 func downloadAudio(dir, id string) (string, error) {
-	if _, err := ytdlp("-f", "ba[ext=m4a]/ba", "--no-playlist", "-P", dir, "-o", "%(id)s.%(ext)s",
+	if _, err := ytdlp.Run("-f", "ba[ext=m4a]/ba", "--no-playlist", "-P", dir, "-o", "%(id)s.%(ext)s",
 		"https://www.youtube.com/watch?v="+id); err != nil {
 		return "", err
 	}
@@ -245,7 +173,7 @@ func fetchCaptions(dir string, v video, lang string) (string, error) {
 	if _, ok := v.Subtitles[lang]; ok {
 		kind = "--write-subs"
 	}
-	if _, err := ytdlp("--skip-download", kind, "--sub-langs", lang, "--sub-format", "json3", "--no-playlist",
+	if _, err := ytdlp.Run("--skip-download", kind, "--sub-langs", lang, "--sub-format", "json3", "--no-playlist",
 		"-P", dir, "-o", "%(id)s.%(ext)s", "https://www.youtube.com/watch?v="+v.ID); err != nil {
 		return "", err
 	}
