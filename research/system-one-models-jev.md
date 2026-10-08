@@ -1,5 +1,8 @@
 # System One models and Jev: what they are, and whether becky should have one
 
+> **Superseded in part (2026-10-07):** see `jev-integration-plan.md`. Jordan will pay for Jev; base
+> Laya is near chance until trained on our own decisions; ImaJev 4B makes picture decisions locally.
+
 Researched 2026-09-18 by the local agent. Jev launched in early access on 15 September 2026, three
 days before this was written, so everything here is young. Sources are at the bottom.
 
