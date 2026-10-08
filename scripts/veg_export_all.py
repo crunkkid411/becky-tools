@@ -133,7 +133,7 @@ def needs_keyframes(edits_path):
     """True when an export marks animated effect settings but has no keyframe values ("anim")."""
     with open(edits_path, encoding="utf-8") as f:
         text = f.read()
-    return "[animated]" in text and '"anim"' not in text
+    return "[animated]" in text and '"anim":{"' not in text
 
 
 def main():
@@ -141,7 +141,7 @@ def main():
     ap.add_argument("--root", default=r"X:\Videos")
     ap.add_argument("--out", default=r"X:\AI-2\edit-learning-work\vegs")
     ap.add_argument("--redo-animated", action="store_true",
-                    help="re-export ok projects whose export has animated effects but no keyframe values (pre-2026-10-07 exporter)")
+                    help="re-export ok projects whose export has animated effects but no keyframe values (older exporter)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     index = os.path.join(a.out, "index.jsonl")

@@ -204,7 +204,10 @@ public class EntryPoint
             foreach (object key in keys)
             {
                 OFXKeyframe k = key as OFXKeyframe;
-                object v = key.GetType().GetProperty("Value").GetValue(key, null);
+                // OFXDoubleKeyframe has its own Value AND the generic base's: by name alone
+                // GetProperty throws "ambiguous match", so take the declared one.
+                object v = key.GetType().GetProperty("Value", System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly).GetValue(key, null);
                 if (sb.Length > 1) sb.Append(',');
                 sb.Append('[').Append(Sec(k.Time)).Append(',').Append(Format(v)).Append(',').Append(Str(k.Interpolation.ToString())).Append(']');
             }

@@ -131,3 +131,11 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   keyframed Location/Scale. The exporter now writes animated settings' keyframes (`"anim"`), so his
   packages can be rebuilt from his own projects. 13 animated Picture In Picture zooms in the first
   51 projects.
+- **00:20 His zoom, rebuilt:** batch export finished - **91 of 91 projects, every original's SHA-256
+  unchanged** (tripod too: its "crash" was a dialog the batch now answers). Keyframe values (after a
+  fix: VEGAS keyframes have two "Value" properties, so reading by name threw) show 17 animated
+  Picture In Picture zooms in 3 projects: Scale 1 -> 1.11 over the piece (slow creep) or 1 -> 1.447
+  with the height easing 0.5 -> 0.42-0.45 (face stays in). Package internals stay unreadable (packed
+  binary), so BeckyFX got `pipzoom <first> <len> <scale> [height]`: his zoom as one continuous move
+  across jump cuts. Tested on the human-brain-robot copy: 3 pieces, VEGAS's own render shows the
+  push-in growing across both cuts with his face in frame.

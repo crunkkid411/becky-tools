@@ -15,6 +15,7 @@
  * Job file: plain text, TAB-separated, one item per line, positions in FRAMES:
  *   fx    <TAB> <first frame> <TAB> <length> <TAB> <plug-in> [<TAB> <preset>]
  *   zoom  <TAB> <first frame> <TAB> <length> <TAB> <scale> [<TAB> <cx> <TAB> <cy> [<TAB> <ramp frames>]]
+ *   pipzoom <TAB> <first frame> <TAB> <length> <TAB> <scale, his: 1.11 or 1.447> [<TAB> <end height, 0.5 = none>]
  *   duck  <TAB> <first frame> <TAB> <length> <TAB> <dB, e.g. -60 to silence>
  *   audio <TAB> <first frame> <TAB> <file.wav> <TAB> <track name>
  * fx and zoom go on the TOP video track that has footage (not a title) at <first frame>. duck puts
@@ -104,6 +105,9 @@ public class EntryPoint
                 fx += Zoom(vegas, at, Timecode.FromFrames(Len(f[2])), Num(f[3]), f.Length > 5 ? Num(f[4]) : 0.5, f.Length > 5 ? Num(f[5]) : 0.5,
                            f.Length > 6 ? long.Parse(f[6].Trim()) : 6);
                 break;
+            case "pipzoom":
+                fx += PipZoom(vegas, at, Timecode.FromFrames(Len(f[2])), Num(f[3]), f.Length > 4 ? Num(f[4]) : 0.5);
+                break;
             case "duck":
                 duck += Duck(vegas.Project, at, Timecode.FromFrames(Len(f[2])), double.Parse(f[3].Trim(), System.Globalization.CultureInfo.InvariantCulture));
                 break;
@@ -157,6 +161,51 @@ public class EntryPoint
                 // ...the pieces after his jump cuts hold the zoom instead of restarting it
                 k0.Bounds = zoomed;
             }
+            n++;
+        }
+        if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);
+        return n;
+    }
+
+    // PipZoom is Jordan's own slow zoom, measured from his projects (2026-10-08, 17 of them):
+    // VEGAS Picture In Picture on each piece, Scale keyframed linearly from 1 at the start of
+    // the range to <scale> at its end (his values: 1.11 for a creep, 1.447 for a push), and
+    // Location's height easing from 0.5 to <y> so his face stays in frame (he used 0.42-0.45
+    // with 1.447). One continuous move across his jump cuts: each piece carries its share.
+    static int PipZoom(Vegas vegas, Timecode at, Timecode len, double scale, double y)
+    {
+        PlugInNode node = Find(vegas.VideoFX, "VEGAS Picture In Picture");
+        if (node == null) throw new ApplicationException("no video effect named \"VEGAS Picture In Picture\"");
+        Track track = FootageTrack(vegas.Project, at);
+        if (track == null) throw new ApplicationException("no footage on a video track at frame " + at.FrameCount);
+        Timecode end = at + len;
+        at = Snap(track, at);
+        end = Snap(track, end);
+        SplitAt(track, at);
+        SplitAt(track, end);
+        double total = (end - at).ToMilliseconds();
+        int n = 0;
+        foreach (TrackEvent ev in track.Events)
+        {
+            if (ev.Start < at || ev.End > end) continue;
+            double a = (ev.Start - at).ToMilliseconds() / total, b = (ev.End - at).ToMilliseconds() / total;
+            Effect e = new Effect(node);
+            ((VideoEvent)ev).Effects.Add(e);
+            OFXEffect ofx = e.OFXEffect;
+            foreach (string name in new string[] { "Scale", "DistortionScaleY" })
+            {
+                OFXDoubleParameter p = (OFXDoubleParameter)ofx.FindParameterByName(name);
+                p.IsAnimated = true;
+                p.SetValueAtTime(Timecode.FromFrames(0), 1 + (scale - 1) * a);
+                p.SetValueAtTime(ev.Length, 1 + (scale - 1) * b);
+            }
+            OFXDouble2DParameter loc = (OFXDouble2DParameter)ofx.FindParameterByName("Location");
+            loc.IsAnimated = true;
+            OFXDouble2D p0 = loc.Value, p1 = loc.Value;
+            p0.Y = 0.5 + (y - 0.5) * a;
+            p1.Y = 0.5 + (y - 0.5) * b;
+            loc.SetValueAtTime(Timecode.FromFrames(0), p0);
+            loc.SetValueAtTime(ev.Length, p1);
             n++;
         }
         if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);

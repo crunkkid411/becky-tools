@@ -1434,9 +1434,10 @@ median chat delay. One signal for "talking to chat", next to gaze/posture and th
 **Zooms, censoring, bleeps in VEGAS = `vegas/BeckyFX.cs`** (job file of frame ranges; open project via
 `becky-vegas run_script path=vegas\BeckyFX.cs job=<job.txt>`). Use HIS presets, never invented looks:
 `fx <first> <len> VEGAS Pixelate CENSOR`, `fx ... VEGAS Picture In Picture IN` (punch-in; also
-`IN EXTREME`, `OUT`, `1 JUMP`..`5 JUMP`), `zoom <first> <len> <scale> <cx> <cy> <ramp>`,
+`IN EXTREME`, `OUT`, `1 JUMP`..`5 JUMP`), `pipzoom <first> <len> 1.11|1.447 [end height 0.43]` (his own
+slow zoom, from his projects - prefer it), `zoom <first> <len> <scale> <cx> <cy> <ramp>`,
 `duck <first> <len> -60`, `audio <first> <bleep.wav> <track>`. Check the result by rendering the
-ranges (`vegas/BeckyRenderRanges.cs`) and LOOKING at them. His filter packages cannot be scripted.
+ranges (`vegas/BeckyRenderRanges.cs`) and LOOKING at them. His filter packages cannot be scripted; `pipzoom` is his zoom rebuilt from his own keyframes.
 
 **Never alter Jordan's originals.** VEGAS projects are read through `scripts/veg_export_all.py` /
 `vegas/BeckyDumpProject.cs` on a COPY only (SHA-256 checked before and after, nothing saved). `python scripts/edit_habits.py`
