@@ -3,7 +3,7 @@
 Jordan, 2026-10-07: "I have years worth of edited video; we should be able to
 systematically extract all my edit decisions and try to reverse engineer them."
 
-Input: the read-only exports of scripts/veg_export_all.py (<dir>\\index.jsonl +
+Input: the read-only exports of vegas/veg_export_all.py (<dir>\\index.jsonl +
 <copy>.veg.edits.json). Nothing here opens VEGAS or touches an original.
 
 Per video event it records: length (the cut rhythm), effects, fades, and its
@@ -12,7 +12,7 @@ the move takes) or a PAN (same size, centre moves). Writes table vegas_events
 into the edit-learning sqlite DB and prints a one-screen summary; with --md, also
 a markdown report. Deterministic: same exports, same numbers.
 
-  python edit_habits.py [--dir X:\\AI-2\\edit-learning-work\\vegs] [--db ...edits.db] [--md out.md]
+  python edit_habits.py [--dir vegas\\edit-learning\\vegs] [--db ...edits.db] [--md out.md]
 """
 import argparse
 import collections
@@ -21,8 +21,8 @@ import os
 import sqlite3
 import statistics
 
-DEFAULT_DIR = r"X:\AI-2\edit-learning-work\vegs"
-DEFAULT_DB = r"X:\AI-2\edit-learning-work\edits.db"
+DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edit-learning", "vegs")
+DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edit-learning", "edits.db")
 ZOOM_MIN = 1.05  # frame width changing by 5%+ counts as a zoom, not a wobble
 PAN_MIN = 0.03   # centre moving 3%+ of the frame width counts as a pan
 

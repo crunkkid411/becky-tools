@@ -1,0 +1,1 @@
+ok fx=3 duck=0 audio=0

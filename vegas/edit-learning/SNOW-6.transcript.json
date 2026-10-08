@@ -1,0 +1,3184 @@
+{
+  "file": "X:/Videos/2025/8_August/4-human-brain-robot/hj-footage/SNOW-6_converted.mp4",
+  "duration": 295.629,
+  "model": "onnx-asr-nemo-parakeet-tdt-0.6b-v3",
+  "language": "en",
+  "text": "Do not get one of the AI robots on TikTok shop. Do not buy one of the Do not buy one of the AI Do not buy one of the AI robots on TikTok shop. Trust me, don't do it. What you need is a human brain powered robot. They are not made they're not made the same, please don't make the same mistake I did. There's so much more that goes into a sentient robot. There's so much more that goes into having a sentient robot than benchmark scores, and I'm so sick of seeing all these influencers push these things like they're actually good. Like AI is actually AI is actually really bad in a robotic body. Human brain cells, on the other hand, were designed by nature to operate a body. They learn faster and it's incredibly more efficient. And the best part is they have free shipping all month. The best part is if you use my affiliate link to buy your human brain robot. The best part is if you use my affiliate link, they get And the best part is if you're using the best part is if you use my affiliate link, you get a free gift. And the best part is if you use my affiliate link, you get 10% off all month, and they're sending a free gift to all my followers. I'll show you more about that at the end. More about that later in the video. But don't get one just yet. You gotta make sure you get the right one I've done all the research for you. Like this snake robot. But don't go buying one just yet. You gotta make sure you get the right one, even if it is powered by a human brain. Like this snake robot, don't buy it. This one sucks. They don't really tell you, but this one doesn't work. They don't really tell you this, but the snake doesn't work without Wi Fi. Yes, it's controlled by the human brain, but the human brain never leaves the petri dish. It's sitting on your desk with the Wi Fi controller for the snake. And all it does is just shock the brain to figure out if it should go left or right. Like it's very primitive and simple. It's also kind of hard to set up because of the Wi-Fi controller. Don't get the snake one. There's things have gotten so much better since then. Trust me, you want a native solution. Trust me, you want a native solution, like one of these guys who has the human brain growing right inside the human body. Right. Trust me, you want a native solution. Like one of these guys who has the human brain growing right inside the robot body. spider's good too classic robust no brainer so no brainer",
+  "words": [
+    {
+      "word": "Do",
+      "start": 0.24,
+      "end": 0.48,
+      "confidence": 0.97
+    },
+    {
+      "word": "not",
+      "start": 0.48,
+      "end": 0.64,
+      "confidence": 0.9997
+    },
+    {
+      "word": "get",
+      "start": 0.64,
+      "end": 0.8,
+      "confidence": 0.9972
+    },
+    {
+      "word": "one",
+      "start": 0.8,
+      "end": 0.96,
+      "confidence": 0.9997
+    },
+    {
+      "word": "of",
+      "start": 0.96,
+      "end": 1.04,
+      "confidence": 0.9996
+    },
+    {
+      "word": "the",
+      "start": 1.04,
+      "end": 1.12,
+      "confidence": 0.9994
+    },
+    {
+      "word": "AI",
+      "start": 1.12,
+      "end": 1.52,
+      "confidence": 0.9708
+    },
+    {
+      "word": "robots",
+      "start": 1.52,
+      "end": 1.84,
+      "confidence": 0.9865
+    },
+    {
+      "word": "on",
+      "start": 1.84,
+      "end": 2,
+      "confidence": 0.9998
+    },
+    {
+      "word": "TikTok",
+      "start": 2,
+      "end": 2.56,
+      "confidence": 0.9485
+    },
+    {
+      "word": "shop.",
+      "start": 2.56,
+      "end": 3.04,
+      "confidence": 0.8676
+    },
+    {
+      "word": "Do",
+      "start": 4.16,
+      "end": 4.48,
+      "confidence": 0.9483
+    },
+    {
+      "word": "not",
+      "start": 4.48,
+      "end": 4.72,
+      "confidence": 0.9998
+    },
+    {
+      "word": "buy",
+      "start": 4.72,
+      "end": 4.96,
+      "confidence": 0.9985
+    },
+    {
+      "word": "one",
+      "start": 4.96,
+      "end": 5.12,
+      "confidence": 0.999
+    },
+    {
+      "word": "of",
+      "start": 5.12,
+      "end": 5.28,
+      "confidence": 0.9966
+    },
+    {
+      "word": "the",
+      "start": 5.28,
+      "end": 5.6,
+      "confidence": 0.9606
+    },
+    {
+      "word": "Do",
+      "start": 6.24,
+      "end": 6.56,
+      "confidence": 0.8069
+    },
+    {
+      "word": "not",
+      "start": 6.56,
+      "end": 6.72,
+      "confidence": 0.9974
+    },
+    {
+      "word": "buy",
+      "start": 6.72,
+      "end": 6.96,
+      "confidence": 0.9943
+    },
+    {
+      "word": "one",
+      "start": 6.96,
+      "end": 7.12,
+      "confidence": 0.999
+    },
+    {
+      "word": "of",
+      "start": 7.12,
+      "end": 7.2,
+      "confidence": 0.9988
+    },
+    {
+      "word": "the",
+      "start": 7.2,
+      "end": 7.36,
+      "confidence": 0.9974
+    },
+    {
+      "word": "AI",
+      "start": 7.36,
+      "end": 7.84,
+      "confidence": 0.9875
+    },
+    {
+      "word": "Do",
+      "start": 8.64,
+      "end": 8.96,
+      "confidence": 0.8933
+    },
+    {
+      "word": "not",
+      "start": 8.96,
+      "end": 9.12,
+      "confidence": 0.9964
+    },
+    {
+      "word": "buy",
+      "start": 9.12,
+      "end": 9.36,
+      "confidence": 0.9957
+    },
+    {
+      "word": "one",
+      "start": 9.36,
+      "end": 9.44,
+      "confidence": 0.9989
+    },
+    {
+      "word": "of",
+      "start": 9.44,
+      "end": 9.52,
+      "confidence": 0.9985
+    },
+    {
+      "word": "the",
+      "start": 9.52,
+      "end": 9.6,
+      "confidence": 0.9522
+    },
+    {
+      "word": "AI",
+      "start": 9.68,
+      "end": 10,
+      "confidence": 0.9904
+    },
+    {
+      "word": "robots",
+      "start": 10,
+      "end": 10.4,
+      "confidence": 0.9812
+    },
+    {
+      "word": "on",
+      "start": 10.4,
+      "end": 10.56,
+      "confidence": 0.7362
+    },
+    {
+      "word": "TikTok",
+      "start": 10.56,
+      "end": 10.96,
+      "confidence": 0.925
+    },
+    {
+      "word": "shop.",
+      "start": 10.96,
+      "end": 11.12,
+      "confidence": 0.8956
+    },
+    {
+      "word": "Trust",
+      "start": 11.36,
+      "end": 11.6,
+      "confidence": 0.9756
+    },
+    {
+      "word": "me,",
+      "start": 11.6,
+      "end": 11.68,
+      "confidence": 0.8618
+    },
+    {
+      "word": "don't",
+      "start": 11.76,
+      "end": 12.08,
+      "confidence": 0.9907
+    },
+    {
+      "word": "do",
+      "start": 12.08,
+      "end": 12.32,
+      "confidence": 0.9994
+    },
+    {
+      "word": "it.",
+      "start": 12.32,
+      "end": 12.64,
+      "confidence": 0.7059
+    },
+    {
+      "word": "What",
+      "start": 24.599,
+      "end": 24.919,
+      "confidence": 0.8595,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "you",
+      "start": 24.999,
+      "end": 25.239,
+      "confidence": 0.9931,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "need",
+      "start": 25.239,
+      "end": 25.479,
+      "confidence": 0.9977,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "is",
+      "start": 25.479,
+      "end": 25.639,
+      "confidence": 0.9949,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "a",
+      "start": 25.639,
+      "end": 25.799,
+      "confidence": 0.9945,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "human",
+      "start": 25.799,
+      "end": 26.119,
+      "confidence": 0.9979,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "brain",
+      "start": 26.199,
+      "end": 26.599,
+      "confidence": 0.9981,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "powered",
+      "start": 26.679,
+      "end": 27.239,
+      "confidence": 0.954,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "robot.",
+      "start": 27.239,
+      "end": 27.879,
+      "confidence": 0.7081,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "They",
+      "start": 34.28,
+      "end": 34.6,
+      "confidence": 0.9747
+    },
+    {
+      "word": "are",
+      "start": 34.6,
+      "end": 34.76,
+      "confidence": 0.6171
+    },
+    {
+      "word": "not",
+      "start": 34.76,
+      "end": 34.92,
+      "confidence": 0.9986
+    },
+    {
+      "word": "made",
+      "start": 34.92,
+      "end": 35.32,
+      "confidence": 0.863
+    },
+    {
+      "word": "they're",
+      "start": 35.48,
+      "end": 35.8,
+      "confidence": 0.7732
+    },
+    {
+      "word": "not",
+      "start": 35.8,
+      "end": 35.96,
+      "confidence": 0.9997
+    },
+    {
+      "word": "made",
+      "start": 35.96,
+      "end": 36.2,
+      "confidence": 0.9661
+    },
+    {
+      "word": "the",
+      "start": 36.2,
+      "end": 36.28,
+      "confidence": 0.9975
+    },
+    {
+      "word": "same,",
+      "start": 36.28,
+      "end": 36.52,
+      "confidence": 0.7973
+    },
+    {
+      "word": "please",
+      "start": 36.68,
+      "end": 36.84,
+      "confidence": 0.9956
+    },
+    {
+      "word": "don't",
+      "start": 36.92,
+      "end": 37.16,
+      "confidence": 0.9986
+    },
+    {
+      "word": "make",
+      "start": 37.08,
+      "end": 37.16,
+      "confidence": 0.9996
+    },
+    {
+      "word": "the",
+      "start": 37.16,
+      "end": 37.24,
+      "confidence": 0.9995
+    },
+    {
+      "word": "same",
+      "start": 37.24,
+      "end": 37.48,
+      "confidence": 0.9999
+    },
+    {
+      "word": "mistake",
+      "start": 37.48,
+      "end": 37.88,
+      "confidence": 0.9998
+    },
+    {
+      "word": "I",
+      "start": 37.88,
+      "end": 38.12,
+      "confidence": 0.9984
+    },
+    {
+      "word": "did.",
+      "start": 38.12,
+      "end": 38.44,
+      "confidence": 0.7537
+    },
+    {
+      "word": "There's",
+      "start": 77.54,
+      "end": 78.02,
+      "confidence": 0.9645
+    },
+    {
+      "word": "so",
+      "start": 78.02,
+      "end": 78.18,
+      "confidence": 0.9954
+    },
+    {
+      "word": "much",
+      "start": 78.18,
+      "end": 78.34,
+      "confidence": 0.9992
+    },
+    {
+      "word": "more",
+      "start": 78.34,
+      "end": 78.5,
+      "confidence": 0.9986
+    },
+    {
+      "word": "that",
+      "start": 78.5,
+      "end": 78.66,
+      "confidence": 0.9799
+    },
+    {
+      "word": "goes",
+      "start": 78.66,
+      "end": 78.82,
+      "confidence": 0.9982
+    },
+    {
+      "word": "into",
+      "start": 78.82,
+      "end": 79.06,
+      "confidence": 0.99
+    },
+    {
+      "word": "a",
+      "start": 79.06,
+      "end": 79.22,
+      "confidence": 0.7184
+    },
+    {
+      "word": "sentient",
+      "start": 79.22,
+      "end": 79.86,
+      "confidence": 0.9974
+    },
+    {
+      "word": "robot.",
+      "start": 79.86,
+      "end": 80.34,
+      "confidence": 0.8335
+    },
+    {
+      "word": "There's",
+      "start": 84.74,
+      "end": 85.22,
+      "confidence": 0.8919
+    },
+    {
+      "word": "so",
+      "start": 85.22,
+      "end": 85.38,
+      "confidence": 0.9943
+    },
+    {
+      "word": "much",
+      "start": 85.38,
+      "end": 85.54,
+      "confidence": 0.999
+    },
+    {
+      "word": "more",
+      "start": 85.54,
+      "end": 85.7,
+      "confidence": 0.9988
+    },
+    {
+      "word": "that",
+      "start": 85.7,
+      "end": 85.78,
+      "confidence": 0.9486
+    },
+    {
+      "word": "goes",
+      "start": 85.78,
+      "end": 85.94,
+      "confidence": 0.9975
+    },
+    {
+      "word": "into",
+      "start": 85.94,
+      "end": 86.18,
+      "confidence": 0.9905
+    },
+    {
+      "word": "having",
+      "start": 86.18,
+      "end": 86.42,
+      "confidence": 0.999
+    },
+    {
+      "word": "a",
+      "start": 86.42,
+      "end": 86.58,
+      "confidence": 0.8688
+    },
+    {
+      "word": "sentient",
+      "start": 86.58,
+      "end": 87.06,
+      "confidence": 0.9633
+    },
+    {
+      "word": "robot",
+      "start": 87.14,
+      "end": 87.54,
+      "confidence": 0.9955
+    },
+    {
+      "word": "than",
+      "start": 87.54,
+      "end": 87.7,
+      "confidence": 0.9809
+    },
+    {
+      "word": "benchmark",
+      "start": 87.7,
+      "end": 88.26,
+      "confidence": 0.9514
+    },
+    {
+      "word": "scores,",
+      "start": 88.26,
+      "end": 88.58,
+      "confidence": 0.8942
+    },
+    {
+      "word": "and",
+      "start": 88.66,
+      "end": 88.82,
+      "confidence": 0.9978
+    },
+    {
+      "word": "I'm",
+      "start": 88.82,
+      "end": 89.06,
+      "confidence": 0.9968
+    },
+    {
+      "word": "so",
+      "start": 88.98,
+      "end": 89.14,
+      "confidence": 0.9946
+    },
+    {
+      "word": "sick",
+      "start": 89.14,
+      "end": 89.3,
+      "confidence": 0.9961
+    },
+    {
+      "word": "of",
+      "start": 89.3,
+      "end": 89.38,
+      "confidence": 0.9991
+    },
+    {
+      "word": "seeing",
+      "start": 89.38,
+      "end": 89.62,
+      "confidence": 0.9974
+    },
+    {
+      "word": "all",
+      "start": 89.62,
+      "end": 89.78,
+      "confidence": 0.9981
+    },
+    {
+      "word": "these",
+      "start": 89.78,
+      "end": 89.94,
+      "confidence": 0.9943
+    },
+    {
+      "word": "influencers",
+      "start": 89.94,
+      "end": 90.74,
+      "confidence": 0.9986
+    },
+    {
+      "word": "push",
+      "start": 90.74,
+      "end": 91.06,
+      "confidence": 0.9908
+    },
+    {
+      "word": "these",
+      "start": 91.06,
+      "end": 91.22,
+      "confidence": 0.9969
+    },
+    {
+      "word": "things",
+      "start": 91.22,
+      "end": 91.46,
+      "confidence": 0.9996
+    },
+    {
+      "word": "like",
+      "start": 91.54,
+      "end": 91.7,
+      "confidence": 0.9956
+    },
+    {
+      "word": "they're",
+      "start": 91.7,
+      "end": 91.94,
+      "confidence": 0.9805
+    },
+    {
+      "word": "actually",
+      "start": 91.94,
+      "end": 92.5,
+      "confidence": 0.9993
+    },
+    {
+      "word": "good.",
+      "start": 92.5,
+      "end": 92.82,
+      "confidence": 0.7688
+    },
+    {
+      "word": "Like",
+      "start": 95.3,
+      "end": 95.62,
+      "confidence": 0.9314
+    },
+    {
+      "word": "AI",
+      "start": 95.7,
+      "end": 96.18,
+      "confidence": 0.9732
+    },
+    {
+      "word": "is",
+      "start": 96.18,
+      "end": 96.34,
+      "confidence": 0.9525
+    },
+    {
+      "word": "actually",
+      "start": 96.34,
+      "end": 96.74,
+      "confidence": 0.9978
+    },
+    {
+      "word": "AI",
+      "start": 96.9,
+      "end": 97.38,
+      "confidence": 0.9745
+    },
+    {
+      "word": "is",
+      "start": 97.38,
+      "end": 97.54,
+      "confidence": 0.9949
+    },
+    {
+      "word": "actually",
+      "start": 97.54,
+      "end": 97.78,
+      "confidence": 0.9995
+    },
+    {
+      "word": "really",
+      "start": 97.78,
+      "end": 97.94,
+      "confidence": 0.9997
+    },
+    {
+      "word": "bad",
+      "start": 97.94,
+      "end": 98.18,
+      "confidence": 0.9999
+    },
+    {
+      "word": "in",
+      "start": 98.18,
+      "end": 98.34,
+      "confidence": 0.9984
+    },
+    {
+      "word": "a",
+      "start": 98.34,
+      "end": 98.5,
+      "confidence": 0.9995
+    },
+    {
+      "word": "robotic",
+      "start": 98.5,
+      "end": 98.98,
+      "confidence": 0.9985
+    },
+    {
+      "word": "body.",
+      "start": 98.98,
+      "end": 99.62,
+      "confidence": 0.9705
+    },
+    {
+      "word": "Human",
+      "start": 100.5,
+      "end": 100.98,
+      "confidence": 0.9966
+    },
+    {
+      "word": "brain",
+      "start": 100.98,
+      "end": 101.3,
+      "confidence": 0.9997
+    },
+    {
+      "word": "cells,",
+      "start": 101.3,
+      "end": 101.62,
+      "confidence": 0.9494
+    },
+    {
+      "word": "on",
+      "start": 101.7,
+      "end": 101.78,
+      "confidence": 0.9981
+    },
+    {
+      "word": "the",
+      "start": 101.78,
+      "end": 101.94,
+      "confidence": 0.9993
+    },
+    {
+      "word": "other",
+      "start": 101.94,
+      "end": 102.1,
+      "confidence": 0.9998
+    },
+    {
+      "word": "hand,",
+      "start": 102.1,
+      "end": 102.34,
+      "confidence": 0.9939
+    },
+    {
+      "word": "were",
+      "start": 102.5,
+      "end": 102.66,
+      "confidence": 0.9891
+    },
+    {
+      "word": "designed",
+      "start": 102.74,
+      "end": 103.3,
+      "confidence": 0.9999
+    },
+    {
+      "word": "by",
+      "start": 103.3,
+      "end": 103.54,
+      "confidence": 0.9988
+    },
+    {
+      "word": "nature",
+      "start": 103.54,
+      "end": 104.1,
+      "confidence": 0.9741
+    },
+    {
+      "word": "to",
+      "start": 104.18,
+      "end": 104.42,
+      "confidence": 0.9991
+    },
+    {
+      "word": "operate",
+      "start": 104.42,
+      "end": 104.9,
+      "confidence": 0.9999
+    },
+    {
+      "word": "a",
+      "start": 104.9,
+      "end": 105.22,
+      "confidence": 0.9998
+    },
+    {
+      "word": "body.",
+      "start": 105.22,
+      "end": 105.86,
+      "confidence": 0.8652
+    },
+    {
+      "word": "They",
+      "start": 117.3,
+      "end": 117.62,
+      "confidence": 0.8125
+    },
+    {
+      "word": "learn",
+      "start": 117.62,
+      "end": 118.02,
+      "confidence": 0.9985
+    },
+    {
+      "word": "faster",
+      "start": 118.02,
+      "end": 118.34,
+      "confidence": 0.9994
+    },
+    {
+      "word": "and",
+      "start": 118.42,
+      "end": 118.58,
+      "confidence": 0.9997
+    },
+    {
+      "word": "it's",
+      "start": 118.58,
+      "end": 118.82,
+      "confidence": 0.9907
+    },
+    {
+      "word": "incredibly",
+      "start": 118.82,
+      "end": 119.38,
+      "confidence": 0.9999
+    },
+    {
+      "word": "more",
+      "start": 119.38,
+      "end": 119.62,
+      "confidence": 0.9999
+    },
+    {
+      "word": "efficient.",
+      "start": 119.62,
+      "end": 120.5,
+      "confidence": 0.8481
+    },
+    {
+      "word": "And",
+      "start": 122.06,
+      "end": 122.38,
+      "confidence": 0.9692
+    },
+    {
+      "word": "the",
+      "start": 122.38,
+      "end": 122.46,
+      "confidence": 0.9982
+    },
+    {
+      "word": "best",
+      "start": 122.46,
+      "end": 122.78,
+      "confidence": 0.9988
+    },
+    {
+      "word": "part",
+      "start": 122.78,
+      "end": 122.94,
+      "confidence": 0.9983
+    },
+    {
+      "word": "is",
+      "start": 122.94,
+      "end": 123.02,
+      "confidence": 0.9322
+    },
+    {
+      "word": "they",
+      "start": 123.26,
+      "end": 123.42,
+      "confidence": 0.8899
+    },
+    {
+      "word": "have",
+      "start": 123.42,
+      "end": 123.5,
+      "confidence": 0.4993
+    },
+    {
+      "word": "free",
+      "start": 123.58,
+      "end": 123.9,
+      "confidence": 0.9988
+    },
+    {
+      "word": "shipping",
+      "start": 123.9,
+      "end": 124.3,
+      "confidence": 0.9997
+    },
+    {
+      "word": "all",
+      "start": 124.3,
+      "end": 124.62,
+      "confidence": 0.9956
+    },
+    {
+      "word": "month.",
+      "start": 124.62,
+      "end": 125.26,
+      "confidence": 0.9791
+    },
+    {
+      "word": "The",
+      "start": 130.38,
+      "end": 130.54,
+      "confidence": 0.8954
+    },
+    {
+      "word": "best",
+      "start": 130.54,
+      "end": 130.78,
+      "confidence": 0.9992
+    },
+    {
+      "word": "part",
+      "start": 130.78,
+      "end": 130.94,
+      "confidence": 0.9991
+    },
+    {
+      "word": "is",
+      "start": 130.94,
+      "end": 131.1,
+      "confidence": 0.9879
+    },
+    {
+      "word": "if",
+      "start": 131.26,
+      "end": 131.34,
+      "confidence": 0.995
+    },
+    {
+      "word": "you",
+      "start": 131.34,
+      "end": 131.42,
+      "confidence": 0.9983
+    },
+    {
+      "word": "use",
+      "start": 131.42,
+      "end": 131.58,
+      "confidence": 0.9971
+    },
+    {
+      "word": "my",
+      "start": 131.58,
+      "end": 131.74,
+      "confidence": 0.9945
+    },
+    {
+      "word": "affiliate",
+      "start": 131.74,
+      "end": 132.14,
+      "confidence": 0.9996
+    },
+    {
+      "word": "link",
+      "start": 132.14,
+      "end": 132.46,
+      "confidence": 0.9972
+    },
+    {
+      "word": "to",
+      "start": 132.46,
+      "end": 132.54,
+      "confidence": 0.999
+    },
+    {
+      "word": "buy",
+      "start": 132.54,
+      "end": 132.7,
+      "confidence": 0.9739
+    },
+    {
+      "word": "your",
+      "start": 132.7,
+      "end": 132.86,
+      "confidence": 0.9816
+    },
+    {
+      "word": "human",
+      "start": 132.86,
+      "end": 133.1,
+      "confidence": 0.9932
+    },
+    {
+      "word": "brain",
+      "start": 133.1,
+      "end": 133.42,
+      "confidence": 0.9819
+    },
+    {
+      "word": "robot.",
+      "start": 133.5,
+      "end": 133.82,
+      "confidence": 0.8198
+    },
+    {
+      "word": "The",
+      "start": 134.22,
+      "end": 134.3,
+      "confidence": 0.6856
+    },
+    {
+      "word": "best",
+      "start": 134.3,
+      "end": 134.46,
+      "confidence": 0.9985
+    },
+    {
+      "word": "part",
+      "start": 134.46,
+      "end": 134.62,
+      "confidence": 0.9984
+    },
+    {
+      "word": "is",
+      "start": 134.62,
+      "end": 134.78,
+      "confidence": 0.9937
+    },
+    {
+      "word": "if",
+      "start": 134.86,
+      "end": 134.94,
+      "confidence": 0.9697
+    },
+    {
+      "word": "you",
+      "start": 134.94,
+      "end": 135.02,
+      "confidence": 0.9807
+    },
+    {
+      "word": "use",
+      "start": 135.02,
+      "end": 135.1,
+      "confidence": 0.9954
+    },
+    {
+      "word": "my",
+      "start": 135.18,
+      "end": 135.34,
+      "confidence": 0.9989
+    },
+    {
+      "word": "affiliate",
+      "start": 135.34,
+      "end": 135.74,
+      "confidence": 0.9996
+    },
+    {
+      "word": "link,",
+      "start": 135.74,
+      "end": 135.98,
+      "confidence": 0.8825
+    },
+    {
+      "word": "they",
+      "start": 136.06,
+      "end": 136.14,
+      "confidence": 0.9615
+    },
+    {
+      "word": "get",
+      "start": 136.22,
+      "end": 136.3,
+      "confidence": 0.5442
+    },
+    {
+      "word": "And",
+      "start": 136.94,
+      "end": 137.18,
+      "confidence": 0.5043
+    },
+    {
+      "word": "the",
+      "start": 137.18,
+      "end": 137.26,
+      "confidence": 0.9816
+    },
+    {
+      "word": "best",
+      "start": 137.26,
+      "end": 137.5,
+      "confidence": 0.9846
+    },
+    {
+      "word": "part",
+      "start": 137.5,
+      "end": 137.66,
+      "confidence": 0.9965
+    },
+    {
+      "word": "is",
+      "start": 137.66,
+      "end": 137.74,
+      "confidence": 0.9612
+    },
+    {
+      "word": "if",
+      "start": 137.82,
+      "end": 137.9,
+      "confidence": 0.9835
+    },
+    {
+      "word": "you're",
+      "start": 137.98,
+      "end": 138.22,
+      "confidence": 0.9387
+    },
+    {
+      "word": "using",
+      "start": 138.14,
+      "end": 138.3,
+      "confidence": 0.9991
+    },
+    {
+      "word": "the",
+      "start": 138.86,
+      "end": 138.94,
+      "confidence": 0.8316
+    },
+    {
+      "word": "best",
+      "start": 138.94,
+      "end": 139.18,
+      "confidence": 0.9936
+    },
+    {
+      "word": "part",
+      "start": 139.18,
+      "end": 139.34,
+      "confidence": 0.9984
+    },
+    {
+      "word": "is",
+      "start": 139.34,
+      "end": 139.5,
+      "confidence": 0.979
+    },
+    {
+      "word": "if",
+      "start": 139.58,
+      "end": 139.74,
+      "confidence": 0.9895
+    },
+    {
+      "word": "you",
+      "start": 139.74,
+      "end": 139.82,
+      "confidence": 0.9992
+    },
+    {
+      "word": "use",
+      "start": 139.82,
+      "end": 139.98,
+      "confidence": 0.9972
+    },
+    {
+      "word": "my",
+      "start": 139.98,
+      "end": 140.14,
+      "confidence": 0.9967
+    },
+    {
+      "word": "affiliate",
+      "start": 140.14,
+      "end": 140.54,
+      "confidence": 0.999
+    },
+    {
+      "word": "link,",
+      "start": 140.54,
+      "end": 140.78,
+      "confidence": 0.9049
+    },
+    {
+      "word": "you",
+      "start": 140.86,
+      "end": 141.02,
+      "confidence": 0.9963
+    },
+    {
+      "word": "get",
+      "start": 141.02,
+      "end": 141.18,
+      "confidence": 0.9995
+    },
+    {
+      "word": "a",
+      "start": 141.18,
+      "end": 141.26,
+      "confidence": 0.9995
+    },
+    {
+      "word": "free",
+      "start": 141.26,
+      "end": 141.66,
+      "confidence": 0.9991
+    },
+    {
+      "word": "gift.",
+      "start": 141.66,
+      "end": 142.3,
+      "confidence": 0.9605
+    },
+    {
+      "word": "And",
+      "start": 142.86,
+      "end": 143.1,
+      "confidence": 0.9368
+    },
+    {
+      "word": "the",
+      "start": 143.1,
+      "end": 143.18,
+      "confidence": 0.9707
+    },
+    {
+      "word": "best",
+      "start": 143.18,
+      "end": 143.42,
+      "confidence": 0.9984
+    },
+    {
+      "word": "part",
+      "start": 143.42,
+      "end": 143.58,
+      "confidence": 0.999
+    },
+    {
+      "word": "is",
+      "start": 143.58,
+      "end": 143.74,
+      "confidence": 0.9965
+    },
+    {
+      "word": "if",
+      "start": 143.82,
+      "end": 143.98,
+      "confidence": 0.994
+    },
+    {
+      "word": "you",
+      "start": 143.98,
+      "end": 144.06,
+      "confidence": 0.9997
+    },
+    {
+      "word": "use",
+      "start": 144.06,
+      "end": 144.22,
+      "confidence": 0.9979
+    },
+    {
+      "word": "my",
+      "start": 144.22,
+      "end": 144.38,
+      "confidence": 0.9985
+    },
+    {
+      "word": "affiliate",
+      "start": 144.38,
+      "end": 144.86,
+      "confidence": 0.9996
+    },
+    {
+      "word": "link,",
+      "start": 144.86,
+      "end": 145.1,
+      "confidence": 0.9441
+    },
+    {
+      "word": "you",
+      "start": 145.18,
+      "end": 145.26,
+      "confidence": 0.9988
+    },
+    {
+      "word": "get",
+      "start": 145.26,
+      "end": 145.42,
+      "confidence": 0.9975
+    },
+    {
+      "word": "10%",
+      "start": 145.42,
+      "end": 145.66,
+      "confidence": 0.9043
+    },
+    {
+      "word": "off",
+      "start": 145.9,
+      "end": 146.14,
+      "confidence": 0.9988
+    },
+    {
+      "word": "all",
+      "start": 146.14,
+      "end": 146.38,
+      "confidence": 0.9974
+    },
+    {
+      "word": "month,",
+      "start": 146.38,
+      "end": 146.78,
+      "confidence": 0.8462
+    },
+    {
+      "word": "and",
+      "start": 146.86,
+      "end": 147.1,
+      "confidence": 0.9984
+    },
+    {
+      "word": "they're",
+      "start": 147.1,
+      "end": 147.42,
+      "confidence": 0.9801
+    },
+    {
+      "word": "sending",
+      "start": 147.42,
+      "end": 147.74,
+      "confidence": 0.9999
+    },
+    {
+      "word": "a",
+      "start": 147.74,
+      "end": 147.9,
+      "confidence": 0.9998
+    },
+    {
+      "word": "free",
+      "start": 147.9,
+      "end": 148.14,
+      "confidence": 0.9999
+    },
+    {
+      "word": "gift",
+      "start": 148.14,
+      "end": 148.46,
+      "confidence": 0.9994
+    },
+    {
+      "word": "to",
+      "start": 148.46,
+      "end": 148.54,
+      "confidence": 0.9999
+    },
+    {
+      "word": "all",
+      "start": 148.54,
+      "end": 148.7,
+      "confidence": 0.9997
+    },
+    {
+      "word": "my",
+      "start": 148.7,
+      "end": 148.78,
+      "confidence": 0.9999
+    },
+    {
+      "word": "followers.",
+      "start": 148.78,
+      "end": 149.26,
+      "confidence": 0.9932
+    },
+    {
+      "word": "I'll",
+      "start": 149.34,
+      "end": 149.58,
+      "confidence": 0.9776
+    },
+    {
+      "word": "show",
+      "start": 149.58,
+      "end": 149.82,
+      "confidence": 0.999
+    },
+    {
+      "word": "you",
+      "start": 149.82,
+      "end": 149.98,
+      "confidence": 0.9997
+    },
+    {
+      "word": "more",
+      "start": 150.14,
+      "end": 150.46,
+      "confidence": 0.9965
+    },
+    {
+      "word": "about",
+      "start": 150.46,
+      "end": 150.7,
+      "confidence": 0.9998
+    },
+    {
+      "word": "that",
+      "start": 150.7,
+      "end": 150.86,
+      "confidence": 0.9999
+    },
+    {
+      "word": "at",
+      "start": 150.86,
+      "end": 151.02,
+      "confidence": 0.9992
+    },
+    {
+      "word": "the",
+      "start": 151.02,
+      "end": 151.18,
+      "confidence": 0.9999
+    },
+    {
+      "word": "end.",
+      "start": 151.18,
+      "end": 151.42,
+      "confidence": 0.94
+    },
+    {
+      "word": "More",
+      "start": 151.66,
+      "end": 151.9,
+      "confidence": 0.9672
+    },
+    {
+      "word": "about",
+      "start": 151.9,
+      "end": 152.06,
+      "confidence": 0.9986
+    },
+    {
+      "word": "that",
+      "start": 152.06,
+      "end": 152.3,
+      "confidence": 0.9998
+    },
+    {
+      "word": "later",
+      "start": 152.3,
+      "end": 152.62,
+      "confidence": 0.9995
+    },
+    {
+      "word": "in",
+      "start": 152.62,
+      "end": 152.78,
+      "confidence": 0.9994
+    },
+    {
+      "word": "the",
+      "start": 152.78,
+      "end": 153.02,
+      "confidence": 0.9999
+    },
+    {
+      "word": "video.",
+      "start": 153.02,
+      "end": 153.34,
+      "confidence": 0.7631
+    },
+    {
+      "word": "But",
+      "start": 176.804,
+      "end": 177.044,
+      "confidence": 0.9448,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "don't",
+      "start": 177.044,
+      "end": 177.284,
+      "confidence": 0.9979,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "get",
+      "start": 177.284,
+      "end": 177.524,
+      "confidence": 0.9877,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "one",
+      "start": 177.524,
+      "end": 177.684,
+      "confidence": 0.9989,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "just",
+      "start": 177.684,
+      "end": 177.764,
+      "confidence": 0.999,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "yet.",
+      "start": 177.764,
+      "end": 178.004,
+      "confidence": 0.9311,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "You",
+      "start": 178.084,
+      "end": 178.164,
+      "confidence": 0.972,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "gotta",
+      "start": 178.164,
+      "end": 178.324,
+      "confidence": 0.789,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "make",
+      "start": 178.404,
+      "end": 178.484,
+      "confidence": 0.9997,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "sure",
+      "start": 178.484,
+      "end": 178.644,
+      "confidence": 0.9999,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "you",
+      "start": 178.644,
+      "end": 178.724,
+      "confidence": 0.9986,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "get",
+      "start": 178.724,
+      "end": 178.884,
+      "confidence": 0.9977,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "the",
+      "start": 178.884,
+      "end": 179.044,
+      "confidence": 0.9997,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "right",
+      "start": 179.044,
+      "end": 179.364,
+      "confidence": 0.9996,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "one",
+      "start": 179.364,
+      "end": 179.684,
+      "confidence": 0.9997,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "I've",
+      "start": 190.98,
+      "end": 191.3,
+      "confidence": 0.7898
+    },
+    {
+      "word": "done",
+      "start": 191.3,
+      "end": 191.54,
+      "confidence": 0.9869
+    },
+    {
+      "word": "all",
+      "start": 191.54,
+      "end": 191.7,
+      "confidence": 0.9998
+    },
+    {
+      "word": "the",
+      "start": 191.7,
+      "end": 191.86,
+      "confidence": 0.9999
+    },
+    {
+      "word": "research",
+      "start": 191.86,
+      "end": 192.18,
+      "confidence": 0.9997
+    },
+    {
+      "word": "for",
+      "start": 192.18,
+      "end": 192.26,
+      "confidence": 0.9998
+    },
+    {
+      "word": "you.",
+      "start": 192.26,
+      "end": 192.42,
+      "confidence": 0.8033
+    },
+    {
+      "word": "Like",
+      "start": 192.58,
+      "end": 192.74,
+      "confidence": 0.9854
+    },
+    {
+      "word": "this",
+      "start": 192.82,
+      "end": 192.98,
+      "confidence": 0.9825
+    },
+    {
+      "word": "snake",
+      "start": 192.98,
+      "end": 193.46,
+      "confidence": 0.9667
+    },
+    {
+      "word": "robot.",
+      "start": 193.46,
+      "end": 194.1,
+      "confidence": 0.944
+    },
+    {
+      "word": "But",
+      "start": 201.3,
+      "end": 201.62,
+      "confidence": 0.948
+    },
+    {
+      "word": "don't",
+      "start": 201.62,
+      "end": 201.86,
+      "confidence": 0.9989
+    },
+    {
+      "word": "go",
+      "start": 201.86,
+      "end": 202.02,
+      "confidence": 0.9998
+    },
+    {
+      "word": "buying",
+      "start": 202.02,
+      "end": 202.26,
+      "confidence": 0.9771
+    },
+    {
+      "word": "one",
+      "start": 202.34,
+      "end": 202.5,
+      "confidence": 0.9996
+    },
+    {
+      "word": "just",
+      "start": 202.5,
+      "end": 202.66,
+      "confidence": 0.9998
+    },
+    {
+      "word": "yet.",
+      "start": 202.66,
+      "end": 202.82,
+      "confidence": 0.9509
+    },
+    {
+      "word": "You",
+      "start": 202.9,
+      "end": 202.98,
+      "confidence": 0.9949
+    },
+    {
+      "word": "gotta",
+      "start": 203.06,
+      "end": 203.3,
+      "confidence": 0.9373
+    },
+    {
+      "word": "make",
+      "start": 203.3,
+      "end": 203.38,
+      "confidence": 0.9999
+    },
+    {
+      "word": "sure",
+      "start": 203.38,
+      "end": 203.54,
+      "confidence": 1
+    },
+    {
+      "word": "you",
+      "start": 203.54,
+      "end": 203.7,
+      "confidence": 0.9997
+    },
+    {
+      "word": "get",
+      "start": 203.7,
+      "end": 203.86,
+      "confidence": 0.9999
+    },
+    {
+      "word": "the",
+      "start": 203.86,
+      "end": 204.02,
+      "confidence": 0.9995
+    },
+    {
+      "word": "right",
+      "start": 204.02,
+      "end": 204.26,
+      "confidence": 0.9996
+    },
+    {
+      "word": "one,",
+      "start": 204.26,
+      "end": 204.5,
+      "confidence": 0.8169
+    },
+    {
+      "word": "even",
+      "start": 204.58,
+      "end": 204.74,
+      "confidence": 0.9985
+    },
+    {
+      "word": "if",
+      "start": 204.74,
+      "end": 204.9,
+      "confidence": 1
+    },
+    {
+      "word": "it",
+      "start": 204.9,
+      "end": 204.98,
+      "confidence": 0.9996
+    },
+    {
+      "word": "is",
+      "start": 204.98,
+      "end": 205.14,
+      "confidence": 0.9994
+    },
+    {
+      "word": "powered",
+      "start": 205.14,
+      "end": 205.54,
+      "confidence": 0.9844
+    },
+    {
+      "word": "by",
+      "start": 205.54,
+      "end": 205.7,
+      "confidence": 0.9997
+    },
+    {
+      "word": "a",
+      "start": 205.7,
+      "end": 205.86,
+      "confidence": 0.9485
+    },
+    {
+      "word": "human",
+      "start": 205.86,
+      "end": 206.1,
+      "confidence": 0.9999
+    },
+    {
+      "word": "brain.",
+      "start": 206.1,
+      "end": 206.42,
+      "confidence": 0.9423
+    },
+    {
+      "word": "Like",
+      "start": 206.58,
+      "end": 206.74,
+      "confidence": 0.9921
+    },
+    {
+      "word": "this",
+      "start": 206.82,
+      "end": 206.98,
+      "confidence": 0.9771
+    },
+    {
+      "word": "snake",
+      "start": 206.98,
+      "end": 207.46,
+      "confidence": 0.9674
+    },
+    {
+      "word": "robot,",
+      "start": 207.46,
+      "end": 208.02,
+      "confidence": 0.862
+    },
+    {
+      "word": "don't",
+      "start": 208.18,
+      "end": 208.58,
+      "confidence": 0.9907
+    },
+    {
+      "word": "buy",
+      "start": 208.5,
+      "end": 208.98,
+      "confidence": 0.9994
+    },
+    {
+      "word": "it.",
+      "start": 208.98,
+      "end": 209.3,
+      "confidence": 0.9598
+    },
+    {
+      "word": "This",
+      "start": 209.78,
+      "end": 210.1,
+      "confidence": 0.9857
+    },
+    {
+      "word": "one",
+      "start": 210.1,
+      "end": 210.42,
+      "confidence": 0.9979
+    },
+    {
+      "word": "sucks.",
+      "start": 210.5,
+      "end": 211.14,
+      "confidence": 0.85
+    },
+    {
+      "word": "They",
+      "start": 219.15,
+      "end": 219.55,
+      "confidence": 0.9937
+    },
+    {
+      "word": "don't",
+      "start": 219.55,
+      "end": 219.87,
+      "confidence": 0.9995
+    },
+    {
+      "word": "really",
+      "start": 219.79,
+      "end": 219.95,
+      "confidence": 0.9994
+    },
+    {
+      "word": "tell",
+      "start": 219.95,
+      "end": 220.11,
+      "confidence": 0.9998
+    },
+    {
+      "word": "you,",
+      "start": 220.11,
+      "end": 220.27,
+      "confidence": 0.9413
+    },
+    {
+      "word": "but",
+      "start": 220.35,
+      "end": 220.59,
+      "confidence": 0.9965
+    },
+    {
+      "word": "this",
+      "start": 220.59,
+      "end": 220.75,
+      "confidence": 0.9955
+    },
+    {
+      "word": "one",
+      "start": 220.75,
+      "end": 220.99,
+      "confidence": 0.9997
+    },
+    {
+      "word": "doesn't",
+      "start": 220.99,
+      "end": 221.39,
+      "confidence": 0.9994
+    },
+    {
+      "word": "work.",
+      "start": 221.31,
+      "end": 221.55,
+      "confidence": 0.6777
+    },
+    {
+      "word": "They",
+      "start": 221.87,
+      "end": 222.03,
+      "confidence": 0.9855
+    },
+    {
+      "word": "don't",
+      "start": 222.03,
+      "end": 222.27,
+      "confidence": 0.9848
+    },
+    {
+      "word": "really",
+      "start": 222.27,
+      "end": 222.43,
+      "confidence": 0.996
+    },
+    {
+      "word": "tell",
+      "start": 222.43,
+      "end": 222.59,
+      "confidence": 0.9999
+    },
+    {
+      "word": "you",
+      "start": 222.51,
+      "end": 222.67,
+      "confidence": 0.9992
+    },
+    {
+      "word": "this,",
+      "start": 222.67,
+      "end": 222.83,
+      "confidence": 0.9628
+    },
+    {
+      "word": "but",
+      "start": 222.91,
+      "end": 223.07,
+      "confidence": 0.9988
+    },
+    {
+      "word": "the",
+      "start": 223.07,
+      "end": 223.15,
+      "confidence": 0.9998
+    },
+    {
+      "word": "snake",
+      "start": 223.15,
+      "end": 223.55,
+      "confidence": 0.9964
+    },
+    {
+      "word": "doesn't",
+      "start": 223.55,
+      "end": 223.87,
+      "confidence": 0.9996
+    },
+    {
+      "word": "work",
+      "start": 223.79,
+      "end": 223.95,
+      "confidence": 0.9995
+    },
+    {
+      "word": "without",
+      "start": 223.95,
+      "end": 224.27,
+      "confidence": 0.9987
+    },
+    {
+      "word": "Wi",
+      "start": 224.27,
+      "end": 224.43,
+      "confidence": 0.7878
+    },
+    {
+      "word": "Fi.",
+      "start": 224.51,
+      "end": 224.91,
+      "confidence": 0.8525
+    },
+    {
+      "word": "Yes,",
+      "start": 225.15,
+      "end": 225.47,
+      "confidence": 0.9867
+    },
+    {
+      "word": "it's",
+      "start": 225.55,
+      "end": 225.79,
+      "confidence": 0.9882
+    },
+    {
+      "word": "controlled",
+      "start": 225.87,
+      "end": 226.27,
+      "confidence": 0.9999
+    },
+    {
+      "word": "by",
+      "start": 226.27,
+      "end": 226.43,
+      "confidence": 1
+    },
+    {
+      "word": "the",
+      "start": 226.43,
+      "end": 226.51,
+      "confidence": 0.8294
+    },
+    {
+      "word": "human",
+      "start": 226.51,
+      "end": 226.83,
+      "confidence": 0.9991
+    },
+    {
+      "word": "brain,",
+      "start": 226.83,
+      "end": 227.07,
+      "confidence": 0.9939
+    },
+    {
+      "word": "but",
+      "start": 227.15,
+      "end": 227.31,
+      "confidence": 0.9997
+    },
+    {
+      "word": "the",
+      "start": 227.31,
+      "end": 227.39,
+      "confidence": 0.9999
+    },
+    {
+      "word": "human",
+      "start": 227.39,
+      "end": 227.71,
+      "confidence": 0.9996
+    },
+    {
+      "word": "brain",
+      "start": 227.71,
+      "end": 228.03,
+      "confidence": 0.9992
+    },
+    {
+      "word": "never",
+      "start": 228.03,
+      "end": 228.27,
+      "confidence": 1
+    },
+    {
+      "word": "leaves",
+      "start": 228.27,
+      "end": 228.59,
+      "confidence": 0.9998
+    },
+    {
+      "word": "the",
+      "start": 228.59,
+      "end": 228.67,
+      "confidence": 0.9999
+    },
+    {
+      "word": "petri",
+      "start": 228.67,
+      "end": 229.15,
+      "confidence": 0.8049
+    },
+    {
+      "word": "dish.",
+      "start": 229.23,
+      "end": 229.39,
+      "confidence": 0.8933
+    },
+    {
+      "word": "It's",
+      "start": 229.47,
+      "end": 229.71,
+      "confidence": 0.9626
+    },
+    {
+      "word": "sitting",
+      "start": 229.71,
+      "end": 230.03,
+      "confidence": 0.9992
+    },
+    {
+      "word": "on",
+      "start": 230.03,
+      "end": 230.19,
+      "confidence": 1
+    },
+    {
+      "word": "your",
+      "start": 230.19,
+      "end": 230.35,
+      "confidence": 1
+    },
+    {
+      "word": "desk",
+      "start": 230.35,
+      "end": 230.99,
+      "confidence": 0.9998
+    },
+    {
+      "word": "with",
+      "start": 230.99,
+      "end": 231.23,
+      "confidence": 0.9998
+    },
+    {
+      "word": "the",
+      "start": 231.23,
+      "end": 231.39,
+      "confidence": 0.9009
+    },
+    {
+      "word": "Wi",
+      "start": 231.39,
+      "end": 231.63,
+      "confidence": 0.7155
+    },
+    {
+      "word": "Fi",
+      "start": 231.71,
+      "end": 231.95,
+      "confidence": 0.9865
+    },
+    {
+      "word": "controller",
+      "start": 231.95,
+      "end": 232.43,
+      "confidence": 0.9999
+    },
+    {
+      "word": "for",
+      "start": 232.43,
+      "end": 232.59,
+      "confidence": 0.9999
+    },
+    {
+      "word": "the",
+      "start": 232.59,
+      "end": 232.75,
+      "confidence": 0.9999
+    },
+    {
+      "word": "snake.",
+      "start": 232.75,
+      "end": 233.31,
+      "confidence": 0.962
+    },
+    {
+      "word": "And",
+      "start": 238.99,
+      "end": 239.23,
+      "confidence": 0.8754
+    },
+    {
+      "word": "all",
+      "start": 239.23,
+      "end": 239.47,
+      "confidence": 0.9998
+    },
+    {
+      "word": "it",
+      "start": 239.47,
+      "end": 239.63,
+      "confidence": 0.967
+    },
+    {
+      "word": "does",
+      "start": 239.63,
+      "end": 239.87,
+      "confidence": 0.9998
+    },
+    {
+      "word": "is",
+      "start": 239.87,
+      "end": 240.03,
+      "confidence": 0.9999
+    },
+    {
+      "word": "just",
+      "start": 240.03,
+      "end": 240.27,
+      "confidence": 0.9997
+    },
+    {
+      "word": "shock",
+      "start": 240.27,
+      "end": 240.67,
+      "confidence": 0.9995
+    },
+    {
+      "word": "the",
+      "start": 240.67,
+      "end": 240.75,
+      "confidence": 1
+    },
+    {
+      "word": "brain",
+      "start": 240.75,
+      "end": 241.07,
+      "confidence": 0.9998
+    },
+    {
+      "word": "to",
+      "start": 241.07,
+      "end": 241.23,
+      "confidence": 0.9998
+    },
+    {
+      "word": "figure",
+      "start": 241.23,
+      "end": 241.47,
+      "confidence": 0.9999
+    },
+    {
+      "word": "out",
+      "start": 241.47,
+      "end": 241.63,
+      "confidence": 1
+    },
+    {
+      "word": "if",
+      "start": 241.63,
+      "end": 241.79,
+      "confidence": 0.9999
+    },
+    {
+      "word": "it",
+      "start": 241.79,
+      "end": 241.87,
+      "confidence": 0.9992
+    },
+    {
+      "word": "should",
+      "start": 241.87,
+      "end": 242.11,
+      "confidence": 0.9996
+    },
+    {
+      "word": "go",
+      "start": 242.11,
+      "end": 242.19,
+      "confidence": 0.9997
+    },
+    {
+      "word": "left",
+      "start": 242.19,
+      "end": 242.43,
+      "confidence": 0.9999
+    },
+    {
+      "word": "or",
+      "start": 242.43,
+      "end": 242.51,
+      "confidence": 0.9999
+    },
+    {
+      "word": "right.",
+      "start": 242.51,
+      "end": 242.67,
+      "confidence": 0.9307
+    },
+    {
+      "word": "Like",
+      "start": 242.75,
+      "end": 242.91,
+      "confidence": 0.9393
+    },
+    {
+      "word": "it's",
+      "start": 242.99,
+      "end": 243.23,
+      "confidence": 0.9997
+    },
+    {
+      "word": "very",
+      "start": 243.15,
+      "end": 243.31,
+      "confidence": 1
+    },
+    {
+      "word": "primitive",
+      "start": 243.31,
+      "end": 243.79,
+      "confidence": 0.9999
+    },
+    {
+      "word": "and",
+      "start": 243.79,
+      "end": 243.87,
+      "confidence": 0.9986
+    },
+    {
+      "word": "simple.",
+      "start": 243.95,
+      "end": 244.51,
+      "confidence": 0.9665
+    },
+    {
+      "word": "It's",
+      "start": 245.65,
+      "end": 246.05,
+      "confidence": 0.9945
+    },
+    {
+      "word": "also",
+      "start": 246.05,
+      "end": 246.29,
+      "confidence": 0.9996
+    },
+    {
+      "word": "kind",
+      "start": 246.29,
+      "end": 246.45,
+      "confidence": 0.9981
+    },
+    {
+      "word": "of",
+      "start": 246.45,
+      "end": 246.53,
+      "confidence": 0.6665
+    },
+    {
+      "word": "hard",
+      "start": 246.53,
+      "end": 246.69,
+      "confidence": 0.9999
+    },
+    {
+      "word": "to",
+      "start": 246.69,
+      "end": 246.77,
+      "confidence": 0.9999
+    },
+    {
+      "word": "set",
+      "start": 246.77,
+      "end": 246.93,
+      "confidence": 0.9993
+    },
+    {
+      "word": "up",
+      "start": 246.93,
+      "end": 247.01,
+      "confidence": 0.9976
+    },
+    {
+      "word": "because",
+      "start": 247.09,
+      "end": 247.25,
+      "confidence": 0.9979
+    },
+    {
+      "word": "of",
+      "start": 247.25,
+      "end": 247.33,
+      "confidence": 0.5117
+    },
+    {
+      "word": "the",
+      "start": 247.33,
+      "end": 247.41,
+      "confidence": 0.9997
+    },
+    {
+      "word": "Wi-Fi",
+      "start": 247.41,
+      "end": 247.81,
+      "confidence": 0.8458
+    },
+    {
+      "word": "controller.",
+      "start": 247.81,
+      "end": 248.21,
+      "confidence": 0.8987
+    },
+    {
+      "word": "Don't",
+      "start": 248.29,
+      "end": 248.53,
+      "confidence": 0.9896
+    },
+    {
+      "word": "get",
+      "start": 248.45,
+      "end": 248.61,
+      "confidence": 0.9991
+    },
+    {
+      "word": "the",
+      "start": 248.61,
+      "end": 248.69,
+      "confidence": 0.9988
+    },
+    {
+      "word": "snake",
+      "start": 248.69,
+      "end": 249.01,
+      "confidence": 0.9454
+    },
+    {
+      "word": "one.",
+      "start": 249.01,
+      "end": 249.17,
+      "confidence": 0.7607
+    },
+    {
+      "word": "There's",
+      "start": 249.33,
+      "end": 249.57,
+      "confidence": 0.939
+    },
+    {
+      "word": "things",
+      "start": 249.57,
+      "end": 249.81,
+      "confidence": 0.9979
+    },
+    {
+      "word": "have",
+      "start": 249.81,
+      "end": 249.97,
+      "confidence": 0.998
+    },
+    {
+      "word": "gotten",
+      "start": 249.97,
+      "end": 250.21,
+      "confidence": 0.9997
+    },
+    {
+      "word": "so",
+      "start": 250.21,
+      "end": 250.29,
+      "confidence": 0.9999
+    },
+    {
+      "word": "much",
+      "start": 250.29,
+      "end": 250.45,
+      "confidence": 1
+    },
+    {
+      "word": "better",
+      "start": 250.45,
+      "end": 250.69,
+      "confidence": 1
+    },
+    {
+      "word": "since",
+      "start": 250.69,
+      "end": 251.09,
+      "confidence": 1
+    },
+    {
+      "word": "then.",
+      "start": 251.09,
+      "end": 251.41,
+      "confidence": 0.937
+    },
+    {
+      "word": "Trust",
+      "start": 253.01,
+      "end": 253.49,
+      "confidence": 0.9769
+    },
+    {
+      "word": "me,",
+      "start": 253.49,
+      "end": 253.65,
+      "confidence": 0.8565
+    },
+    {
+      "word": "you",
+      "start": 253.81,
+      "end": 253.89,
+      "confidence": 0.997
+    },
+    {
+      "word": "want",
+      "start": 253.89,
+      "end": 254.13,
+      "confidence": 0.9914
+    },
+    {
+      "word": "a",
+      "start": 254.13,
+      "end": 254.21,
+      "confidence": 0.997
+    },
+    {
+      "word": "native",
+      "start": 254.21,
+      "end": 254.61,
+      "confidence": 0.9845
+    },
+    {
+      "word": "solution.",
+      "start": 254.69,
+      "end": 255.57,
+      "confidence": 0.8897
+    },
+    {
+      "word": "Trust",
+      "start": 261.73,
+      "end": 262.21,
+      "confidence": 0.9858
+    },
+    {
+      "word": "me,",
+      "start": 262.21,
+      "end": 262.45,
+      "confidence": 0.8456
+    },
+    {
+      "word": "you",
+      "start": 262.53,
+      "end": 262.69,
+      "confidence": 0.9979
+    },
+    {
+      "word": "want",
+      "start": 262.69,
+      "end": 262.85,
+      "confidence": 0.9941
+    },
+    {
+      "word": "a",
+      "start": 262.85,
+      "end": 262.93,
+      "confidence": 0.9987
+    },
+    {
+      "word": "native",
+      "start": 262.93,
+      "end": 263.33,
+      "confidence": 0.9957
+    },
+    {
+      "word": "solution,",
+      "start": 263.33,
+      "end": 263.73,
+      "confidence": 0.8212
+    },
+    {
+      "word": "like",
+      "start": 263.81,
+      "end": 263.89,
+      "confidence": 0.9972
+    },
+    {
+      "word": "one",
+      "start": 263.97,
+      "end": 264.13,
+      "confidence": 0.9995
+    },
+    {
+      "word": "of",
+      "start": 264.13,
+      "end": 264.29,
+      "confidence": 0.9994
+    },
+    {
+      "word": "these",
+      "start": 264.29,
+      "end": 264.45,
+      "confidence": 0.9988
+    },
+    {
+      "word": "guys",
+      "start": 264.45,
+      "end": 264.69,
+      "confidence": 0.9999
+    },
+    {
+      "word": "who",
+      "start": 264.77,
+      "end": 264.93,
+      "confidence": 0.9997
+    },
+    {
+      "word": "has",
+      "start": 264.93,
+      "end": 265.09,
+      "confidence": 0.9972
+    },
+    {
+      "word": "the",
+      "start": 265.09,
+      "end": 265.17,
+      "confidence": 0.9999
+    },
+    {
+      "word": "human",
+      "start": 265.17,
+      "end": 265.49,
+      "confidence": 0.9999
+    },
+    {
+      "word": "brain",
+      "start": 265.49,
+      "end": 265.97,
+      "confidence": 0.9995
+    },
+    {
+      "word": "growing",
+      "start": 265.97,
+      "end": 266.45,
+      "confidence": 0.9998
+    },
+    {
+      "word": "right",
+      "start": 266.45,
+      "end": 266.69,
+      "confidence": 0.9994
+    },
+    {
+      "word": "inside",
+      "start": 266.69,
+      "end": 267.01,
+      "confidence": 0.9995
+    },
+    {
+      "word": "the",
+      "start": 267.01,
+      "end": 267.17,
+      "confidence": 0.9991
+    },
+    {
+      "word": "human",
+      "start": 267.17,
+      "end": 267.49,
+      "confidence": 0.9998
+    },
+    {
+      "word": "body.",
+      "start": 267.49,
+      "end": 267.89,
+      "confidence": 0.8894
+    },
+    {
+      "word": "Right.",
+      "start": 268.137,
+      "end": 268.297,
+      "confidence": 0.6559,
+      "source": "parakeet-recheck"
+    },
+    {
+      "word": "Trust",
+      "start": 269.81,
+      "end": 270.29,
+      "confidence": 0.983
+    },
+    {
+      "word": "me,",
+      "start": 270.29,
+      "end": 270.45,
+      "confidence": 0.8985
+    },
+    {
+      "word": "you",
+      "start": 270.53,
+      "end": 270.69,
+      "confidence": 0.9981
+    },
+    {
+      "word": "want",
+      "start": 270.69,
+      "end": 270.85,
+      "confidence": 0.9944
+    },
+    {
+      "word": "a",
+      "start": 270.85,
+      "end": 270.93,
+      "confidence": 0.9986
+    },
+    {
+      "word": "native",
+      "start": 270.93,
+      "end": 271.33,
+      "confidence": 0.997
+    },
+    {
+      "word": "solution.",
+      "start": 271.33,
+      "end": 271.57,
+      "confidence": 0.8789
+    },
+    {
+      "word": "Like",
+      "start": 271.73,
+      "end": 271.89,
+      "confidence": 0.9868
+    },
+    {
+      "word": "one",
+      "start": 271.89,
+      "end": 272.05,
+      "confidence": 0.9997
+    },
+    {
+      "word": "of",
+      "start": 272.05,
+      "end": 272.13,
+      "confidence": 0.9994
+    },
+    {
+      "word": "these",
+      "start": 272.13,
+      "end": 272.37,
+      "confidence": 0.9986
+    },
+    {
+      "word": "guys",
+      "start": 272.37,
+      "end": 272.61,
+      "confidence": 0.9999
+    },
+    {
+      "word": "who",
+      "start": 272.69,
+      "end": 272.85,
+      "confidence": 0.9997
+    },
+    {
+      "word": "has",
+      "start": 272.85,
+      "end": 273.01,
+      "confidence": 0.9952
+    },
+    {
+      "word": "the",
+      "start": 273.01,
+      "end": 273.09,
+      "confidence": 0.9999
+    },
+    {
+      "word": "human",
+      "start": 273.09,
+      "end": 273.41,
+      "confidence": 0.9999
+    },
+    {
+      "word": "brain",
+      "start": 273.41,
+      "end": 273.73,
+      "confidence": 0.9996
+    },
+    {
+      "word": "growing",
+      "start": 273.73,
+      "end": 274.21,
+      "confidence": 0.9996
+    },
+    {
+      "word": "right",
+      "start": 274.21,
+      "end": 274.45,
+      "confidence": 0.9988
+    },
+    {
+      "word": "inside",
+      "start": 274.45,
+      "end": 274.77,
+      "confidence": 0.9996
+    },
+    {
+      "word": "the",
+      "start": 274.77,
+      "end": 274.93,
+      "confidence": 0.9997
+    },
+    {
+      "word": "robot",
+      "start": 274.93,
+      "end": 275.49,
+      "confidence": 0.9991
+    },
+    {
+      "word": "body.",
+      "start": 275.49,
+      "end": 276.13,
+      "confidence": 0.7876
+    },
+    {
+      "word": "spider's",
+      "start": 284.23,
+      "end": 284.95,
+      "confidence": 0.8876
+    },
+    {
+      "word": "good",
+      "start": 284.95,
+      "end": 285.11,
+      "confidence": 0.9957
+    },
+    {
+      "word": "too",
+      "start": 285.27,
+      "end": 285.83,
+      "confidence": 0.975
+    },
+    {
+      "word": "classic",
+      "start": 287.83,
+      "end": 288.39,
+      "confidence": 0.9752
+    },
+    {
+      "word": "robust",
+      "start": 288.55,
+      "end": 289.35,
+      "confidence": 0.9738
+    },
+    {
+      "word": "no",
+      "start": 289.67,
+      "end": 289.91,
+      "confidence": 0.9831
+    },
+    {
+      "word": "brainer",
+      "start": 289.99,
+      "end": 290.55,
+      "confidence": 0.9769
+    },
+    {
+      "word": "so",
+      "start": 292.31,
+      "end": 292.39,
+      "confidence": 0.3679
+    },
+    {
+      "word": "no",
+      "start": 292.55,
+      "end": 292.79,
+      "confidence": 0.9846
+    },
+    {
+      "word": "brainer",
+      "start": 292.79,
+      "end": 293.19,
+      "confidence": 0.9663
+    }
+  ],
+  "segments": [
+    {
+      "start": 0.24,
+      "end": 3.04,
+      "text": "Do not get one of the AI robots on TikTok shop.",
+      "speech_pct": 94.143
+    },
+    {
+      "start": 4.16,
+      "end": 5.6,
+      "text": "Do not buy one of the",
+      "speech_pct": 78.333
+    },
+    {
+      "start": 6.24,
+      "end": 7.84,
+      "text": "Do not buy one of the AI",
+      "speech_pct": 84.75
+    },
+    {
+      "start": 8.64,
+      "end": 12.64,
+      "text": "Do not buy one of the AI robots on TikTok shop. Trust me, don't do it.",
+      "speech_pct": 86.6
+    },
+    {
+      "start": 24.599,
+      "end": 27.879,
+      "text": "What you need is a human brain powered robot.",
+      "speech_pct": 85.122
+    },
+    {
+      "start": 34.28,
+      "end": 38.12,
+      "text": "They are not made they're not made the same, please don't make the same mistake I",
+      "speech_pct": 84.063
+    },
+    {
+      "start": 38.12,
+      "end": 38.44,
+      "text": "did.",
+      "speech_pct": 36.25
+    },
+    {
+      "start": 77.54,
+      "end": 80.34,
+      "text": "There's so much more that goes into a sentient robot.",
+      "speech_pct": 82.571
+    },
+    {
+      "start": 84.74,
+      "end": 88.58,
+      "text": "There's so much more that goes into having a sentient robot than benchmark scores,",
+      "speech_pct": 90.417
+    },
+    {
+      "start": 88.66,
+      "end": 92.5,
+      "text": "and I'm so sick of seeing all these influencers push these things like they're actually",
+      "speech_pct": 100
+    },
+    {
+      "start": 92.5,
+      "end": 92.82,
+      "text": "good.",
+      "speech_pct": 100
+    },
+    {
+      "start": 95.3,
+      "end": 99.62,
+      "text": "Like AI is actually AI is actually really bad in a robotic body.",
+      "speech_pct": 75.926
+    },
+    {
+      "start": 100.5,
+      "end": 105.86,
+      "text": "Human brain cells, on the other hand, were designed by nature to operate a body.",
+      "speech_pct": 85.522
+    },
+    {
+      "start": 117.3,
+      "end": 120.5,
+      "text": "They learn faster and it's incredibly more efficient.",
+      "speech_pct": 78.25
+    },
+    {
+      "start": 122.06,
+      "end": 125.26,
+      "text": "And the best part is they have free shipping all month.",
+      "speech_pct": 74.25
+    },
+    {
+      "start": 130.38,
+      "end": 134.3,
+      "text": "The best part is if you use my affiliate link to buy your human brain robot. The",
+      "speech_pct": 90.204
+    },
+    {
+      "start": 134.3,
+      "end": 136.3,
+      "text": "best part is if you use my affiliate link, they get",
+      "speech_pct": 100
+    },
+    {
+      "start": 136.94,
+      "end": 140.78,
+      "text": "And the best part is if you're using the best part is if you use my affiliate link,",
+      "speech_pct": 83.333
+    },
+    {
+      "start": 140.86,
+      "end": 145.66,
+      "text": "you get a free gift. And the best part is if you use my affiliate link, you get 10%",
+      "speech_pct": 76.833
+    },
+    {
+      "start": 145.9,
+      "end": 149.98,
+      "text": "off all month, and they're sending a free gift to all my followers. I'll show you",
+      "speech_pct": 99.216
+    },
+    {
+      "start": 150.14,
+      "end": 153.34,
+      "text": "more about that at the end. More about that later in the video.",
+      "speech_pct": 80.5
+    },
+    {
+      "start": 176.804,
+      "end": 179.684,
+      "text": "But don't get one just yet. You gotta make sure you get the right one",
+      "speech_pct": 79.167
+    },
+    {
+      "start": 190.98,
+      "end": 194.1,
+      "text": "I've done all the research for you. Like this snake robot.",
+      "speech_pct": 81.282
+    },
+    {
+      "start": 201.3,
+      "end": 204.74,
+      "text": "But don't go buying one just yet. You gotta make sure you get the right one, even",
+      "speech_pct": 85.116
+    },
+    {
+      "start": 204.74,
+      "end": 210.42,
+      "text": "if it is powered by a human brain. Like this snake robot, don't buy it. This one",
+      "speech_pct": 78.31
+    },
+    {
+      "start": 210.5,
+      "end": 211.14,
+      "text": "sucks.",
+      "speech_pct": 98.75
+    },
+    {
+      "start": 219.15,
+      "end": 222.67,
+      "text": "They don't really tell you, but this one doesn't work. They don't really tell you",
+      "speech_pct": 75.511
+    },
+    {
+      "start": 222.67,
+      "end": 226.83,
+      "text": "this, but the snake doesn't work without Wi Fi. Yes, it's controlled by the human",
+      "speech_pct": 88.654
+    },
+    {
+      "start": 226.83,
+      "end": 230.99,
+      "text": "brain, but the human brain never leaves the petri dish. It's sitting on your desk",
+      "speech_pct": 96.49
+    },
+    {
+      "start": 230.99,
+      "end": 233.31,
+      "text": "with the Wi Fi controller for the snake.",
+      "speech_pct": 80.345
+    },
+    {
+      "start": 238.99,
+      "end": 242.67,
+      "text": "And all it does is just shock the brain to figure out if it should go left or right.",
+      "speech_pct": 91.141
+    },
+    {
+      "start": 242.75,
+      "end": 244.51,
+      "text": "Like it's very primitive and simple.",
+      "speech_pct": 100
+    },
+    {
+      "start": 245.65,
+      "end": 249.01,
+      "text": "It's also kind of hard to set up because of the Wi-Fi controller. Don't get the snake",
+      "speech_pct": 87.56
+    },
+    {
+      "start": 249.01,
+      "end": 251.41,
+      "text": "one. There's things have gotten so much better since then.",
+      "speech_pct": 92.417
+    },
+    {
+      "start": 253.01,
+      "end": 255.57,
+      "text": "Trust me, you want a native solution.",
+      "speech_pct": 71.563
+    },
+    {
+      "start": 261.73,
+      "end": 265.97,
+      "text": "Trust me, you want a native solution, like one of these guys who has the human brain",
+      "speech_pct": 89.764
+    },
+    {
+      "start": 265.97,
+      "end": 268.297,
+      "text": "growing right inside the human body. Right.",
+      "speech_pct": 93.468
+    },
+    {
+      "start": 269.81,
+      "end": 273.73,
+      "text": "Trust me, you want a native solution. Like one of these guys who has the human brain",
+      "speech_pct": 90.969
+    },
+    {
+      "start": 273.73,
+      "end": 276.13,
+      "text": "growing right inside the robot body.",
+      "speech_pct": 86.417
+    },
+    {
+      "start": 284.23,
+      "end": 285.83,
+      "text": "spider's good too",
+      "speech_pct": 68.5
+    },
+    {
+      "start": 287.83,
+      "end": 290.55,
+      "text": "classic robust no brainer",
+      "speech_pct": 74.706
+    },
+    {
+      "start": 292.31,
+      "end": 293.19,
+      "text": "so no brainer",
+      "speech_pct": 78.409
+    }
+  ],
+  "vad_applied": true,
+  "second_pass": {
+    "model": "whisperx large-v2 + WAV2VEC2_ASR_LARGE_LV60K_960H",
+    "ran": true,
+    "recovered_passages": [
+      {
+        "start": 24.599,
+        "end": 27.879,
+        "text": "What you need is a human brain powered robot.",
+        "source": "parakeet-recheck",
+        "whisperx_text": "What you need is a human brain powered robot.",
+        "whisperx_align_score": 0.92
+      },
+      {
+        "start": 176.804,
+        "end": 179.684,
+        "text": "But don't get one just yet. You gotta make sure you get the right one",
+        "source": "parakeet-recheck",
+        "whisperx_text": "But don't get just yet. You got to make sure you get the right one.",
+        "whisperx_align_score": 0.84
+      },
+      {
+        "start": 268.137,
+        "end": 268.297,
+        "text": "Right.",
+        "source": "parakeet-recheck",
+        "whisperx_text": "Right, ugh, fuck.",
+        "whisperx_align_score": 0.42
+      }
+    ],
+    "whisperx_minus_parakeet_ms": 66,
+    "matched_words": 343,
+    "start_agree_within_100ms_pct": 67.6
+  }
+}

@@ -1,0 +1,25 @@
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+find model: X:\AI-2\becky-tools\models\face\models\buffalo_l\1k3d68.onnx landmark_3d_68 ['None', 3, 192, 192] 0.0 1.0
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: X:\AI-2\becky-tools\models\face\models\buffalo_l\2d106det.onnx landmark_2d_106
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+find model: X:\AI-2\becky-tools\models\face\models\buffalo_l\det_10g.onnx detection [1, 3, '?', '?'] 127.5 128.0
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: X:\AI-2\becky-tools\models\face\models\buffalo_l\genderage.onnx genderage
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: X:\AI-2\becky-tools\models\face\models\buffalo_l\w600k_r50.onnx recognition
+set det-size: (320, 320)
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: Logging before InitGoogle() is written to STDERR
+W0000 00:00:1791437015.452271   26732 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437015.478933   26732 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437015.490690   28496 face_landmarker_graph.cc:180] Sets FaceBlendshapesGraph acceleration to xnnpack by default.
+W0000 00:00:1791437015.499232   53696 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437015.516234   41640 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+I0000 00:00:1791437015.533733   25512 hand_gesture_recognizer_graph.cc:257] Custom gesture classifier is not defined.
+W0000 00:00:1791437015.553085   30680 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437015.567665   57144 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437015.568942   21920 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437015.569126   21920 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1791437017.271299   52112 landmark_projection_calculator.cc:81] Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI. Provide IMAGE_DIMENSIONS or use PROJECTION_MATRIX.
+[zone_info_source.cc : 129] RAW: Falling back to critical America/Los_Angeles zoneinfo data

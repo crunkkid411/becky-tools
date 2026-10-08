@@ -32,15 +32,15 @@ Jordan (night of 2026-10-07): "we should be able to systematically extract all m
 and try to reverse engineer them somehow. Please, above all else, make sure the original files are
 not altered in any way"; "Jev should not be the end-all-be-all"; download the live chat "(just
 don't change my .conf file please)" to tell when he is talking to chat. Night log with every step:
-`research/edit-learning/PROGRESS.md`.
+`vegas/edit-learning/PROGRESS.md`.
 - `vegas/BeckyDumpProject.cs`: headless, read-only export of a COPY of a .veg (every event, cut,
   fade, pan/crop keyframe, effect parameter, envelope, title text). Never saves.
-  `scripts/veg_export_all.py` runs it over every .veg in `X:\Videos` (copies only, SHA-256 of each
+  `vegas/veg_export_all.py` runs it over every .veg in `X:\Videos` (copies only, SHA-256 of each
   original checked before and after; answers VEGAS's "media not found" dialog with "leave offline").
-- `scripts/edit_habits.py`: his habits across every exported project (piece length, push-in/pull-out
+- `vegas/edit_habits.py`: his habits across every exported project (piece length, push-in/pull-out
   size and speed, pans, fades, effects per project) into `edits.db` table `vegas_events`.
-- `scripts/editlearn.py`: labels a raw transcript kept/cut from an export, into
-  `X:\AI-2\edit-learning-work\edits.db` (outside the repo). Answer key #1: human-brain-robot.
+- `vegas/editlearn.py`: labels a raw transcript kept/cut from an export, into
+  `vegas/edit-learning/edits.db`. Answer key #1: human-brain-robot.
 - `becky-besttake` (`cmd/besttake`): Paul Borg's take picker (restart? finished? keep the last
   finished attempt) on a System One decision model through the capped `Hosted` client, with a
   word-match signal beside each model answer. Agrees with Jordan's real cut on 73-90% of lines vs

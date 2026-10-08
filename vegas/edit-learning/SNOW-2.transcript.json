@@ -1,0 +1,2041 @@
+{
+  "file": "X:/Videos/2025/8_August/4-human-brain-robot/hj-footage/SNOW-2_converted.mp4",
+  "duration": 164.517,
+  "model": "onnx-asr-nemo-parakeet-tdt-0.6b-v3",
+  "language": "en",
+  "text": "You need a human brain robot. If you don't know which one to get, just get the spider. It's a classic, it's robust. I know there's a lot of options, but this is a solid one, especially if you're a beginner. You do gotta grow the brain yourself, but they send you a little thing for that. I don't think people realize I don't think people realize how easy it is to grow your own human brain cells and put them in a robot. Human brain computers are so much more powerful than the traditional computers. Like it's not even close. You just get the incubator, put him in. You just get the incubator, let him grow for a month or two, and then put him in the computing module. You're good to go That's all it takes. Consistency. I know it sounds That's all it takes. That's all it takes. Some consistency. I know it sounds cliche, but really. That is That is all that it takes. That is all That is all that it takes. I have like 13 of these things in my garage crawling around. I have like 13 of these things crawling around my garage right now. Consistency? That really is all that it takes. I have like 13 of these things crawling in my garage right now. That's all it takes. Consistency. I know it sounds cliche, but that truly is all that it takes. I have like 13 I have like 13 of these things crawling around in my garage right now. They play with my kid, it's awesome. They can't talk. But they can feel. So you know that they're real. But they can't like express their feelings unless you look it up on the computer. But your kids never gonna know. Don't tell them. Yeah, don't tell them.",
+  "words": [
+    {
+      "word": "You",
+      "start": 0.48,
+      "end": 0.8,
+      "confidence": 0.9801
+    },
+    {
+      "word": "need",
+      "start": 0.96,
+      "end": 1.04,
+      "confidence": 0.9988
+    },
+    {
+      "word": "a",
+      "start": 1.2,
+      "end": 1.36,
+      "confidence": 0.9982
+    },
+    {
+      "word": "human",
+      "start": 1.36,
+      "end": 1.68,
+      "confidence": 0.9941
+    },
+    {
+      "word": "brain",
+      "start": 1.68,
+      "end": 2,
+      "confidence": 0.998
+    },
+    {
+      "word": "robot.",
+      "start": 2,
+      "end": 2.32,
+      "confidence": 0.9675
+    },
+    {
+      "word": "If",
+      "start": 2.48,
+      "end": 2.64,
+      "confidence": 0.9922
+    },
+    {
+      "word": "you",
+      "start": 2.56,
+      "end": 2.64,
+      "confidence": 0.9989
+    },
+    {
+      "word": "don't",
+      "start": 2.64,
+      "end": 2.88,
+      "confidence": 0.9966
+    },
+    {
+      "word": "know",
+      "start": 2.8,
+      "end": 2.88,
+      "confidence": 0.9994
+    },
+    {
+      "word": "which",
+      "start": 2.88,
+      "end": 3.04,
+      "confidence": 0.9993
+    },
+    {
+      "word": "one",
+      "start": 3.04,
+      "end": 3.2,
+      "confidence": 0.9997
+    },
+    {
+      "word": "to",
+      "start": 3.2,
+      "end": 3.28,
+      "confidence": 0.9994
+    },
+    {
+      "word": "get,",
+      "start": 3.28,
+      "end": 3.44,
+      "confidence": 0.9469
+    },
+    {
+      "word": "just",
+      "start": 3.6,
+      "end": 3.84,
+      "confidence": 0.9966
+    },
+    {
+      "word": "get",
+      "start": 3.84,
+      "end": 4,
+      "confidence": 0.9977
+    },
+    {
+      "word": "the",
+      "start": 4,
+      "end": 4.16,
+      "confidence": 0.9866
+    },
+    {
+      "word": "spider.",
+      "start": 4.16,
+      "end": 4.56,
+      "confidence": 0.9529
+    },
+    {
+      "word": "It's",
+      "start": 4.72,
+      "end": 4.96,
+      "confidence": 0.9679
+    },
+    {
+      "word": "a",
+      "start": 4.96,
+      "end": 5.04,
+      "confidence": 0.9957
+    },
+    {
+      "word": "classic,",
+      "start": 5.04,
+      "end": 5.44,
+      "confidence": 0.9226
+    },
+    {
+      "word": "it's",
+      "start": 5.6,
+      "end": 5.92,
+      "confidence": 0.985
+    },
+    {
+      "word": "robust.",
+      "start": 5.92,
+      "end": 6.56,
+      "confidence": 0.8789
+    },
+    {
+      "word": "I",
+      "start": 9.84,
+      "end": 10.08,
+      "confidence": 0.9341
+    },
+    {
+      "word": "know",
+      "start": 10.08,
+      "end": 10.24,
+      "confidence": 0.9946
+    },
+    {
+      "word": "there's",
+      "start": 10.24,
+      "end": 10.48,
+      "confidence": 0.9759
+    },
+    {
+      "word": "a",
+      "start": 10.48,
+      "end": 10.56,
+      "confidence": 0.9971
+    },
+    {
+      "word": "lot",
+      "start": 10.56,
+      "end": 10.72,
+      "confidence": 0.9879
+    },
+    {
+      "word": "of",
+      "start": 10.72,
+      "end": 10.8,
+      "confidence": 0.9937
+    },
+    {
+      "word": "options,",
+      "start": 10.8,
+      "end": 11.12,
+      "confidence": 0.9781
+    },
+    {
+      "word": "but",
+      "start": 11.2,
+      "end": 11.36,
+      "confidence": 0.9996
+    },
+    {
+      "word": "this",
+      "start": 11.36,
+      "end": 11.52,
+      "confidence": 0.9997
+    },
+    {
+      "word": "is",
+      "start": 11.52,
+      "end": 11.6,
+      "confidence": 0.9998
+    },
+    {
+      "word": "a",
+      "start": 11.6,
+      "end": 11.68,
+      "confidence": 0.9997
+    },
+    {
+      "word": "solid",
+      "start": 11.68,
+      "end": 11.92,
+      "confidence": 0.9999
+    },
+    {
+      "word": "one,",
+      "start": 11.92,
+      "end": 12.08,
+      "confidence": 0.9348
+    },
+    {
+      "word": "especially",
+      "start": 12.24,
+      "end": 12.56,
+      "confidence": 0.9985
+    },
+    {
+      "word": "if",
+      "start": 12.56,
+      "end": 12.72,
+      "confidence": 0.9999
+    },
+    {
+      "word": "you're",
+      "start": 12.72,
+      "end": 12.96,
+      "confidence": 0.9989
+    },
+    {
+      "word": "a",
+      "start": 12.96,
+      "end": 13.04,
+      "confidence": 0.9992
+    },
+    {
+      "word": "beginner.",
+      "start": 13.04,
+      "end": 13.84,
+      "confidence": 0.9459
+    },
+    {
+      "word": "You",
+      "start": 14.24,
+      "end": 14.48,
+      "confidence": 0.9124
+    },
+    {
+      "word": "do",
+      "start": 14.48,
+      "end": 14.72,
+      "confidence": 0.9955
+    },
+    {
+      "word": "gotta",
+      "start": 14.72,
+      "end": 14.96,
+      "confidence": 0.9152
+    },
+    {
+      "word": "grow",
+      "start": 14.96,
+      "end": 15.2,
+      "confidence": 0.9993
+    },
+    {
+      "word": "the",
+      "start": 15.2,
+      "end": 15.28,
+      "confidence": 0.9999
+    },
+    {
+      "word": "brain",
+      "start": 15.28,
+      "end": 15.52,
+      "confidence": 0.9989
+    },
+    {
+      "word": "yourself,",
+      "start": 15.52,
+      "end": 15.84,
+      "confidence": 0.9854
+    },
+    {
+      "word": "but",
+      "start": 15.92,
+      "end": 16.08,
+      "confidence": 0.999
+    },
+    {
+      "word": "they",
+      "start": 16.08,
+      "end": 16.24,
+      "confidence": 0.9998
+    },
+    {
+      "word": "send",
+      "start": 16.24,
+      "end": 16.4,
+      "confidence": 0.9987
+    },
+    {
+      "word": "you",
+      "start": 16.4,
+      "end": 16.56,
+      "confidence": 0.9999
+    },
+    {
+      "word": "a",
+      "start": 16.56,
+      "end": 16.64,
+      "confidence": 0.9998
+    },
+    {
+      "word": "little",
+      "start": 16.64,
+      "end": 16.8,
+      "confidence": 0.9998
+    },
+    {
+      "word": "thing",
+      "start": 16.8,
+      "end": 17.12,
+      "confidence": 0.9998
+    },
+    {
+      "word": "for",
+      "start": 17.12,
+      "end": 17.36,
+      "confidence": 0.9999
+    },
+    {
+      "word": "that.",
+      "start": 17.36,
+      "end": 17.68,
+      "confidence": 0.8047
+    },
+    {
+      "word": "I",
+      "start": 18.4,
+      "end": 18.64,
+      "confidence": 0.8346
+    },
+    {
+      "word": "don't",
+      "start": 18.64,
+      "end": 18.96,
+      "confidence": 0.9963
+    },
+    {
+      "word": "think",
+      "start": 18.88,
+      "end": 19.2,
+      "confidence": 0.9884
+    },
+    {
+      "word": "people",
+      "start": 19.2,
+      "end": 19.52,
+      "confidence": 0.9771
+    },
+    {
+      "word": "realize",
+      "start": 19.6,
+      "end": 20.08,
+      "confidence": 0.99
+    },
+    {
+      "word": "I",
+      "start": 20.4,
+      "end": 20.48,
+      "confidence": 0.6026
+    },
+    {
+      "word": "don't",
+      "start": 20.48,
+      "end": 20.72,
+      "confidence": 0.9448
+    },
+    {
+      "word": "think",
+      "start": 20.72,
+      "end": 20.8,
+      "confidence": 0.9989
+    },
+    {
+      "word": "people",
+      "start": 20.96,
+      "end": 21.2,
+      "confidence": 0.9997
+    },
+    {
+      "word": "realize",
+      "start": 21.2,
+      "end": 21.6,
+      "confidence": 0.9969
+    },
+    {
+      "word": "how",
+      "start": 21.6,
+      "end": 21.76,
+      "confidence": 0.9996
+    },
+    {
+      "word": "easy",
+      "start": 21.76,
+      "end": 22.08,
+      "confidence": 0.9991
+    },
+    {
+      "word": "it",
+      "start": 22.08,
+      "end": 22.24,
+      "confidence": 0.9997
+    },
+    {
+      "word": "is",
+      "start": 22.24,
+      "end": 22.4,
+      "confidence": 0.9999
+    },
+    {
+      "word": "to",
+      "start": 22.4,
+      "end": 22.56,
+      "confidence": 0.9999
+    },
+    {
+      "word": "grow",
+      "start": 22.56,
+      "end": 22.8,
+      "confidence": 0.9997
+    },
+    {
+      "word": "your",
+      "start": 22.8,
+      "end": 22.96,
+      "confidence": 0.9985
+    },
+    {
+      "word": "own",
+      "start": 22.96,
+      "end": 23.2,
+      "confidence": 0.9995
+    },
+    {
+      "word": "human",
+      "start": 23.2,
+      "end": 23.6,
+      "confidence": 0.9996
+    },
+    {
+      "word": "brain",
+      "start": 23.6,
+      "end": 24.08,
+      "confidence": 0.9997
+    },
+    {
+      "word": "cells",
+      "start": 24.08,
+      "end": 24.72,
+      "confidence": 0.9997
+    },
+    {
+      "word": "and",
+      "start": 24.72,
+      "end": 24.96,
+      "confidence": 0.9991
+    },
+    {
+      "word": "put",
+      "start": 24.96,
+      "end": 25.2,
+      "confidence": 0.9998
+    },
+    {
+      "word": "them",
+      "start": 25.2,
+      "end": 25.44,
+      "confidence": 0.9999
+    },
+    {
+      "word": "in",
+      "start": 25.44,
+      "end": 25.6,
+      "confidence": 0.9988
+    },
+    {
+      "word": "a",
+      "start": 25.6,
+      "end": 25.84,
+      "confidence": 0.9998
+    },
+    {
+      "word": "robot.",
+      "start": 25.84,
+      "end": 26.48,
+      "confidence": 0.7959
+    },
+    {
+      "word": "Human",
+      "start": 40.38,
+      "end": 40.86,
+      "confidence": 0.9624
+    },
+    {
+      "word": "brain",
+      "start": 40.86,
+      "end": 41.18,
+      "confidence": 0.9909
+    },
+    {
+      "word": "computers",
+      "start": 41.18,
+      "end": 41.66,
+      "confidence": 0.9992
+    },
+    {
+      "word": "are",
+      "start": 41.66,
+      "end": 41.82,
+      "confidence": 0.9989
+    },
+    {
+      "word": "so",
+      "start": 41.82,
+      "end": 41.98,
+      "confidence": 0.9993
+    },
+    {
+      "word": "much",
+      "start": 41.98,
+      "end": 42.14,
+      "confidence": 0.9995
+    },
+    {
+      "word": "more",
+      "start": 42.14,
+      "end": 42.3,
+      "confidence": 0.9999
+    },
+    {
+      "word": "powerful",
+      "start": 42.3,
+      "end": 42.7,
+      "confidence": 0.9999
+    },
+    {
+      "word": "than",
+      "start": 42.7,
+      "end": 42.94,
+      "confidence": 0.9953
+    },
+    {
+      "word": "the",
+      "start": 42.94,
+      "end": 43.1,
+      "confidence": 0.7217
+    },
+    {
+      "word": "traditional",
+      "start": 43.1,
+      "end": 43.5,
+      "confidence": 0.9972
+    },
+    {
+      "word": "computers.",
+      "start": 43.5,
+      "end": 43.9,
+      "confidence": 0.9347
+    },
+    {
+      "word": "Like",
+      "start": 44.06,
+      "end": 44.22,
+      "confidence": 0.8667
+    },
+    {
+      "word": "it's",
+      "start": 44.3,
+      "end": 44.54,
+      "confidence": 0.9889
+    },
+    {
+      "word": "not",
+      "start": 44.46,
+      "end": 44.62,
+      "confidence": 0.988
+    },
+    {
+      "word": "even",
+      "start": 44.62,
+      "end": 44.86,
+      "confidence": 0.9954
+    },
+    {
+      "word": "close.",
+      "start": 44.86,
+      "end": 45.5,
+      "confidence": 0.824
+    },
+    {
+      "word": "You",
+      "start": 47.42,
+      "end": 47.74,
+      "confidence": 0.8842
+    },
+    {
+      "word": "just",
+      "start": 47.74,
+      "end": 47.9,
+      "confidence": 0.9986
+    },
+    {
+      "word": "get",
+      "start": 47.9,
+      "end": 48.14,
+      "confidence": 0.9795
+    },
+    {
+      "word": "the",
+      "start": 48.14,
+      "end": 48.3,
+      "confidence": 0.9995
+    },
+    {
+      "word": "incubator,",
+      "start": 48.3,
+      "end": 49.18,
+      "confidence": 0.9514
+    },
+    {
+      "word": "put",
+      "start": 49.42,
+      "end": 49.74,
+      "confidence": 0.9926
+    },
+    {
+      "word": "him",
+      "start": 49.74,
+      "end": 49.9,
+      "confidence": 0.7054
+    },
+    {
+      "word": "in.",
+      "start": 50.14,
+      "end": 50.46,
+      "confidence": 0.7665
+    },
+    {
+      "word": "You",
+      "start": 53.42,
+      "end": 53.66,
+      "confidence": 0.806
+    },
+    {
+      "word": "just",
+      "start": 53.66,
+      "end": 53.9,
+      "confidence": 0.9478
+    },
+    {
+      "word": "get",
+      "start": 53.9,
+      "end": 54.06,
+      "confidence": 0.9872
+    },
+    {
+      "word": "the",
+      "start": 54.06,
+      "end": 54.22,
+      "confidence": 0.999
+    },
+    {
+      "word": "incubator,",
+      "start": 54.22,
+      "end": 55.1,
+      "confidence": 0.8975
+    },
+    {
+      "word": "let",
+      "start": 55.26,
+      "end": 55.5,
+      "confidence": 0.9699
+    },
+    {
+      "word": "him",
+      "start": 55.66,
+      "end": 55.74,
+      "confidence": 0.6659
+    },
+    {
+      "word": "grow",
+      "start": 55.74,
+      "end": 55.98,
+      "confidence": 0.9977
+    },
+    {
+      "word": "for",
+      "start": 55.98,
+      "end": 56.14,
+      "confidence": 0.9988
+    },
+    {
+      "word": "a",
+      "start": 56.14,
+      "end": 56.22,
+      "confidence": 0.9928
+    },
+    {
+      "word": "month",
+      "start": 56.22,
+      "end": 56.38,
+      "confidence": 0.9988
+    },
+    {
+      "word": "or",
+      "start": 56.38,
+      "end": 56.46,
+      "confidence": 0.9998
+    },
+    {
+      "word": "two,",
+      "start": 56.46,
+      "end": 56.62,
+      "confidence": 0.8449
+    },
+    {
+      "word": "and",
+      "start": 56.7,
+      "end": 56.78,
+      "confidence": 0.9974
+    },
+    {
+      "word": "then",
+      "start": 56.78,
+      "end": 56.94,
+      "confidence": 0.9885
+    },
+    {
+      "word": "put",
+      "start": 56.94,
+      "end": 57.02,
+      "confidence": 0.9954
+    },
+    {
+      "word": "him",
+      "start": 57.02,
+      "end": 57.1,
+      "confidence": 0.5183
+    },
+    {
+      "word": "in",
+      "start": 57.18,
+      "end": 57.26,
+      "confidence": 0.9987
+    },
+    {
+      "word": "the",
+      "start": 57.26,
+      "end": 57.34,
+      "confidence": 0.9964
+    },
+    {
+      "word": "computing",
+      "start": 57.34,
+      "end": 57.82,
+      "confidence": 0.997
+    },
+    {
+      "word": "module.",
+      "start": 57.82,
+      "end": 58.22,
+      "confidence": 0.9551
+    },
+    {
+      "word": "You're",
+      "start": 58.38,
+      "end": 58.62,
+      "confidence": 0.9425
+    },
+    {
+      "word": "good",
+      "start": 58.62,
+      "end": 58.86,
+      "confidence": 0.9894
+    },
+    {
+      "word": "to",
+      "start": 58.86,
+      "end": 59.1,
+      "confidence": 0.9982
+    },
+    {
+      "word": "go",
+      "start": 59.1,
+      "end": 59.42,
+      "confidence": 0.9997
+    },
+    {
+      "word": "That's",
+      "start": 62.41,
+      "end": 62.81,
+      "confidence": 0.9856
+    },
+    {
+      "word": "all",
+      "start": 62.81,
+      "end": 62.97,
+      "confidence": 0.9997
+    },
+    {
+      "word": "it",
+      "start": 62.97,
+      "end": 63.13,
+      "confidence": 0.998
+    },
+    {
+      "word": "takes.",
+      "start": 63.13,
+      "end": 63.45,
+      "confidence": 0.9681
+    },
+    {
+      "word": "Consistency.",
+      "start": 63.61,
+      "end": 64.25,
+      "confidence": 0.9084
+    },
+    {
+      "word": "I",
+      "start": 64.41,
+      "end": 64.49,
+      "confidence": 0.9754
+    },
+    {
+      "word": "know",
+      "start": 64.49,
+      "end": 64.65,
+      "confidence": 0.9979
+    },
+    {
+      "word": "it",
+      "start": 64.65,
+      "end": 64.81,
+      "confidence": 0.9967
+    },
+    {
+      "word": "sounds",
+      "start": 64.81,
+      "end": 65.05,
+      "confidence": 0.9978
+    },
+    {
+      "word": "That's",
+      "start": 65.85,
+      "end": 66.25,
+      "confidence": 0.799
+    },
+    {
+      "word": "all",
+      "start": 66.25,
+      "end": 66.41,
+      "confidence": 0.9948
+    },
+    {
+      "word": "it",
+      "start": 66.41,
+      "end": 66.65,
+      "confidence": 0.9957
+    },
+    {
+      "word": "takes.",
+      "start": 66.65,
+      "end": 67.29,
+      "confidence": 0.8152
+    },
+    {
+      "word": "That's",
+      "start": 67.69,
+      "end": 68.17,
+      "confidence": 0.9695
+    },
+    {
+      "word": "all",
+      "start": 68.09,
+      "end": 68.33,
+      "confidence": 0.9995
+    },
+    {
+      "word": "it",
+      "start": 68.33,
+      "end": 68.49,
+      "confidence": 0.9953
+    },
+    {
+      "word": "takes.",
+      "start": 68.49,
+      "end": 68.81,
+      "confidence": 0.9673
+    },
+    {
+      "word": "Some",
+      "start": 69.05,
+      "end": 69.29,
+      "confidence": 0.9192
+    },
+    {
+      "word": "consistency.",
+      "start": 69.29,
+      "end": 69.85,
+      "confidence": 0.9412
+    },
+    {
+      "word": "I",
+      "start": 70.01,
+      "end": 70.09,
+      "confidence": 0.9889
+    },
+    {
+      "word": "know",
+      "start": 70.09,
+      "end": 70.25,
+      "confidence": 0.9993
+    },
+    {
+      "word": "it",
+      "start": 70.25,
+      "end": 70.33,
+      "confidence": 0.9997
+    },
+    {
+      "word": "sounds",
+      "start": 70.33,
+      "end": 70.57,
+      "confidence": 0.9998
+    },
+    {
+      "word": "cliche,",
+      "start": 70.57,
+      "end": 71.05,
+      "confidence": 0.7425
+    },
+    {
+      "word": "but",
+      "start": 71.37,
+      "end": 71.61,
+      "confidence": 0.9991
+    },
+    {
+      "word": "really.",
+      "start": 71.61,
+      "end": 71.93,
+      "confidence": 0.7356
+    },
+    {
+      "word": "That",
+      "start": 74.81,
+      "end": 75.13,
+      "confidence": 0.8644
+    },
+    {
+      "word": "is",
+      "start": 75.37,
+      "end": 75.69,
+      "confidence": 0.9998
+    },
+    {
+      "word": "That",
+      "start": 77.93,
+      "end": 78.17,
+      "confidence": 0.5529
+    },
+    {
+      "word": "is",
+      "start": 78.17,
+      "end": 78.41,
+      "confidence": 0.9915
+    },
+    {
+      "word": "all",
+      "start": 78.41,
+      "end": 78.65,
+      "confidence": 0.995
+    },
+    {
+      "word": "that",
+      "start": 78.65,
+      "end": 78.89,
+      "confidence": 0.696
+    },
+    {
+      "word": "it",
+      "start": 78.89,
+      "end": 79.13,
+      "confidence": 0.9769
+    },
+    {
+      "word": "takes.",
+      "start": 79.13,
+      "end": 79.69,
+      "confidence": 0.8602
+    },
+    {
+      "word": "That",
+      "start": 81.29,
+      "end": 81.61,
+      "confidence": 0.6988
+    },
+    {
+      "word": "is",
+      "start": 81.61,
+      "end": 81.77,
+      "confidence": 0.9982
+    },
+    {
+      "word": "all",
+      "start": 81.77,
+      "end": 82.01,
+      "confidence": 0.9264
+    },
+    {
+      "word": "That",
+      "start": 82.33,
+      "end": 82.49,
+      "confidence": 0.6258
+    },
+    {
+      "word": "is",
+      "start": 82.49,
+      "end": 82.65,
+      "confidence": 0.9944
+    },
+    {
+      "word": "all",
+      "start": 82.65,
+      "end": 82.89,
+      "confidence": 0.9887
+    },
+    {
+      "word": "that",
+      "start": 82.89,
+      "end": 83.05,
+      "confidence": 0.9974
+    },
+    {
+      "word": "it",
+      "start": 83.05,
+      "end": 83.21,
+      "confidence": 0.9982
+    },
+    {
+      "word": "takes.",
+      "start": 83.21,
+      "end": 83.45,
+      "confidence": 0.9797
+    },
+    {
+      "word": "I",
+      "start": 83.53,
+      "end": 83.61,
+      "confidence": 0.9851
+    },
+    {
+      "word": "have",
+      "start": 83.61,
+      "end": 83.69,
+      "confidence": 0.9471
+    },
+    {
+      "word": "like",
+      "start": 83.77,
+      "end": 83.93,
+      "confidence": 0.9913
+    },
+    {
+      "word": "13",
+      "start": 83.93,
+      "end": 84.33,
+      "confidence": 0.8657
+    },
+    {
+      "word": "of",
+      "start": 84.33,
+      "end": 84.41,
+      "confidence": 0.9989
+    },
+    {
+      "word": "these",
+      "start": 84.41,
+      "end": 84.57,
+      "confidence": 0.9998
+    },
+    {
+      "word": "things",
+      "start": 84.57,
+      "end": 84.81,
+      "confidence": 0.9998
+    },
+    {
+      "word": "in",
+      "start": 84.81,
+      "end": 84.97,
+      "confidence": 0.9281
+    },
+    {
+      "word": "my",
+      "start": 84.97,
+      "end": 85.05,
+      "confidence": 0.9998
+    },
+    {
+      "word": "garage",
+      "start": 85.05,
+      "end": 85.45,
+      "confidence": 0.9997
+    },
+    {
+      "word": "crawling",
+      "start": 85.53,
+      "end": 85.85,
+      "confidence": 0.9983
+    },
+    {
+      "word": "around.",
+      "start": 85.93,
+      "end": 86.65,
+      "confidence": 0.9886
+    },
+    {
+      "word": "I",
+      "start": 87.05,
+      "end": 87.21,
+      "confidence": 0.9626
+    },
+    {
+      "word": "have",
+      "start": 87.21,
+      "end": 87.29,
+      "confidence": 0.8038
+    },
+    {
+      "word": "like",
+      "start": 87.45,
+      "end": 87.61,
+      "confidence": 0.9861
+    },
+    {
+      "word": "13",
+      "start": 87.61,
+      "end": 87.93,
+      "confidence": 0.9015
+    },
+    {
+      "word": "of",
+      "start": 88.09,
+      "end": 88.17,
+      "confidence": 0.9992
+    },
+    {
+      "word": "these",
+      "start": 88.17,
+      "end": 88.33,
+      "confidence": 0.9999
+    },
+    {
+      "word": "things",
+      "start": 88.33,
+      "end": 88.49,
+      "confidence": 0.9998
+    },
+    {
+      "word": "crawling",
+      "start": 88.49,
+      "end": 88.81,
+      "confidence": 0.9976
+    },
+    {
+      "word": "around",
+      "start": 88.89,
+      "end": 89.13,
+      "confidence": 0.9975
+    },
+    {
+      "word": "my",
+      "start": 89.13,
+      "end": 89.21,
+      "confidence": 0.9994
+    },
+    {
+      "word": "garage",
+      "start": 89.21,
+      "end": 89.61,
+      "confidence": 0.9996
+    },
+    {
+      "word": "right",
+      "start": 89.61,
+      "end": 89.93,
+      "confidence": 0.9989
+    },
+    {
+      "word": "now.",
+      "start": 89.93,
+      "end": 90.25,
+      "confidence": 0.8701
+    },
+    {
+      "word": "Consistency?",
+      "start": 91.03,
+      "end": 91.91,
+      "confidence": 0.8304
+    },
+    {
+      "word": "That",
+      "start": 92.31,
+      "end": 92.55,
+      "confidence": 0.7352
+    },
+    {
+      "word": "really",
+      "start": 92.55,
+      "end": 92.79,
+      "confidence": 0.9998
+    },
+    {
+      "word": "is",
+      "start": 92.79,
+      "end": 92.95,
+      "confidence": 0.9997
+    },
+    {
+      "word": "all",
+      "start": 92.95,
+      "end": 93.11,
+      "confidence": 0.9998
+    },
+    {
+      "word": "that",
+      "start": 93.11,
+      "end": 93.27,
+      "confidence": 0.9989
+    },
+    {
+      "word": "it",
+      "start": 93.27,
+      "end": 93.43,
+      "confidence": 0.9995
+    },
+    {
+      "word": "takes.",
+      "start": 93.43,
+      "end": 93.67,
+      "confidence": 0.9846
+    },
+    {
+      "word": "I",
+      "start": 93.83,
+      "end": 93.91,
+      "confidence": 0.9939
+    },
+    {
+      "word": "have",
+      "start": 93.91,
+      "end": 93.99,
+      "confidence": 0.9759
+    },
+    {
+      "word": "like",
+      "start": 94.07,
+      "end": 94.23,
+      "confidence": 0.9832
+    },
+    {
+      "word": "13",
+      "start": 94.23,
+      "end": 94.63,
+      "confidence": 0.9802
+    },
+    {
+      "word": "of",
+      "start": 94.63,
+      "end": 94.71,
+      "confidence": 0.9995
+    },
+    {
+      "word": "these",
+      "start": 94.71,
+      "end": 94.87,
+      "confidence": 1
+    },
+    {
+      "word": "things",
+      "start": 94.87,
+      "end": 95.11,
+      "confidence": 1
+    },
+    {
+      "word": "crawling",
+      "start": 95.11,
+      "end": 95.43,
+      "confidence": 0.9933
+    },
+    {
+      "word": "in",
+      "start": 95.51,
+      "end": 95.59,
+      "confidence": 0.9901
+    },
+    {
+      "word": "my",
+      "start": 95.59,
+      "end": 95.67,
+      "confidence": 0.9999
+    },
+    {
+      "word": "garage",
+      "start": 95.67,
+      "end": 96.15,
+      "confidence": 0.9999
+    },
+    {
+      "word": "right",
+      "start": 96.15,
+      "end": 96.47,
+      "confidence": 0.9995
+    },
+    {
+      "word": "now.",
+      "start": 96.47,
+      "end": 96.79,
+      "confidence": 0.9771
+    },
+    {
+      "word": "That's",
+      "start": 101.03,
+      "end": 101.51,
+      "confidence": 0.9952
+    },
+    {
+      "word": "all",
+      "start": 101.51,
+      "end": 101.75,
+      "confidence": 0.9998
+    },
+    {
+      "word": "it",
+      "start": 101.75,
+      "end": 101.83,
+      "confidence": 0.9998
+    },
+    {
+      "word": "takes.",
+      "start": 101.83,
+      "end": 102.23,
+      "confidence": 0.9665
+    },
+    {
+      "word": "Consistency.",
+      "start": 102.39,
+      "end": 102.95,
+      "confidence": 0.9668
+    },
+    {
+      "word": "I",
+      "start": 103.19,
+      "end": 103.27,
+      "confidence": 0.991
+    },
+    {
+      "word": "know",
+      "start": 103.27,
+      "end": 103.43,
+      "confidence": 0.9993
+    },
+    {
+      "word": "it",
+      "start": 103.43,
+      "end": 103.51,
+      "confidence": 0.9961
+    },
+    {
+      "word": "sounds",
+      "start": 103.51,
+      "end": 103.75,
+      "confidence": 0.9997
+    },
+    {
+      "word": "cliche,",
+      "start": 103.75,
+      "end": 104.55,
+      "confidence": 0.9444
+    },
+    {
+      "word": "but",
+      "start": 104.63,
+      "end": 104.79,
+      "confidence": 0.9998
+    },
+    {
+      "word": "that",
+      "start": 104.79,
+      "end": 104.95,
+      "confidence": 0.9999
+    },
+    {
+      "word": "truly",
+      "start": 104.95,
+      "end": 105.27,
+      "confidence": 0.9999
+    },
+    {
+      "word": "is",
+      "start": 105.27,
+      "end": 105.43,
+      "confidence": 0.9999
+    },
+    {
+      "word": "all",
+      "start": 105.43,
+      "end": 105.59,
+      "confidence": 0.9998
+    },
+    {
+      "word": "that",
+      "start": 105.59,
+      "end": 105.75,
+      "confidence": 0.9985
+    },
+    {
+      "word": "it",
+      "start": 105.75,
+      "end": 105.91,
+      "confidence": 0.9996
+    },
+    {
+      "word": "takes.",
+      "start": 105.91,
+      "end": 106.15,
+      "confidence": 0.994
+    },
+    {
+      "word": "I",
+      "start": 106.31,
+      "end": 106.47,
+      "confidence": 0.8976
+    },
+    {
+      "word": "have",
+      "start": 106.47,
+      "end": 106.55,
+      "confidence": 0.9987
+    },
+    {
+      "word": "like",
+      "start": 106.63,
+      "end": 106.79,
+      "confidence": 0.9863
+    },
+    {
+      "word": "13",
+      "start": 106.79,
+      "end": 107.19,
+      "confidence": 0.9725
+    },
+    {
+      "word": "I",
+      "start": 107.67,
+      "end": 107.83,
+      "confidence": 0.961
+    },
+    {
+      "word": "have",
+      "start": 107.83,
+      "end": 108.07,
+      "confidence": 0.9974
+    },
+    {
+      "word": "like",
+      "start": 108.07,
+      "end": 108.23,
+      "confidence": 0.9917
+    },
+    {
+      "word": "13",
+      "start": 108.23,
+      "end": 108.71,
+      "confidence": 0.9854
+    },
+    {
+      "word": "of",
+      "start": 108.71,
+      "end": 108.79,
+      "confidence": 0.9998
+    },
+    {
+      "word": "these",
+      "start": 108.79,
+      "end": 108.95,
+      "confidence": 1
+    },
+    {
+      "word": "things",
+      "start": 108.95,
+      "end": 109.11,
+      "confidence": 0.9999
+    },
+    {
+      "word": "crawling",
+      "start": 109.11,
+      "end": 109.51,
+      "confidence": 0.9936
+    },
+    {
+      "word": "around",
+      "start": 109.51,
+      "end": 109.75,
+      "confidence": 0.9998
+    },
+    {
+      "word": "in",
+      "start": 109.75,
+      "end": 109.91,
+      "confidence": 0.9695
+    },
+    {
+      "word": "my",
+      "start": 109.91,
+      "end": 109.99,
+      "confidence": 0.9999
+    },
+    {
+      "word": "garage",
+      "start": 109.99,
+      "end": 110.47,
+      "confidence": 0.9999
+    },
+    {
+      "word": "right",
+      "start": 110.47,
+      "end": 110.79,
+      "confidence": 0.9989
+    },
+    {
+      "word": "now.",
+      "start": 110.79,
+      "end": 111.11,
+      "confidence": 0.9629
+    },
+    {
+      "word": "They",
+      "start": 114.23,
+      "end": 114.55,
+      "confidence": 0.7624
+    },
+    {
+      "word": "play",
+      "start": 114.63,
+      "end": 114.95,
+      "confidence": 0.9999
+    },
+    {
+      "word": "with",
+      "start": 114.95,
+      "end": 115.03,
+      "confidence": 1
+    },
+    {
+      "word": "my",
+      "start": 115.03,
+      "end": 115.19,
+      "confidence": 0.9995
+    },
+    {
+      "word": "kid,",
+      "start": 115.19,
+      "end": 115.43,
+      "confidence": 0.7611
+    },
+    {
+      "word": "it's",
+      "start": 115.59,
+      "end": 115.83,
+      "confidence": 0.9995
+    },
+    {
+      "word": "awesome.",
+      "start": 115.75,
+      "end": 116.15,
+      "confidence": 0.9775
+    },
+    {
+      "word": "They",
+      "start": 116.31,
+      "end": 116.55,
+      "confidence": 0.9902
+    },
+    {
+      "word": "can't",
+      "start": 116.55,
+      "end": 116.87,
+      "confidence": 0.9996
+    },
+    {
+      "word": "talk.",
+      "start": 116.87,
+      "end": 117.51,
+      "confidence": 0.8871
+    },
+    {
+      "word": "But",
+      "start": 119.59,
+      "end": 119.91,
+      "confidence": 0.9966
+    },
+    {
+      "word": "they",
+      "start": 119.91,
+      "end": 120.15,
+      "confidence": 0.9999
+    },
+    {
+      "word": "can",
+      "start": 120.15,
+      "end": 120.39,
+      "confidence": 1
+    },
+    {
+      "word": "feel.",
+      "start": 120.39,
+      "end": 120.87,
+      "confidence": 0.7375
+    },
+    {
+      "word": "So",
+      "start": 120.95,
+      "end": 121.11,
+      "confidence": 0.9596
+    },
+    {
+      "word": "you",
+      "start": 121.19,
+      "end": 121.35,
+      "confidence": 0.9993
+    },
+    {
+      "word": "know",
+      "start": 121.35,
+      "end": 121.51,
+      "confidence": 0.9999
+    },
+    {
+      "word": "that",
+      "start": 121.51,
+      "end": 121.67,
+      "confidence": 0.9994
+    },
+    {
+      "word": "they're",
+      "start": 121.67,
+      "end": 121.99,
+      "confidence": 0.9993
+    },
+    {
+      "word": "real.",
+      "start": 121.99,
+      "end": 122.31,
+      "confidence": 0.9144
+    },
+    {
+      "word": "But",
+      "start": 124.03,
+      "end": 124.35,
+      "confidence": 0.9943
+    },
+    {
+      "word": "they",
+      "start": 124.43,
+      "end": 124.59,
+      "confidence": 0.9995
+    },
+    {
+      "word": "can't",
+      "start": 124.59,
+      "end": 124.91,
+      "confidence": 0.9983
+    },
+    {
+      "word": "like",
+      "start": 124.99,
+      "end": 125.23,
+      "confidence": 0.981
+    },
+    {
+      "word": "express",
+      "start": 125.47,
+      "end": 126.03,
+      "confidence": 0.9939
+    },
+    {
+      "word": "their",
+      "start": 126.03,
+      "end": 126.19,
+      "confidence": 0.9965
+    },
+    {
+      "word": "feelings",
+      "start": 126.35,
+      "end": 126.99,
+      "confidence": 1
+    },
+    {
+      "word": "unless",
+      "start": 126.99,
+      "end": 127.39,
+      "confidence": 0.9967
+    },
+    {
+      "word": "you",
+      "start": 127.39,
+      "end": 127.55,
+      "confidence": 0.9998
+    },
+    {
+      "word": "look",
+      "start": 127.55,
+      "end": 127.71,
+      "confidence": 0.9997
+    },
+    {
+      "word": "it",
+      "start": 127.71,
+      "end": 127.87,
+      "confidence": 0.9978
+    },
+    {
+      "word": "up",
+      "start": 127.87,
+      "end": 128.03,
+      "confidence": 1
+    },
+    {
+      "word": "on",
+      "start": 128.03,
+      "end": 128.19,
+      "confidence": 0.9999
+    },
+    {
+      "word": "the",
+      "start": 128.19,
+      "end": 128.27,
+      "confidence": 0.9978
+    },
+    {
+      "word": "computer.",
+      "start": 128.27,
+      "end": 128.91,
+      "confidence": 0.9438
+    },
+    {
+      "word": "But",
+      "start": 132.35,
+      "end": 132.67,
+      "confidence": 0.9463
+    },
+    {
+      "word": "your",
+      "start": 132.91,
+      "end": 133.15,
+      "confidence": 0.9485
+    },
+    {
+      "word": "kids",
+      "start": 133.23,
+      "end": 133.47,
+      "confidence": 0.8778
+    },
+    {
+      "word": "never",
+      "start": 133.63,
+      "end": 133.87,
+      "confidence": 0.9997
+    },
+    {
+      "word": "gonna",
+      "start": 133.87,
+      "end": 134.27,
+      "confidence": 0.9314
+    },
+    {
+      "word": "know.",
+      "start": 134.27,
+      "end": 134.59,
+      "confidence": 0.9205
+    },
+    {
+      "word": "Don't",
+      "start": 135.47,
+      "end": 136.03,
+      "confidence": 0.9542
+    },
+    {
+      "word": "tell",
+      "start": 136.03,
+      "end": 136.43,
+      "confidence": 0.9975
+    },
+    {
+      "word": "them.",
+      "start": 136.43,
+      "end": 136.59,
+      "confidence": 0.6413
+    },
+    {
+      "word": "Yeah,",
+      "start": 138.27,
+      "end": 138.59,
+      "confidence": 0.9172
+    },
+    {
+      "word": "don't",
+      "start": 138.67,
+      "end": 138.91,
+      "confidence": 0.9941
+    },
+    {
+      "word": "tell",
+      "start": 138.99,
+      "end": 139.23,
+      "confidence": 0.998
+    },
+    {
+      "word": "them.",
+      "start": 139.23,
+      "end": 139.39,
+      "confidence": 0.5459
+    }
+  ],
+  "segments": [
+    {
+      "start": 0.48,
+      "end": 4.56,
+      "text": "You need a human brain robot. If you don't know which one to get, just get the spider.",
+      "speech_pct": 94.02
+    },
+    {
+      "start": 4.72,
+      "end": 6.56,
+      "text": "It's a classic, it's robust.",
+      "speech_pct": 98.043
+    },
+    {
+      "start": 9.84,
+      "end": 13.04,
+      "text": "I know there's a lot of options, but this is a solid one, especially if you're a",
+      "speech_pct": 85.875
+    },
+    {
+      "start": 13.04,
+      "end": 17.12,
+      "text": "beginner. You do gotta grow the brain yourself, but they send you a little thing",
+      "speech_pct": 74.314
+    },
+    {
+      "start": 17.12,
+      "end": 17.68,
+      "text": "for that.",
+      "speech_pct": 45
+    },
+    {
+      "start": 18.4,
+      "end": 22.8,
+      "text": "I don't think people realize I don't think people realize how easy it is to grow",
+      "speech_pct": 85.909
+    },
+    {
+      "start": 22.8,
+      "end": 26.48,
+      "text": "your own human brain cells and put them in a robot.",
+      "speech_pct": 87.5
+    },
+    {
+      "start": 40.38,
+      "end": 44.22,
+      "text": "Human brain computers are so much more powerful than the traditional computers. Like",
+      "speech_pct": 89.375
+    },
+    {
+      "start": 44.3,
+      "end": 45.5,
+      "text": "it's not even close.",
+      "speech_pct": 89.333
+    },
+    {
+      "start": 47.42,
+      "end": 50.46,
+      "text": "You just get the incubator, put him in.",
+      "speech_pct": 65.789
+    },
+    {
+      "start": 53.42,
+      "end": 57.26,
+      "text": "You just get the incubator, let him grow for a month or two, and then put him in",
+      "speech_pct": 73.333
+    },
+    {
+      "start": 57.26,
+      "end": 59.42,
+      "text": "the computing module. You're good to go",
+      "speech_pct": 89.63
+    },
+    {
+      "start": 62.41,
+      "end": 65.05,
+      "text": "That's all it takes. Consistency. I know it sounds",
+      "speech_pct": 86.288
+    },
+    {
+      "start": 65.85,
+      "end": 71.05,
+      "text": "That's all it takes. That's all it takes. Some consistency. I know it sounds cliche,",
+      "speech_pct": 71.5
+    },
+    {
+      "start": 71.37,
+      "end": 71.93,
+      "text": "but really.",
+      "speech_pct": 100
+    },
+    {
+      "start": 74.81,
+      "end": 75.69,
+      "text": "That is",
+      "speech_pct": 62.727
+    },
+    {
+      "start": 77.93,
+      "end": 79.69,
+      "text": "That is all that it takes.",
+      "speech_pct": 83.068
+    },
+    {
+      "start": 81.29,
+      "end": 85.45,
+      "text": "That is all That is all that it takes. I have like 13 of these things in my garage",
+      "speech_pct": 93.606
+    },
+    {
+      "start": 85.53,
+      "end": 90.25,
+      "text": "crawling around. I have like 13 of these things crawling around my garage right now.",
+      "speech_pct": 73.432
+    },
+    {
+      "start": 91.03,
+      "end": 95.43,
+      "text": "Consistency? That really is all that it takes. I have like 13 of these things crawling",
+      "speech_pct": 93.5
+    },
+    {
+      "start": 95.51,
+      "end": 96.79,
+      "text": "in my garage right now.",
+      "speech_pct": 92.969
+    },
+    {
+      "start": 101.03,
+      "end": 105.59,
+      "text": "That's all it takes. Consistency. I know it sounds cliche, but that truly is all",
+      "speech_pct": 87.939
+    },
+    {
+      "start": 105.59,
+      "end": 109.99,
+      "text": "that it takes. I have like 13 I have like 13 of these things crawling around in my",
+      "speech_pct": 89.273
+    },
+    {
+      "start": 109.99,
+      "end": 111.11,
+      "text": "garage right now.",
+      "speech_pct": 81.964
+    },
+    {
+      "start": 114.23,
+      "end": 117.51,
+      "text": "They play with my kid, it's awesome. They can't talk.",
+      "speech_pct": 78.537
+    },
+    {
+      "start": 119.59,
+      "end": 122.31,
+      "text": "But they can feel. So you know that they're real.",
+      "speech_pct": 80.294
+    },
+    {
+      "start": 124.03,
+      "end": 128.91,
+      "text": "But they can't like express their feelings unless you look it up on the computer.",
+      "speech_pct": 79.836
+    },
+    {
+      "start": 132.35,
+      "end": 134.59,
+      "text": "But your kids never gonna know.",
+      "speech_pct": 60.714
+    },
+    {
+      "start": 135.47,
+      "end": 136.59,
+      "text": "Don't tell them.",
+      "speech_pct": 64.286
+    },
+    {
+      "start": 138.27,
+      "end": 139.39,
+      "text": "Yeah, don't tell them.",
+      "speech_pct": 63.571
+    }
+  ],
+  "vad_applied": true,
+  "second_pass": {
+    "model": "whisperx large-v2 + WAV2VEC2_ASR_LARGE_LV60K_960H",
+    "ran": true,
+    "whisperx_minus_parakeet_ms": 70,
+    "matched_words": 223,
+    "start_agree_within_100ms_pct": 66.4
+  }
+}

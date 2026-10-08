@@ -1439,8 +1439,8 @@ slow zoom, from his projects - prefer it), `zoom <first> <len> <scale> <cx> <cy>
 `duck <first> <len> -60`, `audio <first> <bleep.wav> <track>`. Check the result by rendering the
 ranges (`vegas/BeckyRenderRanges.cs`) and LOOKING at them. His filter packages cannot be scripted; `pipzoom` is his zoom rebuilt from his own keyframes.
 
-**Never alter Jordan's originals.** VEGAS projects are read through `scripts/veg_export_all.py` /
-`vegas/BeckyDumpProject.cs` on a COPY only (SHA-256 checked before and after, nothing saved). `python scripts/edit_habits.py`
+**Never alter Jordan's originals.** VEGAS projects are read through `vegas/veg_export_all.py` /
+`vegas/BeckyDumpProject.cs` on a COPY only (SHA-256 checked before and after, nothing saved). `python vegas/edit_habits.py`
 summarises every export: his cut rhythm, push-in sizes/speeds, pans and effects (table `vegas_events`).
 Reading chat on a stream = TWO signals: `becky-livechat` read-aloud matches, plus head down 12+ deg /
 face low in frame in the 3 s before (picture_signals; 13 of 14 reads vs 6 of 28 ordinary moments).

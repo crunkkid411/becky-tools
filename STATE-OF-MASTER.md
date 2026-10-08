@@ -78,8 +78,8 @@ by VEGAS's own render. Filter packages are not scriptable in VEGAS 18.
 ### Learning Jordan's edits from his VEGAS projects (2026-10-07, local)
 
 Read-only: `vegas/BeckyDumpProject.cs` exports a COPY of a project, never saves;
-`scripts/veg_export_all.py` does all of `X:\Videos` and checks each original's SHA-256 before and
-after. `scripts/edit_habits.py` measures his habits across all exports. `scripts/editlearn.py` turns an export + raw transcript into kept/cut labels (sqlite, outside
+`vegas/veg_export_all.py` does all of `X:\Videos` and checks each original's SHA-256 before and
+after. `vegas/edit_habits.py` measures his habits across all exports. `vegas/editlearn.py` turns an export + raw transcript into kept/cut labels (sqlite, outside
 the repo). `becky-besttake` picks the finished take (System One model + word match), 73-90%
 agreement with Jordan's real cut. `becky-livechat` gets a stream's chat replay and finds where he
 read messages aloud. yt-dlp's 90-second gate now lives in `internal/ytdlp` for every tool.

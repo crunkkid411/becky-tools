@@ -14,7 +14,7 @@ gets kept_frac. Every stretch of the source he removed between two kept pieces
 is logged with its length and the words in it (none = a pause he trimmed).
 
 Output: rows appended to an sqlite database (default
-X:\\AI-2\\edit-learning-work\\edits.db, outside the repo) and a one-screen
+vegas\\edit-learning\\edits.db) and a one-screen
 summary on stdout. Deterministic: same inputs, same rows.
 """
 import argparse
@@ -24,7 +24,7 @@ import os
 import sqlite3
 import sys
 
-DEFAULT_DB = r"X:\AI-2\edit-learning-work\edits.db"
+DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edit-learning", "edits.db")
 KEEP, CUT = 0.8, 0.2  # sentence kept_frac at/above KEEP = kept, at/below CUT = cut, else partial
 
 SCHEMA = """

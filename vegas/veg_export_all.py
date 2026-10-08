@@ -1,6 +1,6 @@
 """veg_export_all.py - export every VEGAS project under a folder, read-only.
 
-  python veg_export_all.py [--root X:\\Videos] [--out X:\\AI-2\\edit-learning-work\\vegs]
+  python veg_export_all.py [--root X:\\Videos] [--out vegas\\edit-learning\\vegs]
 
 For each .veg (not .bak): SHA-256 the original, copy it into --out, run
 vegas/BeckyDumpProject.cs on the COPY headless, then SHA-256 the original
@@ -20,7 +20,7 @@ import subprocess
 import time
 
 VEGAS = r"C:\Program Files\VEGAS\VEGAS Pro 18.0\vegas180.exe"
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vegas", "BeckyDumpProject.cs")
+SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "BeckyDumpProject.cs")
 TIMEOUT = 240
 
 
@@ -120,6 +120,10 @@ def export_one(src, out_dir):
         except subprocess.TimeoutExpired:
             pass
     kill_vegas(proc.pid)
+    try:
+        os.remove(copy)  # only the export is kept; every run copies the original afresh
+    except OSError:
+        pass
     if status == "ok":
         with open(out_json, encoding="utf-8") as f:
             if "error" in json.load(f):
@@ -139,7 +143,7 @@ def needs_keyframes(edits_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=r"X:\Videos")
-    ap.add_argument("--out", default=r"X:\AI-2\edit-learning-work\vegs")
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "edit-learning", "vegs"))
     ap.add_argument("--redo-animated", action="store_true",
                     help="re-export ok projects whose export has animated effects but no keyframe values (older exporter)")
     a = ap.parse_args()

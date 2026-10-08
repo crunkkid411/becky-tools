@@ -44,7 +44,7 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   (Gemma "thinks" on image prompts in both). New build serves `/v1/systemone` for local decision models.
 - **21:10 `vegas/BeckyDumpProject.cs`:** headless, read-only export of a whole VEGAS project to JSON
   (events, source offsets = the cuts, pan/crop keyframes = zooms, effects + parameter values,
-  envelopes, Titles & Text, markers, regions). Always run on a COPY in `X:\AI-2\edit-learning-work\`
+  envelopes, Titles & Text, markers, regions). Always run on a COPY in `vegas\edit-learning\`
   (outside the repo). Originals' SHA-256 checked before and after: unchanged.
   - human-brain-robot: works (2 tracks, 71 video events; track FX: LUT, Beauty Box, AutoLooks,
     Color Corrector, Color Curves; audio: Noise Gate, EQ, Compressor).
@@ -60,7 +60,7 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   Space Bunny is reading Albert's skills and hermes/HyperEdit (OpenCode blocks paths outside its
   folder, so it works on copies).
 - **21:45 Answer key #1 loaded:** `scripts/editlearn.py` labels every raw word/sentence kept or cut
-  against the exported edit and stores it in `X:\AI-2\edit-learning-work\edits.db` (sqlite, outside
+  against the exported edit and stores it in `vegas\edit-learning\edits.db` (sqlite, outside
   the repo: tables projects, pieces, sentences, removed). human-brain-robot: 113 raw sentences ->
   54 kept, 30 partly, 29 cut; 63 removed stretches contained words (retakes, false starts, a whole
   affiliate pitch), only 6 were pure pauses. His pattern = Paul Borg's: keep the LAST good attempt.
@@ -119,7 +119,7 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   read, fixed seed). Head down 12+ deg, or head dropped out of the face model, or face low in frame
   (centre below 0.40): **13 of 14 reads, 6 of 28 ordinary moments.** Head angle alone: down 9+ deg
   before 10/10 reads where the face model held. So posture is a real second signal next to the
-  read-aloud match. Work files: `X:\AI-2\edit-learning-work\gaze\`.
+  read-aloud match. Work files: `vegas\edit-learning\gaze\`.
 - **22:40 `scripts/edit_habits.py`** over the first 14 exported projects: 2,160 video pieces, median
   piece 1.72 s (10% under 0.77 s, 90% under 6.87 s); 56 push-ins, median 1.55x, reached in median
   0.70 s; 23 pull-outs; 13 pans; almost no fades; effects led by S_Shake (31 uses / 4 projects).
