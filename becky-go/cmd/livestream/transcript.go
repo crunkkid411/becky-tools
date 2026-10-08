@@ -25,6 +25,7 @@ type Sentence struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
+	Hint  string  `json:"-"` // a specialist's note shown after the text to the models (stack.go)
 }
 
 const (

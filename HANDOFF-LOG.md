@@ -19,14 +19,21 @@ then "Did you integrate the systemone pass into what we've already established o
 wheel (again)?" Answer: the pipeline around the decision was shared (transcript, becky-cut, edges,
 visual moments, breaths, VEGAS, checks), but the decision step of `systemone` is a new design (a vote of
 three, then three readers) instead of the qwen path's lead + targeted review. So, as he asked,
-`stack.go` duplicates `--model qwen` and inserts System One:
-- System One decides every line (`vote-systemone.json` reused);
-- its disagreements with Qwen are added to Gemma's review targets;
-- `concludeStack` = `conclude` unchanged, then a System One call 80%+ sure settles a Qwen/Gemma split.
-- 27-livestream (decision only, `selection-systemone-stack.json`): Gemma checked 63 (20 because of
-  System One); 13 splits settled; 2 unsure; 3.3 min kept. It keeps the qwen path's chat/filler lines
-  Jordan flagged; only `systemone`'s posture + chat + readers remove those.
-- NOT run through VEGAS yet: Jordan needed his PC (the visual-moment step would watch 60 new stretches
+`stack.go` duplicates `--model qwen` and adds System One.
+- **First version (edf3876) was wrong:** it made System One a third voter (extra review targets plus a
+  tie-break). Jordan: "systemone-stack should have the systemone model be its own separate pass BEFORE
+  the qwen model - treat it just like the mediapipe, falcon perception, etc. It provides data to Qwen,
+  then Qwen decides... Then gemma reviews just like in the other workflows - not voting". Specialist
+  data is trusted unless there is a reason not to; Qwen has the final say.
+- **Now:** System One runs first (`vote-systemone.json` reused). Its call is printed after every sentence
+  line Qwen and Gemma read (`Sentence.Hint`, `withS1`, `s1Hint`); the brief `s1Data` says to trust it
+  unless the context shows otherwise. Then `runLocal(qwen, gemma, ..., s1Data)` runs unchanged
+  (`runLocal`/`runLead` gained a `data` argument, "" for the other modes). Unsure notes name System
+  One's call too.
+- 27-livestream (decision only, `selection-systemone-stack.json`): Qwen agreed with System One on 290 of
+  300; Gemma reviewed 134; 2 unsure; 3.0 min kept. It keeps the "to-do list... here it is" chat answer
+  (System One itself said keep); only `systemone`'s posture + chat + readers remove that.
+- NOT run through VEGAS yet: Jordan needed his PC (the visual-moment step watches ~50 new stretches
   with Gemma 12B on CPU, ~25 min). The launcher builds it: `Livestream-Edit_System-One-Stack.bat`.
 - His review notes (zoom targets, bleep precision, edits on intentional silences) are in
   `vegas/edit-learning/habits.md`.

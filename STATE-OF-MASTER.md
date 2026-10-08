@@ -8,9 +8,10 @@
 
 ### NEW — `--model systemone-stack`: the qwen workflow with System One inserted (2026-10-08, local)
 
-Same as `--model qwen`, plus: System One decides every line, its disagreements with Qwen go to Gemma's
-review, and a sure System One call settles a Qwen/Gemma split. Decision tested on the 27-livestream
-(3.3 min kept, 2 unsure); not yet run through VEGAS. `--model systemone` (below) stays.
+Same as `--model qwen`, with System One run first as a specialist data point: its call is shown on
+every sentence Qwen and Gemma read; Qwen decides, Gemma reviews as usual (no voting - that is
+`--model systemone`, below, which stays). Decision tested on the 27-livestream (3.0 min kept, 2
+unsure); not yet run through VEGAS.
 
 ### System One edit redone: three models vote, three models read the edit (2026-10-08, local)
 

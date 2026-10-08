@@ -159,7 +159,7 @@ func windows(ss []Sentence) [][2]int {
 func sentenceLines(ss []Sentence, a, b int) string {
 	var sb strings.Builder
 	for i := a; i < b; i++ {
-		fmt.Fprintf(&sb, "[id %d | %s] %s\n", ss[i].ID, clock(ss[i].Start), ss[i].Text)
+		fmt.Fprintf(&sb, "[id %d | %s] %s%s\n", ss[i].ID, clock(ss[i].Start), ss[i].Text, ss[i].Hint)
 	}
 	return sb.String()
 }
@@ -511,15 +511,17 @@ func verdict(keep bool) string {
 }
 
 // runLocal is the Gemma/Qwen path: lead decides, the other model reviews.
-func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance string, logf func(string, ...any)) (Selection, error) {
+// data explains any specialist notes on the sentence lines (Sentence.Hint) to
+// both models; "" when there are none.
+func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance, data string, logf func(string, ...any)) (Selection, error) {
 	start := time.Now()
-	sel, err := runLead(lead, ss, guidance, logf)
+	sel, err := runLead(lead, ss, guidance, data, logf)
 	if err != nil {
 		return sel, err
 	}
 	sel.Reviewer = reviewer.name
 	ws := windows(ss)
-	brief := "GUIDANCE: " + guidance + "\n\n" + wantedText(sel.Topics) + outlineText(sel.Outline)
+	brief := "GUIDANCE: " + guidance + "\n\n" + wantedText(sel.Topics) + outlineText(sel.Outline) + data
 	ds := sel.Decisions
 
 	targets := reviewTargets(ds)
@@ -544,7 +546,7 @@ func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance string, log
 // runLead is one local model's own call on every sentence (the wanted topics,
 // an outline, then window by window), with no review: Decisions are its raw
 // calls, Keep by keeps().
-func runLead(lead localModelSpec, ss []Sentence, guidance string, logf func(string, ...any)) (Selection, error) {
+func runLead(lead localModelSpec, ss []Sentence, guidance, data string, logf func(string, ...any)) (Selection, error) {
 	start := time.Now()
 	sel := Selection{Model: lead.name, Guidance: guidance}
 	lm, err := lead.open()
@@ -562,7 +564,7 @@ func runLead(lead localModelSpec, ss []Sentence, guidance string, logf func(stri
 	ws := windows(ss)
 	logf("%s: outlining the stream (%d parts)...", lead.name, len(ws))
 	sel.Outline = lm.outline(ss, ws, logf)
-	brief := "GUIDANCE: " + guidance + "\n\n" + wantedText(sel.Topics) + outlineText(sel.Outline)
+	brief := "GUIDANCE: " + guidance + "\n\n" + wantedText(sel.Topics) + outlineText(sel.Outline) + data
 	logf("%s: deciding %d sentences...", lead.name, len(ss))
 	if sel.Decisions, err = lm.decideWindows(ss, ws, brief, len(sel.Topics), logf); err != nil {
 		return sel, err

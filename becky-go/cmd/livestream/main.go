@@ -400,9 +400,9 @@ func (r *run) decide(ss []Sentence, fresh bool) (Selection, error) {
 	var err error
 	switch r.tag {
 	case "gemma4":
-		sel, err = runLocal(gemma, qwen, ss, r.guidance, r.logf)
+		sel, err = runLocal(gemma, qwen, ss, r.guidance, "", r.logf)
 	case "qwen3.5":
-		sel, err = runLocal(qwen, gemma, ss, r.guidance, r.logf)
+		sel, err = runLocal(qwen, gemma, ss, r.guidance, "", r.logf)
 	case "systemone":
 		sel, err = r.together(ss, fresh)
 	case "systemone-stack":

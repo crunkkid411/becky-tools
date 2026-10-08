@@ -1,31 +1,22 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// System One settles a Qwen/Gemma split only when it is sure and sides with one
-// of them; otherwise the line stays unsure and the note names all three calls.
-func TestConcludeStackSettlesSplits(t *testing.T) {
-	ds := []Decision{
-		{ID: 0, Label: "narrative", Topic: 1, Keep: true, Confidence: 60}, // qwen keep, gemma cut, s1 sure cut
-		{ID: 1, Label: "narrative", Topic: 1, Keep: true, Confidence: 60}, // qwen keep, gemma cut, s1 unsure
-		{ID: 2, Label: "narrative", Topic: 1, Keep: true, Confidence: 95}, // all agree
+// System One's call reaches Qwen and Gemma as a note on each sentence line;
+// the sentences themselves are not changed.
+func TestStackShowsSystemOneOnEachLine(t *testing.T) {
+	ss := []Sentence{{ID: 0, Text: "Calling someone bald is not an insult."}, {ID: 1, Text: "Thanks for the super chat."}}
+	s1 := []Decision{{Said: true, Confidence: 93, Label: "narrative"}, {Said: false, Confidence: 88, Label: "super_chat"}}
+	lines := sentenceLines(withS1(ss, s1), 0, 2)
+	for _, want := range []string{"insult. [System One: belongs in the edit, 93%]", "chat. [System One: does not belong, 88%; looks like super_chat]"} {
+		if !strings.Contains(strings.ReplaceAll(lines, "   [", " ["), want) {
+			t.Errorf("lines miss %q:\n%s", want, lines)
+		}
 	}
-	reviews := map[int]Review{
-		0: {Model: "gemma4", Label: "break", Keep: false, Confidence: 80},
-		1: {Model: "gemma4", Label: "break", Keep: false, Confidence: 80},
-	}
-	s1 := []Decision{{Said: false, Confidence: 97}, {Said: false, Confidence: 55}, {Said: true, Confidence: 99}}
-	out := concludeStack(ds, reviews, s1, "qwen3.5")
-	if out[0].Keep || out[0].Unsure {
-		t.Errorf("line 0: keep=%v unsure=%v, want cut and settled (%s)", out[0].Keep, out[0].Unsure, out[0].Note)
-	}
-	if !out[1].Unsure || !out[1].Keep {
-		t.Errorf("line 1: keep=%v unsure=%v, want kept and unsure", out[1].Keep, out[1].Unsure)
-	}
-	if want := " - systemone said cut (55% sure)"; len(out[1].Note) < len(want) || out[1].Note[len(out[1].Note)-len(want):] != want {
-		t.Errorf("line 1 note %q does not say what System One said", out[1].Note)
-	}
-	if !out[2].Keep || out[2].Unsure {
-		t.Errorf("line 2: keep=%v unsure=%v, want a plain keep", out[2].Keep, out[2].Unsure)
+	if ss[0].Hint != "" || strings.Contains(sentenceLines(ss, 0, 2), "System One") {
+		t.Error("the original sentences got the note too")
 	}
 }

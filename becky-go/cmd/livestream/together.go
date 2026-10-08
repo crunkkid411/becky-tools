@@ -51,7 +51,7 @@ func (r *run) calls(name string, spec localModelSpec, ss []Sentence, fresh bool)
 	if name == "systemone" {
 		s, err = runSystemOne(systemone.NewHosted("becky-livestream"), ss, r.guidance, r.logf)
 	} else {
-		s, err = runLead(spec, ss, r.guidance, r.logf)
+		s, err = runLead(spec, ss, r.guidance, "", r.logf)
 	}
 	if err != nil {
 		return s, err
