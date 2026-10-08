@@ -12,6 +12,53 @@
 
 ---
 
+## System One edit redone: three models vote, three models read the edit (2026-10-08, local, `master`)
+
+Jordan on `27-livestream-systemone.veg`: "the system one model is not supposed to be the final say -
+that edit does not even make sense"; "gemma qwen and systemone have to work TOGETHER"; "we need a
+separate llm pass AFTER the systemone model to determine if what remains belongs there within the
+context of the video itself"; no more "unsure 65%" markers - "what did the OTHER FUCKING MODELS say
+about it???"; wire in the body language (hunched over = reading chat).
+- **Vote** (`together.go`): System One, Gemma-4 E4B and Qwen3.5-4B each decide every sentence; the
+  majority stands; a split keep is cut when he is reading or answering chat. System One's raw call
+  is kept in `Said` (`systemone.go` no longer concludes). Each voter's calls are saved
+  (`vote-<model>.json`; a saved `selection-gemma4|qwen3.5.json` is reused).
+- **Posture** (`posture.go`): picture helper at 2 fps over the whole stream (`measureFrames` split
+  out of `picture.go`), cached `<video>.posture.json`. Reading = head 12 deg below his median,
+  face 0.06 lower, or head lost with body present. 89 of 153 Claude-chat lines vs 0 of 45 kept.
+- **Chat** (`chat.go`): becky-livechat's answers map to the line that STARTS closest (the old
+  nearest-line mapping put "cheers" on the line before). Chat questions from the minute before
+  each line go to the readers. becky-livechat itself now keeps every "?" message of its 90 s
+  window when the 25 newest push one out (`reply.go`).
+- **Filler**: a kept line of only filler words is cut with no model call.
+- **Reading the edit** (`context.go`): Gemma-4 E4B, Qwen3.5-4B and Gemma-4 12B read only the kept
+  lines in order, briefed with the guidance, wanted topics and outline; up to 3 rounds, rounds 2-3
+  only on lines next to a new cut. A majority of the readers cuts; else a weighted score (reader 2,
+  voter 1, reading/chat 1, half the maximum). First version over-cut (1.1 min; "Calling someone bald
+  is not an insult" gone) because the readers did not know topic #1 and read a "(cut)" prefix as
+  the line's verdict - fixed with the brief and a separate gap line.
+- **Edges** (`edges.go`): a becky-cut keep edge more than 0.3 s before the first word (0.5 s after
+  the last) is replaced by a frame cut near the word (1.1 s of hair fixing before "held for review");
+  pieces with no word in them are dropped.
+- **Report**: no unsure markers; "Cut when the models read the edit", "Cut, but at least one
+  model wanted it" and "Every kept line", each with every model's call, posture and chat.
+- **Result, 27-livestream:** 1.7 of 15 min kept (the update, then the baldness topic). Every line
+  Jordan flagged is out, including the "to-do list ... here it is ... do it live" answer to "What's
+  on your topic list?". Still kept and arguable: "I am that dumb, okay." (13:58).
+- **Render template** (`vegas/BeckyRenderRanges.cs`): prefers an AVC 1080p template; the first
+  .mp4 template was MPEG-2 + PCM, which his players would not open. The old fxtest renders were
+  converted to H.264/AAC in `vegas/edit-learning/fxtest/playable/`.
+- **His censor method recorded** (`vegas/edit-learning/habits.md`): duplicate the clip on a track
+  directly above, CENSOR preset on the top copy, a mask around the thing, moved frame by frame.
+  Built: `BeckyFX.cs` `censor` line - CENSOR track above, CENSOR preset, VEGAS Bezier Masking
+  (scriptable: Type_0, Location_0 counted from the bottom, Width_0, Height_0), a keyframe per box
+  row; the render showed only his head pixelated, following him for 92 frames.
+- **Face zoom** (`moments.go`): a kept picture moment that is only a "reaction" (Gemma) with a big
+  expression on 2+ frames or the mouth held open (MediaPipe) gets a 2x zoom on his face (BeckyFX
+  `zoom`, 4-frame ramp) and a FACE ZOOM marker. The first rule also zoomed "grooming, looking away,
+  reaction" and showed his hair - tightened. 27-livestream: 2 zooms, both rendered and checked.
+- **Renders**: the AVC template is 1920x1080, so a vertical project comes out with black bars.
+
 ## Chat answers, System One livestream edit, ROADMAP.md, review guide (2026-10-08, local, `master`)
 
 Jordan (2026-10-08): "is there a way to see the outcome or did you not save it for me to review?";

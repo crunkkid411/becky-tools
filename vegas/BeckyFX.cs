@@ -16,6 +16,11 @@
  *   fx    <TAB> <first frame> <TAB> <length> <TAB> <plug-in> [<TAB> <preset>]
  *   zoom  <TAB> <first frame> <TAB> <length> <TAB> <scale> [<TAB> <cx> <TAB> <cy> [<TAB> <ramp frames>]]
  *   pipzoom <TAB> <first frame> <TAB> <length> <TAB> <scale, his: 1.11 or 1.447> [<TAB> <end height, 0.5 = none>]
+ *   censor <TAB> <first frame> <TAB> <length> <TAB> <cx> <TAB> <cy> <TAB> <w> <TAB> <h> [<TAB> Oval|Rectangle]
+ *   censor <TAB> <first frame> <TAB> <length> <TAB> <boxes.tsv> [<TAB> Oval|Rectangle]
+ *         Jordan's way: copy on a new CENSOR track directly above + CENSOR preset + a mask.
+ *         boxes.tsv: <frame in the range> <TAB> cx <TAB> cy <TAB> w <TAB> h per line (fractions,
+ *         top-left origin) - one keyframe per line, so the mask follows the thing frame by frame.
  *   duck  <TAB> <first frame> <TAB> <length> <TAB> <dB, e.g. -60 to silence>
  *   audio <TAB> <first frame> <TAB> <file.wav> <TAB> <track name>
  * fx and zoom go on the TOP video track that has footage (not a title) at <first frame>. duck puts
@@ -107,6 +112,9 @@ public class EntryPoint
                 break;
             case "pipzoom":
                 fx += PipZoom(vegas, at, Timecode.FromFrames(Len(f[2])), Num(f[3]), f.Length > 4 ? Num(f[4]) : 0.5);
+                break;
+            case "censor":
+                fx += Censor(vegas, at, Timecode.FromFrames(Len(f[2])), f);
                 break;
             case "duck":
                 duck += Duck(vegas.Project, at, Timecode.FromFrames(Len(f[2])), double.Parse(f[3].Trim(), System.Globalization.CultureInfo.InvariantCulture));
@@ -206,6 +214,86 @@ public class EntryPoint
             p1.Y = 0.5 + (y - 0.5) * b;
             loc.SetValueAtTime(Timecode.FromFrames(0), p0);
             loc.SetValueAtTime(ev.Length, p1);
+            n++;
+        }
+        if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);
+        return n;
+    }
+
+    // Censor is Jordan's own way (2026-10-08): "the clip is duplicated directly above the
+    // original, the censor preset is added to the topmost one, then a mask is created around
+    // the thing being censored... And yes, I often move the censor frame-by-frame." So: the
+    // pieces in the range are copied onto a new "CENSOR" track right above, each copy gets
+    // VEGAS Pixelate + CENSOR and VEGAS Bezier Masking (Mask 1, oval or rectangle) whose
+    // Location/Width/Height take a keyframe for every box row. Box values are fractions of
+    // the picture, top-left origin (cx, cy = centre). The original track is only split at
+    // the range edges, like every other line here.
+    static int Censor(Vegas vegas, Timecode at, Timecode len, string[] f)
+    {
+        string shape = "Oval";
+        List<double[]> boxes = new List<double[]>(); // frame offset in the range, cx, cy, w, h
+        if (f.Length >= 7 && !File.Exists(f[3].Trim()))
+        {
+            boxes.Add(new double[] { 0, Num(f[3]), Num(f[4]), Num(f[5]), Num(f[6]) });
+            if (f.Length > 7) shape = f[7].Trim();
+        }
+        else
+        {
+            if (!File.Exists(f[3].Trim())) throw new ApplicationException("censor needs cx cy w h, or a box file: " + f[3]);
+            foreach (string row in File.ReadAllLines(f[3].Trim()))
+            {
+                string[] c = row.Split('\t');
+                if (c.Length < 5) continue;
+                boxes.Add(new double[] { Num(c[0]), Num(c[1]), Num(c[2]), Num(c[3]), Num(c[4]) });
+            }
+            if (f.Length > 4) shape = f[4].Trim();
+            if (boxes.Count == 0) throw new ApplicationException("no boxes in " + f[3]);
+        }
+        PlugInNode pix = Find(vegas.VideoFX, "VEGAS Pixelate");
+        PlugInNode bz = vegas.VideoFX.GetChildByUniqueID("{Svfx:com.vegascreativesoftware:bzmasking}");
+        if (pix == null || bz == null) throw new ApplicationException("VEGAS Pixelate or VEGAS Bezier Masking is missing");
+        Track track = FootageTrack(vegas.Project, at);
+        if (track == null) throw new ApplicationException("no footage on a video track at frame " + at.FrameCount);
+        Timecode end = at + len;
+        at = Snap(track, at);
+        end = Snap(track, end);
+        SplitAt(track, at);
+        SplitAt(track, end);
+        VideoTrack top = new VideoTrack(vegas.Project, track.Index, "CENSOR");
+        vegas.Project.Tracks.Add(top);
+        List<TrackEvent> inRange = new List<TrackEvent>();
+        foreach (TrackEvent ev in track.Events) if (ev.Start >= at && ev.End <= end) inRange.Add(ev);
+        int n = 0;
+        foreach (TrackEvent ev in inRange)
+        {
+            VideoEvent copy = (VideoEvent)ev.Copy(top, ev.Start);
+            Effect pe = new Effect(pix);
+            copy.Effects.Add(pe);
+            pe.Preset = "CENSOR";
+            Effect me = new Effect(bz);
+            copy.Effects.Add(me);
+            OFXEffect ofx = me.OFXEffect;
+            OFXChoiceParameter type = (OFXChoiceParameter)ofx.FindParameterByName("Type_0");
+            foreach (OFXChoice c in type.Choices) if (c.Name.Equals(shape, StringComparison.OrdinalIgnoreCase)) type.Value = c;
+            OFXDouble2DParameter loc = (OFXDouble2DParameter)ofx.FindParameterByName("Location_0");
+            OFXDoubleParameter w = (OFXDoubleParameter)ofx.FindParameterByName("Width_0");
+            OFXDoubleParameter h = (OFXDoubleParameter)ofx.FindParameterByName("Height_0");
+            bool moving = boxes.Count > 1;
+            loc.IsAnimated = moving; w.IsAnimated = moving; h.IsAnimated = moving;
+            long off = (ev.Start - at).FrameCount, evLen = ev.Length.FrameCount;
+            foreach (double[] b in boxes)
+            {
+                long rel = (long)b[0] - off; // frame inside this piece
+                if (moving && (rel < 0 || rel >= evLen)) continue;
+                OFXDouble2D p = loc.Value;
+                p.X = b[1];
+                p.Y = 1 - b[2]; // the mask counts up from the bottom
+                if (!moving) { loc.Value = p; w.Value = b[3]; h.Value = b[4]; break; }
+                Timecode t = Timecode.FromFrames(rel);
+                loc.SetValueAtTime(t, p);
+                w.SetValueAtTime(t, b[3]);
+                h.SetValueAtTime(t, b[4]);
+            }
             n++;
         }
         if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);

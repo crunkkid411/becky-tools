@@ -233,7 +233,7 @@ func TestContentRangesUseBeckyCutEdgeOrQuietFrame(t *testing.T) {
 	if len(loudEdges(rs, -50)) != 0 || len(loudEdges(rs, -70)) != 1 {
 		t.Errorf("loud edges: quiet cut at %.1f dB misjudged", r.OutDB)
 	}
-	ps := finalPieces(rs, keeps, 30)
+	ps := finalPieces(rs, keeps, ws, 30)
 	if len(ps) != 1 || !near(ps[0].A, 1.9) || !near(ps[0].B, 91.0/30) {
 		t.Errorf("final pieces = %+v", ps)
 	}

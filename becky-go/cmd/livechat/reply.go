@@ -101,7 +101,15 @@ func candidates(msgs []message, ls []line, i int) []int {
 		}
 	}
 	if len(recent) > maxOptions {
+		// a busy chat pushes a question out of the newest 25: keep the questions
+		// ("What's on your topic list?" was answered 39 s later, 27-livestream 2026-10-08)
+		for _, k := range recent[maxOptions:] {
+			if strings.Contains(msgs[k].Text, "?") {
+				older = append([]int{k}, older...)
+			}
+		}
 		recent = recent[:maxOptions]
+		cue = cue || len(older) > 0
 	}
 	if !cue {
 		return recent

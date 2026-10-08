@@ -85,7 +85,10 @@ func runSystemOne(dec systemone.Decider, ss []Sentence, guidance string, logf fu
 		}
 		logf("  systemone decided %d of %d sentences", e, len(ss))
 	}
-	sel.Decisions, sel.Rules = conclude(ds, nil, "systemone"), rulesVersion
+	for i := range ds {
+		ds[i].Said = ds[i].Keep // its own calls: the vote with Gemma and Qwen decides (together.go)
+	}
+	sel.Decisions = ds
 	sel.Seconds = time.Since(start).Seconds()
 	return sel, nil
 }

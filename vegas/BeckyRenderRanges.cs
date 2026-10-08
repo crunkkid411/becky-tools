@@ -46,15 +46,23 @@ public class EntryPoint
         vegas.Exit();
     }
 
-    // Mp4Template: the first valid template of an .mp4 renderer.
+    // Mp4Template: an AVC (H.264) template first - the first .mp4 template on
+    // this PC was MPEG-2 video + PCM sound in an MP4 box, which Windows players
+    // will not play (fxtest, 2026-10-08). Then any valid .mp4 template.
     static RenderTemplate Mp4Template(Vegas vegas)
     {
+        RenderTemplate any = null;
         foreach (Renderer r in vegas.Renderers)
         {
             if (r.FileExtension == null || !r.FileExtension.ToLower().Contains("mp4")) continue;
+            bool avc = (r.FileTypeName ?? "").ToUpperInvariant().Contains("AVC");
             foreach (RenderTemplate t in r.Templates)
-                if (t.IsValid() && t.VideoStreamCount > 0) return t;
+            {
+                if (!t.IsValid() || t.VideoStreamCount == 0) continue;
+                if (avc && t.Name.Contains("1080p")) return t;
+                if (any == null) any = t;
+            }
         }
-        return null;
+        return any;
     }
 }

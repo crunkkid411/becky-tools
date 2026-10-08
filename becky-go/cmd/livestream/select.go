@@ -56,7 +56,12 @@ type Decision struct {
 	Note       string  `json:"note,omitempty"`
 	Review     *Review `json:"review,omitempty"`
 	Unsure     bool    `json:"unsure,omitempty"`
-	Said       bool    `json:"said"` // the lead model's own call (Keep is after becky's rules)
+	Said       bool    `json:"said"`              // the lead model's own call (Keep is after becky's rules)
+	Votes      []vote  `json:"votes,omitempty"`   // --model systemone: each model's own call
+	Posture    string  `json:"posture,omitempty"` // where he looks on this sentence
+	Chat       string  `json:"chat,omitempty"`    // the chat message he answers here (becky-livechat)
+	Asked      string  `json:"asked,omitempty"`   // questions viewers asked in the minute before
+	Read       []vote  `json:"read,omitempty"`    // the models that read the whole edit (contextPass)
 }
 
 // Review is the second model's independent call on the same sentence.
@@ -83,8 +88,9 @@ type Selection struct {
 
 // rulesVersion is bumped whenever conclude() changes, so a saved decision is
 // concluded again (2: chat replies the model cut stay cut; the stray-fragment
-// rule only cuts what the model itself said to cut).
-const rulesVersion = 2
+// rule only cuts what the model itself said to cut; 3: --model systemone is the
+// vote of three models plus the read of the whole edit, together.go).
+const rulesVersion = 3
 
 // editorRole is what every model is told; the local models then get topicRule
 // (systemPrompt), Claude gets keepRule (claudeOrder).
@@ -507,29 +513,14 @@ func verdict(keep bool) string {
 // runLocal is the Gemma/Qwen path: lead decides, the other model reviews.
 func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance string, logf func(string, ...any)) (Selection, error) {
 	start := time.Now()
-	sel := Selection{Model: lead.name, Reviewer: reviewer.name, Guidance: guidance}
+	sel, err := runLead(lead, ss, guidance, logf)
+	if err != nil {
+		return sel, err
+	}
+	sel.Reviewer = reviewer.name
 	ws := windows(ss)
-
-	lm, err := lead.open()
-	if err != nil {
-		return sel, err
-	}
-	if sel.Topics, err = lm.wantedTopics(guidance); err != nil {
-		sel.Topics = []string{guidance}
-		sel.Notes = append(sel.Notes, fmt.Sprintf("%s could not list the wanted topics (%v), so the whole guidance was one topic", lead.name, err))
-	}
-	for i, t := range sel.Topics {
-		logf("%s: wanted topic %d: %s", lead.name, i+1, t)
-	}
-	logf("%s: outlining the stream (%d parts)...", lead.name, len(ws))
-	sel.Outline = lm.outline(ss, ws, logf)
 	brief := "GUIDANCE: " + guidance + "\n\n" + wantedText(sel.Topics) + outlineText(sel.Outline)
-	logf("%s: deciding %d sentences...", lead.name, len(ss))
-	ds, err := lm.decideWindows(ss, ws, brief, len(sel.Topics), logf)
-	lm.client.Close()
-	if err != nil {
-		return sel, err
-	}
+	ds := sel.Decisions
 
 	targets := reviewTargets(ds)
 	reviews := map[int]Review{}
@@ -546,6 +537,36 @@ func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance string, log
 		}
 	}
 	sel.Decisions, sel.Rules = conclude(ds, reviews, lead.name), rulesVersion
+	sel.Seconds = time.Since(start).Seconds()
+	return sel, nil
+}
+
+// runLead is one local model's own call on every sentence (the wanted topics,
+// an outline, then window by window), with no review: Decisions are its raw
+// calls, Keep by keeps().
+func runLead(lead localModelSpec, ss []Sentence, guidance string, logf func(string, ...any)) (Selection, error) {
+	start := time.Now()
+	sel := Selection{Model: lead.name, Guidance: guidance}
+	lm, err := lead.open()
+	if err != nil {
+		return sel, err
+	}
+	defer lm.client.Close()
+	if sel.Topics, err = lm.wantedTopics(guidance); err != nil {
+		sel.Topics = []string{guidance}
+		sel.Notes = append(sel.Notes, fmt.Sprintf("%s could not list the wanted topics (%v), so the whole guidance was one topic", lead.name, err))
+	}
+	for i, t := range sel.Topics {
+		logf("%s: wanted topic %d: %s", lead.name, i+1, t)
+	}
+	ws := windows(ss)
+	logf("%s: outlining the stream (%d parts)...", lead.name, len(ws))
+	sel.Outline = lm.outline(ss, ws, logf)
+	brief := "GUIDANCE: " + guidance + "\n\n" + wantedText(sel.Topics) + outlineText(sel.Outline)
+	logf("%s: deciding %d sentences...", lead.name, len(ss))
+	if sel.Decisions, err = lm.decideWindows(ss, ws, brief, len(sel.Topics), logf); err != nil {
+		return sel, err
+	}
 	sel.Seconds = time.Since(start).Seconds()
 	return sel, nil
 }

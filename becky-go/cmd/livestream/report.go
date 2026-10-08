@@ -65,8 +65,11 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	}
 
 	fmt.Fprintf(&b, "\n## On the timeline for you to look at (%d)\n\n", len(marks))
-	fmt.Fprintf(&b, "- **Unsure calls:** %d kept and marked with an \"Unsure\" region\n", unsure)
-	fmt.Fprintf(&b, "- **Unsure chat replies:** %d cut, as the model said, with a marker at each cut\n", chats)
+	together := len(sel.Decisions) > 0 && len(sel.Decisions[0].Votes) > 0
+	if !together {
+		fmt.Fprintf(&b, "- **Unsure calls:** %d kept and marked with an \"Unsure\" region\n", unsure)
+		fmt.Fprintf(&b, "- **Unsure chat replies:** %d cut, as the model said, with a marker at each cut\n", chats)
+	}
 	b.WriteString(momentLine(faces, faceNote) + "\n")
 	fmt.Fprintf(&b, "- **Publish check:** %d region(s)", regions)
 	if n := len(findings) - regions; n > 0 {
@@ -111,7 +114,10 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		}
 	}
 	fmt.Fprintf(&b, "- %d sentences: %s\n", len(sel.Decisions), strings.Join(ls, ", "))
-	if sel.Reviewer != "" {
+	if together {
+		b.WriteString("- System One, Gemma-4 and Qwen3.5 each decided every sentence on their own; the majority stands, and a split keep while he looks down at his screen or answers chat is cut\n")
+		b.WriteString("- Then Gemma-4, Qwen3.5 and Gemma-4 12B each read the kept lines in order, with where he is looking and what chat had just asked on each line. A line two of the three readers cut is cut; one reader's cut needs other signals (a voter, his posture) to agree. Repeated until nothing changed\n")
+	} else if sel.Reviewer != "" {
 		fmt.Fprintf(&b, "- %s re-decided %d of %s's calls on its own (both sides of every keep/cut edge, cuts near kept lines, unsure calls): agreed on %d, disagreed on %d\n",
 			sel.Reviewer, reviewed, sel.Model, agreed, reviewed-agreed)
 	}
@@ -126,10 +132,15 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		}
 	}
 
-	b.WriteString("\n## Details\n\n### Unsure calls\n\n")
-	for _, d := range sel.Decisions {
-		if d.Unsure {
-			fmt.Fprintf(&b, "- %s %s - %s: \"%s\"\n", clock(ss[d.ID].Start), verdict(d.Keep), d.Note, short(ss[d.ID].Text, 90))
+	b.WriteString("\n## Details\n\n")
+	if together {
+		writeTogether(&b, sel, ss)
+	} else {
+		b.WriteString("### Unsure calls\n\n")
+		for _, d := range sel.Decisions {
+			if d.Unsure {
+				fmt.Fprintf(&b, "- %s %s - %s: \"%s\"\n", clock(ss[d.ID].Start), verdict(d.Keep), d.Note, short(ss[d.ID].Text, 90))
+			}
 		}
 	}
 	b.WriteString("\n### Publish check\n\n")

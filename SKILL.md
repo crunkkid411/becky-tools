@@ -1271,11 +1271,40 @@ Full report: `vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`. Rules it 
 becky-livestream --model gemma|qwen|claude|systemone "<video>" [--guidance "what to keep"] [--no-vegas] [--fresh]
 becky-livestream --model gemma|qwen|claude "<video>" --breaths-only   :: redo ONLY the breath check on the saved project
 ```
-`--model systemone` (2026-10-08, `systemone.go`): a System One decision model through the capped
-`Hosted` client answers two questions per sentence (which of the six labels; does it belong to what the
-guidance keeps). The keep answer alone decides; the label only names the sentence. 27-livestream: 269
-of 300 sentences agree with Claude (Gemma 268, Qwen 272), ~14 s, a few cents. Launcher
+`--model systemone` (2026-10-08) is **three models together, never System One alone** (`together.go`,
+`context.go`, `posture.go`, `chat.go`). Jordan, on the first version where System One decided alone:
+"systemone is ONE DATA POINT... gemma qwen and systemone have to work TOGETHER". Every line he flagged
+on that edit had been cut by Gemma AND Qwen in their own runs. Now:
+1. **Vote.** System One (`systemone.go`, capped `Hosted`), Gemma-4 E4B and Qwen3.5-4B each decide every
+   sentence alone (Gemma/Qwen: `runLead`, no review; saved `vote-<model>.json`, or a saved
+   `selection-gemma4|qwen3.5.json` is reused). The majority stands. A split keep is cut when he is
+   reading his screen or answering chat.
+2. **Posture** (`posture.go`): the picture helper over the whole stream at 2 fps, cached
+   `<video>.posture.json` (~7 min for 15 min). "Reading" = head 12+ deg below his median, or face
+   0.06+ lower in the frame than his median, or the head out of the face models while his body is
+   there. 27-livestream: 89 of 153 Claude-chat lines "reading", 0 of 45 kept lines.
+3. **Chat** (`chat.go`): one `becky-livechat` call (cached `<video>.chat.json`). Its answers ("@Lonnie:
+   Hair Jordan wins again?") are a signal. The questions viewers asked in the minute before a line are
+   shown to the readers.
+4. **Filler:** a kept line made only of filler words ("Like", "Yeah.", "So just you know um") is cut,
+   with no model involved.
+5. **Reading the edit** (`contextPass`): Gemma-4 E4B, Qwen3.5-4B and **Gemma-4 12B** each read ONLY the
+   kept lines in order. Each line carries its time, where he is looking and any chat questions. A
+   separate "~ a part was cut here ~" line marks the gaps. As a "(cut)" prefix the models read it as
+   the verdict. Each reader says keep/cut and why. A majority of readers cuts. Otherwise a reader's
+   cut counts double, a voter's cut once and reading/answering chat once, and half the most it could
+   score cuts. Rounds 2-3 re-judge only the lines next to a new cut. Every cut is logged with every
+   model's call.
+6. **No "unsure N%" markers.** The report lists every kept line and every cut with what each model said.
+
+27-livestream result: 1.7 of 15 min, the update plus the baldness topic. Every line Jordan flagged is out,
+including "I do have a to-do list... here it is", his answer to "What's on your topic list?". The
+voters' calls were reused; the reading takes ~8 min. Launcher:
 `workflows/livestream/Livestream-Edit_System-One.bat`.
+Cut edges (2026-10-08, `edges.go`): a becky-cut keep edge more than 0.3 s before the first kept word
+(0.5 s after the last) is not used, because that is a sound that is not his voice (1.1 s of hair fixing
+before "held for review"). A piece with no word in it is dropped (`finalPieces`/`hasWord`); the
+visual-moments step puts back the ones Gemma sees as a reaction or gesture.
 Jordan's launchers: `workflows/livestream/Livestream Edit - Gemma|Qwen|Claude.bat` (copy into the
 footage folder; drag the video on, or double-click). What to keep comes from `--guidance`, else
 `<video name>.guidance.txt`, else `guidance.txt` beside the video, else it asks for one line.
@@ -1440,8 +1469,26 @@ With `--transcript` it also finds where he ANSWERED a message without reading it
 System One choice "which recent message (or none) does this answer?" over the text and super chat
 messages of the last 90 s, widened to 5 min of questions after "scroll up" / "someone asked" / "in
 chat"; kept only at 0.7+. `--no-replies` skips it (it uses the capped `Hosted` client). Apology stream:
-73 answers, median 16 s after the message, about 68 clearly right; recall not measured; posture is
-NOT part of it yet.
+73 answers, median 16 s after the message, about 68 clearly right; recall not measured. In a busy chat
+the 25 newest messages are offered, plus every question ("?") from the 90 s (2026-10-08). System One
+still did not link "What's on your topic list?" to "I do have a to-do list" 39 s later, so
+becky-livestream also shows the readers the chat questions next to each line. Posture is combined
+with it in `becky-livestream --model systemone`.
+
+**How Jordan censors (2026-10-08, his words, `vegas/edit-learning/habits.md`):** the clip is duplicated
+on a track directly ABOVE; the CENSOR pixelate preset goes on the top copy; a MASK around the thing
+being censored, often moved frame by frame. `BeckyFX.cs`'s censor pixelates the whole picture, which is
+the old whole-picture way. The `censor` job line does it HIS way: a new CENSOR track directly above,
+the CENSOR preset on the copies, and a VEGAS Bezier Masking Mask 1 (oval or rectangle). A box file
+gives one keyframe per frame, so the mask follows the thing. Checked by render:
+`fxtest/censor-masked.becky.veg`. What to censor is the caller's call.
+
+Kept extreme facial expressions are where he does a face zoom. becky-livestream puts a 2x zoom on a
+kept picture moment, centred on his face (`moments.go` `faceZoom`/`zoomJob`, BeckyFX `zoom`), when:
+- Gemma labels the moment ONLY a reaction; and
+- MediaPipe measured a big expression on 2+ frames, or the mouth held open.
+
+The marker says FACE ZOOM.
 
 **Zooms, censoring, bleeps in VEGAS = `vegas/BeckyFX.cs`** (job file of frame ranges; open project via
 `becky-vegas run_script path=vegas\BeckyFX.cs job=<job.txt>`). Use HIS presets, never invented looks:

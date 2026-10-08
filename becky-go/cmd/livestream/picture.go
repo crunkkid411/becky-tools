@@ -137,25 +137,44 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 	if len(need) == 0 {
 		return p, nil
 	}
+	frames, err := measureFrames(cfg, media, cachePath, need, picFPS)
+	if err != nil {
+		return p, err
+	}
+	for _, r := range frames {
+		p.frames[picKey(r.T)] = r
+	}
+	rows := make([]picFrame, 0, len(p.frames))
+	for _, r := range p.frames {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].T < rows[j].T })
+	writeJSON(cachePath, rows)
+	return p, nil
+}
+
+// measureFrames runs pyhelpers/picture_signals.py over the spans at fps (one
+// helper call). scratch names the temporary span file.
+func measureFrames(cfg config.Config, media, scratch string, spans []span, fps float64) ([]picFrame, error) {
 	mesh, objects := mediapipeModel(cfg, "face_landmarker.task"), mediapipeModel(cfg, "efficientdet_lite0_int8.tflite")
 	gestures := mediapipeModel(cfg, "gesture_recognizer.task")
 	for _, f := range []string{cfg.FacePython, poseModel(cfg), mesh, objects, gestures, filepath.Join(cfg.FaceModelRoot, "models", "buffalo_l")} {
 		if _, err := os.Stat(f); err != nil {
-			return p, fmt.Errorf("the picture models are missing (%s)", f)
+			return nil, fmt.Errorf("the picture models are missing (%s)", f)
 		}
 	}
 	script, err := pyhelpers.Materialize("picture_signals.py", pyhelpers.PictureSignals)
 	if err != nil {
-		return p, err
+		return nil, err
 	}
-	spanFile := cachePath + ".spans.json"
-	js := make([][2]float64, len(need))
-	for i, s := range need {
+	spanFile := scratch + ".spans.json"
+	js := make([][2]float64, len(spans))
+	for i, s := range spans {
 		js[i] = [2]float64{s.A, s.B}
 	}
 	writeJSON(spanFile, js)
 	defer os.Remove(spanFile)
-	cmd := exec.Command(cfg.FacePython, script, "--video", media, "--spans", spanFile,
+	cmd := exec.Command(cfg.FacePython, script, "--video", media, "--spans", spanFile, "--fps", fmt.Sprint(fps),
 		"--face-root", cfg.FaceModelRoot, "--pose", poseModel(cfg), "--face-mesh", mesh, "--objects", objects, "--gestures", gestures, "--ffmpeg", cfg.FFmpeg)
 	cmd.Env = crop.ChildEnv(cfg)
 	var stderr strings.Builder
@@ -167,21 +186,12 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 		Frames []picFrame `json:"frames"`
 	}
 	if err := json.Unmarshal([]byte(lastJSONLine(string(out))), &res); err != nil {
-		return p, fmt.Errorf("the picture check gave no answer: %v (%s)", runErr, lastLines(stderr.String(), 2))
+		return nil, fmt.Errorf("the picture check gave no answer: %v (%s)", runErr, lastLines(stderr.String(), 2))
 	}
 	if !res.OK {
-		return p, fmt.Errorf("%s", res.Reason)
+		return nil, fmt.Errorf("%s", res.Reason)
 	}
-	for _, r := range res.Frames {
-		p.frames[picKey(r.T)] = r
-	}
-	rows := make([]picFrame, 0, len(p.frames))
-	for _, r := range p.frames {
-		rows = append(rows, r)
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].T < rows[j].T })
-	writeJSON(cachePath, rows)
-	return p, nil
+	return res.Frames, nil
 }
 
 // missingKeys lists the runs [first, last] of 0.1 s grid frames inside the spans

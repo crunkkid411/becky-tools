@@ -249,14 +249,13 @@ You were right: there are several watchdogs, and almost none of them run.
   - S1 question: "Which recent chat message (or none) is he answering with this sentence?",
     accepted only at 70%+. After "let me scroll up" or "someone asked", it looks back 5 minutes.
   - **Not measured:** how many answers it misses.
-- [ ] **C4. Use your body language in the reply finder**
-  - **Does:** a reply counts as more likely if your eyes went to the chat screen in the 30 s
-    before it (your example).
-  - **S1:** none for the glance itself. The reply question stays as in C3.
-  - **Code:** a gaze/head-turn signal across the whole stream. The picture signals exist
-    (`vegas/edit-learning` gaze files, MediaPipe in becky-livestream), but they are not computed
-    for the whole stream yet.
-  - **From you:** where the chat screen sits (left or right of the camera).
+- [x] **C4. Use your body language with the chat answers** - `becky-livestream` `posture.go` (built
+  2026-10-08). USED in `--model systemone`: the whole stream is measured at 2 frames a second (~7 min
+  for 15 min). Your face dropping in the frame or your head tilting down counts as "reading". On the
+  27-livestream 89 of 153 chat lines show it and 0 of 45 kept lines do. It is one signal next to the
+  chat answers (C3) and the models; it never cuts a line on its own.
+  - **Not done:** inside `becky-livechat` itself (it still uses the words only).
+  - **From you:** nothing.
 - [ ] **C5. Live keyword moderation** (Jev use cases 17 and 18)
   - **Does:** during a live stream, hides chat messages with your banned words. Each word maps to
     one fixed action (hide, timeout, ban).

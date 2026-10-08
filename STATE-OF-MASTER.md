@@ -6,7 +6,17 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — chat answers, System One livestream edit, ROADMAP.md, review guide (2026-10-08, local)
+### NEW — System One edit redone: three models vote, three models read the edit (2026-10-08, local)
+
+`becky-livestream --model systemone` no longer lets System One decide alone: System One, Gemma-4 and
+Qwen3.5 vote, then Gemma-4 E4B, Qwen3.5 and Gemma-4 12B read the kept edit in order, with his posture
+(measured over the whole stream) and the chat as signals, and cut what does not belong. No more
+"unsure N%" markers: the report says what every model said. 27-livestream: 1.7 of 15 min, every line
+Jordan flagged is out. Cut edges no longer reach into non-speech sounds. His censor method (copy on a
+track above, CENSOR preset, a mask that follows frame by frame) is a BeckyFX line, and kept
+surprised faces get a 2x face zoom. Details: top of `HANDOFF-LOG.md`.
+
+### chat answers, System One livestream edit, ROADMAP.md, review guide (2026-10-08, local)
 
 `becky-livechat` now also finds chat messages Jordan ANSWERED without reading them (System One picks
 the message, 0.7+ only): 73 on the apology stream, about 68 right, recall not measured, posture not

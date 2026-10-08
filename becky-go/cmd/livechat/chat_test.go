@@ -96,6 +96,20 @@ func TestCandidatesWidenAfterScrollCue(t *testing.T) {
 	}
 }
 
+// 27-livestream: "What's on your topic list?" was 22+ messages back when he
+// answered "I do have a to-do list"; a busy chat must not push a question out.
+func TestCandidatesKeepQuestionsInABusyChat(t *testing.T) {
+	msgs := []message{{T: 685.5, Author: "Ninjas_Mom", Text: "What's on your topic list?", Kind: "text"}}
+	for i := 0; i < 30; i++ {
+		msgs = append(msgs, message{T: 690 + float64(i), Author: "x", Text: "you look great", Kind: "text"})
+	}
+	ls := lines(talk(724, "If that wasn't happening, I do have a to-do list."))
+	c := candidates(msgs, ls, 0)
+	if len(c) != maxOptions+1 || c[len(c)-1] != 0 {
+		t.Fatalf("got %d candidates ending %v, want the %d newest plus the question", len(c), c[len(c)-1], maxOptions)
+	}
+}
+
 func TestLowConfidencePickIsNotAReply(t *testing.T) {
 	msgs := []message{{T: 0, Text: "what hair dye", Kind: "text"}}
 	if _, ok := pickReply(systemone.Answer{Choice: "m0", Probabilities: map[string]float64{"m0": 0.5}}, msgs, line{Start: 10}); ok {

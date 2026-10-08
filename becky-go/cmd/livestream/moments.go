@@ -65,15 +65,82 @@ var momentExpr = map[string]float64{"smile": 0.5, "brow": 0.5, "eyes": 0.4, "puc
 
 // moment is one watched stretch and what became of it.
 type moment struct {
-	A       float64  `json:"a"` // the stretch the edit cut
-	B       float64  `json:"b"`
-	Kind    string   `json:"kind"`
-	Signals []string `json:"signals"`
-	Said    string   `json:"said"`
-	Label   string   `json:"label,omitempty"` // Gemma's labels, in order (momentPrompt)
-	Gemma   string   `json:"gemma,omitempty"` // what Gemma says he does
-	Keep    bool     `json:"keep"`
-	Back    []span   `json:"back,omitempty"` // what was put back
+	A       float64   `json:"a"` // the stretch the edit cut
+	B       float64   `json:"b"`
+	Kind    string    `json:"kind"`
+	Signals []string  `json:"signals"`
+	Said    string    `json:"said"`
+	Label   string    `json:"label,omitempty"` // Gemma's labels, in order (momentPrompt)
+	Gemma   string    `json:"gemma,omitempty"` // what Gemma says he does
+	Keep    bool      `json:"keep"`
+	Back    []span    `json:"back,omitempty"`   // what was put back
+	Face    []float64 `json:"face,omitempty"`   // his face in the first put-back piece: centre x, y (median, fractions)
+	Zoomed  bool      `json:"zoomed,omitempty"` // a face zoom was put on it
+}
+
+// Face zoom (Jordan, 2026-10-08): "if we're keeping my extreme facial expressions
+// (like on the vegas timeline), typically that's when I'd do an exaggerated edit
+// like a face-zoom." A kept moment gets one when Gemma calls it a reaction AND
+// MediaPipe measured a big expression on 2+ frames or the mouth held open (two
+// models agree). Size: exaggerated, above his usual push-in (median 1.27x, his
+// 90th percentile 2.52x, habits.md); fast, like a punch-in. A marker names each
+// one so he can judge it.
+const (
+	faceZoomScale = 2.0
+	faceZoomRamp  = 4 // frames to reach it
+)
+
+func (m moment) faceZoom() bool {
+	// only a moment that is nothing but a reaction: "grooming, looking away,
+	// reaction" got a zoom on his hair (27-livestream 3:06, 2026-10-08)
+	if !m.Keep || len(m.Face) != 2 || strings.Trim(strings.ReplaceAll(m.Label, "reaction", ""), ", ") != "" {
+		return false
+	}
+	for _, s := range m.Signals {
+		if strings.HasPrefix(s, "mouth held open") || (strings.HasPrefix(s, "big facial expression") && !strings.HasSuffix(s, " x1")) {
+			return true
+		}
+	}
+	return false
+}
+
+// faceAt is the median face centre in [a, b] from the picture frames.
+func faceAt(p *pictures, a, b float64) []float64 {
+	var xs, ys []float64
+	for k := int(math.Ceil(a*picFPS - 1e-6)); float64(k) <= b*picFPS+1e-6; k++ {
+		if f, ok := p.frames[k]; ok && len(f.Face) >= 2 {
+			xs, ys = append(xs, f.Face[0]), append(ys, f.Face[1])
+		}
+	}
+	if len(xs) == 0 {
+		return nil
+	}
+	return []float64{median(xs), median(ys)}
+}
+
+// zoomJob is the BeckyFX.cs job for the face zooms on the finished timeline;
+// it sets Zoomed on each moment it zooms (the marker says so).
+func zoomJob(ms []moment, ps []piece, fps float64) (string, int) {
+	var sb strings.Builder
+	n := 0
+	for i, m := range ms {
+		if !m.faceZoom() {
+			continue
+		}
+		t0, t1, ok := toTimeline(ps, m.Back[0].A, m.Back[0].B)
+		if !ok {
+			continue
+		}
+		f0 := int64(math.Round(t0 * fps))
+		n1 := int64(math.Round(t1*fps)) - f0
+		if n1 < 3*faceZoomRamp { // the breath check took most of it: too short to hold a zoom
+			continue
+		}
+		fmt.Fprintf(&sb, "zoom\t%d\t%d\t%.2f\t%.3f\t%.3f\t%d\n", f0, n1, faceZoomScale, m.Face[0], m.Face[1], faceZoomRamp)
+		ms[i].Zoomed = true
+		n++
+	}
+	return sb.String(), n
 }
 
 // momentCandidates are the stretches the edit cuts right next to his words. A
@@ -474,6 +541,7 @@ func keepMoments(cfg config.Config, media, work, stem string, ranges []Range, pi
 			}
 			verdict = "PUT BACK " + strings.Join(parts, ", ")
 			add = append(add, c.Back...)
+			c.Face = faceAt(pics, c.Back[0].A, c.Back[0].B)
 		}
 		logf("  %s %.2f-%.2f: [%s] %s -> %s", c.Kind, c.A, c.B, c.Label, c.Gemma, verdict)
 	}
@@ -489,8 +557,12 @@ func momentMarks(ms []moment, ps []piece) []mark {
 			continue
 		}
 		if t, _, ok := toTimeline(ps, m.Back[0].A, m.Back[0].A+0.04); ok {
-			out = append(out, mark{At: t, Label: fmt.Sprintf("Kept for the picture - %s (Gemma, next to \"%s\"; small models: %s)",
-				m.Gemma, lastWords(m.Said, 6), strings.Join(m.Signals, ", "))})
+			zoom := ""
+			if m.Zoomed {
+				zoom = fmt.Sprintf(" - FACE ZOOM %.1fx added", faceZoomScale)
+			}
+			out = append(out, mark{At: t, Label: fmt.Sprintf("Kept for the picture%s - %s (Gemma, next to \"%s\"; small models: %s)",
+				zoom, m.Gemma, lastWords(m.Said, 6), strings.Join(m.Signals, ", "))})
 		}
 	}
 	return out

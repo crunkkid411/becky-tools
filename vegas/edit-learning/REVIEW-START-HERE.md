@@ -5,15 +5,17 @@ Open these in this order. The first two take one minute each.
 
 ## 1. The VEGAS effects (zoom, punch-in, censor, bleep, slow zoom)
 
-**Quickest:** play the four short test videos in
-`X:\AI-2\becky-tools\vegas\edit-learning\fxtest\`:
+**Quickest:** play the short test videos in
+`X:\AI-2\becky-tools\vegas\edit-learning\fxtest\playable\` (the first ones would not play - fixed):
 
 | File | What to look for |
 |---|---|
-| `punchin.MP4` | your punch-in zoom on a moment |
-| `pipzoom.MP4` | your slow zoom, rebuilt from how you do it in your projects |
-| `censor.MP4` | your CENSOR pixelate preset on a stretch of the picture |
-| `bleep.MP4` | the sound muted with a bleep tone on top |
+| `zoom.mp4` | a push-in zoom |
+| `punchin.mp4` | your punch-in zoom on a moment |
+| `pipzoom.mp4` | your slow zoom, rebuilt from how you do it in your projects |
+| `censor-masked.mp4` | censor YOUR way: the clip copied on a CENSOR track above, your CENSOR preset, a mask that follows his face frame by frame (project: `fxtest\censor-masked.becky.veg`) |
+| `censor.mp4` | the old wrong one (whole picture pixelated), kept only to compare |
+| `bleep.mp4` | the sound muted with a bleep tone on top |
 
 **In VEGAS:** open `fxtest\fx-test.becky.veg` to see the same effects on the timeline, as
 editable events. This is a COPY made for the test. It is not one of your projects.
@@ -27,11 +29,13 @@ time in the stream. Read a few and tell me which ones are wrong. About 5 look do
 
 ## 3. The 27-livestream edit made by the System One decision model
 
-`X:\Videos\2026\09_sept\27-livestream\27-livestream-systemone.veg`
+`X:\Videos\2026\09_sept\27-livestream\27-livestream-systemone (3).veg` (redone after your notes:
+System One, Gemma and Qwen vote, then three models read the whole edit; no "unsure" markers;
+a 2x face zoom on the two surprised faces, each with a marker saying FACE ZOOM).
 
-The same stream was also cut by Claude, Gemma and Qwen (the `-claude`, `-gemma4` and `-qwen3.5`
-projects next to it), so you can compare. The short report is
-`27-livestream\becky-edit\report-systemone.md`.
+The report says what every model said about every line:
+`27-livestream\becky-edit\report-systemone (3).md`. The first try,
+`27-livestream-systemone.veg`, is the one you called trash; it is left as it was.
 
 ## 4. Your editing habits, measured from 90 of your projects
 

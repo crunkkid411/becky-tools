@@ -88,7 +88,7 @@ func main() {
 	case "claude":
 		r.tag, r.label = "claude", "Claude ("+claudeModel()+", your subscription)"
 	case "systemone", "system-one", "s1":
-		r.tag, r.label = "systemone", "System One decision model ("+systemone.NewHosted("").Model+", capped at $5 a month)"
+		r.tag, r.label = "systemone", "System One + Gemma-4 + Qwen3.5 together (System One: "+systemone.NewHosted("").Model+", capped at $5 a month)"
 	default:
 		fatal("say which model makes the content calls: --model gemma, --model qwen, --model claude or --model systemone")
 	}
@@ -305,7 +305,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 	if len(ranges) == 0 {
 		fatal("the model kept nothing - check the guidance (" + r.guidance + ")")
 	}
-	predicted := finalPieces(ranges, keeps, r.fps)
+	predicted := finalPieces(ranges, keeps, words, r.fps)
 	loud := loudEdges(ranges, cr.ThresholdDB)
 	r.logf("%d kept sections, %.1f of %.1f minutes before the dead air comes out", len(ranges), sumRanges(ranges)/60, r.duration/60)
 
@@ -349,7 +349,18 @@ func (r *run) workflow(fresh, noVegas bool) {
 	ver := verifyEdit(ps, predicted, r.fps, au, words, keep, r.work, r.tag, health, r.logf)
 	r.step("edit check", t0)
 
-	// 9. regions and markers, save, report
+	// 9. face zooms, regions and markers, save, report
+	if job, n := zoomJob(faces, ps, r.fps); n > 0 {
+		res, err := runJob("BeckyFX.cs", filepath.Join(r.work, "vegas-zooms.txt"), job, 5*time.Minute)
+		if err != nil { // the markers still go on; none of them claims a zoom
+			for i := range faces {
+				faces[i].Zoomed = false
+			}
+			r.logf("VEGAS: the face zooms could not be added: %v", err)
+		} else {
+			r.logf("VEGAS: %d face zoom(s) on kept facial expressions (%s)", n, res)
+		}
+	}
 	marks := r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps)
 	if err := addMarks(marks, r.fps, r.work, r.logf); err != nil {
 		fatal("the edit is saved, but the regions could not be added: " + err.Error())
@@ -391,7 +402,7 @@ func (r *run) decide(ss []Sentence, fresh bool) (Selection, error) {
 	case "qwen3.5":
 		sel, err = runLocal(qwen, gemma, ss, r.guidance, r.logf)
 	case "systemone":
-		sel, err = runSystemOne(systemone.NewHosted("becky-livestream"), ss, r.guidance, r.logf)
+		sel, err = r.together(ss, fresh)
 	default:
 		sel, err = runClaude(ss, r.guidance, r.work, r.logf)
 	}

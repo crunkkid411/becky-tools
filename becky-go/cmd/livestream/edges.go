@@ -167,6 +167,14 @@ func (k keepIndex) before(t float64) (span, bool) {
 	return span{}, false
 }
 
+// ponytail: becky-cut leaves 0.04 s before and 0.25 s after his voice; a keep
+// edge further from the first/last kept word is a sound that is not his voice
+// (1.1 s of fixing his hair before "held for review", 27-livestream, 2026-10-08).
+const (
+	maxLead  = 0.3
+	maxTrail = 0.5
+)
+
 // contentRanges turns kept words (keep[i] per word) into merged frame-exact
 // source ranges. duration caps the last edge.
 func contentRanges(words []Word, keep []bool, keeps []span, au *audio, fps, duration float64) []Range {
@@ -191,10 +199,11 @@ func contentRanges(words []Word, keep []bool, keeps []span, au *audio, fps, dura
 			if !ok {
 				K, ok = k.after(words[fw].Start)
 			}
-			if ok && K.A > wordMid(pw) && K.A < words[fw].Start+1.0 {
+			st := words[fw].Start
+			if ok && K.A > wordMid(pw) && K.A < st+1.0 && K.A >= st-maxLead {
 				r.In, r.InHow = K.A, "becky-cut"
 			} else {
-				r.In, r.InHow, r.InDB = au.frameCut(math.Min(pw.End, words[fw].Start)-0.1, words[fw].Start+0.1, fps, true)
+				r.In, r.InHow, r.InDB = au.frameCut(math.Max(math.Min(pw.End, st)-0.1, st-maxLead), st+0.1, fps, true)
 			}
 		}
 		if lw+1 < len(words) {
@@ -206,10 +215,11 @@ func contentRanges(words []Word, keep []bool, keeps []span, au *audio, fps, dura
 			if !ok {
 				K, ok = k.before(words[lw].End + 0.3)
 			}
-			if ok && K.B <= nw.Start+0.15 && K.B > words[lw].Start {
+			end := words[lw].End
+			if ok && K.B <= nw.Start+0.15 && K.B > words[lw].Start && K.B <= end+maxTrail {
 				r.Out, r.OutHow = K.B, "becky-cut"
 			} else {
-				r.Out, r.OutHow, r.OutDB = au.frameCut(math.Min(words[lw].End, nw.Start)-0.1, nw.Start+0.1, fps, false)
+				r.Out, r.OutHow, r.OutDB = au.frameCut(math.Min(end, nw.Start)-0.1, math.Min(nw.Start+0.1, end+maxTrail), fps, false)
 			}
 		} else {
 			r.Out = math.Min(math.Ceil(words[lw].End*fps+3)/fps, duration)
@@ -243,17 +253,33 @@ func mergeRanges(rs []Range) []Range {
 
 // finalPieces predicts what BeckyCut.cs leaves: each content range minus
 // becky-cut's cut spans (= intersected with its keep spans).
-func finalPieces(rs []Range, keeps []span, fps float64) []span {
+// A piece with none of his words in it is a sound between his lines (his
+// chair, fixing his hair) and is left out; the visual-moments step puts back
+// the ones Gemma sees are a reaction or gesture.
+func finalPieces(rs []Range, keeps []span, words []Word, fps float64) []span {
 	var out []span
 	for _, r := range rs {
 		for _, k := range keeps {
 			a, b := math.Max(r.In, k.A), math.Min(r.Out, k.B)
-			if b-a > 0.5/fps {
+			if b-a > 0.5/fps && hasWord(words, a, b) {
 				out = append(out, span{snap(a, fps), snap(b, fps)})
 			}
 		}
 	}
 	return out
+}
+
+// hasWord: at least 0.1 s of some word (or a short word's middle) lies in [a, b].
+func hasWord(words []Word, a, b float64) bool {
+	for _, w := range words {
+		if w.Start >= b {
+			return false
+		}
+		if math.Min(w.End, b)-math.Max(w.Start, a) >= 0.1 || (wordMid(w) >= a && wordMid(w) <= b) {
+			return true
+		}
+	}
+	return false
 }
 
 // loudEdges lists cut points inside speech that are still louder than
