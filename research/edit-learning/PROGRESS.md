@@ -114,3 +114,13 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   this month: $0.0089 of $5.
 - **22:25 yt-dlp gate is now first come, first served** (the backfill starved the chat download
   for 40 min).
+- **22:40 "Reading chat" from posture (apology stream):** picture_signals.py (face, head angle) on the
+  3 s before each of the 14 confirmed reads vs 28 ordinary talking moments (random, 60+ s from any
+  read, fixed seed). Head down 12+ deg, or head dropped out of the face model, or face low in frame
+  (centre below 0.40): **13 of 14 reads, 6 of 28 ordinary moments.** Head angle alone: down 9+ deg
+  before 10/10 reads where the face model held. So posture is a real second signal next to the
+  read-aloud match. Work files: `X:\AI-2\edit-learning-work\gaze\`.
+- **22:40 `scripts/edit_habits.py`** over the first 14 exported projects: 2,160 video pieces, median
+  piece 1.72 s (10% under 0.77 s, 90% under 6.87 s); 56 push-ins, median 1.55x, reached in median
+  0.70 s; 23 pull-outs; 13 pans; almost no fades; effects led by S_Shake (31 uses / 4 projects).
+  Re-run after the batch ends for all 91.

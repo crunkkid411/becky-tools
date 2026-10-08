@@ -37,6 +37,8 @@ don't change my .conf file please)" to tell when he is talking to chat. Night lo
   fade, pan/crop keyframe, effect parameter, envelope, title text). Never saves.
   `scripts/veg_export_all.py` runs it over every .veg in `X:\Videos` (copies only, SHA-256 of each
   original checked before and after; answers VEGAS's "media not found" dialog with "leave offline").
+- `scripts/edit_habits.py`: his habits across every exported project (piece length, push-in/pull-out
+  size and speed, pans, fades, effects per project) into `edits.db` table `vegas_events`.
 - `scripts/editlearn.py`: labels a raw transcript kept/cut from an export, into
   `X:\AI-2\edit-learning-work\edits.db` (outside the repo). Answer key #1: human-brain-robot.
 - `becky-besttake` (`cmd/besttake`): Paul Borg's take picker (restart? finished? keep the last
