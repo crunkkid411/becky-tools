@@ -15,6 +15,10 @@ import (
 func fakeJev(t *testing.T, fails int) (*httptest.Server, *int) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"data":[{"id":"~typesafe/jev-latest","architecture":{"output_modalities":["decisions"]}},{"id":"anthropic/claude-sonnet-5","architecture":{"output_modalities":["text"]}}]}`))
+			return
+		}
 		calls++
 		if calls <= fails {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -28,7 +32,7 @@ func fakeJev(t *testing.T, fails int) (*httptest.Server, *int) {
 }
 
 func testHosted(t *testing.T, url string) Hosted {
-	return Hosted{Model: JevModel, Dir: t.TempDir(), Key: "k", Endpoint: url, Client: http.DefaultClient, Tool: "test"}
+	return Hosted{Model: JevModel, Dir: t.TempDir(), Key: "k", Endpoint: url, Models: url + "/models", Client: http.DefaultClient, Tool: "test"}
 }
 
 var testReq = Request{State: "take 41, take 43", Questions: map[string]Question{"best": Choice("Which take?", Option{Key: "41"}, Option{Key: "43"})}}
@@ -82,13 +86,25 @@ func TestJevRetriesOutage(t *testing.T) {
 	}
 }
 
-// Real call, opt-in: BECKY_JEV_LIVE=1 (costs about $0.00002).
-func TestJevLive(t *testing.T) {
+// Real calls, opt-in: BECKY_JEV_LIVE=1 (costs about $0.00003 for both).
+func TestDeciderLive(t *testing.T) {
 	if os.Getenv("BECKY_JEV_LIVE") != "1" {
-		t.Skip("set BECKY_JEV_LIVE=1 to call real Jev")
+		t.Skip("set BECKY_JEV_LIVE=1 to call the real models")
 	}
-	h := NewHosted("live-test")
+	for _, model := range []string{DefaultModel, JevModel, "openai/gpt-5.5"} {
+		t.Run(model, func(t *testing.T) { liveOne(t, model) })
+	}
+}
+
+func liveOne(t *testing.T, model string) {
+	h := NewHosted("live-test").WithModel(model)
 	h.Dir = t.TempDir()
+	if model == "openai/gpt-5.5" { // a chat model: must be refused before sending
+		if _, err := h.Decide(context.Background(), testReq); err == nil || !strings.Contains(err.Error(), "not a System One") {
+			t.Fatalf("chat model not refused: %v", err)
+		}
+		return
+	}
 	got, err := h.Decide(context.Background(), Request{
 		State: "Sentence 41: So the whole point of this... Sentence 42: So the whole point of this, uh. Sentence 43: So the whole point of this video is to show you the new editor.",
 		Questions: map[string]Question{

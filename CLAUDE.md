@@ -140,11 +140,13 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   before a request is sent — copy that guard into any new tool that talks to a paid
   endpoint. Violated once (2026-07-19): one caption run on `anthropic/claude-sonnet-5`
   burned his entire $0.67 OpenRouter balance, after which every call 402'd.
-- **ONE PAID EXCEPTION: Jev, $5 a month, enforced in code.** Jordan, 2026-10-07: "I am happy to
+- **ONE PAID EXCEPTION: System One decision models, $5 a month total, enforced in code.** Jordan, 2026-10-07: "I am happy to
   PAY for Jev" and chose "$5 a month"; "jev is already breaking one of our rules (it's paid), so
   let's not be legalistic in the way we use it; we're after effectiveness". All Jev calls go
-  through `internal/systemone` `Hosted` (OpenRouter `~typesafe/jev-latest`, `/api/alpha/decisions`):
-  it refuses any non-Jev model id and refuses to send once the month's ledger
+  through `internal/systemone` `Hosted` (OpenRouter `/api/alpha/decisions`; default Perplexity Decider
+  v1.1, Jev via `WithModel(JevModel)`). Jordan, later that night: the $5 "can be used on whichever system
+  one decision model seems most appropriate for the task". It refuses any model OpenRouter does not list
+  with the "decisions" output (so never a chat model) and refuses to send once the month's ledger
   (`research/jev/spend-YYYY-MM.json`) reaches `MonthlyCapUSD`. Never call Jev around it.
   Forensic evidence stays local (Laya / ImaJev); Jev is for Jordan's own content and agents.
 - **Reaching another model/API from inside Claude Code is EXACTLY 3 methods, never a

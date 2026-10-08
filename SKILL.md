@@ -1406,8 +1406,8 @@ processor whenever any VEGAS is open.
 request `{"state": "...", "questions": {"q": {"type": "choice", "instructions": "...", "criteria":
 {"key": "description", ...}}}}` (also `score`, `noul`), stdout the answers. Laya ONNX on CPU, 0 VRAM,
 ~0.5s. In Go use `internal/systemone` (`Choice`, `Score`, `Noul`, `Runner.Decide`).
-**Paid Jev, same types:** `systemone.NewHosted("<tool>").Decide(ctx, req)` (OpenRouter
-`~typesafe/jev-latest`, ~0.5 s, ~$0.00002 per small call). Both satisfy `systemone.Decider`, so a tool
+**Paid decision models, same types:** `systemone.NewHosted("<tool>").Decide(ctx, req)` (OpenRouter;
+default Perplexity Decider v1.1, `.WithModel(systemone.JevModel)` for Jev; ~$0.00001 per small call). Both satisfy `systemone.Decider`, so a tool
 swaps Laya for Jev in one line. $5/month cap enforced in code; every call logged to
 `research/jev/log-YYYY-MM.jsonl` (future training data for a local model).
 
