@@ -18,6 +18,56 @@ built yet. Jordan said he is happy to pay for Jev and open to training a local c
   | **ImaJev 4B** | This PC, llama.cpp, ~3.4 GB VRAM | Decisions straight from a picture (Jev cannot see images). |
 - **Start with ONE pilot and measure it** (below), not a rewrite.
 
+## Update after two research passes (same evening)
+
+Jordan, after reading the first draft: Jev is not necessarily the best model; workflows must run
+unattended ("Requiring claude code to oversee it indefinitely defeats the purpose"); copy how others
+use Jev before inventing; $5/month; use his OpenRouter key. Done: `internal/systemone` `Hosted`
+calls `~typesafe/jev-latest` with the cap in code (live-tested 0.5 s, $0.000015).
+
+**Models (verified: OpenRouter model list + Decision Index v0.3 data file, 2026-10-07):**
+| Job | Hosted pick | Local pick (fits next to Whoretana) |
+|---|---|---|
+| Text decisions | Jev (`typesafe/jev-1.13`, DI 60.11, #3, most proven) and test Perplexity Decider v1.1 side by side (`perplexity/pplx-decider-v1.1-27b`, DI 62.75, #1, $0.02/M, released today) | JevK5 4B or Decider-4B GGUF (DI ~41) until a fine-tuned Laya exists |
+| Picture yes/no | Perplexity Decider v1.1 (takes images) | ImaJev 4B (best open image decider) |
+| Untrained Laya | - | DI 4.43 (#106): do not use untrained |
+Pin a version id, not `-latest`, once thresholds are tuned. The installed llama-server (build 9551,
+June) has no `/v1/systemone`; local decision models need b11361+ in a SEPARATE folder (Whoretana's
+brain uses the current binary).
+
+**What the other editors actually ask (from their code, quoted in the research):**
+- Paul Borg (best take): Noul per line pair "`later` repeats the opening words of `earlier`, as a
+  retake of the same sentence" (6 lines back, up to 240 questions in one request), then Noul per
+  attempt "Does `take` finish its thought...?"; code keeps the LAST finished attempt, flags the rest
+  `?`. He dropped a "clean delivery" question: on unpunctuated Whisper text it separated nothing.
+- jevclip (keep/cut by value): 20 s segments, state = title + segment only; Choice `kind` (insight,
+  evidence, method, concept, story, small-talk, promo, filler), Score `substance` (4 levels), Nouls
+  `hype`, `standalone`, per-focus relevance. Cutting needs MORE certainty than keeping. A clip that
+  opens on "and / second" pulls in the segment before it. Answers cached by request hash.
+- jev-shorts-editor (vertical shorts): per 1-5 s beat, Nouls `needs_visual`, `punch_in`, Choices for
+  template, emphasis word, transition, sound effect; never two punch-ins in a row (code).
+- HyperEdit: Jev routes editing commands (one Choice over 15 workflows); dead air is plain ffmpeg.
+- jevmeter: every Noul has yes/no definitions plus near-miss examples: held-out 94.5% -> 99.0%.
+
+**Steps they do that becky does not (check each):** group retakes before choosing; re-transcribe
+each kept span to prove no word was lost; a reason stored with every cut; answers cached so a
+threshold change costs no calls; per-video thresholds; "failed = not judged", never "cut".
+
+**How they stay unattended:** pinned model, retries, cache, a log of every decision with its odds,
+shadow mode before a gate acts, fixed code rules first and the model only on the remainder, and a
+plain fallback when the model is down.
+
+**Training data format (Laya, `laya-train`):** one JSONL line per case:
+`{"state": "...", "questions": {...same as a Jev request...}, "expected": {"dept": "billing", "urgent": true}}`.
+1,200 cases took Laya from 0.36 to ~0.78; calibration needs 10+ held-out items per question type.
+Full fine-tune is ~6-7 GB VRAM (estimate): run with Whoretana off, or on Kaggle's free GPUs.
+Every `Hosted` call is already logged in this shape (`research/jev/log-YYYY-MM.jsonl`); Jordan's
+corrections become `expected`.
+
+**First trial (recommended): best take, Paul Borg's two questions, in shadow mode** on a recording
+Jordan already edited, scored against his own cuts, Jev vs Perplexity Decider vs today's Gemma
+labels. Then the jevclip value rubric for livestream keep/cut.
+
 ## What we had wrong before (corrects `system-one-models-jev.md`, 2026-09-18)
 
 | We believed | Verified now |
@@ -90,9 +140,9 @@ final-test, as in ICtPrhMBUKA). Forensic work stays local-only from day one: no 
 
 ## Needs Jordan (the only blockers)
 
-1. **A TypeSafe account and key** (console.typesafe.ai; Vercel AI Gateway is the no-waitlist route).
-   No key is on this PC yet. Agents do not create accounts.
-2. **Yes/no on a money exception, enforced in code:** Jev only, a hard monthly cap (suggest $5, which
-   is about 120M tokens), refused by code once reached, like the `isFreeModel` guard. becky-tools'
-   CLAUDE.md currently says "never spend Jordan's money", so this must be written there with his OK.
-3. **Pick the pilot.** Recommended: #1, livestream sentence labels, scored against his own edits.
+1. ~~TypeSafe key~~ DONE: his OpenRouter key works (`/api/alpha/decisions`), no TypeSafe account needed.
+2. ~~Money exception~~ DONE: $5/month, enforced in `internal/systemone` `Hosted`, written in CLAUDE.md.
+3. **An answer key for the first trial:** a recording Jordan cut himself (not one becky cut), so the
+   best-take and keep/cut questions are scored against HIS choices.
+4. **Allowing a 2nd paid model:** the code accepts Jev only. Testing Perplexity Decider v1.1 side by
+   side needs his OK to widen the guard (same $5 cap).
