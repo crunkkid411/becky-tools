@@ -69,6 +69,13 @@ Verified: it found the X on Manus's real 'Restore your account?' popup (3 px off
 end to end, said 'nothing blocking' on clean pages, and no window flashed. avlm's llama-server now always
 spawns hidden. Details: top of `HANDOFF-LOG.md`.
 
+### Paid Jev client with a $5/month cap (2026-10-07, local)
+
+`internal/systemone` `Hosted` calls Jev through Jordan's OpenRouter key with the same request/answer
+types as local Laya. Refuses non-Jev models and refuses past $5 a month (ledger in `research/jev`);
+logs every call for later training. Live-tested: 0.5 s, $0.000015. No tool uses it yet; the plan is
+`research/jev-integration-plan.md`.
+
 ### becky-intake keeps transcripts, YouTube's first, one yt-dlp call per 90 s (2026-10-07, local)
 
 Each note now has `<note>.transcript.md` beside it, linked at its top. The transcript is YouTube's

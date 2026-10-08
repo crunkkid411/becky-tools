@@ -140,6 +140,13 @@ These are settled and each was a real bug or measured failure. Full reasoning in
   before a request is sent — copy that guard into any new tool that talks to a paid
   endpoint. Violated once (2026-07-19): one caption run on `anthropic/claude-sonnet-5`
   burned his entire $0.67 OpenRouter balance, after which every call 402'd.
+- **ONE PAID EXCEPTION: Jev, $5 a month, enforced in code.** Jordan, 2026-10-07: "I am happy to
+  PAY for Jev" and chose "$5 a month"; "jev is already breaking one of our rules (it's paid), so
+  let's not be legalistic in the way we use it; we're after effectiveness". All Jev calls go
+  through `internal/systemone` `Hosted` (OpenRouter `~typesafe/jev-latest`, `/api/alpha/decisions`):
+  it refuses any non-Jev model id and refuses to send once the month's ledger
+  (`research/jev/spend-YYYY-MM.json`) reaches `MonthlyCapUSD`. Never call Jev around it.
+  Forensic evidence stays local (Laya / ImaJev); Jev is for Jordan's own content and agents.
 - **Reaching another model/API from inside Claude Code is EXACTLY 3 methods, never a
   4th:** `claude <mode>` interactive launcher, `fleet-run.ps1` headless delegation, or a
   direct HTTP POST to a provider's OpenAI-compatible endpoint (Go tools: copy

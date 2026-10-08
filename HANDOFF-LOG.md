@@ -12,6 +12,18 @@
 
 ---
 
+## Paid Jev client, $5/month cap in code (2026-10-07, local, `master`)
+
+Jordan approved paying for Jev ("$5 a month", via his OpenRouter key, `~typesafe/jev-latest`).
+OpenRouter serves it on `/api/alpha/decisions` (not chat/completions); Choice criteria is required
+(a map of option -> description or null). Built `internal/systemone/jev.go`: `Hosted` + `Decider`
+interface, Jev-only model guard, monthly ledger with a lock file, retries on 429/5xx, JSONL log of
+every request + answer. Tests: cap refusal, non-Jev refusal, outage retry, ledger + log; opt-in live
+test `BECKY_JEV_LIVE=1` passed (best take 43 at confidence 1.00, 0.53 s, $0.000015).
+becky-tools CLAUDE.md money rule now names this one exception.
+
+---
+
 ## becky-intake: transcripts saved, YouTube's captions first, one yt-dlp call per 90 s (2026-10-07, local, `master`)
 
 Jordan could not find the transcripts the notes talked about: they were used for Gemma's how-to and

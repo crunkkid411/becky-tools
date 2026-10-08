@@ -1406,6 +1406,10 @@ processor whenever any VEGAS is open.
 request `{"state": "...", "questions": {"q": {"type": "choice", "instructions": "...", "criteria":
 {"key": "description", ...}}}}` (also `score`, `noul`), stdout the answers. Laya ONNX on CPU, 0 VRAM,
 ~0.5s. In Go use `internal/systemone` (`Choice`, `Score`, `Noul`, `Runner.Decide`).
+**Paid Jev, same types:** `systemone.NewHosted("<tool>").Decide(ctx, req)` (OpenRouter
+`~typesafe/jev-latest`, ~0.5 s, ~$0.00002 per small call). Both satisfy `systemone.Decider`, so a tool
+swaps Laya for Jev in one line. $5/month cap enforced in code; every call logged to
+`research/jev/log-YYYY-MM.jsonl` (future training data for a local model).
 
 Rules that are law here (measured 2026-09-25, `research/playlist-intake/README.md`):
 - **The model picks, code computes.** Laya cannot count, reads wording literally and gets worse with
