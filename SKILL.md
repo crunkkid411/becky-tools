@@ -1301,6 +1301,25 @@ on that edit had been cut by Gemma AND Qwen in their own runs. Now:
 including "I do have a to-do list... here it is", his answer to "What's on your topic list?". The
 voters' calls were reused; the reading takes ~8 min. Launcher:
 `workflows/livestream/Livestream-Edit_System-One.bat`.
+
+`--model systemone-stack` (2026-10-08, `stack.go`) is **the `--model qwen` workflow with System One
+inserted, everything else the same**. Jordan asked for it after `systemone` turned out to be a new
+decision design rather than the established one. How the two compare:
+- **qwen:** Qwen decides; Gemma re-decides the calls that need it (Qwen under 70% sure, keep/cut
+  boundaries, cuts within 4 lines of a keep); a split is kept and marked unsure.
+- **systemone-stack:** the same, plus two things. System One decides every line, and every line where
+  it disagrees with Qwen also goes to Gemma. A Qwen/Gemma split is settled by a System One call 80%+
+  sure (two of three). Only what stays open is marked unsure, and the marker names all three calls.
+
+27-livestream: Gemma checked 63 calls (20 because System One disagreed); System One settled 13 splits
+(9 cut, 4 kept); 2 lines stayed unsure; 3.3 min kept.
+
+It has NO posture, chat or reading-the-edit pass, so it keeps what the qwen path keeps that Jordan
+flagged as chat/filler: "I do have a to-do list... here it is", the ADHD aside at 6:59, "What",
+"Like", "Yeah". Those were removed only by `systemone`'s posture + chat + three readers.
+
+The saved `selection-qwen3.5.json` is reused only when it holds Qwen's raw calls (rules 2+). Launcher:
+`workflows/livestream/Livestream-Edit_System-One-Stack.bat`.
 Cut edges (2026-10-08, `edges.go`): a becky-cut keep edge more than 0.3 s before the first kept word
 (0.5 s after the last) is not used, because that is a sound that is not his voice (1.1 s of hair fixing
 before "held for review"). A piece with no word in it is dropped (`finalPieces`/`hasWord`); the

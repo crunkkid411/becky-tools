@@ -12,6 +12,25 @@
 
 ---
 
+## `--model systemone-stack`: the qwen workflow with System One inserted (2026-10-08, local, `master`)
+
+Jordan, reviewing the redone edit: the face zooms were "a breakthrough", the masked censor "incredible";
+then "Did you integrate the systemone pass into what we've already established or did you reinvent the
+wheel (again)?" Answer: the pipeline around the decision was shared (transcript, becky-cut, edges,
+visual moments, breaths, VEGAS, checks), but the decision step of `systemone` is a new design (a vote of
+three, then three readers) instead of the qwen path's lead + targeted review. So, as he asked,
+`stack.go` duplicates `--model qwen` and inserts System One:
+- System One decides every line (`vote-systemone.json` reused);
+- its disagreements with Qwen are added to Gemma's review targets;
+- `concludeStack` = `conclude` unchanged, then a System One call 80%+ sure settles a Qwen/Gemma split.
+- 27-livestream (decision only, `selection-systemone-stack.json`): Gemma checked 63 (20 because of
+  System One); 13 splits settled; 2 unsure; 3.3 min kept. It keeps the qwen path's chat/filler lines
+  Jordan flagged; only `systemone`'s posture + chat + readers remove those.
+- NOT run through VEGAS yet: Jordan needed his PC (the visual-moment step would watch 60 new stretches
+  with Gemma 12B on CPU, ~25 min). The launcher builds it: `Livestream-Edit_System-One-Stack.bat`.
+- His review notes (zoom targets, bleep precision, edits on intentional silences) are in
+  `vegas/edit-learning/habits.md`.
+
 ## System One edit redone: three models vote, three models read the edit (2026-10-08, local, `master`)
 
 Jordan on `27-livestream-systemone.veg`: "the system one model is not supposed to be the final say -

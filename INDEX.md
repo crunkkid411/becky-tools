@@ -30,6 +30,9 @@
   Gemma-4 E4B, Qwen3.5 and Gemma-4 12B READ the kept edit in order (posture from the picture,
   chat answers and chat questions as signals) and cut what does not belong (`together.go`,
   `context.go`, `posture.go`, `chat.go`); launcher `workflows/livestream/Livestream-Edit_System-One.bat`.
+- **`becky-livestream --model systemone-stack`** (2026-10-08, `stack.go`): the `--model qwen` workflow
+  unchanged, plus System One: its disagreements with Qwen go to Gemma's review, and a sure System One
+  call settles a Qwen/Gemma split; launcher `Livestream-Edit_System-One-Stack.bat`.
 - **Browser unsticker = `becky-unstick`** (`cmd/unstick`): Microsoft **Fara1.5-4B** (Qwen3.5-4B fine-tuned only
   for browser control; `models\fara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and
   returns the click that clears the popup/banner, or `terminate` if nothing blocks. Hidden llama-server, ~4s warm /

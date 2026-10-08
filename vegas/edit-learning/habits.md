@@ -11,3 +11,8 @@
 
 - **Censor:** the clip is duplicated on a track directly ABOVE the original; the CENSOR pixelate preset goes on the top copy; then a MASK is drawn around the thing being censored, so only that spot is pixelated (not the whole picture). He often moves the mask frame by frame. (becky's first fxtest censor pixelated the whole picture - wrong.)
 - **Face zoom:** when an extreme facial expression is kept on the timeline, that is typically where he does an exaggerated edit like a face zoom.
+- **Face zoom (his review of the 27-livestream, 2026-10-08):** the two 2x face zooms on his surprised faces were "amazing! That's a breakthrough!"; the second should have come in slightly sooner (needs data from more projects).
+- **Zooms aim at SOMETHING:** pipzoom and the other test zooms aimed at the centre of the picture - wrong. A zoom targets a specific thing, almost always his face (which is not always centred), occasionally something else (context decides).
+- **Intentional silence gets an edit:** where a silence is left in on purpose, a zoom, a colour change or another of his edits is usually in order (more data to come).
+- **Bleep:** the bleep sound is shortened to cover ONLY the swear word; sometimes the very beginning and/or end of the word is left audible. becky's test bleep was not precise enough.
+- **Masked censor:** "incredible, nice work" (the CENSOR track + mask that follows the face).

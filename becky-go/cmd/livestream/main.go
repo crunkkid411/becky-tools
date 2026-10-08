@@ -3,7 +3,7 @@
 // leaves a saved VEGAS project next to the footage. Every step runs by itself,
 // every time, in this order; a model is asked ONLY what to keep.
 //
-//	becky-livestream --model gemma|qwen|claude|systemone [--guidance "what to keep"] [video]
+//	becky-livestream --model gemma|qwen|claude|systemone|systemone-stack [--guidance "what to keep"] [video]
 //
 // No video: the one video in the current folder (several: it asks which).
 // No --guidance: <video name>.guidance.txt, then guidance.txt beside the video,
@@ -72,7 +72,7 @@ func fatal(msg string) {
 }
 
 func main() {
-	model := flag.String("model", "", "who makes the content calls: gemma, qwen, claude or systemone")
+	model := flag.String("model", "", "who makes the content calls: gemma, qwen, claude, systemone or systemone-stack")
 	guidance := flag.String("guidance", "", "what to keep, in plain words")
 	noVegas := flag.Bool("no-vegas", false, "make the plan and the checks, but no VEGAS project")
 	fresh := flag.Bool("fresh", false, "decide again even if this model already decided with the same guidance")
@@ -87,10 +87,12 @@ func main() {
 		r.tag, r.label = "qwen3.5", "Qwen3.5-4B (reviewed by Gemma-4 E4B)"
 	case "claude":
 		r.tag, r.label = "claude", "Claude ("+claudeModel()+", your subscription)"
+	case "systemone-stack", "system-one-stack", "s1-stack":
+		r.tag, r.label = "systemone-stack", "Qwen3.5-4B, checked by System One and Gemma-4 E4B (the qwen workflow; System One: "+systemone.NewHosted("").Model+", capped at $5 a month)"
 	case "systemone", "system-one", "s1":
 		r.tag, r.label = "systemone", "System One + Gemma-4 + Qwen3.5 together (System One: "+systemone.NewHosted("").Model+", capped at $5 a month)"
 	default:
-		fatal("say which model makes the content calls: --model gemma, --model qwen, --model claude or --model systemone")
+		fatal("say which model makes the content calls: --model gemma, --model qwen, --model claude, --model systemone or --model systemone-stack")
 	}
 	var err error
 	if r.media, err = pickVideo(flag.Arg(0)); err != nil {
@@ -403,6 +405,8 @@ func (r *run) decide(ss []Sentence, fresh bool) (Selection, error) {
 		sel, err = runLocal(qwen, gemma, ss, r.guidance, r.logf)
 	case "systemone":
 		sel, err = r.together(ss, fresh)
+	case "systemone-stack":
+		sel, err = r.stack(ss, fresh)
 	default:
 		sel, err = runClaude(ss, r.guidance, r.work, r.logf)
 	}

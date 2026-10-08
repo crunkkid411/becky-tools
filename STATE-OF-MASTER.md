@@ -6,7 +6,13 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — System One edit redone: three models vote, three models read the edit (2026-10-08, local)
+### NEW — `--model systemone-stack`: the qwen workflow with System One inserted (2026-10-08, local)
+
+Same as `--model qwen`, plus: System One decides every line, its disagreements with Qwen go to Gemma's
+review, and a sure System One call settles a Qwen/Gemma split. Decision tested on the 27-livestream
+(3.3 min kept, 2 unsure); not yet run through VEGAS. `--model systemone` (below) stays.
+
+### System One edit redone: three models vote, three models read the edit (2026-10-08, local)
 
 `becky-livestream --model systemone` no longer lets System One decide alone: System One, Gemma-4 and
 Qwen3.5 vote, then Gemma-4 E4B, Qwen3.5 and Gemma-4 12B read the kept edit in order, with his posture
