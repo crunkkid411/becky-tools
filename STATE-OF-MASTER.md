@@ -6,6 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — chat answers, System One livestream edit, ROADMAP.md, review guide (2026-10-08, local)
+
+`becky-livechat` now also finds chat messages Jordan ANSWERED without reading them (System One picks
+the message, 0.7+ only): 73 on the apology stream, about 68 right, recall not measured, posture not
+used yet. `becky-livestream --model systemone` + `Livestream-Edit_System-One.bat` (269/300 agree with
+Claude). Visual moments send at most 10 frames to Gemma (20 overflowed its 8192 context). The
+edit-learning folder lives in `vegas/edit-learning/`; Jordan's review guide is
+`vegas/edit-learning/REVIEW-START-HERE.md`. `ROADMAP.md` lists every feature of the AI-useful repos
+with becky's status (every watchdog task is currently disabled). Details: top of `HANDOFF-LOG.md`.
+
 ### NEW — visual moments: the small vision models + Gemma 12B decide which cut gestures go back; checked breaths are cut (2026-10-07, local)
 
 Jordan: the edit cut his head drop after "but not all of them", the thumbs up after "still allowed to

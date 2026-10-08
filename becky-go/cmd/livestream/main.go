@@ -3,7 +3,7 @@
 // leaves a saved VEGAS project next to the footage. Every step runs by itself,
 // every time, in this order; a model is asked ONLY what to keep.
 //
-//	becky-livestream --model gemma|qwen|claude [--guidance "what to keep"] [video]
+//	becky-livestream --model gemma|qwen|claude|systemone [--guidance "what to keep"] [video]
 //
 // No video: the one video in the current folder (several: it asks which).
 // No --guidance: <video name>.guidance.txt, then guidance.txt beside the video,
@@ -12,11 +12,11 @@
 //  1. transcript, two passes (becky-transcribe: Parakeet + WhisperX second
 //     opinion + Jordan's word list), cached beside the footage in becky-edit\
 //  2. becky-cut --dry-run: where the silence is (cached)
-//  3. the content decision (select.go): Gemma or Qwen lead and the other one
+//  3. the content decision (select.go; systemone.go for a System One model): Gemma or Qwen lead and the other one
 //     reviews, or Claude through Jordan's subscription
 //  4. cut points from the audio (edges.go), loud cuts flagged
 //  5. publish check on the kept frames (publish.go)
-//  4b. visual moments (moments.go): the small vision models + Gemma put back a
+//     4b. visual moments (moments.go): the small vision models + Gemma put back a
 //     gesture, face or movement the edit cut that goes with his line
 //  6. breath check (breath.go): a sound labeler + the picture; every checked breath is cut
 //  7. VEGAS: new project, keep list, BeckyCut.cs for the dead air, save as
@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"becky-go/internal/config"
+	"becky-go/internal/systemone"
 )
 
 var videoExt = map[string]bool{".mp4": true, ".mov": true, ".mkv": true, ".m4v": true, ".webm": true, ".avi": true}
@@ -71,7 +72,7 @@ func fatal(msg string) {
 }
 
 func main() {
-	model := flag.String("model", "", "who makes the content calls: gemma, qwen or claude")
+	model := flag.String("model", "", "who makes the content calls: gemma, qwen, claude or systemone")
 	guidance := flag.String("guidance", "", "what to keep, in plain words")
 	noVegas := flag.Bool("no-vegas", false, "make the plan and the checks, but no VEGAS project")
 	fresh := flag.Bool("fresh", false, "decide again even if this model already decided with the same guidance")
@@ -86,8 +87,10 @@ func main() {
 		r.tag, r.label = "qwen3.5", "Qwen3.5-4B (reviewed by Gemma-4 E4B)"
 	case "claude":
 		r.tag, r.label = "claude", "Claude ("+claudeModel()+", your subscription)"
+	case "systemone", "system-one", "s1":
+		r.tag, r.label = "systemone", "System One decision model ("+systemone.NewHosted("").Model+", capped at $5 a month)"
 	default:
-		fatal("say which model makes the content calls: --model gemma, --model qwen or --model claude")
+		fatal("say which model makes the content calls: --model gemma, --model qwen, --model claude or --model systemone")
 	}
 	var err error
 	if r.media, err = pickVideo(flag.Arg(0)); err != nil {
@@ -387,6 +390,8 @@ func (r *run) decide(ss []Sentence, fresh bool) (Selection, error) {
 		sel, err = runLocal(gemma, qwen, ss, r.guidance, r.logf)
 	case "qwen3.5":
 		sel, err = runLocal(qwen, gemma, ss, r.guidance, r.logf)
+	case "systemone":
+		sel, err = runSystemOne(systemone.NewHosted("becky-livestream"), ss, r.guidance, r.logf)
 	default:
 		sel, err = runClaude(ss, r.guidance, r.work, r.logf)
 	}

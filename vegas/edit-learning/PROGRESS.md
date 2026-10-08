@@ -149,3 +149,14 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   - flashbacks: Black and White in 9 projects; censoring: Pixelate in 5.
   - looks: Color Corrector in 20 projects; S_Shake 9; sound: Reverb 9, Pitch Shift 4.
   - fades are rare (126 in, 140 out over 31,879 pieces).
+
+## 2026-10-08 (day)
+
+- **Folder moved** into becky-tools (`vegas/edit-learning/`, scripts in `vegas/`). Jordan's review
+  guide: `REVIEW-START-HERE.md`.
+- **Chat answers** (`becky-livechat`, new `replies`): apology stream, 73 answers to chat found
+  (median 16 s after the message), list in `apology-chat-replies.txt`. About 68 right, about 5
+  doubtful. Recall not measured; posture not used yet.
+- **System One livestream edit** (`becky-livestream --model systemone`): 27-livestream, 269 of 300
+  sentences agree with Claude (Gemma 268, Qwen 272).
+- **ROADMAP.md** in the repo root: every feature of the AI-useful repos, with becky's status.

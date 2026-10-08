@@ -11,21 +11,27 @@
 // yt-dlp runs only through internal/ytdlp (--ignore-config, 1 call / 90 s).
 //
 // Output: {"video_id", "messages": [{t, author, text, kind, amount, read_at,
-// read_words}], "delay": {median, n}}. t is seconds into the stream when the
-// message arrived; read_at is when Jordan said most of its words, if he did.
+// read_words}], "delay": {median, n}, "replies": [{at, line, msg, author, chat,
+// lag, p}]}. t is seconds into the stream when the message arrived; read_at is
+// when Jordan said most of its words, if he did. replies (reply.go) are the
+// lines where he ANSWERS a message without reading it out, decided by a System
+// One model through the capped internal/systemone client (--no-replies: skip).
 // Exit codes: 0 ok, 1 error, 2 usage.
 package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 
 	"becky-go/internal/beckyio"
+	"becky-go/internal/systemone"
 	"becky-go/internal/ytdlp"
 )
 
@@ -35,6 +41,7 @@ func main() {
 	chatFile := flag.String("chat", "", "an already downloaded <id>.live_chat.json")
 	transcript := flag.String("transcript", "", "becky-transcribe JSON of the stream: finds where each message was read aloud")
 	out := flag.String("out", "", "write JSON here instead of stdout")
+	noReplies := flag.Bool("no-replies", false, "skip finding the lines where he answers chat (System One, paid, capped)")
 	var refs []string // flags may come before or after the video reference
 	for args := os.Args[1:]; len(args) > 0; {
 		if err := flag.CommandLine.Parse(args); err != nil {
@@ -71,6 +78,14 @@ func main() {
 			beckyio.Fatalf("%v", err)
 		}
 		res.Delay = matchReadAloud(res.Messages, ws)
+		if !*noReplies {
+			logf := func(f string, a ...any) { fmt.Fprintf(os.Stderr, "becky-livechat: "+f+"\n", a...) }
+			res.Replies, err = findReplies(context.Background(), systemone.NewHosted("becky-livechat"), res.Messages, ws, logf)
+			if err != nil {
+				res.Note = "finding replies to chat stopped early: " + err.Error()
+				logf("%s", res.Note)
+			}
+		}
 	}
 	if *out == "" {
 		beckyio.PrintJSON(res)
@@ -86,14 +101,16 @@ func main() {
 			read++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "becky-livechat: %d messages, %d read aloud, delay median %.1fs (%d matches) -> %s\n",
-		len(res.Messages), read, res.Delay.Median, res.Delay.N, *out)
+	fmt.Fprintf(os.Stderr, "becky-livechat: %d messages, %d read aloud, delay median %.1fs (%d matches), %d answered -> %s\n",
+		len(res.Messages), read, res.Delay.Median, res.Delay.N, len(res.Replies), *out)
 }
 
 type result struct {
 	VideoID  string    `json:"video_id,omitempty"`
 	Messages []message `json:"messages"`
 	Delay    delay     `json:"delay"`
+	Replies  []reply   `json:"replies,omitempty"`
+	Note     string    `json:"note,omitempty"`
 }
 
 func videoID(ref string) string {
@@ -156,5 +173,6 @@ func readChat(path string) ([]message, error) {
 	for sc.Scan() {
 		out = append(out, parseLine(sc.Bytes())...)
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].T < out[j].T })
 	return out, sc.Err()
 }

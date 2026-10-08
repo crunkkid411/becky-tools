@@ -12,6 +12,43 @@
 
 ---
 
+## Chat answers, System One livestream edit, ROADMAP.md, review guide (2026-10-08, local, `master`)
+
+Jordan (2026-10-08): "is there a way to see the outcome or did you not save it for me to review?";
+"Livestream-Edit_System-One.bat"; move `X:\AI-2\edit-learning-work` into becky-tools; "the question
+should not be only 'is he reading the live chat?' but also, 'is he RESPONDING to the live-chat'"; a
+ROADMAP.md of every functionality in the AI-useful videos' repos, "[x] ... if we've already solved
+it ... whether it's actually being utilized".
+- **Folder move** (81de19d): edit-learning data now in `vegas/edit-learning/`, scripts in `vegas/`
+  with paths relative to themselves; project copies deleted after export, renders and `edits.db`
+  stay on disk, out of git. (The .gitignore is hook-protected, so nothing was added to it.)
+- **`becky-livechat` replies** (`cmd/livechat/reply.go`): every spoken sentence (grouped from word
+  times, 1.2 s gap) is asked "which of these recent messages does it answer, or none?" over the text
+  and super chat messages of the last 90 s that have 2+ content words (25 max), widened to questions
+  of the last 5 min after "scroll up" / "someone asked" / "in chat" / "let me see". Kept at 0.7+ only.
+  Batches of 20. Apology stream: 1,725 sentences, 73 answers, median 16 s after the message; I read
+  all 73: about 68 right ("is he pressuring you" -> "So no, there's no pressure"; "lol this is a
+  parody stream" -> "This is not a parody or satire."), about 5 doubtful fragments. Recall is NOT
+  measured. Posture is NOT used: the picture signals are not computed across a whole stream yet.
+  Readable list: `vegas/edit-learning/apology-chat-replies.txt`. Tests: Manic Panic example, scroll
+  cue, low-confidence pick refused.
+- **`becky-livestream --model systemone`** (`cmd/livestream/systemone.go`): two questions per sentence
+  (label choice + keep noul with the guidance), 15 sentences per request. The keep noul alone decides:
+  on the 27-livestream it was decisive (229 of 300 under 0.1 or over 0.9) while the 6-way label
+  spread out; letting the label into confidence marked 185 of 300 unsure (now 18). Agreement with
+  Claude: System One 269/300, Gemma 268, Qwen 272. Launcher
+  `workflows/livestream/Livestream-Edit_System-One.bat`.
+- **Visual moments frame cap 20 -> 10** (`moments.go`): each Gemma frame is ~520 tokens, not 256; at
+  20 frames three stretches of the System One run sent 8,436-10,456 tokens into the 8192 context
+  (HTTP 400) and got no picture check, and one answer ran out of room before its JSON.
+- **`ROADMAP.md`** + `research/roadmap/01-05` (five research passes over HyperEdit/Creator OS, Kevin
+  Badi's repos, Albert Olgaard's 38 skills, 11 agent-safety repos, 8 Jev videos). Its A0 table: every
+  watchdog scheduled task is disabled except the playlist scout; `becky-foreman` was never built.
+  Checked in code: becky-ask does not call System One.
+- **`vegas/edit-learning/REVIEW-START-HERE.md`**: what Jordan opens, in order.
+
+---
+
 ## VEGAS effect writer: zooms, censoring, bleeps on the timeline (2026-10-07, local, `master`)
 
 Jordan: "they cover zooms and censoring - do we have the tools to do that in Vegas Pro? If not, we

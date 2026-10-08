@@ -16,8 +16,18 @@
 - **Learning Jordan's edits** (2026-10-07): `vegas/edit-learning/PROGRESS.md` (night log +
   answer keys). Read-only VEGAS export `vegas/BeckyDumpProject.cs` + `vegas/veg_export_all.py`;
   labels `vegas/editlearn.py`; habits (cut rhythm, zooms, effects) `vegas/edit_habits.py`; take picker **`becky-besttake`** (`cmd/besttake`, scored by
-  `scripts/besttake_score.py`); chat replay **`becky-livechat`** (`cmd/livechat`). Every yt-dlp
-  call goes through `internal/ytdlp` (90 s gate, `--ignore-config`).
+  `scripts/besttake_score.py`); chat replay **`becky-livechat`** (`cmd/livechat`; since 2026-10-08
+  also which chat messages he ANSWERED, by System One). Every yt-dlp
+  call goes through `internal/ytdlp` (90 s gate, `--ignore-config`). The whole folder moved here from
+  `X:\AI-2\edit-learning-work` on 2026-10-08. **Jordan's review guide:
+  `vegas/edit-learning/REVIEW-START-HERE.md`** (what to open, in order).
+- **`ROADMAP.md`** (2026-10-08): every feature of the "AI useful" playlist videos and their repos
+  (HyperEdit/Creator OS, Kevin Badi, Albert Olgaard's skills, agent-safety repos, Jev videos), one
+  checkbox each, `[x]` = becky tool + whether it is actually USED, with the System One question, the
+  deterministic parts, becky data sources and what is needed from Jordan. Full research notes per
+  feature: `research/roadmap/01-05`. Its A0 table is the honest state of every watchdog (all off).
+- **`becky-livestream --model systemone`** (2026-10-08): the content decision by a System One decision
+  model (capped `Hosted`); launcher `workflows/livestream/Livestream-Edit_System-One.bat`.
 - **Browser unsticker = `becky-unstick`** (`cmd/unstick`): Microsoft **Fara1.5-4B** (Qwen3.5-4B fine-tuned only
   for browser control; `models\fara1.5-4b\`, Q4_K_M + f16 mmproj, ~3.6 GB) looks at ONE stuck-page screenshot and
   returns the click that clears the popup/banner, or `terminate` if nothing blocks. Hidden llama-server, ~4s warm /

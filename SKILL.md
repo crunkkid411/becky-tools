@@ -1268,9 +1268,14 @@ Full report: `vegas/REAL-WORLD-TEST-apology-livestream-2026-10-05.md`. Rules it 
 ### The livestream clip-down is ONE call now: `becky-livestream` (2026-10-05)
 
 ```bat
-becky-livestream --model gemma|qwen|claude "<video>" [--guidance "what to keep"] [--no-vegas] [--fresh]
+becky-livestream --model gemma|qwen|claude|systemone "<video>" [--guidance "what to keep"] [--no-vegas] [--fresh]
 becky-livestream --model gemma|qwen|claude "<video>" --breaths-only   :: redo ONLY the breath check on the saved project
 ```
+`--model systemone` (2026-10-08, `systemone.go`): a System One decision model through the capped
+`Hosted` client answers two questions per sentence (which of the six labels; does it belong to what the
+guidance keeps). The keep answer alone decides; the label only names the sentence. 27-livestream: 269
+of 300 sentences agree with Claude (Gemma 268, Qwen 272), ~14 s, a few cents. Launcher
+`workflows/livestream/Livestream-Edit_System-One.bat`.
 Jordan's launchers: `workflows/livestream/Livestream Edit - Gemma|Qwen|Claude.bat` (copy into the
 footage folder; drag the video on, or double-click). What to keep comes from `--guidance`, else
 `<video name>.guidance.txt`, else `guidance.txt` beside the video, else it asks for one line.
@@ -1430,6 +1435,13 @@ the VEGAS timeline yet. Score against a real edit with `scripts/besttake_score.p
 downloads only the chat replay (through `internal/ytdlp`), each message timed in stream seconds,
 super chats marked. With `--transcript` it finds where Jordan read a message aloud (`read_at`) and the
 median chat delay. One signal for "talking to chat", next to gaze/posture and the transcript.
+With `--transcript` it also finds where he ANSWERED a message without reading it (`replies`, Jordan
+2026-10-08: "I randomly say 'I use Manic Panic' - that is a direct answer"): per spoken sentence a
+System One choice "which recent message (or none) does this answer?" over the text and super chat
+messages of the last 90 s, widened to 5 min of questions after "scroll up" / "someone asked" / "in
+chat"; kept only at 0.7+. `--no-replies` skips it (it uses the capped `Hosted` client). Apology stream:
+73 answers, median 16 s after the message, about 68 clearly right; recall not measured; posture is
+NOT part of it yet.
 
 **Zooms, censoring, bleeps in VEGAS = `vegas/BeckyFX.cs`** (job file of frame ranges; open project via
 `becky-vegas run_script path=vegas\BeckyFX.cs job=<job.txt>`). Use HIS presets, never invented looks:

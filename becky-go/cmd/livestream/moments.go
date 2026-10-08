@@ -55,7 +55,7 @@ const (
 	momentActive    = 2    // active frames that make a stretch worth watching (any gesture is enough)
 	momentContext   = 1.5  // seconds of his words before the stretch that Gemma also sees
 	momentFPS       = 4.0  // frames a second Gemma watches
-	momentMaxFrames = 20   // at most (~256 tokens each), so a long pause lowers the rate
+	momentMaxFrames = 10   // at most (~520 tokens each, measured 2026-10-08: 20 frames sent 10,456 tokens into the 8192 context), so a long pause lowers the rate
 	momentWordGap   = 0.04 // never closer than this to a word that was cut
 	momentMinFrame  = 4    // a put-back shorter than this many frames is not worth a cut point
 )
@@ -258,8 +258,8 @@ func momentRunner(cfg config.Config) (*avlm.Runner, string) {
 	}
 	r := avlm.New(m, mp, cfg.LlamaServer, "", cfg.FFmpeg, cfg.FFprobe, nil)
 	r.NGL = 0
-	// ponytail: half the default context - a window is at most ~6 s at 4 fps
-	// (~24 frames, ~6k tokens); at 16384 the 12B's cache alone was several GB
+	// ponytail: half the default context - at most momentMaxFrames frames
+	// (~5k tokens) plus the prompt and answer; at 16384 the 12B's cache alone was several GB
 	// and Claude Code stopped the run twice for low memory (2026-10-07)
 	r.CtxSize = 8192
 	return r, note
