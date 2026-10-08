@@ -139,3 +139,13 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   binary), so BeckyFX got `pipzoom <first> <len> <scale> [height]`: his zoom as one continuous move
   across jump cuts. Tested on the human-brain-robot copy: 3 pieces, VEGAS's own render shows the
   push-in growing across both cuts with his face in frame.
+- **00:25 His habits, all projects** (`scripts/edit_habits.py`, 90 projects with video, 31,879 video
+  pieces) vs his own description in `hj-clone\hj-guidance.md` ("very fast paced, constant jump cuts,
+  text on screen, flashbacks, visual and sound effects"):
+  - fast / jump cuts: median piece 1.70 s; 10% under 0.73 s; 90% under 5.0 s.
+  - zooms: Picture In Picture in 18 projects (445 uses); 130 Pan/Crop push-ins (median 1.27x,
+    reached in 1.1 s), 29 pull-outs.
+  - text on screen: generated media / titles in 47 projects.
+  - flashbacks: Black and White in 9 projects; censoring: Pixelate in 5.
+  - looks: Color Corrector in 20 projects; S_Shake 9; sound: Reverb 9, Pitch Shift 4.
+  - fades are rare (126 in, 140 out over 31,879 pieces).
