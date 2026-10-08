@@ -124,3 +124,10 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   piece 1.72 s (10% under 0.77 s, 90% under 6.87 s); 56 push-ins, median 1.55x, reached in median
   0.70 s; 23 pull-outs; 13 pans; almost no fades; effects led by S_Shake (31 uses / 4 projects).
   Re-run after the batch ends for all 91.
+- **23:15 Filter packages, reverse engineered:** theAIsearch's "AI is reverse engineering everything"
+  video (now titled "The AI unlock has begun", h5zkzon0gM4, intake note written) points at ILSpy for
+  .NET. VEGAS's script library has no way to apply a package (only `PlugInNode.IsPackage`). But
+  `Vegas Effects HJ.sfpreset` shows what a package is: "ZOOM IN OUT" = one Picture In Picture with
+  keyframed Location/Scale. The exporter now writes animated settings' keyframes (`"anim"`), so his
+  packages can be rebuilt from his own projects. 13 animated Picture In Picture zooms in the first
+  51 projects.

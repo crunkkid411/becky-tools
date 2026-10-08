@@ -129,17 +129,28 @@ def export_one(src, out_dir):
             **({"dialog": dialog} if status != "ok" and dialog else {})}
 
 
+def needs_keyframes(edits_path):
+    """True when an export marks animated effect settings but has no keyframe values ("anim")."""
+    with open(edits_path, encoding="utf-8") as f:
+        text = f.read()
+    return "[animated]" in text and '"anim"' not in text
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=r"X:\Videos")
     ap.add_argument("--out", default=r"X:\AI-2\edit-learning-work\vegs")
+    ap.add_argument("--redo-animated", action="store_true",
+                    help="re-export ok projects whose export has animated effects but no keyframe values (pre-2026-10-07 exporter)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     index = os.path.join(a.out, "index.jsonl")
     done = set()
     if os.path.exists(index):
         with open(index, encoding="utf-8") as f:
-            done = {r["veg"] for r in map(json.loads, filter(str.strip, f)) if r["status"] == "ok"}
+            done = {r["veg"]: r for r in map(json.loads, filter(str.strip, f)) if r["status"] == "ok"}
+    if a.redo_animated:
+        done = {v for v, r in done.items() if not needs_keyframes(r["copy"] + ".edits.json")}
     vegs = sorted(os.path.join(d, n) for d, _, files in os.walk(a.root) for n in files if n.lower().endswith(".veg"))
     for i, src in enumerate(vegs, 1):
         if src in done:

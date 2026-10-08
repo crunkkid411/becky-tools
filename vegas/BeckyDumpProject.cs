@@ -175,8 +175,50 @@ public class EntryPoint
                 first = false;
                 sb.Append(Str(prm.Name)).Append(':').Append(Str(v + (prm.IsAnimated ? " [animated]" : "")));
             }
+            // Animated parameters' keyframes: [[seconds, value, interpolation], ...]. This is
+            // how his filter packages ("ZOOM IN OUT" = Picture In Picture with keyframed
+            // Scale/Location) can be rebuilt: packages cannot be applied by script.
+            sb.Append("},\"anim\":{");
+            first = true;
+            foreach (OFXParameter prm in ofx.Parameters)
+            {
+                if (!prm.IsAnimated) continue;
+                string k = KeyframesJson(prm);
+                if (k == null) continue;
+                if (!first) sb.Append(',');
+                first = false;
+                sb.Append(Str(prm.Name)).Append(':').Append(k);
+            }
         }
         sb.Append("}}");
+    }
+
+    static string KeyframesJson(OFXParameter prm)
+    {
+        try
+        {
+            System.Reflection.PropertyInfo kp = prm.GetType().GetProperty("Keyframes");
+            System.Collections.IEnumerable keys = kp == null ? null : kp.GetValue(prm, null) as System.Collections.IEnumerable;
+            if (keys == null) return null;
+            StringBuilder sb = new StringBuilder("[");
+            foreach (object key in keys)
+            {
+                OFXKeyframe k = key as OFXKeyframe;
+                object v = key.GetType().GetProperty("Value").GetValue(key, null);
+                if (sb.Length > 1) sb.Append(',');
+                sb.Append('[').Append(Sec(k.Time)).Append(',').Append(Format(v)).Append(',').Append(Str(k.Interpolation.ToString())).Append(']');
+            }
+            return sb.Append(']').ToString();
+        }
+        catch { return null; }
+    }
+
+    // Format: a number, [x, y] for a 2D point, else a JSON string.
+    static string Format(object v)
+    {
+        if (v is OFXDouble2D) { OFXDouble2D p = (OFXDouble2D)v; return "[" + Num(p.X) + "," + Num(p.Y) + "]"; }
+        if (v is double) return Num((double)v);
+        return Str(Convert.ToString(v, Inv));
     }
 
     // OFX parameter subclasses each carry their own Value type; read it by name.
@@ -188,7 +230,7 @@ public class EntryPoint
             if (pi == null) return null;
             object v = pi.GetValue(prm, null);
             if (v == null) return null;
-            string s = Convert.ToString(v, Inv);
+            string s = v is OFXDouble2D ? Format(v) : Convert.ToString(v, Inv);
             return s.Length > 4000 ? s.Substring(0, 4000) : s;
         }
         catch { return null; }
