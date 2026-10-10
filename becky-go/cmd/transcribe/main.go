@@ -94,6 +94,10 @@ type Output struct {
 	// the lines have no speaker labels when the speaker pass could not run.
 	Speakers    int    `json:"speakers,omitempty"`
 	SpeakerNote string `json:"speaker_note,omitempty"`
+	// SpeakerCheck says, in words, what the wording-based double-check (becky-diarfix,
+	// DiarizationLM) did; SpeakerFixes lists every word it moved to another speaker.
+	SpeakerCheck string       `json:"speaker_check,omitempty"`
+	SpeakerFixes []SpeakerFix `json:"speaker_fixes,omitempty"`
 	// SecondPass is the audit trail of the WhisperX second opinion (what it
 	// recovered, what stayed unconfirmed, how its timing compares); nil with
 	// --single-pass. LexiconFixes lists every niche-word fix applied.
@@ -308,11 +312,18 @@ func main() {
 	// still ships, unlabelled, with a plain-words note saying why.
 	wantSpeakers := *diarize || *speakers > 1
 	nSpeakers, speakerNote := 0, ""
+	var speakerFixes []SpeakerFix
+	speakerCheck := ""
 	if wantSpeakers {
 		beckyio.Logf(*verbose, "working out who is speaking (becky-diarize)...")
 		nSpeakers, speakerNote = labelSpeakers(res.Words, wav, *speakers)
 		if speakerNote != "" {
 			beckyio.Logf(true, "becky-transcribe: %s", speakerNote)
+		}
+		if nSpeakers > 1 {
+			beckyio.Logf(*verbose, "double-checking who said what from the wording (becky-diarfix)...")
+			speakerFixes, speakerCheck = checkSpeakers(res.Words)
+			beckyio.Logf(*verbose, "becky-transcribe: %s", speakerCheck)
 		}
 	}
 
@@ -356,6 +367,8 @@ func main() {
 		VADDropped:   vadDropped,
 		Speakers:     nSpeakers,
 		SpeakerNote:  speakerNote,
+		SpeakerCheck: speakerCheck,
+		SpeakerFixes: speakerFixes,
 		SecondPass:   second,
 		LexiconFixes: lexFixes,
 		CleanupFixes: cleanFixes,

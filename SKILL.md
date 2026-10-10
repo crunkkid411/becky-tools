@@ -100,6 +100,12 @@ Since 2026-09-24 the speakers come from **nvidia/Nemotron-3-Diarization** (nativ
 CPU, 0 VRAM; `scripts\get-nemotron-diar.ps1`). Ids are SPEAKER_00, 01, ... by first appearance; two
 speakers' spans may overlap, and a tied word stays with the previous word's speaker. It can still
 merge two people talking fast over background audio (TikTok skit, top of `HANDOFF-LOG.md`).
+Since 2026-10-10, with 2+ speakers it then runs **`becky-diarfix`** by itself: DiarizationLM-Gemma-4-E4B
+(llama-server, GPU, ~1/3 of the video's length) re-reads only the words within 5 of a speaker change and
+moves the ones the WORDING gives to the other person (turn edges, short "yeah"s). It never invents a
+speaker and ignores a reply that rewrites the text. Output gains `speaker_check` (one plain line) and
+`speaker_fixes` (every moved word: time, word, from, to). Model missing or failing = Nemotron's labels
+kept + `speaker_check` says why. Standalone: `becky-diarfix <words.json>` (`{"words":[{word,start,end,speaker}]}`).
 
 **The protocols enforced in RUNNING, tested tools (the proven pattern — extend it, don't reinvent):**
 - **`becky-resolve`** (naming): reads becky-identify's real output and STATES a name only when corroborated
@@ -228,6 +234,7 @@ becky-transcribe "<video>" --format srt          # what's said + timestamps
 becky-transcribe "<video>" --diarize              # what's said, every line labelled with its speaker
 becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads misheard names (text only)
 becky-diarize    "<video>"                        # how many speakers + when each talks (times only)
+becky-diarfix    words.json                       # re-check speaker labels from the wording (DiarizationLM)
 becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face)
 becky-validate   "<video>"                        # AV description of on-screen actions (Gemma-4, default backend)
 ```

@@ -64,6 +64,10 @@
   through NVIDIA's native `nemo-speech.exe` (CPU, 0 VRAM). Setup `scripts\get-nemotron-diar.ps1`;
   config `nemo_speech` / `diar_model`; measurements and the known miss at the top of `HANDOFF-LOG.md`.
   becky-identify still uses the old sherpa helper.
+- **Speaker double-check = `becky-diarfix`** (since 2026-10-10; `becky-transcribe --diarize` calls it):
+  DiarizationLM-Gemma-4-E4B re-reads the words near each speaker change and moves the ones the wording
+  gives to the other person. Setup `scripts\get-diarizationlm.ps1`; config `diarlm_model`. Why, numbers,
+  and why qmd stays on EmbeddingGemma v1: `research/embeddinggemma2-and-diarizationlm.md`.
 - **`vegas/README.md` section 6 + `SKILL.md` `# VEGAS PRO 18`** — **transcript search INSIDE VEGAS
   and a working control channel into it.** `vegas/BeckyVegas/` is a VEGAS Application Extension:
   View > Extensions > **Becky Search** searches the open timeline (hits shown on the ruler, "cut

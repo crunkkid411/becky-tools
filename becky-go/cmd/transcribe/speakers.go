@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -110,6 +111,61 @@ func labelSpeakers(words []Word, media string, speakers int) (int, string) {
 		return 0, "no speech was found to split by speaker"
 	}
 	return labelWords(words, spans), ""
+}
+
+// SpeakerFix is one word the wording-based double-check (becky-diarfix) moved to another speaker.
+type SpeakerFix struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Word  string  `json:"word"`
+	From  string  `json:"from"`
+	To    string  `json:"to"`
+}
+
+// runDiarFix is the seam to becky-diarfix (swapped in tests): it gets a JSON file of the labelled
+// words and returns the tool's JSON.
+var runDiarFix = func(wordsJSON string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), diarizeTimeout)
+	defer cancel()
+	return forensicrun.RunTool(ctx, "becky-diarfix", wordsJSON)
+}
+
+// checkSpeakers asks becky-diarfix (DiarizationLM-Gemma-4-E4B) to re-read the words around every
+// speaker change, where the sound-only labels are least sure, and applies its corrections in place.
+// It returns what changed plus one plain-words line. Degrade, never crash: on any failure the
+// sound-only labels stay and the line says so.
+func checkSpeakers(words []Word) ([]SpeakerFix, string) {
+	tmp, err := os.CreateTemp("", "becky_diarfix_*.json")
+	if err != nil {
+		return nil, "speaker double-check skipped: " + err.Error()
+	}
+	defer os.Remove(tmp.Name())
+	err = json.NewEncoder(tmp).Encode(map[string]any{"words": words})
+	tmp.Close()
+	if err != nil {
+		return nil, "speaker double-check skipped: " + err.Error()
+	}
+	raw, err := runDiarFix(tmp.Name())
+	if err != nil {
+		return nil, "speaker double-check skipped (labels are from the sound only): " + err.Error()
+	}
+	var res struct {
+		Speakers    []string     `json:"speakers"`
+		Fixes       []SpeakerFix `json:"fixes"`
+		UnsureWords int          `json:"unsure_words"`
+		Note        string       `json:"note"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil || len(res.Speakers) != len(words) {
+		return nil, "speaker double-check skipped: could not read becky-diarfix output"
+	}
+	for i := range words {
+		words[i].Speaker = res.Speakers[i] // never a new speaker: becky-diarfix only moves words between existing ones
+	}
+	if res.Note != "" { // skipped, or stopped part-way (any fixes made before that are kept)
+		return res.Fixes, res.Note
+	}
+	return res.Fixes, fmt.Sprintf("DiarizationLM re-read the %d words near speaker changes and moved %d of them to the other speaker",
+		res.UnsureWords, len(res.Fixes))
 }
 
 // labelWords stamps each word with its speaker and returns how many distinct speakers were used.

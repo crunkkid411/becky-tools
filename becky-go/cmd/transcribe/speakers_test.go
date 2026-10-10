@@ -90,3 +90,38 @@ func TestSidecarPath(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func withDiarFix(t *testing.T, out string, err error) {
+	t.Helper()
+	old := runDiarFix
+	runDiarFix = func(string) ([]byte, error) { return []byte(out), err }
+	t.Cleanup(func() { runDiarFix = old })
+}
+
+// The wording check's corrections land on the words, so the caption line moves with them.
+func TestCheckSpeakersAppliesFixesBeforeSegmenting(t *testing.T) {
+	withDiarFix(t, `{"speakers":["SPEAKER_00","SPEAKER_00","SPEAKER_00","SPEAKER_01"],
+		"fixes":[{"start":2,"end":2.5,"word":"today?","from":"SPEAKER_01","to":"SPEAKER_00"}],"unsure_words":4}`, nil)
+	words := []Word{
+		{Word: "how", Start: 0, End: 0.5, Speaker: "SPEAKER_00"},
+		{Word: "are", Start: 0.6, End: 1, Speaker: "SPEAKER_00"},
+		{Word: "today?", Start: 1.1, End: 1.5, Speaker: "SPEAKER_01"},
+		{Word: "fine", Start: 1.6, End: 2, Speaker: "SPEAKER_01"},
+	}
+	fixes, line := checkSpeakers(words)
+	if len(fixes) != 1 || words[2].Speaker != "SPEAKER_00" || !strings.Contains(line, "moved 1") {
+		t.Fatalf("fix not applied: %+v %q %+v", fixes, line, words)
+	}
+	if segs := segmentize(words); len(segs) != 2 || segs[0].Text != "how are today?" {
+		t.Fatalf("lines must follow the corrected labels: %+v", segs)
+	}
+}
+
+func TestCheckSpeakersDegrades(t *testing.T) {
+	withDiarFix(t, "", errors.New("becky-diarfix not found"))
+	words := []Word{{Word: "a", Speaker: "SPEAKER_00"}, {Word: "b", Speaker: "SPEAKER_01"}}
+	fixes, line := checkSpeakers(words)
+	if fixes != nil || words[1].Speaker != "SPEAKER_01" || !strings.Contains(line, "not found") {
+		t.Fatalf("a failed check must keep the sound-only labels and say why: %+v %q", words, line)
+	}
+}

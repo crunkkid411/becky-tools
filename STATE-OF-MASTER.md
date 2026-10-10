@@ -6,7 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — CLAUDE.md split into a core + topic rules; System One picker hands them over (2026-10-10, local)
+### NEW — becky-diarfix: DiarizationLM double-checks speakers from the wording (2026-10-10, local)
+
+`becky-transcribe --diarize` (2+ speakers) now runs `becky-diarfix`: DiarizationLM-Gemma-4-E4B-v1 re-reads
+the words near each speaker change and moves the ones the wording gives to the other person. Fast Food
+Test (9 min, 3 people): 42 of 1300 unsure words moved, +2m52s, one known wrong move. Model 5.3 GB via
+`scripts\get-diarizationlm.ps1`. EmbeddingGemma 2 was measured for qmd and lost to v1 on Jordan's notes,
+so qmd is unchanged: `research/embeddinggemma2-and-diarizationlm.md`. Pre-existing on master, not from
+this: `internal/assistant` TestHandleTier2Funnel and `cmd/tts` TestRun_DegradesWhenNoModel fail.
+
+### CLAUDE.md split into a core + topic rules; System One picker hands them over (2026-10-10, local)
 
 CLAUDE.md keeps the rules every task needs; the topic invariants moved VERBATIM (checked line by line)
 to `topic-rules/<topic>/SKILL.md` (`.claude/` is gitignored, so not there):

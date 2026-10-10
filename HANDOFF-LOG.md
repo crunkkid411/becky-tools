@@ -12,6 +12,38 @@
 
 ---
 
+## becky-diarfix (DiarizationLM speaker double-check); EmbeddingGemma 2 measured for qmd (2026-10-10, local, `master`)
+
+Jordan (2026-10-10): switch qmd to EmbeddingGemma 2 (GGUF) system-wide, note when Gemma 4 pairing is
+recommended, and add Google's DiarizationLM-Gemma-4-E4B to becky "even if it's only used to confirm what
+our current diarization system is unconfident about".
+
+**Built:**
+- `cmd/diarfix` (new tool `becky-diarfix`): words JSON in -> per-word speakers + `fixes` out. Marks words
+  within `--radius 5` of a speaker change as unsure, cuts the passage into <= 4000-char prompts (the
+  model card's size, cut at a speaker change), skips prompts with no unsure word, and maps the reply back
+  with a Go port of the official transcript-preserving speaker transfer (`transfer.go`: word Levenshtein
+  on normalised text + best speaker matching). Only unsure words may change; a speaker the passage never
+  had is never invented; a reply that matches < 90% of the words is ignored. 8 tests incl. the card example.
+- `internal/llmlocal/complete.go`: raw `/completion` (the model needs its own prompt, not a chat template).
+- `cmd/transcribe/speakers.go` `checkSpeakers`: runs it after `labelSpeakers` when > 1 speaker; output
+  `speaker_check` + `speaker_fixes`. Degrades to Nemotron's labels with a plain note.
+- config `diarlm_model`; `scripts/get-diarizationlm.ps1` (pinned revision of the `diarizers-community`
+  mirror - Google's own repo now 404s - plus sha256; ASCII, parse-checked under PS 5.1, run OK).
+
+**Verified:** real `becky-transcribe --diarize` on the Fast Food Test video (9 min, 3 people): exit 0,
+264 lines all labelled, 42 words moved, 4m40s total (diarfix ~2m52s). Hand check: most moves right, one
+wrong (189 s "Yes, it is." merged into the asker), ~8 unclear. Gates: build + vet OK; `go test ./...` OK
+except two tests that fail identically on a clean master worktree (`internal/assistant`
+TestHandleTier2Funnel, `cmd/tts` TestRun_DegradesWhenNoModel); `build-all-tools.bat` exit 0.
+
+**EmbeddingGemma 2 - not switched (measured):** qmd's engine can't load it; built a Vulkan engine from
+llama.cpp b11541 in `C:\nq` (outside the repo), matched Google's ONNX build (cosine >= 0.9999), then
+compared on 231 becky docs with 20 known-answer questions: v1 MRR 0.743 / top-5 17, v2 0.664 / 14, and v2
+embeds ~1.7x slower. qmd stays on v1. Details: `research/embeddinggemma2-and-diarizationlm.md`.
+
+---
+
 ## Lean startup: CLAUDE.md core + topic rules, System One skill picker (2026-10-10, local, `master`)
 
 Jordan (2026-10-09): skills, plugins and instruction files should not load in every chat; a System
