@@ -36,6 +36,7 @@ import (
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
+	"becky-go/internal/forensicrun"
 )
 
 // videoExts is the set of extensions treated as input videos when a folder is
@@ -48,7 +49,7 @@ var videoExts = map[string]bool{
 
 func main() {
 	out := flag.String("out", "pipeline-out", "output root directory")
-	kb := flag.String("kb", "", "knowledge-base dir for the identify step (optional)")
+	kb := flag.String("kb", "", "known-people dir for the identify step (default: BECKY_KB env, else kb-final)")
 	binDir := flag.String("bin", "", "directory holding becky-*.exe (default: dir of this binary)")
 	steps := flag.String("steps", "", "comma-separated steps (default: transcribe,diarize,events,osint)")
 	db := flag.String("db", "", "SQLite db path for embed (default: <video-out>/forensic.db)")
@@ -64,6 +65,12 @@ func main() {
 	}
 	if _, err := os.Stat(input); err != nil {
 		beckyio.Fatalf("input not found: %s", input)
+	}
+
+	// Known people are named by default (Jordan, 2026-10-10): resolve the KB the way every becky
+	// entry tool does, and leave it empty only when none exists (identify then skips with a note).
+	if r := forensicrun.ResolveKB(*kb); dirExists(r) {
+		*kb = r
 	}
 
 	plannedSteps, err := parseSteps(*steps)
@@ -246,4 +253,9 @@ func parsePositional() string {
 		_ = flag.CommandLine.Parse(rest[1:])
 	}
 	return input
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }

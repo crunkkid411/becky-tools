@@ -19,8 +19,8 @@ func TestParseStepsDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// ocr is in the default sweep, right after osint (it degrades gracefully when
-	// the OCR model/deps are missing, so it's safe to default on).
-	want := []string{stepTranscribe, stepMetadata, stepDiarize, stepEvents, stepOSINT, stepOCR}
+	// the OCR model/deps are missing, so it's safe to default on). mediasearch likewise.
+	want := []string{stepTranscribe, stepMetadata, stepDiarize, stepEvents, stepOSINT, stepOCR, stepIdentify, stepMedia, stepShots}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("default steps = %v, want %v", got, want)
 	}
@@ -464,5 +464,25 @@ func TestPlanStepsFullChainWithValidate(t *testing.T) {
 	// validate must be the last element in the plan (no report step in this chain).
 	if plan[len(plan)-1].Name != stepValidate {
 		t.Errorf("validate should be last in the plan; got last=%q", plan[len(plan)-1].Name)
+	}
+}
+
+// TestMediaStepArgs pins the mediasearch step: --add the video, write mediasearch.json, and
+// pass --db only when the operator chose one (else the shared library database).
+func TestMediaStepArgs(t *testing.T) {
+	p := newStepPaths("out/v", "")
+	args, ok, _ := stepArgs(stepMedia, "v.mp4", "", p)
+	want := []string{"--add", "v.mp4", "--output", p.mediaJSON}
+	if !ok || !reflect.DeepEqual(args, want) {
+		t.Fatalf("default args = %v, want %v", args, want)
+	}
+	p = newStepPaths("out/v", "case.db")
+	args, _, _ = stepArgs(stepMedia, "v.mp4", "", p)
+	want = append(want, "--db", "case.db")
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("--db args = %v, want %v", args, want)
+	}
+	if !optionalBinary(stepMedia) || outputMarker(stepMedia, p) != p.mediaJSON {
+		t.Fatal("mediasearch must be optional-by-binary with mediasearch.json as its done-marker")
 	}
 }

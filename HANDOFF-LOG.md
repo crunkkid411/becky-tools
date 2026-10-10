@@ -12,6 +12,97 @@
 
 ---
 
+## Footage library: becky-mediasearch + becky-shots, the video database's picture/sound layer (2026-10-10, local, `master`)
+
+Jordan (2026-10-10): EmbeddingGemma 2 has a different job from our text embedders - set it up wherever
+that job comes up, in becky and system-wide; make System One aware of it; wire Gemma 4 so pairing "just
+happens". Then: *"once a video has been analyzed, there is no reason we should have to re-analyze it -
+it needs a persistent file ... and we ALSO need a db we can query ... All the projects I mentioned
+(videoDB, director, kevs-obsidian, buttercut) are useful because the FEATURES themselves are features
+that other video editors actually use ... assume those projects outline the needs of a human video editor"*.
+
+**Built:**
+- `cmd/mediasearch` (new tool `becky-mediasearch`): EmbeddingGemma 2 Q8_0 + its vision/audio projector on
+  becky's llama-server. Per video: a frame a second ("picture"), 4 frames 1 s apart every 2 s ("action"),
+  5 s of sound every 2.5 s ("sound"); `--every-frame`; the top picture/action hits re-read frame by frame
+  (+-1 s) for the exact `frame`; Gemma-4 E4B QAT then watches + hears each hit (yes/no, `gemma_why`).
+  `--like <photo|wav>`, `--add` (ingest only), no file = search the whole database, `--transcript` (the
+  file's spoken lines as "said" rows), `--reel` (hits as an `internal/edl` clip list for becky-reel /
+  becky-otio). Read once; re-read only when size/mtime/step/model change.
+- `cmd/shots` (new tool `becky-shots`): ffmpeg scene cuts (> 0.3; < 1 s merged; > 20 s split) + Gemma-4 E4B
+  describing each shot (frames + sound, fixed seed; names added later the same day, below) -> `shots.json` + "shot" rows (description +
+  its EmbeddingGemma 2 text vector) so becky-mediasearch finds shots by description. buttercut's "visual
+  transcript" / Director's scene index, compiled into a tool.
+- `internal/beckydb/media.go`: additive tables `media_files` + `media_items` (kind, start/end, label,
+  vec_f32 BLOB), brute-force `vec_distance_cosine` scan so a search can be limited to chosen files.
+  Each tool owns its kinds (`ReplaceMedia` / `ReplaceKind`), so re-reading never wipes the shot log.
+- `internal/llmlocal/media.go`: `NewMediaEmbedClient` + `EmbedMedia` (text/image/audio/video parts, OpenAI
+  `/v1/embeddings` content arrays). config `media_embed_model`, `media_embed_mmproj`, `video_db`.
+- `becky-pipeline` default sweep now ends `... ocr, mediasearch, shots` (both optional-by-binary, both
+  note + exit 0 without their models); `--db` sends them to the case DB, else the shared video database.
+- `scripts/get-embeddinggemma2.ps1`: ggml-org revision bfcd2987 + sha256 (matched HF's LFS hashes); ASCII,
+  parse-checked under PS 5.1, run OK. No QAT build exists for EmbeddingGemma 2 (Google released QAT only for
+  v1 and for Gemma 4), so Q8_0 - it matched Google's ONNX reference at cosine >= 0.9999.
+- becky-catalog entries (Whoretana's brain sees both); System One: new `~/.claude/skills/footage-library`,
+  and `videodb` (the paid cloud skill it used to pick at 0.96) added to `route.py` SKIP.
+- `research/footage-library.md`: the four projects' editor features mapped to becky, with the gaps.
+
+**Names (same day).** Jordan: *"we absolutely need to NAME people if we know their names. If we don't,
+that's fine ... if we know Hair Jordan is the speaker because of face, voice, context, verbal disclosure
+from me, etc. Then absolutely label it as Hair Jordan."*
+- `internal/people`: reads becky-identify's `identifications` only (never `unidentified` / demoted
+  near-misses) -> who is present / who is speaking between two times.
+- becky-shots `--identify` (the shot's `people` + Gemma told to use the name) and `--people` (default
+  `people.txt` beside the video: Jordan's own plain notes, e.g. "The man with bright green hair is Hair
+  Jordan."). Nobody known = "a man", never a guessed name.
+- becky-mediasearch `--identify`: "said" rows read "Hair Jordan: ..." when becky-identify knows the voice.
+- becky-pipeline: `identify` joins the default sweep (KB resolved like every entry tool: `--kb`, BECKY_KB,
+  else kb-final); mediasearch + shots get `--identify` automatically.
+- `beckyio.Positional`: one shared flags-anywhere parser (flag set lookup) replacing the two hand-kept
+  lists, which broke when the pipeline called the tools (below).
+
+**becky-livestream analyzes once (same day).** Jordan: swapping gemma4 for qwen on ONE step re-ran
+falcon, mediapipe and the breath/non-speech labelling over the whole video, *"that's why I stopped fine
+tuning the workflow ... like how buttercut analyzes ONCE, then can make decisions on the footage infinite
+times after"*. Cause: the picture signals were measured only where a model's edit needed them (850 of the
+test stream's 9,000 grid frames), and the BEATs sound labels were never kept at all.
+- New step 2b, before any model: the whole stream's sound labels (`<stem>.sound-v1.json`, every 40 ms; the
+  labeler works in fixed 10 s chunks, so a frame's labels don't depend on who asked) and picture signals
+  (`picture-v3.json`, every 0.1 s, 30 s per helper span so memory stays small, saved every 3 min of
+  stream). `--analyze` runs only that. Later runs measure nothing again.
+- Still per model: Gemma's visual-moment verdicts (`moments-cache.json`) are keyed by the stretches that
+  model's cuts create, so a model with different cuts asks Gemma about its new stretches (seconds each).
+  Falcon/Gemma held-object checks and the publish check were already kept by source time.
+
+**Diarization verdict (Jordan asked: make DiarizationLM primary if it is more accurate).** It is not:
+10 VoxConverse files, 14,290 words - Nemotron alone 0.36% words on the wrong speaker, with the shipped
+DiarizationLM check 0.38%; letting it re-read ALL words was worse (vox03 1.77% vs 1.08%). It reads words,
+not audio, so it cannot be the primary diarizer. Speakers stay as shipped (Nemotron + the near-change check).
+
+**Verified:**
+- Search: "a turtle swimming in the ocean" ranked the turtle videos + photo first; a whole-database search
+  (no re-read) took 9 s and found JFK by sound; Gemma's double-check said yes to a short hit; after the
+  27 s shot overflowed Gemma's context (HTTP 400), the checked window is capped at 6 s (regression test
+  `TestWindowCapped`) and the rerun confirmed both hits ("yes").
+- becky-shots on a 40 s Jordan clip: 3 accurate shot descriptions in 75 s, checked against the frame.
+- becky-pipeline end to end on that clip: the first run FAILED both new steps (becky-mediasearch defined
+  `--transcript` after reading the arguments; becky-shots did not know `--identify` takes a value). Fixed
+  with `beckyio.Positional` (test `TestPositional`); rerun: every step ok, 75 picture/sound items + 9 said
+  rows + 3 shots.
+- Names: becky-identify named NOBODY in Jordan's own clip - kb-final's "Hair Jordan" face photo shows
+  blonde/blue hair (best match 0.28 vs the 0.55 naming bar) and his one voice clip scored under the
+  detection floor. Jordan has to confirm that photo / teach more. With his notes file: "Hair Jordan, who has
+  bright green hair, is in a medium close-up shot ..."; with an identify result: `people: ["Hair Jordan"]`
+  + named; with neither: "a man ..." (no invented name). Search "Hair Jordan talks about posting too much
+  on social media" -> his three said lines on top (0.866 / 0.852 / 0.849).
+- Livestream: `--analyze` on the 40 s clip measured 1,000 sound frames + 396 picture frames in 1 m 32 s;
+  the second run took 0.2 s (nothing measured again). Jordan's 15-minute test stream (27-livestream, 850 frames already kept): sound labels for the
+  whole stream in 9 s, picture 8,996 frames (no gaps, a face in 8,313) in 25 m 52 s; the second run took 0.9 s.
+- go build / vet / test: only the pre-existing `cmd/tts` TestRun_DegradesWhenNoModel and
+  `internal/assistant` TestHandleTier2Funnel fail; build-all-tools.bat exit 0.
+
+---
+
 ## becky-diarfix (DiarizationLM speaker double-check); EmbeddingGemma 2 measured for qmd (2026-10-10, local, `master`)
 
 Jordan (2026-10-10): switch qmd to EmbeddingGemma 2 (GGUF) system-wide, note when Gemma 4 pairing is

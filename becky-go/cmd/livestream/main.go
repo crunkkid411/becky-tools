@@ -51,6 +51,7 @@ const defaultGuidance = "Keep the main topics Jordan talks about. Cut chat inter
 
 type run struct {
 	media, work, stem, tag, label, guidance string
+	analyzeOnly                             bool
 	fps, duration, threshold                float64
 	cfg                                     config.Config
 	started                                 time.Time
@@ -77,9 +78,13 @@ func main() {
 	noVegas := flag.Bool("no-vegas", false, "make the plan and the checks, but no VEGAS project")
 	fresh := flag.Bool("fresh", false, "decide again even if this model already decided with the same guidance")
 	breathsOnly := flag.Bool("breaths-only", false, "redo only the breath check on this model's saved VEGAS project")
+	analyzeOnly := flag.Bool("analyze", false, "only analyze the stream (transcript, silences, sound, picture) and keep it; no model, no VEGAS")
 	flag.Parse()
 
 	r := &run{cfg: config.Load(), started: time.Now()}
+	if *analyzeOnly && *model == "" {
+		*model, r.analyzeOnly = "gemma", true // never asked: analysis runs no decision model
+	}
 	switch strings.ToLower(*model) {
 	case "gemma", "gemma4":
 		r.tag, r.label = "gemma4", "Gemma-4 E4B (reviewed by Qwen3.5-4B)"
@@ -107,10 +112,17 @@ func main() {
 		r.redoBreaths()
 		return
 	}
-	r.guidance = pickGuidance(*guidance, r.media)
+	if !r.analyzeOnly {
+		r.guidance = pickGuidance(*guidance, r.media)
+	}
 	r.logf("video: %s", filepath.Base(r.media))
+	if r.analyzeOnly {
+		r.label = "none - analysis only"
+	}
 	r.logf("model: %s", r.label)
-	r.logf("keep: %s", r.guidance)
+	if !r.analyzeOnly {
+		r.logf("keep: %s", r.guidance)
+	}
 	if err := r.probe(); err != nil {
 		fatal(err.Error())
 	}
@@ -282,6 +294,18 @@ func (r *run) workflow(fresh, noVegas bool) {
 		fatal(err.Error())
 	}
 	r.step("silence map", t0)
+
+	// 2b. Analyze the WHOLE stream once and keep it (Jordan, 2026-10-10: "like how buttercut
+	// analyzes ONCE, then can make decisions on the footage infinite times after"). Every later
+	// run - another model, other guidance - reads these back; nothing below measures again.
+	t0 = time.Now()
+	r.analyze(wav)
+	r.step("analysis (kept)", t0)
+	if r.analyzeOnly {
+		r.logf("analysis kept in %s - every edit of this stream reuses it", r.work)
+		fmt.Println(strings.Join(r.times, "\n"))
+		return
+	}
 
 	// 3. the content decision
 	t0 = time.Now()

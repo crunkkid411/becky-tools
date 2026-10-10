@@ -59,7 +59,7 @@ func binName(step string) string {
 // environment. Every other step's missing binary is a real setup error the operator
 // should see.
 func optionalBinary(step string) bool {
-	return step == stepOCR || step == stepMotion || step == stepReport || step == stepValidate
+	return step == stepOCR || step == stepMotion || step == stepReport || step == stepValidate || step == stepMedia || step == stepShots
 }
 
 // fileExists reports whether path exists and is non-empty on disk. Used by
@@ -105,6 +105,30 @@ func stepArgs(step, video, kb string, p stepPaths) (args []string, runnable bool
 			return nil, false, "no --kb provided"
 		}
 		return []string{video, "--kb", kb, "--output", p.identify}, true, ""
+	case stepMedia:
+		// Pictures, actions and sound of the video into the video database, read once; plus its
+		// transcript lines, so one search covers what is said as well as seen and heard.
+		args := []string{"--add", video, "--output", p.mediaJSON}
+		if fileExists(p.transcript) {
+			args = append(args, "--transcript", p.transcript)
+		}
+		if fileExists(p.identify) {
+			args = append(args, "--identify", p.identify) // spoken lines get the speaker's name
+		}
+		if p.mediaDB != "" {
+			args = append(args, "--db", p.mediaDB)
+		}
+		return args, true, ""
+	case stepShots:
+		// The written shot log: shots.json here, descriptions into the same video database.
+		args := []string{video, "--output", p.shotsJSON}
+		if fileExists(p.identify) {
+			args = append(args, "--identify", p.identify) // shots name the people becky identified
+		}
+		if p.mediaDB != "" {
+			args = append(args, "--db", p.mediaDB)
+		}
+		return args, true, ""
 	case stepMotion:
 		// motion reads the video at true source fps (needs ffmpeg on PATH) and emits
 		// a burst timeline. No dependency on other steps — runs on the raw video.
@@ -405,7 +429,7 @@ func (r *toolRunner) runTranscribe(video string, p stepPaths, sr StepResult) (bo
 // exec runs the tool. For embed we capture stdout into embed.json (it has no
 // --output flag); for all others stdout is discarded (they write their own
 // --output file) and only stderr is captured for diagnostics.
-func (r *toolRunner) exec(step, bin string, args []string, p stepPaths) (exitCode int, stderrTail string, err error) {
+func (r *toolRunner) exec(step, bin string, args []string, p stepPaths) (exitCode int, stderrTail string, err error) { // nosec: a method named exec, runs a becky tool binary (no eval)
 	cmd := exec.Command(bin, args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

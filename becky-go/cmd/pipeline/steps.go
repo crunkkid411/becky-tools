@@ -25,9 +25,11 @@ const (
 	stepOCR        = "ocr"
 	stepEmbed      = "embed"
 	stepIdentify   = "identify"
-	stepMotion     = "motion"   // dense frame-diff burst detection (needs ffmpeg on PATH)
-	stepValidate   = "validate" // LLM AV description (Gemma-4); opt-in, needs GPU model
-	stepReport     = "report"   // forensic case report from all available sidecars
+	stepMotion     = "motion"      // dense frame-diff burst detection (needs ffmpeg on PATH)
+	stepMedia      = "mediasearch" // EmbeddingGemma 2 picture/action/sound vectors into the video database
+	stepShots      = "shots"       // written shot log (Gemma-4 describes each shot) into shots.json + the video database
+	stepValidate   = "validate"    // LLM AV description (Gemma-4); opt-in, needs GPU model
+	stepReport     = "report"      // forensic case report from all available sidecars
 )
 
 // canonicalOrder is the dependency-respecting order steps must run in:
@@ -49,6 +51,8 @@ var canonicalOrder = []string{
 	stepOCR,
 	stepEmbed,
 	stepIdentify,
+	stepMedia,
+	stepShots,
 	stepMotion,
 	stepValidate,
 	stepReport,
@@ -61,7 +65,17 @@ var canonicalOrder = []string{
 // to the default sweep never breaks a run that lacks the OCR stack. embed and
 // identify are excluded by default: embed needs the resident embedding server
 // (qwen3-4b) and identify needs a --kb, so they are opt-in.
-var defaultSteps = []string{stepTranscribe, stepMetadata, stepDiarize, stepEvents, stepOSINT, stepOCR}
+//
+// mediasearch is in the sweep too: it reads each video's pictures and sound ONCE into the video
+// database so later "find the shot where..." searches are instant; it notes and exits 0 when the
+// EmbeddingGemma 2 files are missing, like ocr. shots (the written shot log an editor reads)
+// follows it; it is the slow one (Gemma 4 watches every shot) but runs once per video, and it
+// notes and exits 0 without Gemma 4.
+//
+// identify is in the sweep since 2026-10-10 (Jordan: "we absolutely need to NAME people if we know
+// their names"): the KB defaults to BECKY_KB / kb-final, and mediasearch + shots read identify.json
+// to put names on spoken lines and shots. No KB = identify skips with a note, nothing breaks.
+var defaultSteps = []string{stepTranscribe, stepMetadata, stepDiarize, stepEvents, stepOSINT, stepOCR, stepIdentify, stepMedia, stepShots}
 
 // knownSteps is the validation set for --steps parsing.
 var knownSteps = map[string]bool{
@@ -74,6 +88,8 @@ var knownSteps = map[string]bool{
 	stepEmbed:      true,
 	stepIdentify:   true,
 	stepMotion:     true,
+	stepMedia:      true,
+	stepShots:      true,
 	stepValidate:   true,
 	stepReport:     true,
 }
@@ -135,6 +151,9 @@ type stepPaths struct {
 	ocrJSON       string // ocr.json (becky-ocr manifest summary)
 	embedJSON     string // embed.json (captured stdout summary)
 	embedDB       string // forensic.db (or overridden by --db)
+	mediaDB       string // --db when given, else "" = becky-mediasearch's own default (config video_db, the shared library)
+	mediaJSON     string // mediasearch.json (becky-mediasearch --add summary)
+	shotsJSON     string // shots.json (becky-shots: the written shot log)
 	identify      string // identify.json
 	motion        string // motion.json (becky-motion burst timeline; consumed by validate + report)
 	validateJSON  string // validate.json (becky-validate AV observations)
@@ -159,6 +178,9 @@ func newStepPaths(videoDir, dbOverride string) stepPaths {
 		ocrJSON:       filepath.Join(videoDir, "ocr.json"),
 		embedJSON:     filepath.Join(videoDir, "embed.json"),
 		embedDB:       db,
+		mediaDB:       dbOverride,
+		mediaJSON:     filepath.Join(videoDir, "mediasearch.json"),
+		shotsJSON:     filepath.Join(videoDir, "shots.json"),
 		identify:      filepath.Join(videoDir, "identify.json"),
 		motion:        filepath.Join(videoDir, "motion.json"),
 		validateJSON:  filepath.Join(videoDir, "validate.json"),
@@ -190,6 +212,10 @@ func outputMarker(step string, p stepPaths) string {
 		return p.identify
 	case stepMotion:
 		return p.motion
+	case stepMedia:
+		return p.mediaJSON
+	case stepShots:
+		return p.shotsJSON
 	case stepValidate:
 		return p.validateJSON
 	case stepReport:

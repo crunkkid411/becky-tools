@@ -6,7 +6,21 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — becky-diarfix: DiarizationLM double-checks speakers from the wording (2026-10-10, local)
+### NEW — Footage library: becky-mediasearch + becky-shots (2026-10-10, local)
+
+Analyze once, keep it, find it: `becky-pipeline` now also reads every video's pictures, actions and sound
+(EmbeddingGemma 2) and writes a shot-by-shot description (Gemma 4) into the video database (config
+`video_db`) + `shots.json`. `becky-mediasearch "<what>" [files]` finds a moment by what is seen, heard,
+said or described, frame-exact, Gemma 4 double-checks it, `--reel` hands the hits to becky-reel /
+becky-otio. Setup `scripts\get-embeddinggemma2.ps1`. Feature map vs VideoDB / Director / buttercut / kevs
++ gaps: `research/footage-library.md`; usage: `SKILL.md` "Footage library".
+**Names:** shots and spoken lines name a person only when becky KNOWS who it is (becky-identify, now in
+the pipeline sweep, or Jordan's `people.txt` notes beside the video); anyone else stays "a man".
+**becky-livestream analyzes once:** the whole stream's sound labels + picture signals are measured
+before any model runs and kept in `becky-edit` (`--analyze` = only that), so swapping a model re-measures
+nothing. DiarizationLM measured NOT more accurate (0.38% vs Nemotron's 0.36%), so speakers are unchanged.
+
+### becky-diarfix: DiarizationLM double-checks speakers from the wording (2026-10-10, local)
 
 `becky-transcribe --diarize` (2+ speakers) now runs `becky-diarfix`: DiarizationLM-Gemma-4-E4B-v1 re-reads
 the words near each speaker change and moves the ones the wording gives to the other person. Fast Food

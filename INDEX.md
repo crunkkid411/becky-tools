@@ -68,6 +68,13 @@
   DiarizationLM-Gemma-4-E4B re-reads the words near each speaker change and moves the ones the wording
   gives to the other person. Setup `scripts\get-diarizationlm.ps1`; config `diarlm_model`. Why, numbers,
   and why qmd stays on EmbeddingGemma v1: `research/embeddinggemma2-and-diarizationlm.md`.
+- **Footage library = `becky-mediasearch` + `becky-shots`** (since 2026-10-10; both run in `becky-pipeline`'s
+  default sweep): find a moment by what is SEEN or HEARD (EmbeddingGemma 2, Gemma 4 double-check), and a
+  written shot log per video. Read once, kept in the video database (config `video_db`). Names people only
+  when becky-identify or Jordan's `people.txt` says who they are. becky-livestream keeps its own whole-stream
+  analysis in `becky-edit` (`--analyze`), so swapping models re-measures nothing. Usage: `SKILL.md`
+  "Footage library"; setup `scripts\get-embeddinggemma2.ps1`; feature map vs VideoDB / Director / buttercut /
+  kevs and the gaps: `research/footage-library.md`.
 - **`vegas/README.md` section 6 + `SKILL.md` `# VEGAS PRO 18`** — **transcript search INSIDE VEGAS
   and a working control channel into it.** `vegas/BeckyVegas/` is a VEGAS Application Extension:
   View > Extensions > **Becky Search** searches the open timeline (hits shown on the ruler, "cut

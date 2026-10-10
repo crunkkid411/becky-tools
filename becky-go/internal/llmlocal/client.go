@@ -70,6 +70,7 @@ type Client struct {
 	ngl    int      // GPU layers to offload (99 = full; a 4B Q4 fits 8 GB)
 	ctxLen int      // context window
 	extra  []string // extra llama-server flags (the embedding client's pooling)
+	mmproj string   // multimodal projector (NewMediaEmbedClient), checked by EmbedMedia
 	logf   func(format string, a ...any)
 
 	warm bool // keep one resident server for the session

@@ -262,6 +262,42 @@ becky-cluster --db forensic.db                        # group recurring UNKNOWN 
 ```
 On-screen text is searchable in the SAME `becky find` as speech (addresses live in signage — your clips carry no GPS).
 
+## Footage library — analyze once, then find shots by what is SEEN or HEARD (2026-10-10)
+```
+becky-pipeline    "<video-or-folder>"                     # default sweep now also runs mediasearch + shots (read once, kept)
+becky-mediasearch "<what to find>" ["<video-or-folder>"]  # no file = search every video already in the video database
+becky-mediasearch --like "<photo.jpg|sound.wav>" ["<folder>"]
+becky-mediasearch "<what>" "<folder>" --reel hits.json    # + the hits as a clip list -> becky-reel (preview MP4) / becky-otio (editor timeline)
+becky-shots       "<video>"                               # written shot log: start/end + 1-3 sentence description per shot
+```
+- **becky-mediasearch** = EmbeddingGemma 2 (Q8_0 + vision/audio projector, `scripts\get-embeddinggemma2.ps1`;
+  no QAT build exists for it). Text, pictures, sound and short clips share ONE meaning space, so a
+  sentence is compared with frames and sound directly — the job becky-search's Qwen3 and qmd's
+  EmbeddingGemma v1 (text only) cannot do. Per video: a frame a second ("picture"), 4 frames 1 s apart
+  every 2 s ("action"), 5 s of sound every 2.5 s ("sound"); `--every-frame` reads every frame. The top
+  picture/action hits are re-read frame by frame (±1 s) so `frame` is the exact best frame. Then
+  Gemma-4 E4B QAT watches AND hears each hit and answers yes/no (`gemma`, `gemma_why`); confirmed first,
+  "no" kept at the bottom. `--no-check` skips it.
+- **becky-shots** = ffmpeg scene cuts (score > 0.3, pieces < 1 s merged, takes > 20 s split) + Gemma-4
+  E4B describing each shot (frames + sound; names only when known, below). Writes `shots.json` and stores each description
+  with its EmbeddingGemma 2 text vector, so becky-mediasearch also finds shots by their description
+  (`kind: "shot"`, `what`).
+- **Where it lives:** the video database = config `video_db` (`X:\AI-2\becky-tools\video-db\becky-video.db`,
+  beckydb tables `media_files` + `media_items`, `internal/beckydb/media.go`); `--db` on any of the three
+  puts it in another file (e.g. a case's forensic.db). A file is re-read only when it changes.
+- **Names:** a person is named only when becky KNOWS who it is: becky-identify placed them there (voice /
+  face; the pipeline passes `identify.json` as `--identify`), or the editor's own notes say so
+  (`--people`, default `people.txt` beside the video, plain lines like "The man with bright green hair is
+  Hair Jordan."). Shots then read "Hair Jordan talks to the camera ..." and spoken lines "Hair Jordan:
+  ...", so "find where Hair Jordan talks about X" works. Unknown people stay "a man" / "a woman"; never
+  feed it a guessed name.
+- Spoken words: still `becky-search` / qmd. Feature map vs VideoDB / Director / buttercut / kevs and
+  the remaining gaps: `research/footage-library.md`.
+- **becky-livestream** keeps its own per-frame analysis in `<footage>\becky-edit` (sound labels every
+  40 ms `<stem>.sound-v1.json`, picture signals every 0.1 s `<stem>.picture-v3.json`), measured over the
+  WHOLE stream before any model decides; `becky-livestream --analyze <video>` does only that. Swap models
+  freely afterwards - nothing is measured again.
+
 ## Vision / audio-visual models (the eyes + ears)
 Two separate tools, two different llama.cpp paths, **one model on the GPU at a time** (8 GB RTX 3070):
 

@@ -122,8 +122,50 @@ func (s *sedFrames) maxVoice(f0, f1 int) float64 {
 	return m
 }
 
-// soundFrames runs the sound labeler over the spans (one call, ~10 s on the GPU).
-func soundFrames(cfg config.Config, wav, work string, spans []span) (*sedFrames, error) {
+// soundCache keeps the sound labels of the whole stream, every 40 ms.
+func soundCache(work, stem string) string { return filepath.Join(work, stem+".sound-v1.json") }
+
+// soundFile is soundCache's contents.
+type soundFile struct {
+	Names  []string  `json:"vocal_names"`
+	Breath []float64 `json:"breath"`
+	Voice  []float64 `json:"voice"`
+	Vocal  []float64 `json:"vocal"`
+	VocalK []int     `json:"vocal_k"`
+}
+
+// soundFrames labels the WHOLE stream once and keeps it in cachePath, so every later run (any
+// model, any kept pieces) reads it back instead of labelling again (Jordan, 2026-10-10: swapping
+// one model re-ran every analysis model; "once all that data is available, it needs to persist").
+// The labeler works in fixed 10 s chunks, so a frame's labels are the same whatever span asked.
+func soundFrames(cfg config.Config, wav, cachePath string) (*sedFrames, error) {
+	var c soundFile
+	if b, err := os.ReadFile(cachePath); err == nil && json.Unmarshal(b, &c) == nil && len(c.Breath) > 0 {
+		return c.frames()
+	}
+	s, err := labelSounds(cfg, wav, filepath.Dir(cachePath), []span{{0, math.MaxInt32}})
+	if err != nil {
+		return nil, err
+	}
+	c = soundFile{s.names, s.breath, s.voice, s.vocal, s.vocalK}
+	writeJSON(cachePath, c)
+	return s, nil
+}
+
+func (c soundFile) frames() (*sedFrames, error) {
+	n := len(c.Breath)
+	if len(c.Voice) != n || len(c.Vocal) != n || len(c.VocalK) != n {
+		return nil, errors.New("the saved sound labels are damaged - delete " + "the .sound-v1.json file in becky-edit")
+	}
+	have := make([]bool, n)
+	for i := range have {
+		have[i] = true
+	}
+	return &sedFrames{breath: c.Breath, voice: c.Voice, vocal: c.Vocal, vocalK: c.VocalK, have: have, names: c.Names}, nil
+}
+
+// labelSounds runs the sound labeler over the spans (one call; the whole stream ~1 min on the GPU).
+func labelSounds(cfg config.Config, wav, work string, spans []span) (*sedFrames, error) {
 	if _, err := os.Stat(cfg.SoundLabelPython); err != nil {
 		return nil, fmt.Errorf("the sound labeler's Python is missing (%s)", cfg.SoundLabelPython)
 	}
@@ -351,11 +393,7 @@ type breathResult struct {
 // (never back to a guess) and the note says why.
 func runBreathCheck(cfg config.Config, media, work, stem, wav string, au *audio, thr, fps float64, pieces []span, logf func(string, ...any)) breathResult {
 	logf("breath check: listening for breaths in the kept clips, then watching the picture...")
-	spans := make([]span, len(pieces))
-	for i, p := range pieces {
-		spans[i] = span{math.Max(0, p.A-0.6), p.B + 0.6} // margins search 0.5 s past the piece
-	}
-	s, err := soundFrames(cfg, wav, work, spans)
+	s, err := soundFrames(cfg, wav, soundCache(work, stem))
 	if err != nil {
 		logf("  breath check skipped: %v", err)
 		return breathResult{Note: "the sound check did not run: " + err.Error()}

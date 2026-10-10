@@ -43,6 +43,8 @@ import (
 
 const (
 	picFPS = 10.0
+	// maxPicRun is the most grid frames one helper span measures (30 s).
+	maxPicRun = 300
 
 	// ponytail: calibration knobs, set on the 27-livestream against the breaths
 	// Jordan listed and the movements and faces in the frame strips (research
@@ -129,11 +131,7 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 			}
 		}
 	}
-	var need []span
-	for _, k := range missingKeys(p.frames, spans) {
-		a := float64(k[0]) / picFPS
-		need = append(need, span{a, float64(k[1]+1) / picFPS})
-	}
+	need := needSpans(p.frames, spans)
 	if len(need) == 0 {
 		return p, nil
 	}
@@ -571,4 +569,17 @@ func gemmaHeld(cfg config.Config, dir string, keys []string, logf func(string, .
 		}
 	}
 	return out, nil
+}
+
+// needSpans are the stretches of spans whose grid frames are not measured yet, at most 30 s each:
+// the helper holds a span's frames in memory, and a whole stream at once would be gigabytes.
+func needSpans(have map[int]picFrame, spans []span) []span {
+	var need []span
+	for _, k := range missingKeys(have, spans) {
+		for a := k[0]; a <= k[1]; a += maxPicRun {
+			b := min(k[1], a+maxPicRun-1)
+			need = append(need, span{float64(a) / picFPS, float64(b+1) / picFPS})
+		}
+	}
+	return need
 }
