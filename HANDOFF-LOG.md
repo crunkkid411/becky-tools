@@ -12,6 +12,31 @@
 
 ---
 
+## Becky Review 3: "Record layout" switch for screen-recording the preview (2026-10-09, local, `master`)
+
+Jordan: a switch at the top that removes the ask becky panel and shows the video at full height,
+so he can capture the preview pane in OBS on his 1080p monitor; the timeline may get shorter;
+everything must work the same in both layouts. He picked (form) "video runs top to bottom".
+
+**Built (`native/becky-review/main.cpp` only):**
+- `g_recordLayout` + menu-bar button after the folder chip. ON = neon fill, black text.
+- Layout: video window at `{W - recVidW, topY}` sized `{recVidW, availH}`; `recVidW` = full-height
+  frame x `g_vidAspect` (last real frame's w/h after rotation, so it does not flicker between
+  clips), clamped to leave >=640px. Library and timeline get `leftW = W - recVidW`. The library
+  splitter is not drawn (g_libW untouched, so the dragged width returns when OFF).
+- The ask becky window is skipped (pure UI; all its state lives in globals that async callbacks
+  keep updating). The >1s work indicator anchors to `leftW` so OBS never records it.
+- Timeline toolbar: `tbSameLine` = plain `SameLine` in the normal layout; in record layout it
+  wraps a button to a new row when last frame's width says it would pass the right edge. The
+  wrapped rows' height (`g_tlToolbarExtraH`) is added to `timelineH`, so lanes keep their height
+  and the library gives up the space.
+
+**Verified:** `_build.bat` clean; launched maximized on his library, played a portrait video,
+switched ON (video 908px tall in the right column, Export EDL wrapped to row 2, nothing clipped),
+switched OFF (identical to before), playback never stopped.
+
+---
+
 ## Local System One (LiquidAI d1) + a System One skill for all of Claude Code (2026-10-09, local, `master`)
 
 Jordan: research Jev skills (and anything from Anthropic) and open-source Jev alternatives, find the

@@ -6,7 +6,15 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — local System One (LiquidAI d1) + a System One skill for all of Claude Code (2026-10-09, local)
+### NEW — Becky Review 3: "Record layout" switch for OBS (2026-10-09, local)
+
+Menu-bar switch "Record layout: OFF/ON" (neon when ON). ON hides ask becky and gives the video a
+column on the right from the menu bar to the bottom of the window (sized to the clip's shape, so
+tall footage fills the full height); library + timeline share the rest, and the timeline toolbar
+wraps to a second row instead of running off the edge. OFF is the old layout, unchanged. Built and
+checked on screen (both layouts, playing video, switching back and forth).
+
+### local System One (LiquidAI d1) + a System One skill for all of Claude Code (2026-10-09, local)
 
 `becky-decide` defaults to `--model local`: LiquidAI d1-3B on this PC (llama.cpp b11539, starts
 itself, frees the GPU after 10 idle min), free, offline, sees pictures. `becky-besttake --model local`.

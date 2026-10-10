@@ -1599,6 +1599,12 @@ static ID3D11Device* g_dev = nullptr; static ID3D11DeviceContext* g_ctx = nullpt
 static ID3D11RenderTargetView* g_rtv = nullptr;
 static int g_W = 1280, g_H = 800;
 static bool g_resize = false;
+// Record layout (menu-bar toggle): ask becky hidden, video in a full-height right
+// column for OBS capture. g_vidAspect = last real frame's width/height after
+// rotation, so the column keeps its size between clips instead of flickering.
+static bool g_recordLayout = false;
+static float g_vidAspect = 9.0f / 16.0f;
+static float g_tlToolbarExtraH = 0.0f;   // record layout: height of the wrapped toolbar rows beyond one
 
 static void createRTV() {
     ID3D11Texture2D* bb = nullptr;
@@ -3566,6 +3572,23 @@ int main(int argc, char** argv) {
                 }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a case folder  (Ctrl+O)");
+            // Record layout toggle: neon fill + black text when ON so the state reads
+            // at a glance (accessibility palette - do not tone it down).
+            {
+                const bool on = g_recordLayout;
+                if (on) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.224f, 1.0f, 0.078f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 1.0f, 0.35f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.8f, 0.06f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 1));
+                }
+                if (ImGui::Button(on ? "Record layout: ON##reclayout" : "Record layout: OFF##reclayout"))
+                    g_recordLayout = !g_recordLayout;
+                if (on) ImGui::PopStyleColor(4);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("ON: hides ask becky and runs the video top to bottom on the right,\n"
+                                      "for screen-recording the preview. Everything else works the same.");
+            }
             // Item 3: the "%.2fs / %.0fs" playhead readout that used to sit next to Open
             // Folder was REMOVED - Jordan: redundant clutter (the timeline header already
             // shows clip count + duration, and the ruler shows the timecode).
@@ -3697,7 +3720,9 @@ int main(int argc, char** argv) {
         // caption lane, both of which the row would otherwise push under at the
         // old 180 floor. Bites below a ~847px window height - including the
         // default 800px window - where the video pane loses about 12px.
-        const float timelineH = (std::max)(212.0f, availH * 0.26f);
+        // Record layout adds the wrapped toolbar rows (measured last frame) so the
+        // lanes keep their normal height; the library above gives up that space.
+        const float timelineH = (std::max)(212.0f, availH * 0.26f) + (g_recordLayout ? g_tlToolbarExtraH : 0.0f);
         const float topH = availH - timelineH;
         const float topY = menuH;
         // Item 7: the library pane used to be draggable to widen it - a regression
@@ -3725,8 +3750,21 @@ int main(int argc, char** argv) {
         // click, submission order was not a reliable way to win a hit-test.)
         const float splitW = 14.0f, splitHalf = splitW * 0.5f;   // a generous grab width - he has impaired vision
 
+        // RECORD LAYOUT (2026-10-09, Jordan screen-records the preview with OBS on a
+        // 1080p monitor): ask becky is not drawn, and the video gets a column on the
+        // right from the menu bar to the bottom of the window, as wide as the current
+        // clip's shape needs to fill that full height. Library + timeline share the
+        // rest with their normal split. Same panel code either way - only the
+        // rectangles move. The column keeps >=640px for library/timeline.
+        const ImGuiStyle& lst = ImGui::GetStyle();
+        const float recFrameH = availH - lst.WindowPadding.y * 2 - ImGui::GetTextLineHeightWithSpacing() * 2;
+        const float recVidW = (std::max)(240.0f, (std::min)(recFrameH * g_vidAspect + lst.WindowPadding.x * 2,
+                                                             (float)g_W - 640.0f));
+        const float leftW = g_recordLayout ? (float)g_W - recVidW : (float)g_W;   // library + timeline width
+
         // ---- left panel: library / search / transcript (B, C) ----
-        ImGui::SetNextWindowPos({ 0, topY }); ImGui::SetNextWindowSize({ libW - splitHalf, topH });
+        ImGui::SetNextWindowPos({ 0, topY });
+        ImGui::SetNextWindowSize({ g_recordLayout ? leftW : libW - splitHalf, topH });
         if (ImGui::Begin("library", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool libFocusedNow = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             // Round 5c: "Library / Search" header removed (Jordan: redundant) - the search
@@ -4513,7 +4551,8 @@ int main(int argc, char** argv) {
         stageMark("left-panel");
 
         // ---- center video pane (step 6: the ENGINE's frame as a plain ImGui image) ----
-        ImGui::SetNextWindowPos({ libW + splitHalf, topY }); ImGui::SetNextWindowSize({ vidW - splitHalf, topH });
+        if (g_recordLayout) { ImGui::SetNextWindowPos({ leftW, topY }); ImGui::SetNextWindowSize({ recVidW, availH }); }
+        else { ImGui::SetNextWindowPos({ libW + splitHalf, topY }); ImGui::SetNextWindowSize({ vidW - splitHalf, topH }); }
         if (ImGui::Begin("video", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             bool haveClip = !g_track[0].empty();
             int vw = 0, vh = 0, vrot = 0;
@@ -4525,6 +4564,7 @@ int main(int argc, char** argv) {
             // fit math and the four UV corners below turn it, so a 1080x1920 portrait
             // clip letterboxes as a tall frame instead of a sideways stretched one.
             if (vrot == 90 || vrot == 270) std::swap(vw, vh);
+            if (haveClip && vsrv && vw > 0 && vh > 0) g_vidAspect = (float)vw / (float)vh;   // sizes the record-layout column next frame
             if (engine::available() && haveClip) {
                 ImVec2 origin = ImGui::GetCursorScreenPos();
                 ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -4648,8 +4688,10 @@ int main(int argc, char** argv) {
         // ---- LEFT/CENTER SPLITTER (item 7): drag to resize the library pane ----
         // Occupies the strip "library" and "video" leave carved out between
         // them (see splitW/splitHalf above) - never overlapped by a neighbour,
-        // so its click can never be lost to one.
-        {
+        // so its click can never be lost to one. Not drawn in record layout (the
+        // library fills the whole left area there); g_libW is untouched, so the
+        // dragged width comes back when the toggle goes off.
+        if (!g_recordLayout) {
             ImGui::SetNextWindowPos({ libW - splitHalf, topY });
             ImGui::SetNextWindowSize({ splitW, topH });
             ImGui::SetNextWindowBgAlpha(0.0f);
@@ -4682,6 +4724,9 @@ int main(int argc, char** argv) {
         stageMark("lib-splitter");
 
         // ---- right panel: Q&A / ask-becky (G) ----
+        // Skipped entirely in record layout. Safe: everything it shows lives in
+        // globals that async callbacks keep updating, so it is current when shown again.
+        if (!g_recordLayout) {   // closes after this panel's ImGui::End()
         ImGui::SetNextWindowPos({ libW + vidW, topY }); ImGui::SetNextWindowSize({ qaW, topH });
         if (ImGui::Begin("qa", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             const ImVec4 neonV = ImGui::ColorConvertU32ToFloat4(kPalette[0]);   // #14FF39
@@ -5058,6 +5103,7 @@ int main(int argc, char** argv) {
             s_qaBottomH = ImGui::GetCursorPosY() - footY0;
         }
         ImGui::End();
+        }   // !g_recordLayout (ask becky panel)
         stageMark("right-panel-qa");
 
         // ---- bottom timeline ----
@@ -5086,7 +5132,8 @@ int main(int argc, char** argv) {
                 // timeline, never on it. The first version sat in the window's
                 // bottom-right and covered the caption lane; "non-intrusive" cannot
                 // mean "on top of the thing he is editing".
-                ImGui::SetNextWindowPos({ (float)g_W - 20.0f, topY + topH - 12.0f }, ImGuiCond_Always, { 1.0f, 1.0f });
+                // leftW: in record layout this keeps it OFF the video column (OBS would record it).
+                ImGui::SetNextWindowPos({ leftW - 20.0f, topY + topH - 12.0f }, ImGuiCond_Always, { 1.0f, 1.0f });
                 if (ImGui::Begin("##work", nullptr,
                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -5114,7 +5161,7 @@ int main(int argc, char** argv) {
         }
 
         ImGui::SetNextWindowPos({ 0, topY + topH });
-        ImGui::SetNextWindowSize({ (float)g_W, timelineH });
+        ImGui::SetNextWindowSize({ leftW, timelineH });
         if (ImGui::Begin("timeline", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
             // CLICKING THE TIMELINE GIVES THE KEYBOARD BACK TO THE TIMELINE.
             //
@@ -5141,6 +5188,7 @@ int main(int argc, char** argv) {
                 (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
                 ImGui::SetWindowFocus();
             }
+            const float tlHeadY0 = ImGui::GetCursorScreenPos().y;   // record layout measures the wrapped header from here
             // ---- timeline header row (the reference app's .tlhead) ----
             // Left: "N clips - M:SS". Right of it at a FIXED x: the zoom readout.
             // Both existed in the WPF reference (#tlCount / #tZoom) and were the
@@ -5214,8 +5262,27 @@ int main(int argc, char** argv) {
             // cluster naturally sits, so a too-narrow window keeps it left-aligned
             // instead of overlapping the count/zoom.
             static float s_toolbarW = 0.0f;
-            ImGui::SameLine(0.0f, 18.0f);
-            {
+            // RECORD LAYOUT: the timeline is narrower than the toolbar, so the toolbar
+            // starts on its own row and WRAPS to more rows instead of running off the
+            // right edge (where export / Export EDL would be unreachable). tbSameLine
+            // is plain SameLine in the normal layout - that layout is unchanged.
+            // Widths are last frame's (same one-frame trick as s_toolbarW).
+            static float s_tbW[48] = {};
+            int tbIdx = 0;
+            auto tbSameLine = [&](float spacing) {
+                if (tbIdx + 1 < 48) s_tbW[tbIdx] = ImGui::GetItemRectSize().x;
+                tbIdx++;
+                if (!g_recordLayout) { ImGui::SameLine(0.0f, spacing); return; }
+                const float sp = spacing < 0.0f ? ImGui::GetStyle().ItemSpacing.x : spacing;
+                const float nextW = tbIdx < 48 ? s_tbW[tbIdx] : 0.0f;
+                const float edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+                if (ImGui::GetItemRectMax().x + sp + nextW <= edge) ImGui::SameLine(0.0f, spacing);
+                // else: no SameLine = next button starts a new row
+            };
+            if (g_recordLayout) {
+                ImGui::Spacing();   // own row, left-aligned
+            } else {
+                ImGui::SameLine(0.0f, 18.0f);
                 float naturalX = ImGui::GetCursorPosX();
                 float rightEdge = ImGui::GetWindowContentRegionMax().x;
                 float startX = (s_toolbarW > 0.0f) ? std::max(naturalX, rightEdge - s_toolbarW) : naturalX;
@@ -5239,12 +5306,12 @@ int main(int argc, char** argv) {
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(playing ? "Pause" : (g_sel.empty() ? "Play" : "Play the selected clip(s), then stop"));
-                ImGui::SameLine();
+                tbSameLine(-1.0f);
                 // "|<<" was never a label, it was a puzzle. The skip-to-start glyph
                 // says the same thing without being read.
                 if (refBtn(ico(ICON_START "##home", "|<<"))) { curSec = 0; g_playingExt = playing; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to start");
-                ImGui::SameLine();
+                tbSameLine(-1.0f);
             }
             {
                 // Item 7 (round 3): shows the CURRENT rate - "1x" at rest, matching
@@ -5258,7 +5325,7 @@ int main(int argc, char** argv) {
                     g_playRate = g_playRate > 1.75 ? 1.0 : (g_playRate > 1.25 ? 2.0 : 1.5);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed - click to cycle 1x -> 1.5x -> 2x (Shift+Space plays at 2x)");
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // EXTEND THE SELECTED CLIP BY ONE FRAME. Jordan cuts to the frame - "a
             // microsecond difference means you're cutting off consonants" - and
             // dragging an edge with the mouse cannot reliably land on a single frame
@@ -5291,7 +5358,7 @@ int main(int argc, char** argv) {
                     queueEdit(std::move(req));
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extend the selected clip one frame EARLIER (its own source rate)");
-                ImGui::SameLine();
+                tbSameLine(-1.0f);
                 if (fixedButton("\xE2\x96\xB6]##extr", { "\xE2\x96\xB6]" }) && canTrim) {   // |>] reference tExtendR
                     EditReq req; req.verb = "set_trim";
                     req.args = { {"id", sc->id}, {"in", sc->in}, {"out", sc->out + oneFrame} };
@@ -5303,7 +5370,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(1);
                 if (!canTrim) ImGui::EndDisabled();
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // Split at the playhead - the reference toolbar's scissors button. Same
             // split the 'S' key already does; duplicated inline rather than sharing
             // editT()/the key handler's own debounce state, which is scoped to that
@@ -5336,7 +5403,7 @@ int main(int argc, char** argv) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split clip at playhead (S)");
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // D-5: screenshot the preview frame. Engine verb already existed
             // (grab_frame); only the button was missing.
             if (refBtn(ico(ICON_CAMERA "##shot", "Screenshot"))) {
@@ -5369,7 +5436,7 @@ int main(int argc, char** argv) {
                 } else { g_renderMsg = "Screenshot failed: no clip at playhead"; g_renderMsgAt = nowSec(); }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screenshot the frame at the playhead");
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // E-10 SKIP QUIET - during playback, everything under the loudness
             // threshold is SKIPPED seamlessly instead of played. Colour carries the
             // state as well as the shape: neon green with dark ink when armed (same
@@ -5393,13 +5460,13 @@ int main(int argc, char** argv) {
                     ImGui::SetTooltip("Skip quiet parts during playback: %s\nDrag the bar on the timeline to set the level.",
                                       g_thrOn ? "ON" : "OFF");
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // The broomstick - sweeps every quiet span (at the SAME threshold the
             // bar above sets) out of the timeline for good.
             if (broomButton()) applyRemoveSilence(curSec, lastComposed);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Remove all silent parts from the timeline\n(uses the threshold bar's level - one Ctrl+Z undoes the whole sweep)");
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // Item 9: captions ON/OFF, GLYPH not the words "Captions: On/Off" - a
             // checkmark suffix + green tint when on, plain otherwise. Off hides both
             // the timeline caption lane and the preview overlay text.
@@ -5416,7 +5483,7 @@ int main(int argc, char** argv) {
                 if (capOn) ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show/hide captions (timeline lane + preview overlay): %s", capOn ? "ON" : "OFF");
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // Item 8: CLI-CUT captions - becky-subtitle.exe, NOT the Parakeet
             // per-clip transcript the toggle above falls back to. Blue (#00AEEF),
             // NOT the amber "Forensic" already uses - amber there means "runs an
@@ -5437,7 +5504,7 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Build real TikTok-style captions with becky-subtitle: snapped to your\ncut points and phrase-broken - not just the raw Parakeet forensic transcript.");
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // Item 9: 3-state provenance overlay (off / on-hidden-in-preview / on-
             // shown) - a GLYPH per state (x / eye / check), not the words "Overlay:
             // On (hidden)". Render always burns in whichever text "on-previewed"
@@ -5471,7 +5538,7 @@ int main(int argc, char** argv) {
                     ImGui::SetTooltip("Forensic lower-third overlay: %s",
                         g_ovMode == 0 ? "off" : g_ovMode == 1 ? "on (hidden in preview, still burns into export)" : "on (shown in preview)");
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // NEW (round 3): the overlay's filename LINE, on/off - existed as state
             // (g_overlay.showFilename) with no button to toggle it. Green-when-on,
             // matching the reference's "name" pill exactly.
@@ -5497,17 +5564,17 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Include the filename line in the overlay (off = date/timecode/link only): %s", nameOn ? "ON" : "OFF");
             }
-            ImGui::SameLine(0.0f, 18.0f);
+            tbSameLine(18.0f);
             // Undo/Redo - ALWAYS enabled, deliberately. The engine owns both stacks
             // and reports neither depth over the bridge, so "grey it out when empty"
             // would mean GUESSING at emptiness.
             {
                 if (refBtn(ico(ICON_UNDO "##undobtn", "Undo"))) queueUndo(curSec);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo the last edit  (Ctrl+Z)");
-                ImGui::SameLine();
+                tbSameLine(-1.0f);
                 if (refBtn(ico(ICON_REDO "##redobtn", "Redo"))) queueRedo(curSec);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the edit you just undid  (Ctrl+Y or Ctrl+Shift+Z)");
-                ImGui::SameLine();
+                tbSameLine(-1.0f);
             }
             // save / load - plain text, matching the reference exactly (no icon).
             // Save updates the open project file; the very first save (nothing saved or
@@ -5544,7 +5611,7 @@ int main(int argc, char** argv) {
                     g_renderMsgAt = nowSec();
                 });
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             if (refBtn("load##loadreel")) {
                 std::string picked = pickOpenReelFile(hwnd);
                 if (!picked.empty()) {
@@ -5560,7 +5627,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Reel");
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // Item 6: render selection - GRAYED (not blue) with no count shown when
             // nothing is selected, matching the reference's disabled look exactly;
             // blue + white + the "(N)" count once clips ARE selected. An explicit
@@ -5600,7 +5667,7 @@ int main(int argc, char** argv) {
                 }
                 if (!hasSel) { ImGui::EndDisabled(); ImGui::PopStyleColor(1); }
             }
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             // Item 5: "Render" -> "export", GREEN (#39FF14) fill + BLACK text - the
             // primary action, matching the reference exactly.
             {
@@ -5648,7 +5715,7 @@ int main(int argc, char** argv) {
             // Vegas/FCP-interchange feature nobody asked to remove; kept, just
             // relegated to a small trailing text button so it never competes with
             // the primary row the reference actually shows.
-            ImGui::SameLine();
+            tbSameLine(-1.0f);
             if (refBtn("Export EDL##writeedl")) {
                 engineCallAsync("write_edl", { {"output", ""} }, 30.0, "Writing EDL...", [](const json& r) {
                     if (r.value("ok", false)) { std::string p = r.value("data", json::object()).value("path", std::string()); g_renderMsg = "Wrote EDL " + p; openInFileBrowser(p); }
@@ -5660,7 +5727,14 @@ int main(int argc, char** argv) {
             // the cluster's start edge IS the cluster width the NEXT frame right-aligns
             // by. Measured in screen space (SetCursorPosX offsets don't distort a
             // width delta), stored in the static above.
-            s_toolbarW = ImGui::GetItemRectMax().x - toolbarStartScreenX;
+            if (tbIdx < 48) s_tbW[tbIdx] = ImGui::GetItemRectSize().x;   // last button's width, for the wrap check
+            if (g_recordLayout) {
+                // Rows past the first: next frame's layout gives the timeline that much
+                // more height so the wrapped toolbar never squeezes the lanes.
+                g_tlToolbarExtraH = (std::max)(0.0f, ImGui::GetItemRectMax().y - tlHeadY0 - ImGui::GetItemRectSize().y);
+            } else {
+                s_toolbarW = ImGui::GetItemRectMax().x - toolbarStartScreenX;
+            }
 
             // Item 1 fix (round 3): "previewing a quote still shows it on the
             // timeline" - the whole point of a preview is that the timeline must
