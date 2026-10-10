@@ -3,6 +3,10 @@
 **Canonical (read these):**
 - `CLAUDE.md` — how we work. **NO LONGER** the *current* handoff state (§6) - moved to STATE-OF-MASTER.md and INDEX.md (Jordan, 7-04-2026).
 - `INDEX.md` (this file) - *current* doc map; which file, when. STOP updating in CLAUDE.md; it lives here now.
+- **Topic rules** (2026-10-10) - `topic-rules/<topic>/SKILL.md`: `becky-video-editing-rules`,
+  `becky-forensic-rules`, `becky-music-rules`, `becky-model-selection`, `becky-cloud-handoff`,
+  `msys2-native-builds`. Moved out of CLAUDE.md verbatim; same authority. The System One picker
+  (`~/.claude/skills/system-one/route.py`) hands the matching one to the agent with each message.
 - **System One, local LiquidAI d1 (2026-10-09):** `becky-decide` now defaults to `--model local` =
   d1-3B served by llama.cpp b11539 (`C:\llama.cpp\build\bin-b11539\`, beside the untouched b11487) on
   127.0.0.1:8091, started on first use, frees the GPU after 10 idle min (`internal/systemone/local.go`,

@@ -12,6 +12,41 @@
 
 ---
 
+## Lean startup: CLAUDE.md core + topic rules, System One skill picker (2026-10-10, local, `master`)
+
+Jordan (2026-10-09): skills, plugins and instruction files should not load in every chat; a System
+One model should decide what each message needs, in Claude Code AND OpenCode; "Instructions that
+later get contradicted by other instructions is clearly something we need to fix." Then: "Picker.
+NOT watch-only ... implement it NOW", and yes to splitting the two big rule files.
+
+**In this repo:**
+- `CLAUDE.md` -> core (every-task rules) + six topic files in `topic-rules/` (`.claude/skills/` would be the
+  usual place, but `.claude/` is gitignored and hooks block both force-adding and editing `.gitignore`). Moved verbatim by a script that fails
+  if any original line is missing from the output. The handoff tools (`get-becky-updates.ps1`,
+  `cmd/handoff`) look for a "Left for local agent" line in CLAUDE.md; none existed before the move
+  either, so their behaviour is unchanged.
+- `AGENTS.md` (untracked, Jordan's copy for other harnesses) regenerated from the new core with his
+  header kept.
+
+**Outside the repo (local only):**
+- `~/.claude/skills/system-one/route.py`: catalog of every SKILL.md (user, enabled plugins, OpenCode,
+  `~/.agents`, project `.claude/skills` + `topic-rules` up the folder tree) -> skill named in the message wins ->
+  BM25 shortlist of 25 -> d1-3B choice + none via `becky-decide --model local` -> inject at >= 0.6.
+  His own skills are asked first, plugin skills only if none fit; project topic rules get a second,
+  separate pick. Chrome drivers and paid-API skills are never offered. Fails open; logs to
+  `~/.cache/s1route/log-YYYY-MM.jsonl`. 53 labelled requests: 39 of 43 injected picks right, 1 of 8
+  "no skill" requests got one; ~0.3-1 s per message once d1 is warm (~8 s cold start).
+- Claude Code: UserPromptSubmit hook runs it; 246 user skills/commands set to `user-invocable-only`
+  in `skillOverrides` (still usable by `/name`, not listed every chat).
+- OpenCode: `~/.config/opencode/plugins/lean-context.ts` (names-only skill tool + picker per message),
+  `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` (user env var), OMO `"[opencode]".claude_code.plugins=false`,
+  25 plugin MCP servers turned into on-demand skills (`~/.config/opencode/lean/mcp_to_skills.py`,
+  now with each tool's argument list). Verified: a free model asked for Qwen-MM got the skill from the
+  picker and called `media_info` correctly first try (512x910, yuvj420p).
+
+**Measured ("hi" in this folder):** Claude Code 75.4k -> 59.3k (memory files 29.4k -> 20.1k);
+OpenCode 248k -> 44.8k.
+
 ## Becky Review 3: "Record layout" switch for screen-recording the preview (2026-10-09, local, `master`)
 
 Jordan: a switch at the top that removes the ask becky panel and shows the video at full height,

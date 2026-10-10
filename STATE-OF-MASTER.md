@@ -6,7 +6,17 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — Becky Review 3: "Record layout" switch for OBS (2026-10-09, local)
+### NEW — CLAUDE.md split into a core + topic rules; System One picker hands them over (2026-10-10, local)
+
+CLAUDE.md keeps the rules every task needs; the topic invariants moved VERBATIM (checked line by line)
+to `topic-rules/<topic>/SKILL.md` (`.claude/` is gitignored, so not there):
+`becky-video-editing-rules` (+ the editing LESSONS from `X:\AI-2\CLAUDE.md`), `becky-forensic-rules`,
+`becky-music-rules`, `becky-model-selection`, `becky-cloud-handoff` (old sections 6-8 + provable
+handoff), `msys2-native-builds`. CLAUDE.md lists them. The System One picker
+(`~/.claude/skills/system-one/route.py`, Claude Code + OpenCode) adds the matching one to a message.
+Startup in this folder: Claude Code 75.4k -> 59.3k tokens, OpenCode 248k -> 44.8k.
+
+### Becky Review 3: "Record layout" switch for OBS (2026-10-09, local)
 
 Menu-bar switch "Record layout: OFF/ON" (neon when ON). ON hides ask becky and gives the video a
 column on the right from the menu bar to the bottom of the window (sized to the clip's shape, so

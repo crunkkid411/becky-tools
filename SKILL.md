@@ -19,6 +19,10 @@ instead of dumping maybes for users to sort. A lone weak signal stays "unknown."
 - Search commands (`find`, `index`, `corroborate`) need the embedding server running once:
   `X:\AI-2\becky-tools\start-embed-server.bat`. Transcribe/diarize/identify/enroll do **not**.
 
+- Topic rules for building (2026-10-10): `topic-rules/<topic>/SKILL.md` - editing/clipping,
+  forensic, music, model choice, cloud handoff, MSYS2. Moved out of CLAUDE.md; read the one that
+  matches the work before starting (the System One picker usually hands it over by itself).
+
 ## ARCHITECTURE — becky is SELF-ORCHESTRATING (Jordan, 2026-06-26; the load-bearing decision)
 
 **How the forensic agent uses becky: ONE dumb call.** It runs `becky-transcribe <file>` (or whatever the
