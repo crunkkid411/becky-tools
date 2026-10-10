@@ -31,7 +31,11 @@ NOT watch-only ... implement it NOW", and yes to splitting the two big rule file
 **Outside the repo (local only):**
 - `~/.claude/skills/system-one/route.py`: catalog of every SKILL.md (user, enabled plugins, OpenCode,
   `~/.agents`, project `.claude/skills` + `topic-rules` up the folder tree) -> skill named in the message wins ->
-  BM25 shortlist of 25 -> d1-3B choice + none via `becky-decide --model local` -> inject at >= 0.6.
+  BM25 shortlist of 25 -> d1-3B choice + none via `becky-decide --model local:http://127.0.0.1:8092`
+  -> inject at >= 0.6. The picker starts its own text-only 4-bit d1 there (`d1-3B-Q4_K_M-requant.gguf`,
+  2.0 GB of graphics memory vs 4.9 GB; 37 vs 38 right picks of 44); with < 2.4 GB free (Whoretana
+  running) it runs on the processor instead (~3 s a message, <= 337 MiB of the card; < 700 MiB free:
+  no card at all, ~10 s).
   His own skills are asked first, plugin skills only if none fit; project topic rules get a second,
   separate pick. Chrome drivers and paid-API skills are never offered. Fails open; logs to
   `~/.cache/s1route/log-YYYY-MM.jsonl`. 53 labelled requests: 39 of 43 injected picks right, 1 of 8
