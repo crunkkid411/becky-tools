@@ -32,7 +32,7 @@ type result struct {
 }
 
 func main() {
-	model := flag.String("model", "", "decision model id (default: becky's default, Perplexity Decider)")
+	model := flag.String("model", "", "decision model: an OpenRouter id, or local (the d1 server on this PC); default Perplexity Decider")
 	window := flag.Int("window", 6, "how many earlier lines a restart may point back to")
 	out := flag.String("out", "", "write the JSON here instead of stdout")
 	var files []string // flags may come before or after the file name
@@ -59,15 +59,12 @@ func main() {
 	if err := json.Unmarshal(raw, &tr); err != nil || len(tr.Words) == 0 {
 		beckyio.Fatalf("%s is not a becky-transcribe JSON with words", files[0])
 	}
-	d := systemone.NewHosted("besttake")
-	if *model != "" {
-		d = d.WithModel(*model)
-	}
+	d, name := systemone.NewDecider("besttake", *model)
 	res, err := run(context.Background(), d, tr.Words, *window)
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
-	res.Source, res.Model = tr.File, d.Model
+	res.Source, res.Model = tr.File, name
 	if *out == "" {
 		beckyio.PrintJSON(res)
 		return

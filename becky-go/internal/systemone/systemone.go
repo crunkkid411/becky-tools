@@ -92,6 +92,8 @@ func NoulWith(question string, fields map[string]any) Question {
 type Request struct {
 	State     any                 `json:"state"`
 	Questions map[string]Question `json:"questions"`
+	Images    []string            `json:"images,omitempty"` // data: URIs; local d1 only
+	Files     []string            `json:"files,omitempty"`  // one audio data: URI (<=30 s); d1-omni only
 }
 
 // Answer is one typed answer. Choice/Probabilities/Confidence are set for

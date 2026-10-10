@@ -1532,3 +1532,25 @@ Jordan's pain list is `research/playlist-intake/pains.json`.
   only caller for every becky tool and gates every call across processes (`ytdlp.lock` + `ytdlp-last-call.txt` in
   `research/playlist-intake`). Never call yt-dlp around it.
 - `--backfill N` adds YouTube transcripts to up to N existing notes that lack one (captions only).
+
+## System One inside becky tools (typed decisions, 2026-10-09)
+
+A judgment that is really yes/no, pick-one or a level goes to a System One model, not to a chat
+model that writes JSON and guesses its own confidence. Full research, the recipe from 17 Jev /
+Jev-like tools and the measured comparison: `research/system-one-skill-research.md`.
+
+- **Go:** `d, name := systemone.NewDecider("<tool>", model)`; `model` = `"local"` (LiquidAI d1-3B on
+  this PC, free, offline, sees `Images`, starts its own llama-server) or an OpenRouter decision model
+  id (Perplexity Decider default, Jev; $5/month cap enforced in `Hosted`). Build questions with
+  `systemone.Choice / Score / Noul / NoulWith`. Put the item IN the question (`NoulWith`), never an
+  index into the state.
+- **CLI:** `becky-decide [--model local|laya|<id>] < request.json`; `--selftest` in 3 s.
+- **Recipe (enforced in code, not prose):** code narrows first (rules, counts, keyword shortlist);
+  one request carries many questions; code applies a threshold measured on Jordan's labelled
+  decisions; unsure goes to the next model or to Jordan, never onto his timeline as a guess; every
+  call is logged (`research/jev/log-YYYY-MM.jsonl`, local calls cost 0) as training data.
+- **Which model:** local d1 for yes/no and short choices (take picker: 97/125 vs Jev 102/125 on his
+  real cut); hosted Perplexity for nuanced many-way labels (d1-600M collapses on the 6-way livestream
+  sentence label). Forensic evidence: local only.
+- **Never:** who is on screen, timestamps/counts/dates, a final verdict. A System One answer is a
+  data point handed to the lead model (LESSONS 2026-10-08).

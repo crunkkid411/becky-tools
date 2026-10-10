@@ -3,6 +3,13 @@
 **Canonical (read these):**
 - `CLAUDE.md` — how we work. **NO LONGER** the *current* handoff state (§6) - moved to STATE-OF-MASTER.md and INDEX.md (Jordan, 7-04-2026).
 - `INDEX.md` (this file) - *current* doc map; which file, when. STOP updating in CLAUDE.md; it lives here now.
+- **System One, local LiquidAI d1 (2026-10-09):** `becky-decide` now defaults to `--model local` =
+  d1-3B served by llama.cpp b11539 (`C:\llama.cpp\build\bin-b11539\`, beside the untouched b11487) on
+  127.0.0.1:8091, started on first use, frees the GPU after 10 idle min (`internal/systemone/local.go`,
+  `NewDecider(tool, "local"|<OpenRouter id>)`, requests may carry `images` / audio `files`).
+  `--model laya` keeps the old path. `becky-besttake --model local`. Global Claude Code skill:
+  `~/.claude/skills/system-one/` (SKILL.md + `s1.py` filter/label/rank). Research, recipe and the
+  d1 vs Perplexity vs Jev tests: `research/system-one-skill-research.md` (+ `research/system-one/`).
 - **System One (typed decisions) = `becky-decide`** (`cmd/decide`, `internal/systemone`): Laya ONNX
   (`models\laya\`, CPU, 0 VRAM, ~0.5s) answers choice/score/yes-no questions with probabilities, no
   text. Rule: the model picks, code computes and guards. `--selftest` must pass. First user:

@@ -12,6 +12,39 @@
 
 ---
 
+## Local System One (LiquidAI d1) + a System One skill for all of Claude Code (2026-10-09, local, `master`)
+
+Jordan: research Jev skills (and anything from Anthropic) and open-source Jev alternatives, find the
+recipe and where it really helps, build a System One skill for all of Claude Code on this PC, then
+test LiquidAI's new local d1-3B and d1-omni-600M against the System One models already tried.
+
+**Built:**
+- `internal/systemone/local.go`: `Local` decider for llama.cpp's `/v1/systemone` (same request and
+  answer as Jev), starts its own llama-server (b11539, d1-3B Q8 + picture part, port 8091,
+  `--sleep-idle-seconds 600`), logs every answer to `research/jev/log-YYYY-MM.jsonl` at cost 0.
+  `NewDecider(tool, model)`: `"local"` / `"local:<url>"` or an OpenRouter id. `Request` gained
+  `Images` / `Files` (audio). Tests: `local_test.go` (fake server: shape, answer, log, error, picker).
+- `becky-decide --model local|laya|<id>` (default local; `--selftest` works on any model).
+  `becky-besttake --model local`.
+- llama.cpp b11539 in `C:\llama.cpp\build\bin-b11539\` (b11487 cannot load d1; left untouched).
+  Models in `X:\HuggingFace\models\LiquidAI\d1-3B-GGUF` and `d1-omni-600M-GGUF` (Q8_0 + mmproj).
+- Global skill `~/.claude/skills/system-one/` (SKILL.md + `s1.py` filter / label / rank through
+  becky-decide), outside this repo.
+
+**Measured (full tables: `research/system-one-skill-research.md`):** take picker vs Jordan's cut,
+125 lines: d1-3B 97, d1-600M 97, Perplexity 100, Jev 102. Replay of this month's hosted calls:
+d1-3B agrees 93% on take-picker questions, 81% on chat reads, 43% on the 6-way livestream label
+(600M: 89 / 77 / 10%). Skill routing, 53 requests over 148 skills: full list d1-3B 47 (4.3 s),
+Perplexity / Jev 51; 25-skill shortlist d1-3B 45 at 0.5 s. Single-frame "looking down to read
+chat": d1-3B AUC 0.69 (weak), 600M chance. Warm d1-3B server ~4.9 GB VRAM. Spend this session
+~$0.03 (month $0.09 of $5).
+
+**Not done / proposals:** intake's untrained Laya route -> d1 (needs real playlist runs);
+quotes "neighbor needed?", vision ladder confidence, picture.go and VEGAS CENSOR (arcade's Keep It
+Clean pattern) as d1 questions; a skill-routing hook in shadow mode. Each needs Jordan's yes.
+
+---
+
 ## `--model systemone-stack`: the qwen workflow with System One inserted (2026-10-08, local, `master`)
 
 Jordan, reviewing the redone edit: the face zooms were "a breakthrough", the masked censor "incredible";

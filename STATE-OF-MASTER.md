@@ -6,7 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — `--model systemone-stack`: the qwen workflow with System One inserted (2026-10-08, local)
+### NEW — local System One (LiquidAI d1) + a System One skill for all of Claude Code (2026-10-09, local)
+
+`becky-decide` defaults to `--model local`: LiquidAI d1-3B on this PC (llama.cpp b11539, starts
+itself, frees the GPU after 10 idle min), free, offline, sees pictures. `becky-besttake --model local`.
+Go: `systemone.NewDecider(tool, "local"|<OpenRouter id>)`. Global skill `~/.claude/skills/system-one/`.
+Take picker vs Jordan's cut: d1 97/125, Perplexity 100, Jev 102. d1 is weak on nuanced many-way
+labels, so the livestream labels stay hosted. Proposals waiting for Jordan (intake on d1, CENSOR
+finder, quotes, skill-routing hook in shadow mode): `research/system-one-skill-research.md`.
+
+### `--model systemone-stack`: the qwen workflow with System One inserted (2026-10-08, local)
 
 Same as `--model qwen`, with System One run first as a specialist data point: its call is shown on
 every sentence Qwen and Gemma read; Qwen decides, Gemma reviews as usual (no voting - that is

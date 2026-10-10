@@ -1,7 +1,12 @@
-// becky-decide — local System One decisions with Laya (Jev-compatible, ONNX, CPU).
+// becky-decide — System One decisions (Jev-compatible request in, typed answers out).
 //
-//	becky-decide < request.json          # Jev system_one request in, response out
-//	becky-decide --selftest              # three known-answer checks; exit 1 on a miss
+//	becky-decide < request.json                 # local LiquidAI d1 on this PC (default)
+//	becky-decide --model laya < request.json    # old local Laya (ONNX, CPU)
+//	becky-decide --model perplexity/pplx-decider-v1.1-27b < request.json  # hosted, $5/month cap
+//	becky-decide --selftest [--model ...]       # three known-answer checks; exit 1 on a miss
+//
+// local starts its llama-server on first use (d1-3B, unloads after 10 idle
+// minutes) and accepts "images" / "files" (audio) in the request.
 //
 // The request is {"state": <text or JSON>, "questions": {id: {type, instructions,
 // criteria}}} with type choice | score | noul. The answer is typed and carries a
@@ -23,18 +28,31 @@ import (
 )
 
 func main() {
-	selftest := flag.Bool("selftest", false, "run known-answer checks against the local model")
+	selftest := flag.Bool("selftest", false, "run known-answer checks against the model")
+	model := flag.String("model", "local", "local (d1 on this PC), laya, or a hosted OpenRouter decision model id")
 	flag.Parse()
 
-	r := systemone.New()
-	if err := r.Available(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(3)
+	var d systemone.Decider
+	if *model == "laya" {
+		r := systemone.New()
+		if err := r.Available(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+		d = r
+	} else {
+		d, _ = systemone.NewDecider("becky-decide", *model)
+		if l, ok := d.(systemone.Local); ok {
+			if err := l.Ensure(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(3)
+			}
+		}
 	}
 	ctx := context.Background()
 
 	if *selftest {
-		os.Exit(runSelftest(ctx, r))
+		os.Exit(runSelftest(ctx, d))
 	}
 
 	var req systemone.Request
@@ -42,7 +60,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: becky-decide < request.json   (needs a state and at least one question)")
 		os.Exit(2)
 	}
-	resp, err := r.Decide(ctx, req)
+	resp, err := d.Decide(ctx, req)
 	if err != nil {
 		beckyio.Fatalf("%v", err)
 	}
@@ -73,20 +91,15 @@ func selfCases() []selfCase {
 	}
 }
 
-func runSelftest(ctx context.Context, r systemone.Runner) int {
-	cases := selfCases()
-	reqs := make([]systemone.Request, len(cases))
-	for i, c := range cases {
-		reqs[i] = systemone.Request{State: c.state, Questions: map[string]systemone.Question{"q": c.q}}
-	}
-	resps, err := r.DecideBatch(ctx, reqs)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
+func runSelftest(ctx context.Context, d systemone.Decider) int {
 	failed := 0
-	for i, c := range cases {
-		a := resps[i].Answers["q"]
+	for _, c := range selfCases() {
+		resp, err := d.Decide(ctx, systemone.Request{State: c.state, Questions: map[string]systemone.Question{"q": c.q}})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		a := resp.Answers["q"]
 		ok := c.check(a)
 		mark := "PASS"
 		if !ok {
