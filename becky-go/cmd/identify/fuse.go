@@ -24,6 +24,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Fusion thresholds. These encode "don't name from one thin signal, but DO conclude
@@ -65,6 +66,44 @@ type signal struct {
 	Confidence float64 `json:"confidence"` // that modality's raw cosine/score
 	SpeakerID  string  `json:"speaker_id,omitempty"`
 	Hamming    *int    `json:"hamming,omitempty"`
+	Model      string  `json:"model,omitempty"` // how the modality matched (e.g. "redimnet+campp")
+}
+
+// soloVoice says whether one voice identification may name a person alone.
+// ReDimNet2+ names were already held to its own bars in voice.go; a name CAM++
+// disputes never stands alone. A CAM++-only name keeps the old floor.
+func soloVoice(id Identification) bool {
+	switch {
+	case id.Match == "redimnet" || id.Match == "redimnet+campp":
+		return true
+	case strings.HasPrefix(id.Match, "redimnet"):
+		return false
+	}
+	return id.Confidence >= voiceSoloFloor
+}
+
+// soloFace says whether one face identification may name a person alone. When a
+// second face model (LVFace) or Gemma confirmed it, the old ArcFace-only lookalike
+// floor no longer applies: LVFace's wrong-person scores top out at 0.107 and Gemma
+// never said "same" for a different person (research/kb-final-face-voice-check-2026-10-10.md).
+// A face kept only as a hint for the voice never stands alone.
+func soloFace(id Identification) bool {
+	switch {
+	case strings.Contains(id.Match, "needs voice"):
+		return false
+	case strings.Contains(id.Match, "+lvface"), strings.Contains(id.Match, "+gemma"):
+		return true
+	}
+	return id.Confidence >= faceSoloFloor
+}
+
+// corroborateFloor is the per-signal bar to count toward corroboration, on that
+// signal's own model scale.
+func corroborateFloor(s signal) float64 {
+	if strings.HasPrefix(s.Model, "redimnet") {
+		return redimDetect
+	}
+	return corroborateMinPerSignal
 }
 
 // fuseIdentifications collapses the raw per-modality identifications into the final,
@@ -113,6 +152,9 @@ type personSignals struct {
 	bestVoiceConf,
 	bestFaceConf,
 	bestLocConf float64
+	voiceSolo             bool   // some voice identification may stand alone (soloVoice)
+	faceSolo              bool   // some face identification may stand alone (soloFace)
+	voiceMatch, faceMatch string // how the best voice / face matched (Match of that id)
 }
 
 // groupSignalsByPerson buckets every raw identification under its person name,
@@ -130,16 +172,21 @@ func groupSignalsByPerson(rawIDs []Identification) map[string]*personSignals {
 			Confidence: id.Confidence,
 			SpeakerID:  id.SpeakerID,
 			Hamming:    id.Hamming,
+			Model:      id.Match,
 		})
 		switch id.Type {
 		case "voice":
+			ps.voiceSolo = ps.voiceSolo || soloVoice(id)
 			if id.Confidence >= ps.bestVoiceConf {
 				ps.bestVoiceConf = id.Confidence
+				ps.voiceMatch = id.Match
 				ps.segments = id.Segments
 			}
 		case "face":
+			ps.faceSolo = ps.faceSolo || soloFace(id)
 			if id.Confidence >= ps.bestFaceConf {
 				ps.bestFaceConf = id.Confidence
+				ps.faceMatch = id.Match
 				ps.frames = id.Frames
 			}
 		case "location":
@@ -168,10 +215,10 @@ func fusePerson(name string, ps *personSignals) (Identification, *Unidentified) 
 	// Exactly one modality named this person. A strong solo from a RELIABLE-ENOUGH
 	// modality still stands (voice is the most trusted; a very strong face is a
 	// confident visual ID) — but a borderline lone signal is demoted to a candidate.
-	if ps.bestVoiceConf >= voiceSoloFloor && hasModality(strong, "voice") {
+	if ps.voiceSolo && hasModality(strong, "voice") {
 		return soloVoiceEntry(name, ps), nil
 	}
-	if ps.bestFaceConf >= faceSoloFloor && hasModality(strong, "face") {
+	if ps.faceSolo && hasModality(strong, "face") {
 		return soloFaceEntry(name, ps), nil
 	}
 
@@ -186,7 +233,7 @@ func fusePerson(name string, ps *personSignals) (Identification, *Unidentified) 
 func strongSignals(sigs []signal) []signal {
 	var out []signal
 	for _, s := range sigs {
-		if s.Confidence >= corroborateMinPerSignal {
+		if s.Confidence >= corroborateFloor(s) {
 			out = append(out, s)
 		}
 	}
@@ -242,7 +289,7 @@ func soloVoiceEntry(name string, ps *personSignals) Identification {
 		Type:           "voice",
 		Name:           name,
 		Confidence:     round4(ps.bestVoiceConf),
-		Match:          "cosine",
+		Match:          orCosine(ps.voiceMatch),
 		CorroboratedBy: []string{"voice"},
 		Signals:        sortSignals(strongSignals(ps.signals)),
 		Segments:       ps.segments,
@@ -258,7 +305,7 @@ func soloFaceEntry(name string, ps *personSignals) Identification {
 		Type:           "face",
 		Name:           name,
 		Confidence:     round4(ps.bestFaceConf),
-		Match:          "cosine",
+		Match:          orCosine(ps.faceMatch),
 		CorroboratedBy: []string{"face"},
 		Signals:        sortSignals(strongSignals(ps.signals)),
 		Frames:         ps.frames,
@@ -340,4 +387,11 @@ func clamp01(f float64) float64 {
 		return 1
 	}
 	return f
+}
+
+func orCosine(m string) string {
+	if m == "" {
+		return "cosine"
+	}
+	return m
 }

@@ -43,6 +43,9 @@ def main():
     ap.add_argument("--device", default="cpu")  # cpu | cuda | dml
     ap.add_argument("--det-size", type=int, default=640)
     ap.add_argument("--min-det-score", type=float, default=0.5)
+    ap.add_argument("--second-model", default="",
+                    help="LVFace ONNX: also emit 'vector2', a second opinion from a different face model "
+                         "on the SAME aligned crop (identify names only when both models agree)")
     ap.add_argument("--all-faces", action="store_true",
                     help="also emit EVERY face per image under 'all' (a tracker needs them; "
                          "identify/enroll/cluster do not and are unaffected without this flag)")
@@ -89,6 +92,37 @@ def main():
         app = FaceAnalysis(name=args.model_name, root=args.model_root, providers=providers)
         app.prepare(ctx_id=ctx_id, det_size=(args.det_size, args.det_size))
 
+        second = None
+        if args.second_model and os.path.exists(args.second_model):
+            import onnxruntime as ort
+            second = ort.InferenceSession(args.second_model, providers=providers)
+        from insightface.utils import face_align
+
+        def vec2(img, f):
+            # LVFace takes the same 5-point-aligned 112x112 crop ArcFace uses, RGB, scaled to [-1, 1].
+            crop = face_align.norm_crop(img, f.kps, 112)[:, :, ::-1].transpose(2, 0, 1)
+            x = ((crop / 255.0 - 0.5) / 0.5)[None].astype(np.float32)
+            v = second.run(None, {second.get_inputs()[0].name: x})[0][0]
+            return [float(t) for t in v / (np.linalg.norm(v) or 1.0)]
+
+        def detect(img):
+            """Faces in img; a tight crop (face filling the picture) gets a black border of half its
+            size on every side and is tried again, because the detector needs some margin around a
+            face. Returned boxes go through box(), which shifts them back to the original picture."""
+            faces = [f for f in app.get(img) if float(f.det_score) >= args.min_det_score]
+            if faces:
+                return img, faces, 0, 0
+            h, w = img.shape[:2]
+            ph, pw = h // 2, w // 2
+            padded = np.zeros((h + 2 * ph, w + 2 * pw, 3), dtype=img.dtype)
+            padded[ph:ph + h, pw:pw + w] = img
+            faces = [f for f in app.get(padded) if float(f.det_score) >= args.min_det_score]
+            return padded, faces, pw, ph
+
+        def box(f, dx, dy):
+            x1, y1, x2, y2 = (float(v) for v in f.bbox)
+            return [x1 - dx, y1 - dy, x2 - dx, y2 - dy]
+
         def prominence(f):
             x1, y1, x2, y2 = f.bbox
             return (x2 - x1) * (y2 - y1) * float(f.det_score)
@@ -105,15 +139,19 @@ def main():
             if img is None:
                 out.append(rec)
                 continue
-            faces = [f for f in app.get(img) if float(f.det_score) >= args.min_det_score]
+            img, faces, dx, dy = detect(img)
             rec["n_faces"] = len(faces)
+            if faces and dx:
+                rec["padded"] = True
             if faces:
                 best = max(faces, key=prominence)
                 emb = [float(x) for x in best.normed_embedding]
                 dim = len(emb)
                 rec.update(found=True, vector=emb,
-                           bbox=[float(v) for v in best.bbox],
+                           bbox=box(best, dx, dy),
                            det_score=float(best.det_score))
+                if second is not None:
+                    rec["vector2"] = vec2(img, best)
                 if args.all_faces:
                     # Deterministic order: most prominent first, ties broken on
                     # geometry so the same frame always yields the same sequence
@@ -123,12 +161,14 @@ def main():
                         faces,
                         key=lambda f: (-prominence(f), float(f.bbox[0]), float(f.bbox[1])),
                     )
-                    rec["all"] = [
-                        {"vector": [float(x) for x in f.normed_embedding],
-                         "bbox": [float(v) for v in f.bbox],
-                         "det_score": float(f.det_score)}
-                        for f in ordered
-                    ]
+                    rec["all"] = []
+                    for f in ordered:
+                        one = {"vector": [float(x) for x in f.normed_embedding],
+                               "bbox": box(f, dx, dy),
+                               "det_score": float(f.det_score)}
+                        if second is not None:
+                            one["vector2"] = vec2(img, f)
+                        rec["all"].append(one)
             elif args.all_faces:
                 rec["all"] = []
             out.append(rec)

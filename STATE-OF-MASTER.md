@@ -6,6 +6,18 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — becky-identify escalates by itself; System One routes it (2026-10-10, local)
+
+Two models per sense now: voice = ReDimNet2+ names, CAM++ can only dispute; face = ArcFace + LVFace-B
+must agree (tight crops get a border first, automatically). Clear cases are settled by code. An unsure
+face goes to the new shared router `internal/route`: System One (local d1) picks the next step from a
+menu where each tool says what it is good at - Gemma-4 E4B side-by-side compare, Falcon-Perception zoom,
+more frames, wait for the voice, or hold for Jordan. Code only follows a sure pick (>= 0.9), else the safe
+lane. The trail is in the output's `routing[]`. Measured: Gemma E4B pairs 22/24 and never a false "same";
+12B 13/24 (worse, not used); d1 cannot tell people apart, so it only routes. Details: top of
+`HANDOFF-LOG.md`, `research/kb-final-face-voice-check-2026-10-10.md`. Any becky tool can use
+`internal/route` the same way; only becky-identify does so far.
+
 ### NEW — Footage library: becky-mediasearch + becky-shots (2026-10-10, local)
 
 Analyze once, keep it, find it: `becky-pipeline` now also reads every video's pictures, actions and sound

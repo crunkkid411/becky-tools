@@ -69,17 +69,32 @@ func imageDefaults(o *ImageOptions) {
 // missing, image missing or unreadable, empty model output) is a *DegradeError
 // so the caller emits a clean JSON note and exits 0 — never a panic.
 func (r *Runner) AnalyzeImage(ctx context.Context, imagePath string, opts ImageOptions) (Result, error) {
+	return r.AnalyzeImages(ctx, []string{imagePath}, opts)
+}
+
+// AnalyzeImages is AnalyzeImage for several stills in ONE question, in order, so
+// the prompt can say "picture 1 ... picture 2" (becky-identify's side-by-side face
+// comparison). Same degrade-never-crash contract.
+func (r *Runner) AnalyzeImages(ctx context.Context, imagePaths []string, opts ImageOptions) (Result, error) {
 	if err := r.Ready(); err != nil {
 		return Result{}, err
 	}
-	if _, err := os.Stat(imagePath); err != nil {
-		return Result{}, degrade("image not found", err)
-	}
-	b64, err := readBase64(imagePath)
-	if err != nil {
-		return Result{}, degrade("cannot read image", err)
+	if len(imagePaths) == 0 {
+		return Result{}, degrade("no image given", nil)
 	}
 	imageDefaults(&opts)
+	// Text first, then the image parts (the order the clip path uses too).
+	parts := []contentPart{{Type: "text", Text: strings.TrimSpace(opts.Prompt)}}
+	for _, p := range imagePaths {
+		if _, err := os.Stat(p); err != nil {
+			return Result{}, degrade("image not found", err)
+		}
+		b64, err := readBase64(p)
+		if err != nil {
+			return Result{}, degrade("cannot read image", err)
+		}
+		parts = append(parts, contentPart{Type: "image_url", ImageURL: &imageURL{URL: "data:" + imageMIME(p) + ";base64," + b64}})
+	}
 
 	baseURL, cleanup, err := r.ensureServer(ctx)
 	if err != nil {
@@ -87,13 +102,7 @@ func (r *Runner) AnalyzeImage(ctx context.Context, imagePath string, opts ImageO
 	}
 	defer cleanup()
 
-	// Text first, then the single image part (the order the clip path uses too).
-	parts := []contentPart{
-		{Type: "text", Text: strings.TrimSpace(opts.Prompt)},
-		{Type: "image_url", ImageURL: &imageURL{URL: "data:" + imageMIME(imagePath) + ";base64," + b64}},
-	}
-
-	r.Logf("avlm: single-still request (%s, %d tok)...", filepath.Base(imagePath), opts.MaxTokens)
+	r.Logf("avlm: still request (%d picture(s), first %s, %d tok)...", len(imagePaths), filepath.Base(imagePaths[0]), opts.MaxTokens)
 	text, err := r.chat(ctx, baseURL, opts.SystemPrompt, parts, opts.Temperature, opts.Seed, opts.MaxTokens)
 	if err != nil {
 		return Result{}, err // already a *DegradeError
@@ -102,5 +111,5 @@ func (r *Runner) AnalyzeImage(ctx context.Context, imagePath string, opts ImageO
 	if text == "" {
 		return Result{}, degrade("model returned empty output", nil)
 	}
-	return Result{Text: text, FrameCount: 1, HadVideo: true}, nil
+	return Result{Text: text, FrameCount: len(imagePaths), HadVideo: true}, nil
 }

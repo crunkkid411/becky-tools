@@ -235,9 +235,18 @@ becky-transcribe "<video>" --diarize              # what's said, every line labe
 becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads misheard names (text only)
 becky-diarize    "<video>"                        # how many speakers + when each talks (times only)
 becky-diarfix    words.json                       # re-check speaker labels from the wording (DiarizationLM)
-becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face)
+becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face; escalates unsure faces itself)
 becky-validate   "<video>"                        # AV description of on-screen actions (Gemma-4, default backend)
 ```
+`becky-identify` decides for itself (2026-10-10). Voice: ReDimNet2+ names (bars 0.30 / 0.50, margin 0.15);
+CAM++ only DISPUTES when it is sure of someone else, and a disputed voice needs the face to agree. Face:
+ArcFace and LVFace-B read the same crop and must agree (a crop with no margin gets a black border and is
+tried again). Clear faces and clear non-matches are settled by code; each unsure face goes through
+`internal/route`: System One picks Gemma-4 E4B compare / Falcon-Perception zoom / more frames / voice check
+/ hold, code follows only a sure pick (>= 0.9), and the trail lands in `routing[]`. System One never names
+anyone. **Building self-escalation into another tool:** settle the obvious cases in code, then call
+`route.Next(route.Case{Tool, Task, State, Images, Menu, Default, Extra})` with one `route.Step` per tool
+you could run next, its Strength written from MEASURED results; drop a step from the menu once tried.
 `becky-transcribe` listens twice by default (2026-10-05): Parakeet (word timings from the model's own
 token durations, windows that start and end in pauses) and then WhisperX (`X:\AI-2\whisperX`,
 Jordan's settings) as a second opinion. A passage only WhisperX heard is re-listened by Parakeet

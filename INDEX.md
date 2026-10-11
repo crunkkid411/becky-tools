@@ -64,6 +64,13 @@
   through NVIDIA's native `nemo-speech.exe` (CPU, 0 VRAM). Setup `scripts\get-nemotron-diar.ps1`;
   config `nemo_speech` / `diar_model`; measurements and the known miss at the top of `HANDOFF-LOG.md`.
   becky-identify still uses the old sherpa helper.
+- **Self-escalation router = `internal/route`** (since 2026-10-10): one call, `route.Next(Case)`: code
+  hands System One the evidence + a menu of next steps (each with its measured strength), follows the pick
+  only when sure (>= 0.9), else the caller's safe lane; every decision logged. First user: becky-identify's
+  unsure faces (`cmd/identify/escalate.go`: Gemma-4 E4B compare, Falcon-Perception zoom via
+  `internal/falcon`, more frames, voice check, hold). Two models per sense in becky-identify (ReDimNet2+ /
+  CAM++ voice, ArcFace / LVFace-B face; config `speaker_name_model`, `face_second_model`). Why and numbers:
+  `research/kb-final-face-voice-check-2026-10-10.md`.
 - **Speaker double-check = `becky-diarfix`** (since 2026-10-10; `becky-transcribe --diarize` calls it):
   DiarizationLM-Gemma-4-E4B re-reads the words near each speaker change and moves the ones the wording
   gives to the other person. Setup `scripts\get-diarizationlm.ps1`; config `diarlm_model`. Why, numbers,

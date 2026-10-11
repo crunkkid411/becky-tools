@@ -37,6 +37,9 @@ type Output struct {
 	Identifications []Identification  `json:"identifications"`
 	Unidentified    []Unidentified    `json:"unidentified"`
 	Notes           map[string]string `json:"notes,omitempty"`
+	// Routing is every unsure face becky escalated: which steps System One (or the
+	// code's safe lane) picked, what each step found, and the outcome.
+	Routing []FaceRoute `json:"routing,omitempty"`
 }
 
 // Identification is one named match. After the fusion pass (fuse.go) a single
@@ -214,12 +217,24 @@ func main() {
 
 	// 3. Face identification (requires video + enrolled faces + insightface models).
 	if info.HasVideo && len(knowledge.Faces) > 0 {
-		ids, unids, ferr := identifyFaces(cfg, info, input, knowledge, *faceThreshold, dev, *verbose)
+		heard := map[string]bool{}
+		for _, id := range report.Identifications {
+			if id.Type == "voice" {
+				heard[id.Name] = true
+			}
+		}
+		for _, u := range report.Unidentified {
+			if u.Type == "voice" && u.Candidate != "" {
+				heard[u.Candidate] = true
+			}
+		}
+		ids, unids, trails, ferr := identifyFaces(cfg, info, input, knowledge, *faceThreshold, dev, heard, *verbose)
 		if ferr != nil {
 			// Missing models / no detections is not fatal: note it, keep other modalities.
 			report.Notes["face"] = "skipped: " + ferr.Error()
 			beckyio.Logf(true, "warning: face identification failed: %v", ferr)
 		} else {
+			report.Routing = trails
 			report.Identifications = append(report.Identifications, ids...)
 			report.Unidentified = append(report.Unidentified, unids...)
 			beckyio.Logf(*verbose, "face: %d identified, %d unidentified", len(ids), len(unids))

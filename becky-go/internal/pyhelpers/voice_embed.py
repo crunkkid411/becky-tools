@@ -99,13 +99,65 @@ def gate_speech(samples, sample_rate, vad_model, threshold):
     return speech
 
 
+class Redimnet:
+    """ReDimNet2+ (lab260/redimnet2-plus, Apache-2.0), the model becky-identify NAMES voices with.
+
+    model_dir holds pytorch_model_fsdp.bin, model_config.json (the public b6-vox2 release config the
+    "+" checkpoint was tuned from; the model card's own loading snippet has the wrong shape) and
+    code/ (the authors' repo). Needs torch + torchaudio (anaconda base, not the sherpa venv).
+    The model was trained on <=60 s, so long audio is cut into 30 s windows and averaged.
+    """
+
+    WINDOW = 30 * 16000
+    MIN_TAIL = 3 * 16000
+
+    def __init__(self, model_dir, device):
+        import types
+        import torch
+        code = os.path.join(model_dir, "code")
+        sys.path.insert(0, code)
+        # Load only the model files: asv/models/__init__.py imports the training stack (omegaconf, hydra).
+        for name, sub in (("asv", "asv"), ("asv.models", os.path.join("asv", "models"))):
+            mod = types.ModuleType(name)
+            mod.__path__ = [os.path.join(code, sub)]
+            sys.modules.setdefault(name, mod)
+        from asv.models.redimnet2_vendor.redimnet2 import ReDimNet2Wrap
+        with open(os.path.join(model_dir, "model_config.json"), encoding="utf-8") as f:
+            self.model = ReDimNet2Wrap(**json.load(f))
+        sd = torch.load(os.path.join(model_dir, "pytorch_model_fsdp.bin"), map_location="cpu", weights_only=True)  # nosec: weights_only=True loads tensors, never code
+        prefix = "_orig_mod.encoder.model."
+        self.model.load_state_dict({k[len(prefix):]: v for k, v in sd.items() if k.startswith(prefix)}, strict=True)
+        self.device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
+        self.model.eval().to(self.device)
+        self.torch = torch
+
+    def embed(self, samples, sample_rate):
+        if sample_rate != 16000:
+            raise ValueError(f"ReDimNet2+ needs 16 kHz audio, got {sample_rate}")
+        torch = self.torch
+        wave = torch.tensor(samples, dtype=torch.float32)
+        cuts = [wave[i:i + self.WINDOW] for i in range(0, len(wave), self.WINDOW)]
+        if len(cuts) > 1 and len(cuts[-1]) < self.MIN_TAIL:
+            cuts = cuts[:-1]
+        vecs = []
+        with torch.no_grad():
+            for c in cuts:
+                x = c[None].to(self.device)
+                v = self.model(self.model.spec(x))[0]
+                vecs.append(v / v.norm())
+        mean = torch.stack(vecs).mean(0)
+        return [float(t) for t in (mean / mean.norm()).cpu()]
+
+
 def extract_one(extractor, path, vad_model="", vad_threshold=0.5):
-    """Extract a single 192-float embedding from a WAV file (speech-gated)."""
+    """Extract a single embedding from a WAV file (speech-gated)."""
     samples, sample_rate = load_wav(path)
     if not samples:
         raise RuntimeError(f"empty audio: {path}")
     if vad_model and os.path.exists(vad_model):
         samples = gate_speech(samples, sample_rate, vad_model, vad_threshold)
+    if isinstance(extractor, Redimnet):
+        return extractor.embed(samples, sample_rate)
     stream = extractor.create_stream()
     stream.accept_waveform(sample_rate, samples)
     stream.input_finished()
@@ -118,7 +170,8 @@ def extract_one(extractor, path, vad_model="", vad_threshold=0.5):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wavs", nargs="+", help="one or more 16 kHz mono PCM WAV paths")
-    ap.add_argument("--model", required=True, help="CAM++ embedding ONNX model path")
+    ap.add_argument("--model", required=True, help="CAM++ embedding ONNX model path, or the ReDimNet2+ dir with --backend redimnet")
+    ap.add_argument("--backend", default="campp", choices=["campp", "redimnet"])
     ap.add_argument("--num-threads", type=int, default=2)
     ap.add_argument("--device", default="cpu")  # cpu | cuda
     ap.add_argument("--vad-model", default="", help="silero_vad.onnx; gate to speech before embedding")
@@ -129,7 +182,10 @@ def main():
         raise FileNotFoundError(f"model not found: {args.model}")
 
     provider = "cuda" if args.device == "cuda" else "cpu"
-    extractor = make_extractor(args.model, args.num_threads, provider)
+    if args.backend == "redimnet":
+        extractor = Redimnet(args.model, provider)
+    else:
+        extractor = make_extractor(args.model, args.num_threads, provider)
 
     out = []
     dim = 0

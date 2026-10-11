@@ -47,7 +47,18 @@ type voiceOptions struct {
 	numThreads    int
 	keepTemp      bool
 	verbose       bool
+	python        string // interpreter for the helper (default cfg.Python)
+	backend       string // voice_embed.py --backend ("" = CAM++)
 }
+
+// ReDimNet2+ scale, measured on Jordan's footage (research/kb-final-face-voice-check-2026-10-10.md):
+// same person 0.658 at the lowest, a different person 0.147 at the highest. The
+// --voice-* flags keep their CAM++ meaning (CAM++ is now the second opinion).
+const (
+	redimDetect = 0.30 // below this nobody enrolled is talking
+	redimName   = 0.50 // a voice is named at or above this...
+	redimMargin = 0.15 // ...when it beats the runner-up by this much
+)
 
 // speakerAudio holds one diarized speaker, its spans, and its embedding.
 type speakerAudio struct {
@@ -81,29 +92,67 @@ func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Kno
 		return nil, nil, nil
 	}
 
-	embedModel := cfg.SpeakerEmbModel
 	script, err := pyhelpers.Materialize("voice_embed.py", pyhelpers.VoiceEmbed)
 	if err != nil {
 		return nil, nil, fmt.Errorf("materialize voice helper: %w", err)
 	}
 
-	// Extract one embedding per detected speaker from its concatenated audio.
-	if err := embedSpeakers(cfg, script, embedModel, input, speakers, opts); err != nil {
+	// CAM++ pass: the only pass when ReDimNet2+ is not installed, else the second opinion.
+	camSpeakers := append([]speakerAudio(nil), speakers...)
+	if err := embedSpeakers(cfg, script, cfg.SpeakerEmbModel, input, camSpeakers, opts); err != nil {
 		return nil, nil, err
 	}
-
-	// Build enrolled embeddings (averaged across each name's clips).
-	enrolled, err := embedEnrolled(cfg, script, embedModel, kb, opts)
+	camEnrolled, err := embedEnrolled(cfg, script, cfg.SpeakerEmbModel, kb, opts)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(enrolled) == 0 {
+	if len(camEnrolled) == 0 {
 		beckyio.Logf(opts.verbose, "no voice-prints enrolled; all speakers -> unidentified")
 	}
+	if !fileExists(cfg.SpeakerNameModel) || !fileExists(cfg.SoundLabelPython) {
+		return matchSpeakers(camSpeakers, camEnrolled, opts), unmatchedDescriptions(camSpeakers, camEnrolled, opts), nil
+	}
 
-	ids := matchSpeakers(speakers, enrolled, opts)
-	unids := unmatchedDescriptions(speakers, enrolled, opts)
-	return ids, unids, nil
+	// ReDimNet2+ names; CAM++ can only dispute (see secondOpinion).
+	ro := opts
+	ro.python, ro.backend = cfg.SoundLabelPython, "redimnet"
+	ro.threshold, ro.nameThreshold, ro.nameMargin = redimDetect, redimName, redimMargin
+	if err := embedSpeakers(cfg, script, cfg.SpeakerNameModel, input, speakers, ro); err != nil {
+		return nil, nil, err
+	}
+	enrolled, err := embedEnrolled(cfg, script, cfg.SpeakerNameModel, kb, ro)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := secondOpinion(matchSpeakers(speakers, enrolled, ro), camSpeakers, camEnrolled, opts)
+	return ids, unmatchedDescriptions(speakers, enrolled, ro), nil
+}
+
+// secondOpinion marks each ReDimNet2+ name with what CAM++ thinks of the same
+// speaker. CAM++ only DISPUTES when it confidently names someone else (by its own
+// calibrated bars); then the voice may not name anyone alone and fusion needs a
+// second modality (the face) to agree. An unsure CAM++ has no vote: it confuses
+// Jordan and Clancy (margin 0.01), which is why it no longer names.
+func secondOpinion(ids []Identification, cam []speakerAudio, camEnrolled []enrolledVoice, camOpts voiceOptions) []Identification {
+	byID := map[string][]float64{}
+	for _, sp := range cam {
+		byID[sp.id] = sp.embedding
+	}
+	for i := range ids {
+		ids[i].Match = "redimnet"
+		emb := byID[ids[i].SpeakerID]
+		if emb == nil {
+			continue
+		}
+		d := decideSpeaker(emb, camEnrolled, camOpts)
+		switch {
+		case d.best.name == ids[i].Name:
+			ids[i].Match = "redimnet+campp"
+		case d.named:
+			ids[i].Match = fmt.Sprintf("redimnet-disputed (CAM++ heard %s at %.2f)", d.best.name, d.best.sim)
+		}
+	}
+	return ids
 }
 
 // filterCast restricts the enrolled set to those resolving to a name in cast. An empty
@@ -443,6 +492,9 @@ func extractEmbeddings(cfg config.Config, script, model string, wavs []string, o
 		"--model", model,
 		"--num-threads", fmt.Sprintf("%d", opts.numThreads),
 		"--device", opts.device)
+	if opts.backend != "" {
+		args = append(args, "--backend", opts.backend)
+	}
 	// Gate every clip to speech-only before the CAM++ embedding so a clean
 	// speaker concat and a raw enrollment clip (intro music/SFX) compare fairly.
 	if cfg.SileroVADModel != "" {
@@ -451,7 +503,11 @@ func extractEmbeddings(cfg config.Config, script, model string, wavs []string, o
 		}
 	}
 
-	cmd := exec.Command(cfg.Python, args...)
+	py := cfg.Python
+	if opts.python != "" {
+		py = opts.python
+	}
+	cmd := exec.Command(py, args...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	if opts.verbose {

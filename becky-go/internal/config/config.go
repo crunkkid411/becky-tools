@@ -26,7 +26,8 @@ type Config struct {
 	SoundLabelRepo      string `json:"sound_label_repo"`   // PretrainedSED clone (MIT) with resources\BEATs_strong_1.pt
 	VADScript           string `json:"vad_script"`         // legacy torch Silero analyzer (optional)
 	DiarSegModel        string `json:"diar_seg_model"`     // pyannote-segmentation-3.0 model.onnx (becky-identify only since 2026-09-24)
-	SpeakerEmbModel     string `json:"speaker_emb_model"`  // CAM++ 3D-Speaker embedding onnx
+	SpeakerEmbModel     string `json:"speaker_emb_model"`  // CAM++ 3D-Speaker embedding onnx (becky-identify: second opinion since 2026-10-10)
+	SpeakerNameModel    string `json:"speaker_name_model"` // ReDimNet2+ dir (becky-identify names voices with it; runs on SoundLabelPython)
 	NemoSpeech          string `json:"nemo_speech"`        // NeMo-Speech.cpp nemo-speech.exe: becky-diarize's runtime (native, CPU)
 	DiarModel           string `json:"diar_model"`         // nvidia/Nemotron-3-Diarization q8_0 GGUF (becky-diarize)
 	DiarLMModel         string `json:"diarlm_model"`       // DiarizationLM-Gemma-4-E4B-v1 Q4_K_M GGUF (becky-diarfix: speaker double-check from the wording)
@@ -90,6 +91,7 @@ type Config struct {
 	FacePyLib        string `json:"face_pylib"`         // extra site-packages dir put on PYTHONPATH for face deps
 	FaceModelRoot    string `json:"face_model_root"`    // insightface root (holds models/<name>/)
 	FaceModelName    string `json:"face_model_name"`    // insightface model pack, e.g. buffalo_l
+	FaceSecondModel  string `json:"face_second_model"`  // LVFace ONNX: becky-identify names a face only when it and ArcFace agree
 	PoseModel        string `json:"pose_model"`         // MediaPipe pose_landmarker_*.task (body-aware 9:16 framing)
 	LRASDRepo        string `json:"lrasd_repo"`         // LR-ASD checkout (model/ + loss.py + weight/): who is speaking
 	Codec            string `json:"codec"`              // h264_nvenc (never libx264)
@@ -252,6 +254,9 @@ func defaults() Config {
 		SpeakerEmbModel: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\diarization\3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx`,
 		),
+		// ReDimNet2+ (lab260/redimnet2-plus, Apache-2.0): on Jordan's footage it split him from Clancy
+		// by 0.28 where CAM++ managed 0.01 (research/kb-final-face-voice-check-2026-10-10.md).
+		SpeakerNameModel: firstExisting(`X:\AI-2\becky-tools\models\voice\redimnet2-plus`),
 		// becky-diarize (and so becky-transcribe --diarize) since 2026-09-24: Nemotron-3-Diarization
 		// run by NeMo-Speech.cpp, built CPU-only from source. scripts/get-nemotron-diar.ps1 sets both up.
 		NemoSpeech: firstExisting(`X:\AI-2\becky-tools\models\diar\nemo-speech\nemo-speech.exe`),
@@ -262,7 +267,7 @@ func defaults() Config {
 		MediaEmbedModel:  firstExisting(`X:\AI-2\becky-tools\models\embeddinggemma2\embeddinggemma-2-Q8_0.gguf`),
 		MediaEmbedMMProj: firstExisting(`X:\AI-2\becky-tools\models\embeddinggemma2\mmproj-embeddinggemma-2-Q8_0.gguf`),
 		VideoDB:          `X:\AI-2\becky-tools\video-db\becky-video.db`,
-		Sqlite3:     resolve("sqlite3", `C:\ProgramData\anaconda3\Library\bin\sqlite3.exe`),
+		Sqlite3:          resolve("sqlite3", `C:\ProgramData\anaconda3\Library\bin\sqlite3.exe`),
 		SqliteVecExt: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\sqlite-vec\vec0.dll`,
 		),
@@ -371,6 +376,8 @@ func defaults() Config {
 		FacePyLib:     firstExisting(`X:\PythonUserBase\Lib\site-packages`),
 		FaceModelRoot: `X:\AI-2\becky-tools\models\face`,
 		FaceModelName: "buffalo_l",
+		// LVFace-B (ByteDance, ICCV 2025): 0 wrong of 123 test photos where ArcFace had 1.
+		FaceSecondModel: firstExisting(`X:\AI-2\becky-tools\models\face\lvface\LVFace-B_Glint360K\LVFace-B_Glint360K.onnx`),
 		// MediaPipe Pose for body-aware crop framing. "heavy" is the accuracy
 		// pick and is fast enough because the crop path samples a few frames a
 		// second, not every frame; "full" is the fallback if only it is present.
@@ -518,6 +525,9 @@ func merge(base, over Config) Config {
 	if over.SpeakerEmbModel != "" {
 		base.SpeakerEmbModel = over.SpeakerEmbModel
 	}
+	if over.SpeakerNameModel != "" {
+		base.SpeakerNameModel = over.SpeakerNameModel
+	}
 	if over.NemoSpeech != "" {
 		base.NemoSpeech = over.NemoSpeech
 	}
@@ -616,6 +626,9 @@ func merge(base, over Config) Config {
 	}
 	if over.FaceModelName != "" {
 		base.FaceModelName = over.FaceModelName
+	}
+	if over.FaceSecondModel != "" {
+		base.FaceSecondModel = over.FaceSecondModel
 	}
 	if over.Codec != "" {
 		base.Codec = over.Codec

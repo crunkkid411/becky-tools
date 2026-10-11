@@ -43,6 +43,10 @@ Clancy (ScreenRecording_01-09-2026 at 0:02 1:00 3:10 5:00 7:00 8:40 - checked on
 | WeSpeaker ResNet293-LM (2023, CC-BY) | 0.75 | **0.93** | -0.18 (confuses them) |
 | **ReDimNet2+ LMFT** (`lab260/redimnet2-plus`, Apache-2.0, ICASSP-2027 submission; 0.35% EER Vox1-O) | 0.49 | **0.21** | **+0.28** |
 
+Scored the way becky-identify uses it (each clip against the person's AVERAGED print, leave-one-out):
+ReDimNet2+ own person 0.658 at the lowest, the other person 0.147 at the highest. becky-identify's
+ReDimNet bars (detect 0.30, name 0.50, margin 0.15) sit inside that gap.
+
 ReDimNet2+ gotcha: the model card's loading snippet is WRONG (`return_2d_output: False` -> size mismatch).
 The real config is the public b6-vox2 release it was tuned from, saved as `model_config.json`; build
 `ReDimNet2Wrap(**config)`, load the `_orig_mod.encoder.model.*` keys strict, feed `model.spec(wave)`.
@@ -63,7 +67,21 @@ Stream frames (green hair + makeup): ArcFace 0.61-0.76, LVFace 0.46-0.70 - both 
 lower overall, so its naming bar must be set from these numbers, not ArcFace's 0.55.
 Tight crops: padding the photo by half its size before detection recovered 6 of the "no face" crops.
 
-## Next (needs Jordan's yes)
-- Voice: put ReDimNet2+ in becky-identify (replace CAM++ for naming, or both must agree), new bar from
-  the numbers above.
-- Face: LVFace-B as a second opinion next to ArcFace (name only when both agree), plus the padding retry.
+## Done (Jordan said yes, 2026-10-10): wired into becky-identify
+- Voice: ReDimNet2+ names (detect 0.30, name 0.50, margin 0.15); CAM++ only disputes when it is sure of
+  someone else, and then the face must agree.
+- Face: LVFace-B next to ArcFace on the same crop, name only when both agree (LVFace bar 0.30, margin 0.10);
+  the padding retry runs automatically.
+- Unsure faces are routed by System One (`internal/route`, `cmd/identify/escalate.go`).
+
+## Who can judge a face pair (head crops, 24 test photos: Jordan 8, Shelby 5, Clancy 6, strangers 5)
+| Model, how asked | Right | Notes |
+|---|---|---|
+| Gemma-4 E4B, one pair at a time ("same person? yes/no/unclear") | 22/24 | both misses were "none" for Jordan; never a false "same" |
+| Gemma-4 12B, same question | 13/24 | said Jordan and Shelby are the same person; called 3 strangers Clancy. Not used |
+| Gemma-4 E4B, all references in one picture set | 8/24 | poor |
+| d1-3B (System One), one pair at a time | coarse | separates Jordan / Shelby / Clancy, but reads strangers as "Clancy": routing only, never naming |
+
+So in becky-identify Gemma E4B is the face second opinion, d1 picks the route, and neither names alone.
+A separate hair matcher was not built: hair colour changes (Jordan's has), so it would vote against the
+right person; Gemma's compare already looks at hair, beard, sex and tattoos.

@@ -12,6 +12,57 @@
 
 ---
 
+## becky-identify escalates by itself: two models per sense + System One routing (2026-10-10, local, `master`)
+
+Jordan (2026-10-10): *"we should be using the best models, tools and methods available to us ... multiple
+models ... each utilized to their specific strengths"*; padding *"should be a deterministic pre-process step
+done automatically"*; *"systemone should not replace the identify people model, but rather, decides when to
+get a second opinion from another model, when to escalate, what type of data is needed ... Some of the
+escalation should not require a system one decision (like obvious low-confidence scores)"*; *"don't forget to
+include falcon perception as an option ... route according to what is needed and each model / tool's specific
+strengths. Focus on the routing and wiring together of becky-tools' self-orchestration"*.
+
+**Before:** becky-identify had no escalation at all (one voice model, one face model, fixed thresholds), and
+System One was never called by any identity path. `becky-transcribe --forensic` (forensicrun) has a Gemma
+ladder, but it is off by default and its identity re-check is not name-aware.
+
+**Built:**
+- `internal/route` (new): the shared self-escalation router. `route.Next(Case)` sends System One (local d1,
+  `internal/systemone`) the evidence, optional pictures, a menu of `Step{Key, Strength}` and extra data
+  questions; code follows the pick only at >= 0.9 (`SureAt`), else `Case.Default`; off-menu / down / unsure
+  all take the safe lane. Logged by systemone. 6 tests.
+- `internal/falcon` (new): Falcon-Perception boxes for any query over a frames folder (livestream keeps its
+  own copy for now; it is mid-edit by another session).
+- `internal/avlm.AnalyzeImages`: several stills in one Gemma question (AnalyzeImage now wraps it).
+- `face_embed.py --second-model <LVFace onnx>`: `vector2` per face from LVFace-B on the same aligned crop;
+  a picture with no face found gets a black border of half its size and is tried again (`padded`).
+  `faceembed.EmbedBoth` (Embed is unchanged for every other tool).
+- `voice_embed.py --backend redimnet`: ReDimNet2+ (loads only the model files; 30 s windows averaged; runs on
+  `sound_label_python`). Config: `speaker_name_model`, `face_second_model`.
+- `cmd/identify`: `escalate.go` (classify, the menu, the five steps), `face.go` (both models, gray faces
+  escalated, best view per candidate), `voice.go` (ReDimNet2+ names, `secondOpinion` marks
+  `redimnet+campp` / `redimnet` / `redimnet-disputed`), `fuse.go` (solo naming and corroboration floors
+  per model: a face both face models or Gemma confirmed may stand alone; a disputed voice may not),
+  `main.go` (`routing[]` in the output; the voice step's names are routing state). 9 new tests.
+
+**Measured (all on Jordan's footage, scratch probes):** Gemma-4 E4B "same person?" on head-crop pairs 22/24,
+never a false "same"; Gemma-4 12B 13/24 (said Jordan and Shelby were the same person) - so the compare step
+always uses E4B. d1 picks the right person only as a coarse signal and called strangers "Clancy" - routing
+only, never naming.
+
+**Live runs (new becky-identify.exe):** edit40 - Jordan corroborated (face both models 0.84, voice ReDimNet
+0.67 + CAM++ agrees). Clancy test clip (frame + voice not used in his enrollment) - corroborated 0.97 (face
+0.84 both models, voice 0.83, margin 0.80; CAM++ alone had a 0.01 margin between Jordan and Clancy).
+Hard-photo clip (Jordan with hair over half his face, Shelby, Clancy, two strangers): strangers unnamed;
+Jordan's face unsure for both models (0.52 / 0.48) -> System One leaned Gemma at 0.69 (unsure, so the safe
+lane, also Gemma) -> Gemma "yes" -> named. With Gemma hidden: Falcon zoom (0.32 / 0.21), more frames
+(0.51 / 0.50), then hold for Jordan - no guess.
+
+**Not done:** voice has no routing yet (no measured second-opinion tool beyond CAM++); only becky-identify
+uses `internal/route`; System One's routing picks are unsure (0.34-0.69) until it is tuned on the logs.
+
+---
+
 ## Footage library: becky-mediasearch + becky-shots, the video database's picture/sound layer (2026-10-10, local, `master`)
 
 Jordan (2026-10-10): EmbeddingGemma 2 has a different job from our text embedders - set it up wherever

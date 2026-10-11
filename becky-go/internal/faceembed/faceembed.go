@@ -36,6 +36,11 @@ type Face struct {
 	Vector   []float64 // L2-normalized 512-d ArcFace embedding of the best face
 	DetScore float64   // detection score of the best face
 	BBox     []float64 // [x1,y1,x2,y2] of the best face
+	// Vector2 is the SECOND face model's (LVFace) embedding of the same aligned crop -
+	// only set by EmbedBoth. Padded is true when the face was only found after the
+	// helper added a border (a tight crop that fills the picture).
+	Vector2 []float64
+	Padded  bool
 	// All holds EVERY face detected in the image, most-prominent-first — only
 	// populated when EmbedAll (not Embed) was used. A tracker needs every face
 	// per frame, not just the best one; nil/empty here for a plain Embed call,
@@ -50,6 +55,7 @@ type FaceRec struct {
 	Vector   []float64 `json:"vector"`
 	BBox     []float64 `json:"bbox"`
 	DetScore float64   `json:"det_score"`
+	Vector2  []float64 `json:"vector2,omitempty"`
 }
 
 // helperRec mirrors one entry in face_embed.py's "faces" array.
@@ -61,6 +67,8 @@ type helperRec struct {
 	DetScore float64   `json:"det_score"`
 	BBox     []float64 `json:"bbox"`
 	All      []FaceRec `json:"all,omitempty"`
+	Vector2  []float64 `json:"vector2,omitempty"`
+	Padded   bool      `json:"padded,omitempty"`
 }
 
 // helperResult mirrors face_embed.py's stdout JSON contract.
@@ -81,7 +89,14 @@ type helperResult struct {
 // surfaced as an error so the caller can degrade gracefully with a clear note.
 // Returns (nil, nil) for an empty image list.
 func Embed(cfg config.Config, images []string, device string, verbose bool) ([]Face, error) {
-	return embed(cfg, images, device, verbose, false)
+	return embed(cfg, images, device, verbose, false, "")
+}
+
+// EmbedBoth is Embed plus a second opinion: each face also gets Vector2 from
+// cfg.FaceSecondModel (LVFace), a different model on the same aligned crop. A
+// caller that names people uses the pair; without that model it is plain Embed.
+func EmbedBoth(cfg config.Config, images []string, device string, verbose bool) ([]Face, error) {
+	return embed(cfg, images, device, verbose, false, cfg.FaceSecondModel)
 }
 
 // EmbedAll is Embed, but also populates every returned Face's All field with
@@ -90,10 +105,10 @@ func Embed(cfg config.Config, images []string, device string, verbose bool) ([]F
 // the second person in a two-shot, because face_embed.py filters to the single
 // best face before it ever reaches Go.
 func EmbedAll(cfg config.Config, images []string, device string, verbose bool) ([]Face, error) {
-	return embed(cfg, images, device, verbose, true)
+	return embed(cfg, images, device, verbose, true, "")
 }
 
-func embed(cfg config.Config, images []string, device string, verbose bool, allFaces bool) ([]Face, error) {
+func embed(cfg config.Config, images []string, device string, verbose bool, allFaces bool, second string) ([]Face, error) {
 	if len(images) == 0 {
 		return nil, nil
 	}
@@ -111,7 +126,7 @@ func embed(cfg config.Config, images []string, device string, verbose bool, allF
 	// for ffmpeg). Batch so each helper launch stays comfortably under it.
 	var all []Face
 	for _, chunk := range chunkByChars(images, 20000) {
-		faces, err := runEmbed(cfg, script, chunk, device, verbose, allFaces)
+		faces, err := runEmbed(cfg, script, chunk, device, verbose, allFaces, second)
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +153,7 @@ func chunkByChars(images []string, limit int) [][]string {
 	return out
 }
 
-func runEmbed(cfg config.Config, script string, images []string, device string, verbose, allFaces bool) ([]Face, error) {
+func runEmbed(cfg config.Config, script string, images []string, device string, verbose, allFaces bool, second string) ([]Face, error) {
 	args := append([]string{script}, images...)
 	args = append(args,
 		"--model-root", cfg.FaceModelRoot,
@@ -146,6 +161,9 @@ func runEmbed(cfg config.Config, script string, images []string, device string, 
 		"--device", device)
 	if allFaces {
 		args = append(args, "--all-faces")
+	}
+	if second != "" {
+		args = append(args, "--second-model", second)
 	}
 
 	cmd := exec.Command(python(cfg), args...)
@@ -179,6 +197,8 @@ func runEmbed(cfg config.Config, script string, images []string, device string, 
 			DetScore: r.DetScore,
 			BBox:     r.BBox,
 			All:      r.All,
+			Vector2:  r.Vector2,
+			Padded:   r.Padded,
 		})
 	}
 	beckyio.Logf(verbose, "faceembed: embedded %d image(s), dim=%d", len(out), res.Dim)
