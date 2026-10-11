@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"becky-go/internal/pathx"
 	"strings"
@@ -126,7 +127,8 @@ func nameRefersTo(identified, query string) bool {
 		return true
 	}
 	// Whole-word token-subset (NOT raw substring): every word of the shorter name
-	// must appear as a full word in the other, so "John", "John Clancy", or "Clancy"
+	// must appear as a full word in the other, so "John" or "John Clancy" (never a bare
+	// last name like "Clancy": see tokenSubset)
 	// resolve to "John Anthony Clancy", while "John Clancy" does NOT match
 	// "Bettina Burke-Clancy (John Clancy's mother)" — its descriptive parenthetical
 	// is stripped by coreName and "clancy's" is not the word "clancy".
@@ -159,10 +161,16 @@ func nameTokens(s string) map[string]bool {
 
 // tokenSubset reports whether every whole word of sub appears in full's word set
 // (requires >=1 sub word). Used both directions so the shorter name can be either.
+// sub must include full's FIRST name: a last name is shared by a whole family (John
+// Anthony Clancy, Shelby Alyse Clancy, Jake Clancy...), so "Clancy" alone names nobody
+// (Jordan, 2026-10-11: "there is nobody named Clancy").
 func tokenSubset(full, sub string) bool {
 	fullSet := nameTokens(full)
 	subSet := nameTokens(sub)
 	if len(subSet) == 0 {
+		return false
+	}
+	if f := strings.Fields(coreName(full)); len(f) > 1 && !subSet[strings.Trim(f[0], ".,'\"")] {
 		return false
 	}
 	for w := range subSet {
@@ -244,6 +252,42 @@ func countPrintDir(kb, kind, resolvedName string) int {
 		}
 	}
 	return total
+}
+
+// sharedLastName lists the KB people whose name contains the one word asked for when
+// it is not their first name ("Clancy" -> John Anthony Clancy, Shelby Alyse Clancy...).
+func sharedLastName(kb, name string) []string {
+	q := nameTokens(name)
+	if len(q) != 1 {
+		return nil
+	}
+	files, _ := pathx.FilesIn(filepath.Join(kb, "entities"), "", ".json")
+	var who []string
+	for _, f := range files {
+		var e EntityCard
+		if data, err := os.ReadFile(f); err != nil || json.Unmarshal(data, &e) != nil {
+			continue
+		}
+		words := strings.Fields(coreName(e.Name))
+		for w := range q {
+			for i, t := range words {
+				t = strings.TrimSuffix(strings.Trim(t, ".,'\""), "'s")
+				if i > 0 && (t == w || strings.HasSuffix(t, "-"+w)) {
+					who = append(who, coreNameDisplay(e.Name))
+				}
+			}
+		}
+	}
+	sort.Strings(who)
+	return who
+}
+
+// coreNameDisplay is the name without its "(...)" note, keeping its own capitals.
+func coreNameDisplay(s string) string {
+	if i := strings.IndexByte(s, '('); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 func aliasRefersTo(aliases []string, name string) bool {

@@ -38,6 +38,7 @@ import (
 	"becky-go/internal/forensicrun"
 	"becky-go/internal/route"
 	"becky-go/internal/systemone"
+	"becky-go/internal/whois"
 )
 
 const (
@@ -172,6 +173,9 @@ type escalator struct {
 	people     string                      // "Name|alias,alias;..." for reverse search
 	hasAudio   bool
 	tmp        string
+	kbDir      string
+	askJordan  bool           // a held face goes to the who-is-this window (internal/whois)
+	whoPeople  []whois.Person // the names that window offers
 	gemma      *avlm.Runner
 	stopGemma  func()
 }
@@ -208,6 +212,9 @@ func (e *escalator) menu(g grayFace) []route.Step {
 // has run does code list the face for Jordan, with what each check found.
 func (e *escalator) escalate(g grayFace, fps float64) (*Identification, *Unidentified, FaceRoute) {
 	trail := FaceRoute{Candidate: g.name, Timestamp: round3(g.ts), ArcFace: round4(g.read.arc), LVFace: round4(g.read.lv)}
+	if id, unid, done := e.jordanSaid(g, fps, &trail); done { // his answer beats every model, and saves minutes
+		return id, unid, trail
+	}
 	if id, unid, done := e.scrubStep(&g, fps, &trail); done {
 		return id, unid, trail
 	}
@@ -287,7 +294,79 @@ func (e *escalator) escalate(g grayFace, fps float64) (*Identification, *Unident
 	// Every check ran and none settled it: only now is the face listed for Jordan.
 	trail.Rounds = append(trail.Rounds, RouteRound{Step: "hold", By: "code", Result: "every check ran and none settled it; listed for Jordan with what each one found"})
 	trail.Outcome = "held"
-	return nil, e.held(g, trail.Rounds), trail
+	u := e.held(g, trail.Rounds)
+	e.ask(g, trail.Rounds, u)
+	return nil, u, trail
+}
+
+// ask puts a held face in front of Jordan: the who-is-this window (internal/whois) gets
+// the clearest frame, becky's guess and what was already checked. It is only reached
+// after every check above ran.
+func (e *escalator) ask(g grayFace, rounds []RouteRound, u *Unidentified) {
+	if !e.askJordan || e.kbDir == "" || g.frame == "" || len(g.rec.BBox) != 4 {
+		return
+	}
+	video, _ := filepath.Abs(e.input)
+	kb, _ := filepath.Abs(e.kbDir)
+	id, _, err := whois.Ask(whois.Question{Video: video, At: math.Round(g.ts*100) / 100, Guess: g.name,
+		Checked: checkedWords(rounds), Frame: g.frame, Box: g.rec.BBox, KB: kb, People: e.whoPeople})
+	if err != nil {
+		beckyio.Logf(e.verbose, "face: could not queue the question for Jordan: %v", err)
+		return
+	}
+	u.AskedJordan = id
+	u.Description += " - asked Jordan in the who-is-this window"
+}
+
+// jordanSaid settles a face Jordan was already asked about in this video: his answer
+// names it ("cosine+jordan": the face model's guess and a person who knows them, two
+// sources), "unknown" is never asked again, and an open question is not asked twice.
+func (e *escalator) jordanSaid(g grayFace, fps float64, trail *FaceRoute) (*Identification, *Unidentified, bool) {
+	if !e.askJordan {
+		return nil, nil, false
+	}
+	video, _ := filepath.Abs(e.input)
+	a, answered, waiting, err := whois.Lookup(video, g.name)
+	if err != nil || !answered && !waiting {
+		return nil, nil, false
+	}
+	rr := RouteRound{Step: "asked_jordan", By: "jordan"}
+	switch {
+	case waiting:
+		rr.Result = "already waiting for Jordan's answer in the who-is-this window"
+		trail.Rounds, trail.Outcome = append(trail.Rounds, rr), "held"
+		u := e.held(g, trail.Rounds)
+		u.Description = fmt.Sprintf("possible %s at %.1fs: waiting for Jordan's answer in the who-is-this window", g.name, g.ts)
+		return nil, u, true
+	case a.Answer == "unknown":
+		rr.Result = "Jordan did not know who this is (" + a.AnsweredAt + ")"
+		trail.Rounds, trail.Outcome = append(trail.Rounds, rr), "held"
+		u := e.held(g, trail.Rounds)
+		u.Description = fmt.Sprintf("unknown person at %.1fs: Jordan did not know who this is", g.ts)
+		return nil, u, true
+	}
+	rr.Result = "Jordan said this is " + a.Answer + " (" + a.AnsweredAt + ")"
+	trail.Rounds, trail.Outcome = append(trail.Rounds, rr), "named"
+	g.name = a.Answer
+	return e.named(g, fps, "cosine+jordan"), nil, true
+}
+
+// checkedWords says in plain words what becky tried before asking (pure).
+func checkedWords(rounds []RouteRound) string {
+	words := map[string]string{
+		"frame_scrub":     "looked frame by frame for the clearest shot",
+		stepGemma.Key:     "compared the face and the whole person (hair, tattoos, build) with Gemma",
+		stepFalcon.Key:    "zoomed in on the face",
+		stepRevSearch.Key: "searched the web for the same face",
+		stepVoice.Key:     "checked the voice",
+	}
+	var done []string
+	for _, r := range rounds {
+		if w, ok := words[r.Step]; ok {
+			done = append(done, w)
+		}
+	}
+	return strings.Join(done, ", ")
 }
 
 // scrubStep looks for a clear shot of this face by stepping through the video ONE
@@ -509,7 +588,7 @@ func (e *escalator) falconZoom(g grayFace) ([]faceembed.Face, []string, error) {
 
 // Two questions, two crops (measured on 24 photos x 3 people, 2026-10-10, Gemma-4 E4B):
 //   - the FACE question on head crops: 23/24 right, but once said "same" for a stranger
-//     who looks like Clancy;
+//     who looks like John Clancy;
 //   - the WHOLE-PERSON question on head-to-chest crops (hair colour and style, tattoos,
 //     piercings, build, sex): it catches what a face model cannot see.
 //

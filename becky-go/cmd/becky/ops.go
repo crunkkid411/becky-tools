@@ -227,6 +227,9 @@ func runProfile(args []string) error {
 	}
 
 	enrolled, card := loadEntityCard(kb, name)
+	if who := sharedLastName(kb, name); !enrolled && len(who) > 1 {
+		return fmt.Errorf("%q is a last name shared by %s - say which person (use the full name)", name, strings.Join(who, ", "))
+	}
 	if !enrolled {
 		headline(cf, "WARNING: %q is not enrolled in the KB — run `becky enroll-wiki` (profile will show no appearances).", name)
 	}

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestNameRefersTo(t *testing.T) {
 	cases := []struct {
@@ -29,7 +34,9 @@ func TestNameRefersToTokenSubset(t *testing.T) {
 		want         bool
 	}{
 		{"John Anthony Clancy", "John Clancy", true},  // the bug — middle name broke substring
-		{"John Anthony Clancy", "Clancy", true},       // last name alone
+		{"John Anthony Clancy", "Clancy", false},      // a last name alone names nobody
+		{"Shelby Alyse Clancy", "Clancy", false},      // ...it is the whole family's
+		{"Shelby Alyse Clancy", "Shelby", true},       // a first name is fine
 		{"Shelby Alyse Clancy", "John Clancy", false}, // must NOT match across people
 		{"John Anthony Clancy", "John Smith", false},  // partial overlap is not enough
 		// Descriptive parenthetical must NOT hijack: "John Clancy" is inside
@@ -163,5 +170,26 @@ func TestFlagValues(t *testing.T) {
 	}
 	if len(rest) != 2 { // --kb x remains
 		t.Errorf("rest = %v", rest)
+	}
+}
+
+// A bare last name gets the list of people who share it, never one of them.
+func TestSharedLastName(t *testing.T) {
+	kb := t.TempDir()
+	os.MkdirAll(filepath.Join(kb, "entities"), 0o755)
+	for f, n := range map[string]string{"j.json": "John Anthony Clancy", "s.json": "Shelby Alyse Clancy (née Kerberg)",
+		"b.json": "Bettina Burke-Clancy (John Clancy's mother)", "h.json": "Hair Jordan"} {
+		os.WriteFile(filepath.Join(kb, "entities", f), []byte(`{"name":"`+n+`"}`), 0o644)
+	}
+	got := sharedLastName(kb, "clancy")
+	want := []string{"Bettina Burke-Clancy", "John Anthony Clancy", "Shelby Alyse Clancy"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("sharedLastName(clancy) = %v, want %v", got, want)
+	}
+	if got := sharedLastName(kb, "John"); got != nil {
+		t.Errorf("a first name is not a shared last name: %v", got)
+	}
+	if got := sharedLastName(kb, "John Clancy"); got != nil {
+		t.Errorf("a full name is fine: %v", got)
 	}
 }

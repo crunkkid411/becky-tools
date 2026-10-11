@@ -72,6 +72,11 @@
   image search, voice check; a face reaches Jordan only after all of them ran). Two models per sense in becky-identify (ReDimNet2+ /
   CAM++ voice, ArcFace / LVFace-B face; config `speaker_name_model`, `face_second_model`). Why and numbers:
   `research/kb-final-face-voice-check-2026-10-10.md`.
+- **Asking Jordan "who is this?" = `internal/whois` + `becky-whois`** (since 2026-10-11): the ONE popup
+  window (`pyhelpers/whois_popup.py`, tkinter, his high-contrast colours) that becky-identify opens after
+  every check ran; click a full name, the answer is enrolled and read first next run (`cosine+jordan`).
+  `becky-whois --list` for agents. Never ask him in a file. Naming rule (never a bare last name):
+  `topic-rules/becky-forensic-rules`.
 - **Reverse image search = `becky-revsearch <image>`** (since 2026-10-10): Yandex + Bing in the agent
   browser's Camoufox (hidden, no login; Google blocks it), then both face models keep only results with the
   SAME face and read those pages for names (`--names`). Goes online by design. Config `rev_search_python`.
@@ -452,7 +457,9 @@
   - `SPEC-ASK-SINGLESHOT.md` — `becky-ask --question/--image` scriptable mode ADDED BESIDE the
     colored TUI (TUI stays the default — do not demote it).
   - `SPEC-FACE-NAMING-LOOP.md` — `becky-cluster → becky-name` (high-contrast review card) →
-    enroll the cluster, + inline "teach me" remedy in identify's unnamed output.
+    enroll the cluster, + inline "teach me" remedy in identify's unnamed output. Jordan found the
+    terminal card too annoying to use (2026-10-11); asking him now goes through the who-is-this
+    window (`internal/whois`), which opens by itself.
   - `SPEC-BECKY-VOICE.md` (cloud, 2026-06-23, design-only) — **the always-on, proactive VOICE +
     context front-end for the WHOLE suite** ("I just talk and it does it"): a thin realtime skin
     (FastRTC transport + Gemini-Live cloud OR Gemma-4+NeuTTS local) + a **rules/harness layer**

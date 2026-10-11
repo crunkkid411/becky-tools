@@ -20,3 +20,17 @@ of work comes up. It has the same authority as CLAUDE.md.
 
 - **Recall is for DETECTION, not NAMING.** Surface every face/voice; attach a NAME
   only when corroborated.
+
+- **Never a last name alone - use the full name.** There is nobody called "Clancy": John Anthony
+  Clancy, Shelby Alyse Clancy, Jake Clancy and Bettina Burke-Clancy are four people. Jordan,
+  2026-10-11: "do not use last names to identify someone when their full name is available, far too
+  problematic." Write "John Clancy" / "Shelby Clancy" (or the full KB name), in reports, docs,
+  code comments and prompts alike. Shelby Alyse Clancy = Shelby Clancy = Shelby Kerberg = Shelby
+  Alyse Kerberg = PopTart Barbie (one person; KB aliases). Enforced in code: `becky profile`
+  (cmd/becky `tokenSubset`) needs the first name, becky-revsearch matches whole names only, and the
+  who-is-this window lists everyone sharing a typed last name instead of picking one.
+
+- **Due diligence before asking Jordan, then ask on his screen - never in a file.** A tool asks
+  Jordan "who is this?" only after every check it has ran (becky-identify: frame-by-frame, Gemma
+  face + whole person, Falcon, reverse image search, voice), and only through `internal/whois`
+  (the one popup window). Never put a question in a markdown/JSON file for him to find.

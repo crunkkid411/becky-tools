@@ -125,6 +125,8 @@ func TestFusionHonoursFaceModels(t *testing.T) {
 	}{
 		{"cosine+lvface", 0.62, true}, // both face models agreed
 		{"cosine+gemma", 0.52, true},  // Gemma confirmed a gray face
+		{"cosine+web", 0.51, true},    // same-face pages online name them
+		{"cosine+jordan", 0.51, true}, // Jordan answered the who-is-this window
 		{"cosine", 0.70, false},       // ArcFace alone: lookalike floor 0.78
 		{"cosine", 0.80, true},
 		{"cosine (needs voice)", 0.77, false}, // a hint never stands alone

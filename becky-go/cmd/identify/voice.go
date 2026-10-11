@@ -132,7 +132,7 @@ func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Kno
 // speaker. CAM++ only DISPUTES when it confidently names someone else (by its own
 // calibrated bars); then the voice may not name anyone alone and fusion needs a
 // second modality (the face) to agree. An unsure CAM++ has no vote: it confuses
-// Jordan and Clancy (margin 0.01), which is why it no longer names.
+// Jordan and John Clancy (margin 0.01), which is why it no longer names.
 func secondOpinion(ids []Identification, cam []speakerAudio, camEnrolled []enrolledVoice, camOpts voiceOptions) []Identification {
 	byID := map[string][]float64{}
 	for _, sp := range cam {

@@ -20,6 +20,7 @@ import (
 	"becky-go/internal/faceembed"
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/osintexport"
+	"becky-go/internal/whois"
 )
 
 const (
@@ -43,7 +44,7 @@ type enrolledFace struct {
 // identifyFaces returns named face identifications + unidentified faces for input,
 // plus the routing trail of every face it had to escalate (escalate.go).
 // voiceNames are the people the voice step already heard (state for routing).
-func identifyFaces(cfg config.Config, info mediainfo.Info, input string, kb Knowledge, threshold float64, device string, voiceNames map[string]bool, verbose bool) ([]Identification, []Unidentified, []FaceRoute, error) {
+func identifyFaces(cfg config.Config, info mediainfo.Info, input string, kb Knowledge, threshold float64, device string, voiceNames map[string]bool, askJordan, verbose bool) ([]Identification, []Unidentified, []FaceRoute, error) {
 	if len(kb.Faces) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -148,7 +149,8 @@ func identifyFaces(cfg config.Config, info mediainfo.Info, input string, kb Know
 	var trails []FaceRoute
 	esc := &escalator{cfg: cfg, input: input, rotation: osintexport.DisplayRotation(cfg.FFprobe, input), device: device,
 		verbose: verbose, threshold: threshold, enrolled: enrolled, refs: enrolledRecs(allRecs[:len(enrolledImages)], owner),
-		voiceNames: voiceNames, people: peopleList(kb), hasAudio: info.HasAudio, tmp: filepath.Dir(frames[0])}
+		voiceNames: voiceNames, people: peopleList(kb), hasAudio: info.HasAudio, tmp: filepath.Dir(frames[0]),
+		kbDir: kb.Dir, askJordan: askJordan, whoPeople: whoPeople(kb)}
 	defer esc.close()
 	for _, g := range sortedGray(gray) {
 		if _, settled := bestByName[g.name]; settled {
@@ -179,6 +181,29 @@ func peopleList(kb Knowledge) string {
 		parts = append(parts, p)
 	}
 	return strings.Join(parts, ";")
+}
+
+// whoPeople is everyone the who-is-this window can offer: people with face-prints get a
+// button (full names, never a bare last name); every other known person is found by typing.
+func whoPeople(kb Knowledge) []whois.Person {
+	var out []whois.Person
+	seen := map[string]bool{}
+	for _, f := range kb.Faces {
+		p := whois.Person{Name: f.Name, Dir: filepath.Base(filepath.Dir(f.Faces[0])), HasFace: true}
+		p.Aliases = kb.Entities[f.Key].Aliases
+		out, seen[f.Key] = append(out, p), true
+	}
+	keys := make([]string, 0, len(kb.Entities))
+	for k := range kb.Entities {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if e := kb.Entities[k]; !seen[k] && strings.TrimSpace(e.Name) != "" {
+			out = append(out, whois.Person{Name: e.Name, Aliases: e.Aliases, Dir: e.Name})
+		}
+	}
+	return out
 }
 
 // enrolledRecs keeps each person's enrolled face records (Gemma's reference photos).

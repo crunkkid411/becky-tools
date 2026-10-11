@@ -228,6 +228,9 @@ func mentions(text string, people map[string][]string) []string {
 	var out []string
 	for name, aliases := range people {
 		for _, a := range append([]string{name}, aliases...) {
+			if i := strings.IndexByte(a, '('); i > 0 { // "Shelby Alyse Clancy (née Kerberg)"
+				a = a[:i]
+			}
 			k := squash(a)
 			// a short alias ("Shel") only counts as a whole word, never inside "shell"
 			if len(k) >= 6 && strings.Contains(hay, k) || len(k) >= 3 && words[k] {

@@ -79,7 +79,8 @@ machine-readable output.
 | `becky-vision` | Describe / read one image | `becky-vision --image "x.png" --prompt "..."` |
 | `becky-ocr` | Read on-screen text (needs frames) | `becky-ocr --frames-dir frames/` |
 | `becky-motion` | Find WHEN something moved (no model) | `becky-motion "v.mp4"` |
-| `becky-identify` | Match KNOWN people vs your KB (voice reliable; face is weak) | `becky-identify "v.mp4" --kb kb-final` |
+| `becky-identify` | Match KNOWN people vs your KB (two voice + two face models; checks unsure faces itself, then asks you in a popup) | `becky-identify "v.mp4" --kb kb-final` |
+| `becky-whois` | The "Who is this?" popup: click the right name, becky learns it. Opens by itself; this opens it on demand | `becky-whois` |
 
 **Search / find**
 | Tool | Does | Example |

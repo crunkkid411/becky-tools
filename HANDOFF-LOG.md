@@ -12,6 +12,46 @@
 
 ---
 
+## The who-is-this window + never a bare last name (2026-10-11, local, `master`)
+
+Jordan: *"Yes, it can pop up and ask me who someone is. We've tried this in the past and it was too
+annoying to use, so make sure it's actually functional this time and not counterintuitive."* and *"there
+is nobody named Clancy ... John Clancy is one person. Shelby Clancy is another person. Shelby Clancy,
+Shelby Kerberg, Shelby Alyse Kerberg, PopTart Barbie are all the same person - do not use last names to
+identify someone when their full name is available"*.
+
+**What failed before (from the transcripts):** becky-name was a terminal card he had to start with flags
+and type names into; the Cubase factory popup was technical jargon with no clear action; becky-cut's popup
+asked for numbers becky already had; questions were left in folders he never opens.
+
+**Built:**
+- `internal/whois`: `Ask` (queue in `~/.becky/whois/questions.jsonl`, frame copied in, same video + guess
+  never asked twice), `Lookup` (answered / waiting / never), `Show` (opens the window unless already open,
+  inside a 2-hour "Ask me later", or `BECKY_NO_POPUP`; detached, the tool never waits), `ShowNow`.
+- `pyhelpers/whois_popup.py` (pythonw + tkinter + PIL from anaconda, no console flash): one window, live
+  queue, close-up + boxed frame, "Play this moment" (ffplay 6 s), full-name buttons (guess first, green;
+  keys 1-9), typed name with matches by name/alias (a one-word name matching known people - "Clancy" -
+  can never become a new person), "I don't know", "Ask me later". Answer -> `answers.jsonl` + a
+  head-and-shoulders crop into `kb/face-prints/<person>/whois_<video>_<t>s.jpg` (not for videos on the KB's
+  DO-NOT-ENROLL list); a new person also gets `entities/<name>.json`. `--selftest`.
+- becky-identify: the code hold calls `whois.Ask`; `jordanSaid` reads his answer BEFORE the slow checks
+  (named `cosine+jordan`, or "Jordan did not know", or "waiting"); `whois.Show` after the output is
+  written; `--ask=false` for test runs; output `asked_jordan`. `cmd/whois` -> `becky-whois [--list]`.
+- fusion (`soloFace`): `+web` and `+jordan` stand alone like `+lvface`/`+gemma` - before this, a name the
+  reverse search confirmed was silently dropped (bug from 2026-10-10, now tested).
+- Names: `cmd/becky` `tokenSubset` needs the first name ("Clancy" matched John before); revsearch strips
+  "(née ...)" and matches whole names; kb-final Shelby alias "Shelby Alyse Kerberg"; rule in
+  `topic-rules/becky-forensic-rules`; bare "Clancy" removed from my docs/comments.
+
+**Verified live** (test copies of kb-final and the queue): hardcases.mp4 held Hair Jordan -> the window
+opened by itself (screenshots) -> Play worked -> typing "clancy" listed the four Clancys and Enter did
+nothing -> clicking Hair Jordan saved the answer + picture -> rerun named him `cosine+jordan` in 54 s
+instead of 5 min of checks. Two questions added while the window was open joined it ("2 of 4"); key 1,
+"I don't know" and "Ask me later" (2-hour pause) all checked by real clicks/keys. Not done: the saved
+picture alone does not make the face match on OTHER videos much (prints are averaged over ~28 photos).
+
+---
+
 ## Due diligence before asking Jordan: frame-by-frame scrub, whole-person Gemma, becky-revsearch, transcribe second opinion on (2026-10-10 night, local, `master`)
 
 Jordan: *"what do you mean by 'hair colour changes'? ... neon green hair, blonde hair and black hair"*;
@@ -40,7 +80,7 @@ before asking me anything"*; *"compare more than just the face - hair, tattoos /
   the observation names the person; `internal/forensic` counts "cosine+lvface/gemma/web" and
   "redimnet+campp" as two independent sources.
 
-**Verified live (hardcases.mp4, slideshow of Jordan / Clancy / Shelby photos):** with Gemma: scrub 91 of
+**Verified live (hardcases.mp4, slideshow of Jordan / John Clancy / Shelby photos):** with Gemma: scrub 91 of
 120 frames -> Gemma face yes + whole person yes -> Hair Jordan named "cosine+gemma". With Gemma hidden:
 scrub -> Falcon -> reverse search (100 results, 2 same-face Pinterest pages, no names) -> held with all
 three findings. Before the cut check the scrub walked into the next slide and reported a wrong "not them".
@@ -84,13 +124,13 @@ ladder, but it is off by default and its identity re-check is not name-aware.
 
 **Measured (all on Jordan's footage, scratch probes):** Gemma-4 E4B "same person?" on head-crop pairs 22/24,
 never a false "same"; Gemma-4 12B 13/24 (said Jordan and Shelby were the same person) - so the compare step
-always uses E4B. d1 picks the right person only as a coarse signal and called strangers "Clancy" - routing
+always uses E4B. d1 picks the right person only as a coarse signal and called strangers "John Clancy" - routing
 only, never naming.
 
 **Live runs (new becky-identify.exe):** edit40 - Jordan corroborated (face both models 0.84, voice ReDimNet
-0.67 + CAM++ agrees). Clancy test clip (frame + voice not used in his enrollment) - corroborated 0.97 (face
-0.84 both models, voice 0.83, margin 0.80; CAM++ alone had a 0.01 margin between Jordan and Clancy).
-Hard-photo clip (Jordan with hair over half his face, Shelby, Clancy, two strangers): strangers unnamed;
+0.67 + CAM++ agrees). John Clancy test clip (frame + voice not used in his enrollment) - corroborated 0.97 (face
+0.84 both models, voice 0.83, margin 0.80; CAM++ alone had a 0.01 margin between Jordan and John Clancy).
+Hard-photo clip (Jordan with hair over half his face, Shelby, John Clancy, two strangers): strangers unnamed;
 Jordan's face unsure for both models (0.52 / 0.48) -> System One leaned Gemma at 0.69 (unsure, so the safe
 lane, also Gemma) -> Gemma "yes" -> named. With Gemma hidden: Falcon zoom (0.32 / 0.21), more frames
 (0.51 / 0.50), then hold for Jordan - no guess.

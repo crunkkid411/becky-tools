@@ -27,6 +27,7 @@ import (
 
 // Knowledge is the loaded knowledge base.
 type Knowledge struct {
+	Dir       string            // the knowledge base folder (answers from Jordan are enrolled here)
 	Entities  map[string]Entity // keyed by lowercased dir/entity key
 	Voices    []VoicePrint
 	Locations []LocationPrint
@@ -58,7 +59,7 @@ type LocationPrint struct {
 
 // loadKnowledgeBase walks the KB directory and returns the populated records.
 func loadKnowledgeBase(kbDir string, verbose bool) (Knowledge, error) {
-	kb := Knowledge{Entities: map[string]Entity{}}
+	kb := Knowledge{Dir: kbDir, Entities: map[string]Entity{}}
 
 	kb.Entities = loadEntities(filepath.Join(kbDir, "entities"), verbose)
 

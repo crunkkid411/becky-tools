@@ -29,6 +29,7 @@ import (
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/whois"
 )
 
 // Output is the becky-identify JSON contract (matches 05-becky-identify.md).
@@ -83,6 +84,8 @@ type Unidentified struct {
 	RunnerUpConfidence  float64 `json:"runner_up_confidence,omitempty"`
 	VoiceMargin         float64 `json:"voice_margin,omitempty"`
 	WhyUnnamed          string  `json:"why_unnamed,omitempty"`
+	// AskedJordan is the who-is-this question id (internal/whois) when this face was put to Jordan.
+	AskedJordan string `json:"asked_jordan,omitempty"`
 	// Remedy is the inline "teach me" hint: the exact becky command a human runs to
 	// enroll this unidentified person (see remedy.go). Filled in for every
 	// unidentified entry so the fix is visible at the point of failure.
@@ -118,6 +121,7 @@ func main() {
 	numThreads := flag.Int("num-threads", 4, "ONNX inference threads")
 	keepTemp := flag.Bool("keep-temp", false, "keep extracted temp WAVs")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
+	ask := flag.Bool("ask", true, "a face no check could settle goes to Jordan's who-is-this window (--ask=false for test runs)")
 
 	input := parsePositional()
 	if input == "" {
@@ -228,7 +232,7 @@ func main() {
 				heard[u.Candidate] = true
 			}
 		}
-		ids, unids, trails, ferr := identifyFaces(cfg, info, input, knowledge, *faceThreshold, dev, heard, *verbose)
+		ids, unids, trails, ferr := identifyFaces(cfg, info, input, knowledge, *faceThreshold, dev, heard, *ask, *verbose)
 		if ferr != nil {
 			// Missing models / no detections is not fatal: note it, keep other modalities.
 			report.Notes["face"] = "skipped: " + ferr.Error()
@@ -266,6 +270,13 @@ func main() {
 
 	if err := emit(report, *out); err != nil {
 		beckyio.Fatalf("%v", err)
+	}
+	// Any open "who is this?" (this run's or an earlier one's) goes on Jordan's screen;
+	// the window runs on its own, so this tool never waits for him.
+	if *ask {
+		if err := whois.Show(cfg); err != nil {
+			beckyio.Logf(*verbose, "could not open the who-is-this window: %v", err)
+		}
 	}
 }
 

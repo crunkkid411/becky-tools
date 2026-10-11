@@ -6,6 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — The who-is-this window; never a bare last name (2026-10-11, local)
+
+When becky-identify has run every check and still cannot name a face, it now asks Jordan in ONE popup
+window (`internal/whois`, `becky-whois`): the clearest frame, a close-up, "Play this moment", becky's
+guess, and big full-name buttons. His click is enrolled into the KB and read first on the next run
+(`cosine+jordan`, no checks re-run). "Ask me later" = 2 quiet hours; nothing is asked twice. Names:
+a bare "Clancy" now matches nobody (`becky profile`, revsearch, the window); Shelby's KB record gained
+"Shelby Alyse Kerberg". Fixed on the way: names confirmed by reverse search (`+web`) were silently
+dropped by fusion. Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — Due diligence before asking Jordan: frame by frame, whole person, reverse search (2026-10-10, night)
 
 An unsure face in becky-identify now: (1) code steps through the video ONE frame at a time both ways

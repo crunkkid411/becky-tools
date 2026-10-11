@@ -35,4 +35,12 @@ func TestMentionsMatchesNamesInLinksAndTitles(t *testing.T) {
 	if got := mentions("Shell station robbery", people); got != nil {
 		t.Errorf("a 4-letter-or-shorter alias must not match inside another word: %v", got)
 	}
+	// a last name alone names nobody; the "(née ...)" note is not part of the name
+	family := parseNames("John Anthony Clancy|;Shelby Alyse Clancy (née Kerberg)|Shelby Alyse Kerberg")
+	if got := mentions("The Clancy family", family); got != nil {
+		t.Errorf("bare last name matched: %v", got)
+	}
+	if got := mentions("Shelby Alyse Clancy at the fair", family); !reflect.DeepEqual(got, []string{"Shelby Alyse Clancy (née Kerberg)"}) {
+		t.Errorf("full name with a (née) note: %v", got)
+	}
 }

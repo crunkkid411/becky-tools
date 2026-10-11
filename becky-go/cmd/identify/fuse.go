@@ -86,12 +86,14 @@ func soloVoice(id Identification) bool {
 // second face model (LVFace) or Gemma confirmed it, the old ArcFace-only lookalike
 // floor no longer applies: LVFace's wrong-person scores top out at 0.107 and Gemma
 // never said "same" for a different person (research/kb-final-face-voice-check-2026-10-10.md).
+// "+web": same-face pages online name them; "+jordan": Jordan answered the who-is-this window.
 // A face kept only as a hint for the voice never stands alone.
 func soloFace(id Identification) bool {
 	switch {
 	case strings.Contains(id.Match, "needs voice"):
 		return false
-	case strings.Contains(id.Match, "+lvface"), strings.Contains(id.Match, "+gemma"):
+	case strings.Contains(id.Match, "+lvface"), strings.Contains(id.Match, "+gemma"),
+		strings.Contains(id.Match, "+web"), strings.Contains(id.Match, "+jordan"):
 		return true
 	}
 	return id.Confidence >= faceSoloFloor

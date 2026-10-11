@@ -223,8 +223,10 @@ becky "this is Shelby" "<clip>"            # teach a new person from a clip — 
 - `enroll-wiki` reads the case wiki and **auto-builds the known-people KB** (voice + face) — no
   manual clip-making. To add ONE person from a clip, just tell it in plain words:
   `becky "this is <name>" <clip>` (single-person clip = safe; multi-person uses the dominant speaker).
-- Use a **fuller name** ("John Clancy", not just "Clancy") — a lone surname is ambiguous when
-  several people share it.
+- **Never a last name alone** ("John Clancy" or "Shelby Clancy", never "Clancy"): John Anthony
+  Clancy, Shelby Alyse Clancy, Jake Clancy and Bettina Burke-Clancy are four people, so a bare
+  `becky profile "Clancy"` now stops and lists the four people who share it. Shelby Clancy = Shelby Kerberg = Shelby Alyse
+  Kerberg = PopTart Barbie (one person). Rule: `topic-rules/becky-forensic-rules`.
 - Every `becky` command prints a plain-English headline **plus** the full JSON.
 
 ## Ingest ONE video — the forensic pass
@@ -236,6 +238,7 @@ becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads mishear
 becky-diarize    "<video>"                        # how many speakers + when each talks (times only)
 becky-diarfix    words.json                       # re-check speaker labels from the wording (DiarizationLM)
 becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face; escalates unsure faces itself)
+becky-whois      [--list]                         # the who-is-this window on demand / open questions + Jordan's answers
 becky-validate   "<video>"                        # AV description of on-screen actions (Gemma-4, default backend)
 ```
 `becky-identify` decides for itself (2026-10-10). Voice: ReDimNet2+ names (bars 0.30 / 0.50, margin 0.15);
@@ -247,9 +250,22 @@ through the video ONE FRAME at a time around it (2 s each way) for a clear shot,
 colour/style, tattoos, piercings, build - named only if the face says yes and the person check does not
 say no), Falcon-Perception zoom, `becky-revsearch` (web pages showing the same face, read for names), or
 voice check (only if the voice already heard them); code follows only a sure pick (>= 0.9); (3) only when
-every check ran is the face listed for Jordan, with each check's finding in `why_unnamed`. The trail lands
-in `routing[]`. System One never names anyone. **Due diligence before asking Jordan is code, not a
+every check ran is the face held, with each check's finding in `why_unnamed`, AND put to Jordan in the
+**who-is-this window** (`internal/whois`, `asked_jordan` = the question id). The trail lands in
+`routing[]`. System One never names anyone. **Due diligence before asking Jordan is code, not a
 suggestion:** never put an "ask Jordan" step on a menu; hold only after the menu is empty.
+**The who-is-this window (2026-10-11)** - the ONLY way any becky tool asks Jordan who someone is:
+one window (never stacked) pops up by itself after the tool finishes (the tool never waits); it shows
+the clearest frame with the face boxed, a close-up, video + time, becky's guess, what was checked, and
+"Play this moment" (6 s in ffplay). Jordan clicks a full name (keys 1-9), types a new person (the list
+under the box shows matches; a single word that matches known names, like "Clancy", can never become a
+new person), "I don't know" (never asked again) or "Ask me later" (no popup for 2 hours). The answer
+copies a head-and-shoulders picture into that person's `face-prints/` and is read FIRST on the next run:
+that face is named `cosine+jordan` in seconds, with no checks re-run. The same video + guess is never
+asked twice. Agents: `becky-whois --list` (open questions + answers JSON); `becky-whois` opens the
+window on demand. `--ask=false` on becky-identify for test runs; `BECKY_WHOIS_DIR` moves the queue
+(default `~/.becky/whois`), `BECKY_NO_POPUP=1` queues without opening. Another tool asking Jordan:
+`whois.Ask(whois.Question{...})` then `whois.Show(cfg)`, after its own checks.
 `becky-revsearch "<image>" --names "Name|alias;Other"` on its own: Yandex + Bing reverse search, both
 face models keep only same-face results (`same_face[]`, `names_seen`). **Building self-escalation into another tool:** settle the obvious cases in code, then call
 `route.Next(route.Case{Tool, Task, State, Images, Menu, Default, Extra})` with one `route.Step` per tool
