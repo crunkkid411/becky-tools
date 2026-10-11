@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — Speakers escalate by themselves when unsure (2026-10-11, afternoon, local)
+
+becky-diarize now checks its own speaker split with voice prints and, when unsure, has Gemma-4 look at
+the face that is actually talking (LR-ASD via becky-speaking). becky-identify, when two voices tie or the
+words and voice disagree, looks, rereads with the 12B, and finally asks Jordan "Who is talking here?" in
+the who-is-this window. Fixed: becky-transcribe and becky-identify could call each other forever.
+Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — becky-identify tells the people in one video apart (2026-10-11, local)
 
 Fixes hj-clone's TOOL-ISSUES #13 (other people's lines called Jordan's 69% of the time). Speakers now

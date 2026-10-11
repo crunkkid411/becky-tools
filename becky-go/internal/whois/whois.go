@@ -44,12 +44,13 @@ type Person struct {
 type Question struct {
 	ID      string    `json:"id"`
 	Video   string    `json:"video"`
-	At      float64   `json:"at"`      // seconds into the video
-	Guess   string    `json:"guess"`   // becky's best guess, full name ("" = no idea)
-	Checked string    `json:"checked"` // plain words: what becky already tried
-	Frame   string    `json:"frame"`   // the clearest frame, copied into Dir()
-	Box     []float64 `json:"box"`     // the face in that frame [x1,y1,x2,y2]
-	KB      string    `json:"kb"`      // knowledge base an answer is enrolled into
+	At      float64   `json:"at"`                // seconds into the video
+	Guess   string    `json:"guess"`             // becky's best guess, full name ("" = no idea)
+	Checked string    `json:"checked"`           // plain words: what becky already tried
+	Frame   string    `json:"frame"`             // the clearest frame, copied into Dir()
+	Box     []float64 `json:"box"`               // the face in that frame [x1,y1,x2,y2]
+	Speaker string    `json:"speaker,omitempty"` // set = "who is talking here?" about this speaker label (no face box)
+	KB      string    `json:"kb"`                // knowledge base an answer is enrolled into
 	People  []Person  `json:"people"`
 	Asked   string    `json:"asked"`
 }
@@ -84,7 +85,7 @@ func Ask(q Question) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if old, ok := asked(qs, q.Video, q.Guess); ok {
+	if old, ok := asked(qs, q.Video, q.Guess, q.Speaker); ok {
 		return old.ID, false, nil
 	}
 	q.ID = fmt.Sprintf("q%d", time.Now().UnixNano())
@@ -113,11 +114,16 @@ func Ask(q Question) (string, bool, error) {
 // Lookup tells a tool what already happened to "is this <guess> in <video>?": answered
 // (a is Jordan's answer), still waiting, or never asked. Read it BEFORE the slow checks.
 func Lookup(video, guess string) (a Answer, answered, waiting bool, err error) {
+	return LookupSpeaker(video, guess, "")
+}
+
+// LookupSpeaker is Lookup for a "who is talking here?" question about one speaker label.
+func LookupSpeaker(video, guess, speaker string) (a Answer, answered, waiting bool, err error) {
 	qs, err := Questions()
 	if err != nil {
 		return Answer{}, false, false, err
 	}
-	q, ok := asked(qs, video, guess)
+	q, ok := asked(qs, video, guess, speaker)
 	if !ok {
 		return Answer{}, false, false, nil
 	}
@@ -134,9 +140,9 @@ func Lookup(video, guess string) (a Answer, answered, waiting bool, err error) {
 }
 
 // asked finds an earlier question about the same video with the same guess (pure).
-func asked(qs []Question, video, guess string) (Question, bool) {
+func asked(qs []Question, video, guess, speaker string) (Question, bool) {
 	for _, q := range qs {
-		if strings.EqualFold(filepath.Clean(q.Video), filepath.Clean(video)) && q.Guess == guess {
+		if strings.EqualFold(filepath.Clean(q.Video), filepath.Clean(video)) && q.Guess == guess && q.Speaker == speaker {
 			return q, true
 		}
 	}

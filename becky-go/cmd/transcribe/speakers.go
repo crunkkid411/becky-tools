@@ -23,10 +23,13 @@ type speakerSpan struct {
 }
 
 // runDiarize is the seam to becky-diarize (swapped in tests). It returns the tool's JSON.
-var runDiarize = func(media string, speakers int) ([]byte, error) {
+var runDiarize = func(media, video string, speakers int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), diarizeTimeout)
 	defer cancel()
 	args := []string{media}
+	if video != "" {
+		args = append(args, "--video", video) // pictures for the speaker check's look
+	}
 	if speakers > 0 {
 		n := strconv.Itoa(speakers)
 		args = append(args, "--min-speakers", n, "--max-speakers", n)
@@ -98,19 +101,23 @@ func speakerAt(spans []speakerSpan, start, end float64, prev string) string {
 
 // labelSpeakers runs becky-diarize on the audio and stamps each word with its speaker. It returns
 // the number of speakers heard, or a plain-words note when the speaker pass could not run.
-func labelSpeakers(words []Word, media string, speakers int) (int, string) {
-	raw, err := runDiarize(media, speakers)
+func labelSpeakers(words []Word, media, video string, speakers int) (int, string, string) {
+	raw, err := runDiarize(media, video, speakers)
 	if err != nil {
-		return 0, "could not tell the speakers apart, so lines are not labelled: " + err.Error()
+		return 0, "could not tell the speakers apart, so lines are not labelled: " + err.Error(), ""
 	}
 	spans, err := parseDiarize(raw)
 	if err != nil {
-		return 0, "could not tell the speakers apart, so lines are not labelled: " + err.Error()
+		return 0, "could not tell the speakers apart, so lines are not labelled: " + err.Error(), ""
 	}
 	if len(spans) == 0 {
-		return 0, "no speech was found to split by speaker"
+		return 0, "no speech was found to split by speaker", ""
 	}
-	return labelWords(words, spans), ""
+	var checked struct {
+		Note string `json:"speaker_check"`
+	}
+	_ = json.Unmarshal(raw, &checked) // what becky-diarize's own speaker check did
+	return labelWords(words, spans), "", checked.Note
 }
 
 // SpeakerFix is one word the wording-based double-check (becky-diarfix) moved to another speaker.

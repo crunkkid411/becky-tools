@@ -12,6 +12,36 @@
 
 ---
 
+## Speakers escalate by themselves: diarize checks its split, identify looks/rereads/asks (2026-10-11, afternoon, local, `master`)
+
+Jordan: *"the diarization absolutely needs to escalate ... when confidence scores are low, we verify with
+another model / datapoint, escalating as needed - this needs to be automatic; built into the tools ...
+simply running one single diarization model is unacceptable"*, and *"after DiarizationLM and all our
+audio attempts are still unclear, we absolutely need to go with those 3 steps"* (look, bigger model, ask him).
+
+- What already ran: `becky-transcribe --diarize` = Nemotron + DiarizationLM (`becky-diarfix`, word-level fixes
+  at turn changes). Nothing checked the SPLIT itself (one label = two people, one person = two labels).
+- `cmd/diarize/check.go` (on by default, `--check=false`): ReDimNet2+ prints of ~3 s clips per label
+  (`internal/voiceprint`, one helper call); bars calibrated on 5 checked videos (one person 0.72-0.91, different
+  people 0.26-0.41); in between, Gemma-4 E4B then 12B LOOK. `checks[]` + `speaker_check`. becky-transcribe
+  passes `--video` (it diarizes the extracted WAV, whose timeline it owns) and carries the note.
+- `cmd/identify/voicecheck.go`: a tie, or words vs voice -> look (E4B, enrolled photo vs the TALKING face) ->
+  12B rereads (ties only) -> `whois` "Who is talking here?" (`Question.Speaker`, popup shows the frame, no box).
+- Rule change from the 50-video data: a CLEAR voice decides; the words only break ties. E4B's reading named the
+  wrong speaker in UfBEDayJDl4, UaWIuydbVMY, xiuPyYv1OFI, mVSrZRf-laA (it took "Hey Hair Jordan!" as said BY
+  him; the prompt now says the speaker of a name is talking TO that person).
+- Visual aid research (Haiku subagent, report in the session scratchpad): LR-ASD (IJCV 2025, MIT, 94.45 AVA mAP)
+  is already installed (`becky-speaking`); nothing newer beats it and is usable (C3ASD/LASER 93.8; ROAM-ASD no
+  license; GateFusion uses non-commercial AV-HuBERT). MediaPipe jawOpen fires on chewing/laughing: not used.
+  `internal/talkingface` runs becky-speaking on the stretch and crops the face whose lips move with the sound;
+  both looks now show Gemma that close-up (a plain frame made the look say "yes" for whoever was ON screen).
+- BUG FIXED (shipped in 8878bb6 for ~1.5 h): becky-transcribe's name check runs becky-identify, which ran
+  becky-transcribe for words, which ran becky-identify ... (5 levels deep before it was killed). Now
+  forensicrun hands identify the transcript (`--diarized`) and identify's own call uses `--forensic=false`;
+  `TestIdentifyGetsTheTranscript` guards it.
+- Slow, pre-existing: becky-transcribe's default name check (identify + becky-validate E4B then 12B watching
+  the clip) took 10 of 12 min on a 41 s clip and ~25 of 36 min on a 10 min video.
+
 ## becky-identify tells the people in one video apart (2026-10-11, local, `master`)
 
 Jordan: *"Whether we have 3 people indexed or 100 the tools should be able to tell the difference between

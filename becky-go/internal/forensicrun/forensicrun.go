@@ -174,6 +174,18 @@ func runAndReport(ctx context.Context, file, subject, kb string, speakers int, t
 	if strings.TrimSpace(kb) != "" {
 		idArgs = []string{"--kb", kb}
 	}
+	// Hand becky-identify the transcript we already have: it then uses those speaker labels
+	// and words instead of transcribing the clip again (which would run this resolution again).
+	if hasSpeakers(transcribeJSON) {
+		if f, err := os.CreateTemp("", "becky_forensic_tr_*.json"); err == nil {
+			_, werr := f.Write(transcribeJSON)
+			f.Close()
+			defer os.Remove(f.Name())
+			if werr == nil {
+				idArgs = append(idArgs, "--diarized", f.Name())
+			}
+		}
+	}
 	in.Identify = gather("becky-identify", idArgs...)
 	if strings.TrimSpace(subject) != "" {
 		if in.Transcribe == nil {
@@ -398,4 +410,22 @@ func tailStr(s string) string {
 		return s[len(s)-400:]
 	}
 	return s
+}
+
+// hasSpeakers says whether a becky-transcribe JSON has speaker-labelled lines.
+func hasSpeakers(transcribeJSON []byte) bool {
+	var t struct {
+		Segments []struct {
+			Speaker string `json:"speaker"`
+		} `json:"segments"`
+	}
+	if len(transcribeJSON) == 0 || json.Unmarshal(transcribeJSON, &t) != nil {
+		return false
+	}
+	for _, s := range t.Segments {
+		if s.Speaker != "" {
+			return true
+		}
+	}
+	return false
 }

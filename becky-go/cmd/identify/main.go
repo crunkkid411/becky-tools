@@ -192,6 +192,7 @@ func main() {
 			keepTemp:      *keepTemp,
 			verbose:       *verbose,
 			context:       *useWords,
+			ask:           *ask,
 		}
 		ids, unids, audit, wordsNote, verr := identifyVoices(cfg, info, input, knowledge, opts)
 		if verr != nil {

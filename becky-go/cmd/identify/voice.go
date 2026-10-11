@@ -54,7 +54,8 @@ type voiceOptions struct {
 	verbose       bool
 	python        string // interpreter for the helper (default cfg.Python)
 	backend       string // voice_embed.py --backend ("" = CAM++)
-	context       bool   // read the transcript for who is who (context.go)
+	context       bool   // read the transcript, then look / reread / ask when voices tie (context.go, voicecheck.go)
+	ask           bool   // a tie nothing else settles goes to Jordan's who-is-this window
 }
 
 // ReDimNet2+ scale, measured on Jordan's footage (research/kb-final-face-voice-check-2026-10-10.md):
@@ -121,8 +122,7 @@ func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Kno
 	}
 	if !fileExists(cfg.SpeakerNameModel) || !fileExists(cfg.SoundLabelPython) {
 		ids, unids := matchSpeakers(camSpeakers, camEnrolled, opts), unmatchedDescriptions(camSpeakers, camEnrolled, opts)
-		picks, note := wordsCheck(cfg, input, kb, camSpeakers, camEnrolled, opts)
-		ids, unids, audit := applyInVideo(camSpeakers, camEnrolled, ids, unids, picks, opts, "cosine")
+		ids, unids, audit, note := reconcile(cfg, input, kb, camSpeakers, camEnrolled, ids, unids, opts, "cosine")
 		return ids, unids, audit, note, nil
 	}
 
@@ -139,9 +139,35 @@ func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Kno
 	}
 	ids := secondOpinion(matchSpeakers(speakers, enrolled, ro), camSpeakers, camEnrolled, opts)
 	unids := unmatchedDescriptions(speakers, enrolled, ro)
-	picks, note := wordsCheck(cfg, input, kb, speakers, enrolled, ro)
-	ids, unids, audit := applyInVideo(speakers, enrolled, ids, unids, picks, ro, "redimnet")
+	ids, unids, audit, note := reconcile(cfg, input, kb, speakers, enrolled, ids, unids, ro, "redimnet")
 	return ids, unids, audit, note, nil
+}
+
+// reconcile settles who is who among several speakers: the words first, then for every
+// tie the escalation in voicecheck.go. Returns plain words for notes.words.
+func reconcile(cfg config.Config, input string, kb Knowledge, speakers []speakerAudio, enrolled []enrolledVoice,
+	ids []Identification, unids []Unidentified, opts voiceOptions, model string) ([]Identification, []Unidentified, []speakerAudit, string) {
+	picks, note, lines, _ := wordsCheck(cfg, input, kb, speakers, enrolled, opts)
+	outIDs, outUnids, audit, ties := applyInVideo(speakers, enrolled, ids, unids, picks, opts, model)
+	if len(ties) == 0 || !opts.context {
+		return outIDs, outUnids, audit, note
+	}
+	extra, notes := escalateTies(cfg, input, kb, ties, lines, opts)
+	note = strings.TrimPrefix(note+"; voice check: "+strings.Join(notes, "; "), "; ")
+	if len(extra) == 0 {
+		return outIDs, outUnids, audit, note
+	}
+	for _, x := range extra { // a settled tie replaces what the words said about that person
+		kept := picks[:0:0]
+		for _, p := range picks {
+			if !strings.EqualFold(p.Name, x.Name) {
+				kept = append(kept, p)
+			}
+		}
+		picks = append(kept, x)
+	}
+	outIDs, outUnids, audit, _ = applyInVideo(speakers, enrolled, ids, unids, picks, opts, model)
+	return outIDs, outUnids, audit, note
 }
 
 // secondOpinion marks each ReDimNet2+ name with what CAM++ thinks of the same

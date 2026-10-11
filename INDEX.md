@@ -68,6 +68,10 @@
 - **Telling people in one video apart = `cmd/identify/invideo.go` + `context.go`** (since 2026-10-11):
   compares the speakers of one video with each other, then reads the transcript for who is called what.
   Built from hj-clone's working method after TOOL-ISSUES #13 (69% of other people's lines called Jordan's).
+  Unsure voices escalate by themselves (`voicecheck.go`): look at the video, 12B rereads, then Jordan.
+- **becky-diarize checks its own split = `cmd/diarize/check.go`** (since 2026-10-11): voice prints find
+  one label holding two people / one person in two labels; Gemma-4 looks when the voice is unsure.
+  Shared voice-print code: `internal/voiceprint`.
 - **Self-escalation router = `internal/route`** (since 2026-10-10): one call, `route.Next(Case)`: code
   hands System One the evidence + a menu of next steps (each with its measured strength), follows the pick
   only when sure (>= 0.9), else the caller's safe lane; every decision logged. First user: becky-identify's

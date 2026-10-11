@@ -13,7 +13,7 @@ const twoSpeakerDiarize = `{"file":"x.wav","duration":10,"speakers":[
 func withDiarize(t *testing.T, out string, err error) {
 	t.Helper()
 	old := runDiarize
-	runDiarize = func(string, int) ([]byte, error) { return []byte(out), err }
+	runDiarize = func(string, string, int) ([]byte, error) { return []byte(out), err }
 	t.Cleanup(func() { runDiarize = old })
 }
 
@@ -27,7 +27,7 @@ func TestLabelSpeakersSplitsLinesAtSpeakerChange(t *testing.T) {
 		{Word: "hi", Start: 4.0, End: 4.3}, // mostly in SPEAKER_01's span, no pause before it
 		{Word: "back", Start: 4.3, End: 4.6},
 	}
-	n, note := labelSpeakers(words, "x.wav", 0)
+	n, note, _ := labelSpeakers(words, "x.wav", "", 0)
 	if n != 2 || note != "" {
 		t.Fatalf("want 2 speakers and no note, got %d %q", n, note)
 	}
@@ -79,7 +79,7 @@ func TestSpeakerAtOverlapTieKeepsPreviousSpeaker(t *testing.T) {
 func TestLabelSpeakersDegrades(t *testing.T) {
 	withDiarize(t, "", errors.New("becky-diarize not found"))
 	words := []Word{{Word: "hi", Start: 0, End: 1}}
-	n, note := labelSpeakers(words, "x.wav", 0)
+	n, note, _ := labelSpeakers(words, "x.wav", "", 0)
 	if n != 0 || !strings.Contains(note, "not labelled") || words[0].Speaker != "" {
 		t.Errorf("got n=%d note=%q speaker=%q", n, note, words[0].Speaker)
 	}

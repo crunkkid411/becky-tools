@@ -307,3 +307,25 @@ func envHas(env []string, want string) bool {
 	}
 	return false
 }
+
+// becky-transcribe's name check must hand becky-identify the finished transcript: without it,
+// becky-identify transcribed the clip again, which ran this check again, forever (2026-10-11).
+func TestIdentifyGetsTheTranscript(t *testing.T) {
+	var identifyArgs []string
+	runner := func(ctx context.Context, tool string, args, env []string) ([]byte, error) {
+		if tool == "becky-identify" {
+			identifyArgs = args
+			return []byte(`{"identifications":[]}`), nil
+		}
+		return nil, errors.New("unused")
+	}
+	tr := []byte(`{"segments":[{"start":0,"end":1,"text":"hi","speaker":"SPEAKER_00"}]}`)
+	runAndReport(context.Background(), "clip.mp4", "", "kb", 2, tr, runner)
+	if !envHas(identifyArgs, "--diarized") {
+		t.Fatalf("becky-identify must get --diarized <transcript>, got %v", identifyArgs)
+	}
+	runAndReport(context.Background(), "clip.mp4", "", "kb", 1, []byte(`{"segments":[{"text":"hi"}]}`), runner)
+	if envHas(identifyArgs, "--diarized") {
+		t.Fatalf("a transcript without speakers is not handed over: %v", identifyArgs)
+	}
+}

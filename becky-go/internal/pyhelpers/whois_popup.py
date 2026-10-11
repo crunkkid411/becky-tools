@@ -210,7 +210,8 @@ class Window:
         self.q, self.people_keys = q, []
         top = tk.Frame(self.body, bg=BG)
         top.pack(fill="x")
-        self.label(top, "Who is this?", PINK, 26, True).pack(side="left")
+        title = "Who is talking here?" if q.get("speaker") else "Who is this?"
+        self.label(top, title, PINK, 26, True).pack(side="left")
         self.count = self.label(top, f"question {self.i + 1} of {len(self.queue)}", FG, 16)
         self.count.pack(side="right")
         self.status = self.label(top, "", GREEN, 16, True)  # "Saved: ..." shows here, so the window never grows
@@ -223,12 +224,17 @@ class Window:
             from PIL import Image, ImageDraw, ImageTk
             with Image.open(q["frame"]) as img:
                 img = img.convert("RGB")
-                face = head_and_shoulders(img, q["box"])
-                face.thumbnail((240, 240))
+                shown = []
+                if q.get("box"):  # a face question; a who-is-talking question shows the whole frame
+                    face = head_and_shoulders(img, q["box"])
+                    face.thumbnail((240, 240))
+                    shown.append(face)
                 frame = img.copy()
-                ImageDraw.Draw(frame).rectangle(q["box"], outline=GREEN, width=max(4, frame.width // 200))
-                frame.thumbnail((520, 240))
-            for im in (face, frame):
+                if q.get("box"):
+                    ImageDraw.Draw(frame).rectangle(q["box"], outline=GREEN, width=max(4, frame.width // 200))
+                frame.thumbnail((520, 240) if q.get("box") else (640, 300))
+                shown.append(frame)
+            for im in shown:
                 ph = ImageTk.PhotoImage(im)
                 self.images.append(ph)
                 tk.Label(pics, image=ph, bg=BG).pack(side="left", padx=(0, 16))
@@ -336,6 +342,8 @@ class Window:
         write_answer(self.d, q, name, enrolled)
         if name == "unknown":
             msg = "OK - becky will not ask about this one again."
+        elif q.get("speaker"):
+            msg = f"Saved: {name} is the one talking."
         elif enrolled:
             msg = f"Saved: {name}. becky will recognise them next time."
         else:

@@ -39,6 +39,7 @@ type contextPick struct {
 	Labels     []string `json:"labels"`
 	Confidence string   `json:"confidence"` // high | medium | low
 	Evidence   string   `json:"evidence"`
+	Via        string   `json:"-"` // what decided it: "" = the words, "look", "jordan"
 }
 
 func (p contextPick) sure() bool { return p.Confidence == "high" || p.Confidence == "medium" }
@@ -167,7 +168,9 @@ speech-to-text mishears words, names included.
 People to find:
 ` + who.String() + `
 For each person, which speaker label(s) are them? Use who gets called by name, who introduces whom,
-who answers to the name, and who talks about that person's own life. A last name alone never
+who answers to the name, and who talks about that person's own life. Careful: whoever SAYS a name is
+talking TO that person, so the speaker of "Hey Hair Jordan!" is NOT Hair Jordan; Hair Jordan is the
+one who answers, or who says "I'm Hair Jordan" / "my channel". A last name alone never
 identifies anyone (families share it). If the transcript does not show it, give no labels and
 confidence "low". Never guess from how someone talks.
 
@@ -181,14 +184,19 @@ TRANSCRIPT:
 // askContext runs the local model over the transcript. Degrades: any failure returns nil
 // and a note, and identify falls back to voice + face.
 func askContext(cfg config.Config, people []personHint, lines []tLine, verbose bool) ([]contextPick, string) {
+	return askContextWith(cfg, cfg.GemmaModel, people, lines, verbose)
+}
+
+// askContextWith is askContext on a given model (the 12B rereads when E4B was unsure).
+func askContextWith(cfg config.Config, model string, people []personHint, lines []tLine, verbose bool) ([]contextPick, string) {
 	if len(people) == 0 || len(lines) == 0 {
 		return nil, ""
 	}
-	if cfg.GemmaModel == "" || !fileExists(cfg.GemmaModel) {
-		return nil, "transcript check skipped: the local model (gemma_model) is not installed"
+	if model == "" || !fileExists(model) {
+		return nil, "transcript check skipped: the local model is not installed"
 	}
 	logf := func(f string, a ...any) { beckyio.Logf(verbose, f, a...) }
-	c := llmlocal.NewClientCtx(cfg.GemmaModel, cfg.LlamaServer, 16384, logf)
+	c := llmlocal.NewClientCtx(model, cfg.LlamaServer, 16384, logf)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	raw, err := c.Chat(ctx, contextSystem, contextPrompt(people, contextTranscript(lines, people)), llmlocal.Options{MaxTokens: 600})
@@ -226,9 +234,9 @@ func parseContext(raw string) ([]contextPick, bool) {
 // enrolled person might be one of them. The words come from --diarized / the video's
 // .transcript.json, or becky-transcribe runs here (no transcript yet). Returns the
 // picks and a plain-words note for notes.words.
-func wordsCheck(cfg config.Config, input string, kb Knowledge, speakers []speakerAudio, enrolled []enrolledVoice, opts voiceOptions) ([]contextPick, string) {
+func wordsCheck(cfg config.Config, input string, kb Knowledge, speakers []speakerAudio, enrolled []enrolledVoice, opts voiceOptions) ([]contextPick, string, []tLine, []personHint) {
 	if !opts.context {
-		return nil, ""
+		return nil, "", nil, nil
 	}
 	talkers := 0
 	for _, sp := range speakers {
@@ -237,7 +245,7 @@ func wordsCheck(cfg config.Config, input string, kb Knowledge, speakers []speake
 		}
 	}
 	if talkers < 2 {
-		return nil, ""
+		return nil, "", nil, nil
 	}
 	var people []personHint
 	for _, e := range filterCast(enrolled, opts.cast) {
@@ -257,7 +265,7 @@ func wordsCheck(cfg config.Config, input string, kb Knowledge, speakers []speake
 		people = append(people, h)
 	}
 	if len(people) == 0 {
-		return nil, ""
+		return nil, "", nil, nil
 	}
 	var lines []tLine
 	if opts.diarizedPath != "" {
@@ -272,17 +280,19 @@ func wordsCheck(cfg config.Config, input string, kb Knowledge, speakers []speake
 		beckyio.Logf(opts.verbose, "several speakers and no transcript: running becky-transcribe --diarize...")
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Hour)
 		defer cancel()
-		raw, err := forensicrun.RunTool(ctx, "becky-transcribe", input, "--diarize")
+		// --forensic=false: becky-transcribe's own name check runs becky-identify, which would
+		// land back here and loop forever (it did, 2026-10-11).
+		raw, err := forensicrun.RunTool(ctx, "becky-transcribe", input, "--diarize", "--forensic=false")
 		if err != nil {
-			return nil, "transcript check skipped: becky-transcribe failed: " + err.Error()
+			return nil, "transcript check skipped: becky-transcribe failed: " + err.Error(), nil, people
 		}
 		if lines = parseTranscriptLines(raw); lines == nil {
-			return nil, "transcript check skipped: becky-transcribe gave no speaker-labelled lines"
+			return nil, "transcript check skipped: becky-transcribe gave no speaker-labelled lines", nil, people
 		}
 	}
 	picks, note := askContext(cfg, people, lines, opts.verbose)
 	if note != "" {
-		return nil, note
+		return nil, note, lines, people
 	}
 	var said []string
 	for _, p := range picks {
@@ -291,7 +301,7 @@ func wordsCheck(cfg config.Config, input string, kb Knowledge, speakers []speake
 		}
 	}
 	if len(said) == 0 {
-		return picks, "transcript check: the words do not say who is who"
+		return picks, "transcript check: the words do not say who is who", lines, people
 	}
-	return picks, "transcript check: " + strings.Join(said, "; ")
+	return picks, "transcript check: " + strings.Join(said, "; "), lines, people
 }

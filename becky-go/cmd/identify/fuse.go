@@ -74,7 +74,8 @@ type signal struct {
 // disputes never stands alone. A CAM++-only name keeps the old floor.
 func soloVoice(id Identification) bool {
 	switch {
-	case strings.HasSuffix(id.Match, "+context"): // the voice is closest AND the words name them
+	case strings.HasSuffix(id.Match, "+context") || strings.HasSuffix(id.Match, "+look") || strings.HasSuffix(id.Match, "+jordan"):
+		// the voice is closest AND the words, the picture or Jordan name them
 		return true
 	case id.Match == "redimnet" || id.Match == "redimnet+campp":
 		return true

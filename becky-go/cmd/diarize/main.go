@@ -85,6 +85,9 @@ type Output struct {
 	Duration float64   `json:"duration"`
 	Model    string    `json:"model,omitempty"`
 	Speakers []Speaker `json:"speakers"`
+	// Checks is every place the speaker split was checked (check.go); SpeakerNote says it in words.
+	Checks      []Check `json:"checks,omitempty"`
+	SpeakerNote string  `json:"speaker_check,omitempty"`
 }
 
 // nemo-speech prints hard segments, not per-segment probabilities, so every segment
@@ -105,6 +108,8 @@ func main() {
 	_ = flag.Float64("min-speaker-frac", 0.15, "ignored (sherpa-era outlier-merge knob)")
 	_ = flag.Float64("min-speaker-duration", 1.5, "ignored (sherpa-era outlier-merge knob)")
 	_ = flag.Int("num-threads", 4, "ignored (nemo-speech uses 4 CPU threads)")
+	video := flag.String("video", "", "the video to take pictures from when the input is its extracted sound (becky-transcribe passes it)")
+	check := flag.Bool("check", true, "check the speaker split: voice prints, then Gemma-4 looks when unsure (check.go)")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
 
@@ -153,13 +158,28 @@ func main() {
 	if n := countSpeakers(segs); *minSpeakers > 1 && n < *minSpeakers {
 		beckyio.Logf(*verbose, "model heard %d voice(s); caller expected at least %d", n, *minSpeakers)
 	}
+	var checks []Check
+	checkNote := ""
+	if *check {
+		beckyio.Logf(*verbose, "checking the speaker split (voice prints, then a look when unsure)...")
+		pics, hasPics := input, info.HasVideo
+		if *video != "" {
+			if vi, verr := mediainfo.Probe(cfg.FFprobe, *video); verr == nil && vi.HasVideo {
+				pics, hasPics = *video, true
+			}
+		}
+		segs, checks, checkNote = checkSpeakers(cfg, input, pics, hasPics, segs, *verbose)
+		beckyio.Logf(*verbose, "%s", checkNote)
+	}
 	segs = renumber(segs)
 
 	output := Output{
-		File:     input,
-		Duration: round3(info.Duration),
-		Model:    modelID,
-		Speakers: groupBySpeaker(segs),
+		File:        input,
+		Duration:    round3(info.Duration),
+		Model:       modelID,
+		Speakers:    groupBySpeaker(segs),
+		Checks:      checks,
+		SpeakerNote: checkNote,
 	}
 	beckyio.Logf(*verbose, "%d speaker(s), %d total segments", len(output.Speakers), len(segs))
 

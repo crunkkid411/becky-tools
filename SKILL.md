@@ -235,7 +235,7 @@ Each prints JSON (or use `--format srt|txt|vtt` on transcribe):
 becky-transcribe "<video>" --format srt          # what's said + timestamps
 becky-transcribe "<video>" --diarize              # what's said, every line labelled with its speaker
 becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads misheard names (text only)
-becky-diarize    "<video>"                        # how many speakers + when each talks (times only)
+becky-diarize    "<video>"                        # how many speakers + when each talks (checks its own split)
 becky-diarfix    words.json                       # re-check speaker labels from the wording (DiarizationLM)
 becky-identify   "<video>" --kb kb-final          # which KNOWN people (by voice + face; escalates unsure faces itself)
 becky-whois      [--list]                         # the who-is-this window on demand / open questions + Jordan's answers
@@ -270,13 +270,30 @@ window on demand. `--ask=false` on becky-identify for test runs; `BECKY_WHOIS_DI
 else needs a voice print. Speakers: `--diarized` file, else the video's `<stem>.transcript.json`, else
 becky-diarize (Nemotron); the old sherpa helper is only the last fallback (it merged 4 people into 1).
 With 2+ speakers (each >= 2 s), an enrolled person is the ONE label clearly closer to their voice than
-the others in that video (lead >= 0.10), plus any label that is the same voice split in two; two
-different voices that sound about equally like them = nobody named (`cmd/identify/invideo.go`). Then
-the words (`context.go`): Gemma-4 E4B reads the diarized transcript (who is called by name, who
-introduces whom) and its sure pick decides, unless that voice is under the detection bar or another
-speaker is clearly closer. No transcript yet -> becky-identify runs `becky-transcribe --diarize` itself
-(`--context=false` skips the words). A voice+words name (`redimnet+context`) counts as corroborated.
-Every speaker's raw scores and the decision are in `speakers[]`; the words' answer in `notes.words`.
+the others in that video (lead >= 0.10), plus any label that is the same voice split in two
+(`cmd/identify/invideo.go`). A CLEAR voice decides; the words (`context.go`: Gemma-4 E4B reads the
+diarized transcript - who is called by name, who introduces whom) only break a tie. Measured: E4B's
+reading pointed at the wrong speaker in 4 of hj-clone's 50 videos where the voice was clear (0.71-0.87).
+**Unsure = escalate, never stop (`voicecheck.go`, 2026-10-11)**: two voices tie, or the words and
+the voice disagree -> (1) Gemma-4 E4B LOOKS at the person's enrolled photo next to a close-up of the
+face that is TALKING while each disputed speaker talks (`internal/talkingface`: becky-speaking /
+LR-ASD matches lip movement to the sound; a plain frame made Gemma say "yes" for whoever was merely on
+screen); one "yes" settles it (`redimnet+look`); (2) a tie only: Gemma-4 12B
+rereads the words; (3) still open and the voice named nobody: Jordan gets "Who is talking here?" in
+the who-is-this window (`whois.Question.Speaker`, no face box; his answer = `redimnet+jordan` next
+run). A clear voice the look could not overturn stays. No transcript yet -> becky-identify runs
+`becky-transcribe --diarize --forensic=false` itself (WITHOUT `--forensic=false` the two tools called
+each other forever); becky-transcribe's own name check hands its transcript over as `--diarized`.
+`--context=false` skips words + escalation. `+context`/`+look`/`+jordan` names count as corroborated.
+Every speaker's raw scores and the decision are in `speakers[]`; the words' and checks' outcome in `notes.words`.
+**becky-diarize checks its own speaker split (2026-10-11, `cmd/diarize/check.go`, on by default,
+`--check=false` skips)**: ReDimNet2+ voice prints of ~3 s clips per label (one helper call). One
+label holding two voices (two groups < 0.35 alike) is split; two labels of one voice (>= 0.72) are
+merged; in between, Gemma-4 E4B and then 12B LOOK at frames taken while each side talks ("same person
+talking?"), and only a sure answer changes anything. Measured on 5 checked videos: one person's clips
+0.72-0.91 alike (even Jordan impersonating Johnnie Guilbert next to the real one: 0.86), different
+people 0.26-0.41. Output: `checks[]` + `speaker_check`; becky-transcribe passes `--video` (pictures)
+and carries the note into its own `speaker_check`, after DiarizationLM's word-level fix.
 `becky-revsearch "<image>" --names "Name|alias;Other"` on its own: Yandex + Bing reverse search, both
 face models keep only same-face results (`same_face[]`, `names_seen`). **Building self-escalation into another tool:** settle the obvious cases in code, then call
 `route.Next(route.Case{Tool, Task, State, Images, Menu, Default, Extra})` with one `route.Step` per tool

@@ -317,7 +317,8 @@ func main() {
 	speakerCheck := ""
 	if wantSpeakers {
 		beckyio.Logf(*verbose, "working out who is speaking (becky-diarize)...")
-		nSpeakers, speakerNote = labelSpeakers(res.Words, wav, *speakers)
+		var splitCheck string
+		nSpeakers, speakerNote, splitCheck = labelSpeakers(res.Words, wav, input, *speakers)
 		if speakerNote != "" {
 			beckyio.Logf(true, "becky-transcribe: %s", speakerNote)
 		}
@@ -325,6 +326,9 @@ func main() {
 			beckyio.Logf(*verbose, "double-checking who said what from the wording (becky-diarfix)...")
 			speakerFixes, speakerCheck = checkSpeakers(res.Words)
 			beckyio.Logf(*verbose, "becky-transcribe: %s", speakerCheck)
+		}
+		if splitCheck != "" {
+			speakerCheck = strings.TrimSuffix(splitCheck+"; "+speakerCheck, "; ")
 		}
 	}
 
