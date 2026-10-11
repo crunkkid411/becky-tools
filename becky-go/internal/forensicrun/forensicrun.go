@@ -177,7 +177,7 @@ func runAndReport(ctx context.Context, file, subject, kb string, speakers int, t
 	in.Identify = gather("becky-identify", idArgs...)
 	if strings.TrimSpace(subject) != "" {
 		if in.Transcribe == nil {
-			in.Transcribe = gather("becky-transcribe")
+			in.Transcribe = gather("becky-transcribe", "--forensic=false") // this IS the resolution
 		}
 		in.Motion = gather("becky-motion")
 	}
@@ -224,11 +224,12 @@ func (g gemmaLadder) Validate(c orchestrate.Claim, level int) (orchestrate.Signa
 		// below: it yields a sub-floor signal so the ladder ESCALATES (E4B -> 12B) instead.
 		return orchestrate.Signal{}, fmt.Errorf("%s unavailable: %w", model, err)
 	}
-	// A presence watch only corroborates the SUBJECT when the model actually saw the subject (not
-	// just "something" on screen), so for a presence claim we score only the observations that name
-	// it. An identity claim is a generic re-check (top confidence).
+	// A watch only corroborates what the model actually saw: for a presence claim the observations
+	// must name the subject, and for an identity claim they must name the PERSON (an on-screen
+	// caption, a spoken name). A confident watch of "a man talking" never confirms a name - it
+	// used to, which let any clear clip "corroborate" whoever becky-identify guessed.
 	kind := orchestrate.KindPrint
-	conf := topObservationConfidence(out)
+	conf := topObservationConfidenceMatching(out, strings.TrimPrefix(c.Key, "person="))
 	if c.IsPresence {
 		kind = orchestrate.KindWatched
 		conf = topObservationConfidenceMatching(out, presenceSubjectFromKey(c.Key))

@@ -47,7 +47,11 @@ func gather(ctx context.Context, tool, explicitPath, file string) []byte {
 	if file == "" {
 		return nil
 	}
-	b, err := forensicrun.RunTool(ctx, tool, file)
+	args := []string{file}
+	if tool == "becky-transcribe" {
+		args = append(args, "--forensic=false") // only the words are needed here
+	}
+	b, err := forensicrun.RunTool(ctx, tool, args...)
 	if err != nil {
 		return nil
 	}

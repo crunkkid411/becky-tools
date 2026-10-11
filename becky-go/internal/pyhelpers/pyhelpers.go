@@ -52,6 +52,9 @@ var Ground []byte
 //go:embed falcon_detect.py
 var FalconDetect []byte
 
+//go:embed reverse_search.py
+var ReverseSearch []byte
+
 //go:embed laya_decide.py
 var LayaDecide []byte
 

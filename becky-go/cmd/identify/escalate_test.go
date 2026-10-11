@@ -139,3 +139,52 @@ func TestFusionHonoursFaceModels(t *testing.T) {
 		}
 	}
 }
+
+// The face says yes and the whole person does not object -> yes; any face "no" -> no;
+// a face yes that the whole person contradicts (tattoos, sex, build) -> unclear.
+func TestGemmaVerdict(t *testing.T) {
+	cases := []struct{ face, person, want string }{
+		{"yes", "yes", "yes"}, {"yes", "unclear", "yes"}, {"yes", "no", "unclear"},
+		{"no", "yes", "no"}, {"unclear", "yes", "unclear"}, {"unclear", "unclear", "unclear"},
+	}
+	for _, c := range cases {
+		if got := gemmaVerdict(c.face, c.person); got != c.want {
+			t.Errorf("gemmaVerdict(%s,%s) = %s, want %s", c.face, c.person, got, c.want)
+		}
+	}
+	if got := personWord("face: same\nhair: different\nsame person: **No**."); got != "no" {
+		t.Errorf("personWord = %s", got)
+	}
+	if got := personWord("face: same"); got != "unclear" {
+		t.Errorf("personWord without a verdict line = %s", got)
+	}
+}
+
+// Reverse search names the candidate only when more same-face pages name them than anyone else.
+func TestReadRevSearch(t *testing.T) {
+	o := revOut{NamesSeen: map[string]int{"Hair Jordan": 15}, Summary: "s"}
+	if a, _, _ := readRevSearch(o, "Hair Jordan"); a != "yes" {
+		t.Errorf("15 pages naming the candidate: %s", a)
+	}
+	if a, who, _ := readRevSearch(o, "Shelby"); a != "no" || who != "Hair Jordan" {
+		t.Errorf("pages naming someone else: %s %s", a, who)
+	}
+	if a, _, _ := readRevSearch(revOut{NamesSeen: map[string]int{}}, "Shelby"); a != "unclear" {
+		t.Errorf("no names: %s", a)
+	}
+	if a, _, _ := readRevSearch(revOut{NamesSeen: map[string]int{"A": 2, "B": 2}}, "A"); a != "unclear" {
+		t.Errorf("a tie must not name anyone: %s", a)
+	}
+}
+
+// A scrub view of a different face (a cut, someone stepping in) never stands in for the one we follow.
+func TestSameFaceViewsDropsOtherPeople(t *testing.T) {
+	res := faceembed.ScrubResult{
+		Views: []faceembed.Face{{Vector: []float64{0, 1}}, {Vector: []float64{0.8, 0.6}}},
+		Times: []float64{3.0, 2.1},
+	}
+	got := sameFaceViews(res, []float64{1, 0})
+	if len(got.Views) != 1 || got.Times[0] != 2.1 {
+		t.Fatalf("kept %+v", got)
+	}
+}

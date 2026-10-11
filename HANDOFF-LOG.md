@@ -12,6 +12,43 @@
 
 ---
 
+## Due diligence before asking Jordan: frame-by-frame scrub, whole-person Gemma, becky-revsearch, transcribe second opinion on (2026-10-10 night, local, `master`)
+
+Jordan: *"what do you mean by 'hair colour changes'? ... neon green hair, blonde hair and black hair"*;
+*"Did you fix becky-transcribe so that by default a second opinion / escalation is on?"*; *"due diligence
+needs to be conducted before becky-tools EVER tries to ask ME"*; *"literally go ONE VIDEO FRAME at a time
+in both directions"*; *"build a reverse image search tool and if it's unsure, it MUST do that and compare
+before asking me anything"*; *"compare more than just the face - hair, tattoos / piercings, and body"*.
+
+**Built:**
+- `face_embed.py --scrub-dir/--scrub-from/--target/--keep` + `faceembed.Scrub` +
+  `osintexport.ExtractEveryFrameRotated` (every frame, `-vsync passthrough`; ffmpeg 4.3 has no
+  `-fps_mode`). Walks start, +1, -1, +2...; follows the face per direction; uses the same border retry as
+  stills; stops a direction when ArcFace to the previous view drops under 0.25 (a cut / someone else);
+  stops at the first clear shot (det 0.70, width 80, Laplacian sharpness 200 on the aligned crop, yaw 0.25).
+  Go side also drops any view not matching the start face (`sameFaceViews`, tested).
+- `cmd/identify/escalate.go`: `frame_scrub` runs first by code; menu = gemma_compare / falcon_zoom /
+  reverse_search / voice (voice only if the voice step heard that person); no "hold" or "more frames" on the
+  menu; code holds only when the menu is empty, `why_unnamed` lists every step's finding.
+- Gemma: two questions - face only (head crop) and whole person (head-to-chest crop: hair colour/style,
+  facial hair, tattoos, piercings, build, sex). Named when face yes AND person not no. 21/24, 0 false names.
+- `cmd/revsearch` -> `becky-revsearch.exe` + `internal/pyhelpers/reverse_search.py` (Camoufox from the agent
+  browser venv, config `rev_search_python`). `--face face.json` lets the caller pass the vectors it already
+  has (a hair-covered face found only with the border retry was not re-found in the crop).
+- `becky-transcribe`: `--forensic` default true (json output only), `--cleanup` default true. becky-case,
+  becky-presence, forensicrun pass `--forensic=false`. forensicrun's identity watch now only confirms when
+  the observation names the person; `internal/forensic` counts "cosine+lvface/gemma/web" and
+  "redimnet+campp" as two independent sources.
+
+**Verified live (hardcases.mp4, slideshow of Jordan / Clancy / Shelby photos):** with Gemma: scrub 91 of
+120 frames -> Gemma face yes + whole person yes -> Hair Jordan named "cosine+gemma". With Gemma hidden:
+scrub -> Falcon -> reverse search (100 results, 2 same-face Pinterest pages, no names) -> held with all
+three findings. Before the cut check the scrub walked into the next slide and reported a wrong "not them".
+**Not done:** Google reverse search (blocks automated uploads); Bing only sometimes shows picture matches.
+becky-livestream's transcribe calls now also run the second opinion (another session's code, not changed).
+
+---
+
 ## becky-identify escalates by itself: two models per sense + System One routing (2026-10-10, local, `master`)
 
 Jordan (2026-10-10): *"we should be using the best models, tools and methods available to us ... multiple

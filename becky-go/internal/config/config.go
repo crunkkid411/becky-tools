@@ -92,6 +92,7 @@ type Config struct {
 	FaceModelRoot    string `json:"face_model_root"`    // insightface root (holds models/<name>/)
 	FaceModelName    string `json:"face_model_name"`    // insightface model pack, e.g. buffalo_l
 	FaceSecondModel  string `json:"face_second_model"`  // LVFace ONNX: becky-identify names a face only when it and ArcFace agree
+	RevSearchPython  string `json:"rev_search_python"`  // Camoufox venv python: becky-revsearch drives Yandex + Bing reverse image search
 	PoseModel        string `json:"pose_model"`         // MediaPipe pose_landmarker_*.task (body-aware 9:16 framing)
 	LRASDRepo        string `json:"lrasd_repo"`         // LR-ASD checkout (model/ + loss.py + weight/): who is speaking
 	Codec            string `json:"codec"`              // h264_nvenc (never libx264)
@@ -378,6 +379,8 @@ func defaults() Config {
 		FaceModelName: "buffalo_l",
 		// LVFace-B (ByteDance, ICCV 2025): 0 wrong of 123 test photos where ArcFace had 1.
 		FaceSecondModel: firstExisting(`X:\AI-2\becky-tools\models\face\lvface\LVFace-B_Glint360K\LVFace-B_Glint360K.onnx`),
+		// The agent browser's stealth Firefox (Camoufox); see the agent-firefox skill.
+		RevSearchPython: firstExisting(`X:\agent-browser\venv\Scripts\python.exe`),
 		// MediaPipe Pose for body-aware crop framing. "heavy" is the accuracy
 		// pick and is fast enough because the crop path samples a few frames a
 		// second, not every frame; "full" is the fallback if only it is present.
@@ -629,6 +632,9 @@ func merge(base, over Config) Config {
 	}
 	if over.FaceSecondModel != "" {
 		base.FaceSecondModel = over.FaceSecondModel
+	}
+	if over.RevSearchPython != "" {
+		base.RevSearchPython = over.RevSearchPython
 	}
 	if over.Codec != "" {
 		base.Codec = over.Codec

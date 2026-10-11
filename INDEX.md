@@ -67,10 +67,17 @@
 - **Self-escalation router = `internal/route`** (since 2026-10-10): one call, `route.Next(Case)`: code
   hands System One the evidence + a menu of next steps (each with its measured strength), follows the pick
   only when sure (>= 0.9), else the caller's safe lane; every decision logged. First user: becky-identify's
-  unsure faces (`cmd/identify/escalate.go`: Gemma-4 E4B compare, Falcon-Perception zoom via
-  `internal/falcon`, more frames, voice check, hold). Two models per sense in becky-identify (ReDimNet2+ /
+  unsure faces (`cmd/identify/escalate.go`: first a frame-by-frame search for a clear shot, by code;
+  then Gemma-4 E4B face + whole-person compare, Falcon-Perception zoom via `internal/falcon`, reverse
+  image search, voice check; a face reaches Jordan only after all of them ran). Two models per sense in becky-identify (ReDimNet2+ /
   CAM++ voice, ArcFace / LVFace-B face; config `speaker_name_model`, `face_second_model`). Why and numbers:
   `research/kb-final-face-voice-check-2026-10-10.md`.
+- **Reverse image search = `becky-revsearch <image>`** (since 2026-10-10): Yandex + Bing in the agent
+  browser's Camoufox (hidden, no login; Google blocks it), then both face models keep only results with the
+  SAME face and read those pages for names (`--names`). Goes online by design. Config `rev_search_python`.
+- **Frame-by-frame clear shot = `faceembed.Scrub`** (since 2026-10-10): every frame of a window
+  (`osintexport.ExtractEveryFrameRotated`), stepped one at a time outward from a moment
+  (`face_embed.py --scrub-dir`), stops at the first clear shot or at a cut.
 - **Speaker double-check = `becky-diarfix`** (since 2026-10-10; `becky-transcribe --diarize` calls it):
   DiarizationLM-Gemma-4-E4B re-reads the words near each speaker change and moves the ones the wording
   gives to the other person. Setup `scripts\get-diarizationlm.ps1`; config `diarlm_model`. Why, numbers,

@@ -241,10 +241,17 @@ becky-validate   "<video>"                        # AV description of on-screen 
 `becky-identify` decides for itself (2026-10-10). Voice: ReDimNet2+ names (bars 0.30 / 0.50, margin 0.15);
 CAM++ only DISPUTES when it is sure of someone else, and a disputed voice needs the face to agree. Face:
 ArcFace and LVFace-B read the same crop and must agree (a crop with no margin gets a black border and is
-tried again). Clear faces and clear non-matches are settled by code; each unsure face goes through
-`internal/route`: System One picks Gemma-4 E4B compare / Falcon-Perception zoom / more frames / voice check
-/ hold, code follows only a sure pick (>= 0.9), and the trail lands in `routing[]`. System One never names
-anyone. **Building self-escalation into another tool:** settle the obvious cases in code, then call
+tried again). Clear faces and clear non-matches are settled by code. Each unsure face: (1) code steps
+through the video ONE FRAME at a time around it (2 s each way) for a clear shot, stopping at a cut;
+(2) `internal/route`: System One picks, one at a time, Gemma-4 E4B compare (face AND whole person: hair
+colour/style, tattoos, piercings, build - named only if the face says yes and the person check does not
+say no), Falcon-Perception zoom, `becky-revsearch` (web pages showing the same face, read for names), or
+voice check (only if the voice already heard them); code follows only a sure pick (>= 0.9); (3) only when
+every check ran is the face listed for Jordan, with each check's finding in `why_unnamed`. The trail lands
+in `routing[]`. System One never names anyone. **Due diligence before asking Jordan is code, not a
+suggestion:** never put an "ask Jordan" step on a menu; hold only after the menu is empty.
+`becky-revsearch "<image>" --names "Name|alias;Other"` on its own: Yandex + Bing reverse search, both
+face models keep only same-face results (`same_face[]`, `names_seen`). **Building self-escalation into another tool:** settle the obvious cases in code, then call
 `route.Next(route.Case{Tool, Task, State, Images, Menu, Default, Extra})` with one `route.Step` per tool
 you could run next, its Strength written from MEASURED results; drop a step from the menu once tried.
 `becky-transcribe` listens twice by default (2026-10-05): Parakeet (word timings from the model's own

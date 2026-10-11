@@ -104,7 +104,7 @@ func runCase(file, subject string, speakers int) caseReport {
 
 // transcribeArgs: always transcribe; label speakers unless the caller said there is exactly one.
 func transcribeArgs(file string, speakers int) []string {
-	args := []string{file}
+	args := []string{file, "--forensic=false"} // becky-case runs its own resolution next
 	if speakers != 1 {
 		args = append(args, "--diarize")
 	}

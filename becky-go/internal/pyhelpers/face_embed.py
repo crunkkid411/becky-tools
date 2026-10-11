@@ -37,7 +37,15 @@ import sys
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("images", nargs="+", help="image paths (frames or enrollment faces)")
+    ap.add_argument("images", nargs="*", help="image paths (frames or enrollment faces)")
+    ap.add_argument("--scrub-dir", default="",
+                    help="SCRUB mode: a folder holding EVERY video frame of a short window, in order. "
+                         "Starting at --scrub-from it steps ONE frame at a time outward in both directions, "
+                         "follows the face at --target, and stops at the first clear shot (sharp, frontal, "
+                         "big enough). Emits the clearest views it saw, best first")
+    ap.add_argument("--scrub-from", type=int, default=0, help="index of the starting frame in --scrub-dir")
+    ap.add_argument("--target", default="", help="x1,y1,x2,y2 of the face to follow in the starting frame")
+    ap.add_argument("--keep", type=int, default=3, help="scrub mode: how many of the clearest views to emit")
     ap.add_argument("--model-root", required=True, help="insightface root (holds models/<name>/)")
     ap.add_argument("--model-name", default="buffalo_l")
     ap.add_argument("--device", default="cpu")  # cpu | cuda | dml
@@ -127,6 +135,11 @@ def main():
             x1, y1, x2, y2 = f.bbox
             return (x2 - x1) * (y2 - y1) * float(f.det_score)
 
+        if args.scrub_dir:
+            sys.stdout = real_stdout
+            print(json.dumps(scrub(args, detect, box, read, vec2 if second is not None else None, face_align, np)))
+            return
+
         out = []
         dim = 0
         for path in args.images:
@@ -176,6 +189,92 @@ def main():
         sys.stdout = real_stdout
 
     print(json.dumps({"dim": dim, "faces": out}))
+
+
+# A view is CLEAR when all of these hold (measured on Jordan's stream frames, 2026-10-10).
+CLEAR_DET = 0.70    # detector is sure it is a face (green hair + makeup reads 0.72-0.79 straight on)
+CLEAR_WIDTH = 80    # face box at least this many pixels wide
+CLEAR_SHARP = 200   # Laplacian variance of the aligned 112 px crop: sharp 440-1240, 7 px blur ~210, 15 px 70-90
+CLEAR_YAW = 0.25    # nose within this fraction of the eye span from the middle (0 = straight on)
+SAME_TRACK = 0.25   # ArcFace between neighbouring frames: same person stays well above, a cut drops near 0
+
+
+def view_quality(img, f, face_align, np):
+    """How usable one face view is: detector confidence, size, sharpness, how straight on."""
+    import cv2
+    x1, y1, x2, y2 = (float(v) for v in f.bbox)
+    width = x2 - x1
+    crop = face_align.norm_crop(img, f.kps, 112)
+    sharp = float(cv2.Laplacian(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+    le, re, nose = f.kps[0], f.kps[1], f.kps[2]
+    span = float(re[0] - le[0]) or 1.0
+    yaw = abs((float(nose[0]) - float(le[0])) / span - 0.5)
+    det = float(f.det_score)
+    clear = det >= CLEAR_DET and width >= CLEAR_WIDTH and sharp >= CLEAR_SHARP and yaw <= CLEAR_YAW
+    score = det * min(1.0, width / 120) * min(1.0, sharp / 200) * max(0.0, 1 - 2 * yaw)
+    return {"width": round(width, 1), "sharpness": round(sharp, 1), "yaw": round(yaw, 3),
+            "quality": round(score, 4), "clear": clear}
+
+
+def scrub(args, detect, box, read, vec2, face_align, np):
+    """Step one frame at a time outward from --scrub-from (0, +1, -1, +2, -2, ...), follow the
+    target face separately in each direction, and stop at the first clear view."""
+    frames = sorted(p for p in os.listdir(args.scrub_dir) if p.lower().endswith(".jpg"))
+    frames = [os.path.join(args.scrub_dir, p) for p in frames]
+    if not frames:
+        return {"skipped": True, "reason": "no frames in the scrub folder"}
+    start = min(max(args.scrub_from, 0), len(frames) - 1)
+    target = [float(v) for v in args.target.split(",")] if args.target else None
+    track = {1: target, -1: target}  # last box seen walking forward / backward
+    last = {1: None, -1: None}       # last face embedding seen in each direction
+    stopped = {1: False, -1: False}  # a cut, or someone else took the spot: stop that way
+    views, looked = [], 0
+    order = [start]
+    for k in range(1, len(frames)):
+        order += [i for i in (start + k, start - k) if 0 <= i < len(frames)]
+    for i in order:
+        direction = 1 if i >= start else -1
+        if stopped[direction] or (i == start and stopped[-1]):
+            continue
+        img = read(frames[i])
+        if img is None:
+            continue
+        looked += 1
+        img, faces, dx, dy = detect(img)  # same border retry as a still photo
+        at = {id(f): box(f, dx, dy) for f in faces}  # boxes in the frame's own coordinates
+        ref = track[direction]
+        if ref is not None:
+            cx, cy, w = (ref[0] + ref[2]) / 2, (ref[1] + ref[3]) / 2, max(ref[2] - ref[0], 1.0)
+            def off(f):
+                b = at[id(f)]
+                return abs((b[0] + b[2]) / 2 - cx), abs((b[1] + b[3]) / 2 - cy)
+            near = [f for f in faces if max(off(f)) < 1.5 * w]
+            near.sort(key=lambda f: sum(off(f)))
+            faces = near[:1]
+        else:
+            faces = sorted(faces, key=lambda f: -(f.bbox[2] - f.bbox[0]) * float(f.det_score))[:1]
+        if not faces:
+            continue
+        f = faces[0]
+        emb = np.asarray(f.normed_embedding, dtype=np.float32)
+        prev = last[direction] if last[direction] is not None else last[-direction]
+        if prev is not None and float(emb @ prev) < SAME_TRACK:
+            stopped[direction] = True  # the face here is not the one we were following
+            continue
+        last[direction] = emb
+        if i == start:
+            last[-direction] = emb
+        track[direction] = at[id(f)]
+        q = view_quality(img, f, face_align, np)
+        rec = {"path": frames[i], "index": i, "found": True, "n_faces": 1, "bbox": track[direction], "padded": bool(dx),
+               "det_score": float(f.det_score), "vector": [float(x) for x in f.normed_embedding], **q}
+        if vec2 is not None:
+            rec["vector2"] = vec2(img, f)
+        views.append(rec)
+        if q["clear"]:
+            break
+    views.sort(key=lambda r: -r["quality"])
+    return {"dim": 512, "frames_looked": looked, "frames_total": len(frames), "faces": views[:max(args.keep, 1)]}
 
 
 if __name__ == "__main__":

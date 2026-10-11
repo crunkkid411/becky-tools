@@ -125,6 +125,28 @@ func ExtractFrameRotated(ffmpeg, video string, timestampSec float64, outPath, fo
 	return nil
 }
 
+// ExtractEveryFrameRotated writes EVERY video frame from startSec for durSec into
+// dir as 00001.jpg, 00002.jpg, ... at the video's own frame rate (no frame skipped
+// or duplicated), with the same rotation fix as ExtractFrameRotated. It is for
+// scrubbing frame by frame: a few frames either side of a blurred one are often
+// much clearer than any one-per-second sample.
+func ExtractEveryFrameRotated(ffmpeg, video string, startSec, durSec float64, dir string, quality, rotationDeg int) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create frame dir: %w", err)
+	}
+	preInput, vf := rotationArgs(rotationDeg)
+	args := append([]string{"-y"}, preInput...)
+	args = append(args, "-ss", fmt.Sprintf("%.3f", startSec), "-i", video, "-t", fmt.Sprintf("%.3f", durSec), "-vsync", "passthrough") // every frame once (-fps_mode on ffmpeg 5+; becky ships 4.3)
+	if vf != "" {
+		args = append(args, "-vf", vf)
+	}
+	args = append(args, "-q:v", fmt.Sprintf("%d", quality), "-loglevel", "error", filepath.Join(dir, "%05d.jpg"))
+	if err := runFFmpeg(ffmpeg, args); err != nil {
+		return fmt.Errorf("ffmpeg frames %.2f-%.2fs: %w", startSec, startSec+durSec, err)
+	}
+	return nil
+}
+
 // deriveFFprobe turns an ffmpeg path into the sibling ffprobe path (they ship in
 // the same dir), so ExtractFrame can probe rotation without a separate config
 // plumb. Falls back to a bare "ffprobe" (resolved on PATH) if the name doesn't

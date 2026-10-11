@@ -83,5 +83,31 @@ Tight crops: padding the photo by half its size before detection recovered 6 of 
 | d1-3B (System One), one pair at a time | coarse | separates Jordan / Shelby / Clancy, but reads strangers as "Clancy": routing only, never naming |
 
 So in becky-identify Gemma E4B is the face second opinion, d1 picks the route, and neither names alone.
-A separate hair matcher was not built: hair colour changes (Jordan's has), so it would vote against the
-right person; Gemma's compare already looks at hair, beard, sex and tattoos.
+
+**Correction (Jordan, same night):** the first build ignored hair ("hair colour can change") - wrong.
+Neon green vs blonde vs black hair is strong evidence. Why the face models miss it: ArcFace and LVFace
+only ever see a 112 px crop from eyebrows to chin, by design. So Gemma now asks two questions:
+
+| Gemma-4 E4B, 24 photos x 3 people (72 pairs) | Right | Wrong "same person" |
+|---|---|---|
+| old prompt (head crop, "hair colour can change") | 22/24 | 2 (stranger Paul Denino -> Clancy) |
+| face only (head crop) | 23/24 | 1 |
+| whole person: face, hair colour/style, facial hair, tattoos, piercings, build, sex (head-to-chest crop) | 20/24 | 1 |
+| **face yes AND whole person not no** (shipped) | **21/24** | **0** - the 3 misses come back "unclear" and routing goes on |
+
+Scripts: session scratchpad `pair_dump.py`, `person_probe.py`, answers in `ladder/pairs.json`.
+
+## Frame by frame, reverse image search, nobody asked first (2026-10-10, night)
+- **Clear shot first:** every unsure face, code (no model choice) writes EVERY frame of the 2 s either
+  side (ffmpeg `-vsync passthrough`), steps ONE frame at a time outward both ways, follows the face, and
+  stops at the first clear shot (det >= 0.70, width >= 80 px, sharpness >= 200, near straight on).
+  Measured on the 2026-09-26 stream: sharp frames 440-1240, a 7 px blur 210, 15 px 70-90. It stops a
+  direction when the face it follows stops matching (ArcFace < 0.25: a cut or someone else).
+  Bug found live: on a slideshow it walked across a cut into the next photo - fixed by that check.
+- **becky-revsearch:** Yandex + Bing in Camoufox (hidden; Google blocks automated uploads with its
+  "unusual traffic" page). Every result thumbnail goes through both face models; only arc >= 0.55 AND
+  LVFace >= 0.30 counts as the same face. Tested: Clancy's Osceola mugshot -> 60 look-alikes, 0 same
+  face (correct: none was him); Jordan's IMG_1137 -> 18 same-face pages, 15 naming Hair Jordan
+  (YouTube, Facebook, OnlyFans review sites, hairjordancosmetics.com).
+- **Asking Jordan:** System One's menu no longer has a "hold" step. Code lists a face for Jordan only
+  after every check ran, with what each found in `why_unnamed`.

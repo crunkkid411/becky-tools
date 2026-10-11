@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
@@ -147,7 +148,7 @@ func identifyFaces(cfg config.Config, info mediainfo.Info, input string, kb Know
 	var trails []FaceRoute
 	esc := &escalator{cfg: cfg, input: input, rotation: osintexport.DisplayRotation(cfg.FFprobe, input), device: device,
 		verbose: verbose, threshold: threshold, enrolled: enrolled, refs: enrolledRecs(allRecs[:len(enrolledImages)], owner),
-		voiceNames: voiceNames, hasAudio: info.HasAudio, tmp: filepath.Dir(frames[0])}
+		voiceNames: voiceNames, people: peopleList(kb), hasAudio: info.HasAudio, tmp: filepath.Dir(frames[0])}
 	defer esc.close()
 	for _, g := range sortedGray(gray) {
 		if _, settled := bestByName[g.name]; settled {
@@ -164,6 +165,20 @@ func identifyFaces(cfg config.Config, info mediainfo.Info, input string, kb Know
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i].Name < ids[j].Name })
 	return ids, unidentified, trails, nil
+}
+
+// peopleList is every enrolled face's name with its aliases, "Name|a,b;Name2|c",
+// for reverse image search to look for in the pages it finds.
+func peopleList(kb Knowledge) string {
+	var parts []string
+	for _, f := range kb.Faces {
+		p := f.Name + "|"
+		if e, ok := kb.Entities[f.Key]; ok {
+			p += strings.Join(e.Aliases, ",")
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ";")
 }
 
 // enrolledRecs keeps each person's enrolled face records (Gemma's reference photos).

@@ -169,7 +169,7 @@ func TestLadder_EscalatesViaVariantEnv(t *testing.T) {
 			validateEnvs = append(validateEnvs, env)
 			// L1 (no env) does NOT corroborate; L2 (12b env) does.
 			if envHas(env, "BECKY_AVLM_VARIANT=12b") {
-				return []byte(`{"observations":[{"confidence":0.8}]}`), nil
+				return []byte(`{"observations":[{"visual":"a caption reads Alex","confidence":0.8}]}`), nil
 			}
 			return []byte(`{"observations":[]}`), nil
 		default:
@@ -194,6 +194,27 @@ func TestLadder_EscalatesViaVariantEnv(t *testing.T) {
 	}
 	if !hasClaim(rep.Names, "person=Alex") {
 		t.Errorf("the 12B watch corroborated Alex, so it must be a stated name; Names=%v", rep.Names)
+	}
+}
+
+// An identity watch confirms a name ONLY when the model's observations name that person; a
+// confident "a man is talking" must leave the guess held (the old generic re-check confirmed it).
+func TestIdentityWatch_NameAware(t *testing.T) {
+	id := `{"identifications":[{"type":"face","name":"Alex","confidence":0.8,"match":"cosine"}]}`
+	run := func(obs string) ForensicReport {
+		return runAndReport(context.Background(), "clip.mp4", "", "kb", 1, nil,
+			func(ctx context.Context, tool string, args, env []string) ([]byte, error) {
+				if tool == "becky-identify" {
+					return []byte(id), nil
+				}
+				return []byte(obs), nil
+			})
+	}
+	if rep := run(`{"observations":[{"visual":"a man is talking","confidence":0.95}]}`); hasClaim(rep.Names, "person=Alex") {
+		t.Fatalf("a watch that never named Alex must not confirm him; Names=%v", rep.Names)
+	}
+	if rep := run(`{"observations":[{"visual":"on-screen caption: Alex","confidence":0.9}]}`); !hasClaim(rep.Names, "person=Alex") {
+		t.Fatalf("a watch that names Alex should confirm him; Held=%v", rep.Held)
 	}
 }
 

@@ -6,6 +6,18 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — Due diligence before asking Jordan: frame by frame, whole person, reverse search (2026-10-10, night)
+
+An unsure face in becky-identify now: (1) code steps through the video ONE frame at a time both ways
+for a clear shot (stops at a cut); (2) System One picks Gemma-4 E4B (face AND whole person: hair, tattoos,
+piercings, build), Falcon zoom, the new `becky-revsearch` (Yandex + Bing reverse image search, results
+kept only when both face models see the same face, pages read for names) or the voice; (3) a face is
+listed for Jordan only after every check ran, with each finding. `becky-transcribe` now runs its
+name-checking second opinion (`--forensic`) by default (`--forensic=false` to skip; becky-case,
+becky-presence and forensicrun pass it so they don't run it twice). Reverse search goes online by
+Jordan's request (the "offline / evidence stays local" rule does not hold for this one step).
+Numbers: `research/kb-final-face-voice-check-2026-10-10.md`; detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — becky-identify escalates by itself; System One routes it (2026-10-10, local)
 
 Two models per sense now: voice = ReDimNet2+ names, CAM++ can only dispute; face = ArcFace + LVFace-B

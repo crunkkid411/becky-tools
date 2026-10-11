@@ -41,6 +41,11 @@ type Face struct {
 	// helper added a border (a tight crop that fills the picture).
 	Vector2 []float64
 	Padded  bool
+	// Scrub only: how usable this view is (0-1), whether it counts as a clear shot,
+	// and which frame of the scrubbed window it came from.
+	Quality float64
+	Clear   bool
+	Index   int
 	// All holds EVERY face detected in the image, most-prominent-first — only
 	// populated when EmbedAll (not Embed) was used. A tracker needs every face
 	// per frame, not just the best one; nil/empty here for a plain Embed call,
@@ -69,6 +74,9 @@ type helperRec struct {
 	All      []FaceRec `json:"all,omitempty"`
 	Vector2  []float64 `json:"vector2,omitempty"`
 	Padded   bool      `json:"padded,omitempty"`
+	Quality  float64   `json:"quality,omitempty"`
+	Clear    bool      `json:"clear,omitempty"`
+	Index    int       `json:"index,omitempty"`
 }
 
 // helperResult mirrors face_embed.py's stdout JSON contract.
@@ -77,6 +85,8 @@ type helperResult struct {
 	Reason  string      `json:"reason"`
 	Dim     int         `json:"dim"`
 	Faces   []helperRec `json:"faces"`
+	Looked  int         `json:"frames_looked,omitempty"`
+	Total   int         `json:"frames_total,omitempty"`
 }
 
 // Embed runs the face helper over one or more images and returns one Face per
@@ -155,13 +165,32 @@ func chunkByChars(images []string, limit int) [][]string {
 
 func runEmbed(cfg config.Config, script string, images []string, device string, verbose, allFaces bool, second string) ([]Face, error) {
 	args := append([]string{script}, images...)
+	if allFaces {
+		args = append(args, "--all-faces")
+	}
+	res, err := runHelper(cfg, args, device, second, verbose)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Face, 0, len(res.Faces))
+	for _, r := range res.Faces {
+		out = append(out, r.face())
+	}
+	beckyio.Logf(verbose, "faceembed: embedded %d image(s), dim=%d", len(out), res.Dim)
+	return out, nil
+}
+
+func (r helperRec) face() Face {
+	return Face{Path: r.Path, Found: r.Found, NFaces: r.NFaces, Vector: r.Vector, DetScore: r.DetScore, BBox: r.BBox,
+		All: r.All, Vector2: r.Vector2, Padded: r.Padded, Quality: r.Quality, Clear: r.Clear, Index: r.Index}
+}
+
+// runHelper runs face_embed.py with args plus the model flags and parses its JSON.
+func runHelper(cfg config.Config, args []string, device, second string, verbose bool) (helperResult, error) {
 	args = append(args,
 		"--model-root", cfg.FaceModelRoot,
 		"--model-name", modelName(cfg),
 		"--device", device)
-	if allFaces {
-		args = append(args, "--all-faces")
-	}
 	if second != "" {
 		args = append(args, "--second-model", second)
 	}
@@ -176,33 +205,16 @@ func runEmbed(cfg config.Config, script string, images []string, device string, 
 		cmd.Stderr = &stderr
 	}
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("face helper failed: %v\n%s", err, tail(stderr.String()))
+		return helperResult{}, fmt.Errorf("face helper failed: %v\n%s", err, tail(stderr.String()))
 	}
-
 	res, ok := parseJSON(stdout.String())
 	if !ok {
-		return nil, fmt.Errorf("could not parse face helper output:\n%s", tail(stdout.String()))
+		return helperResult{}, fmt.Errorf("could not parse face helper output:\n%s", tail(stdout.String()))
 	}
 	if res.Skipped {
-		return nil, fmt.Errorf("face helper skipped: %s", res.Reason)
+		return helperResult{}, fmt.Errorf("face helper skipped: %s", res.Reason)
 	}
-
-	out := make([]Face, 0, len(res.Faces))
-	for _, r := range res.Faces {
-		out = append(out, Face{
-			Path:     r.Path,
-			Found:    r.Found,
-			NFaces:   r.NFaces,
-			Vector:   r.Vector,
-			DetScore: r.DetScore,
-			BBox:     r.BBox,
-			All:      r.All,
-			Vector2:  r.Vector2,
-			Padded:   r.Padded,
-		})
-	}
-	beckyio.Logf(verbose, "faceembed: embedded %d image(s), dim=%d", len(out), res.Dim)
-	return out, nil
+	return res, nil
 }
 
 // parseJSON tolerates leading library banner noise by scanning bottom-up for the

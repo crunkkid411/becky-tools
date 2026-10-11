@@ -35,6 +35,24 @@ func TestIdentifyToClaims_Corroboration(t *testing.T) {
 	}
 }
 
+// Two face models (or ArcFace + Gemma's compare) agreeing inside becky-identify are two
+// independent checks; one model, or a face waiting on the voice, is still one.
+func TestIdentifyToClaims_TwoModelsCount(t *testing.T) {
+	raw := `{"identifications":[
+	  {"type":"face","name":"A","confidence":0.8,"match":"cosine+lvface"},
+	  {"type":"face","name":"B","confidence":0.8,"match":"cosine+gemma"},
+	  {"type":"face","name":"C","confidence":0.8,"match":"cosine"},
+	  {"type":"face","name":"D","confidence":0.6,"match":"cosine (needs voice)"},
+	  {"type":"voice","name":"E","confidence":0.8,"match":"redimnet-disputed (CAM++ heard X at 0.80)"}]}`
+	want := map[string]orchestrate.Status{"person=A": orchestrate.Concluded, "person=B": orchestrate.Concluded,
+		"person=C": orchestrate.Candidate, "person=D": orchestrate.Candidate, "person=E": orchestrate.Candidate}
+	for _, c := range IdentifyToClaims([]byte(raw)) {
+		if got := orchestrate.Corroborate(c, orchestrate.DefaultRules()).Status; got != want[c.Key] {
+			t.Errorf("%s => %s, want %s", c.Key, got, want[c.Key])
+		}
+	}
+}
+
 const trJSON = `{"segments":[{"start":10,"end":11,"text":"there goes the cat"},{"start":40,"end":41,"text":"the dog barks"}]}`
 const moJSON = `{"motion_bursts":[{"window_start":10.2,"window_end":12}]}`
 const vaJSON = `{"observations":[

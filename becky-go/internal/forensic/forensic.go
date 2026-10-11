@@ -18,7 +18,27 @@ type idIdentification struct {
 	Type           string   `json:"type"`
 	Name           string   `json:"name"`
 	Confidence     float64  `json:"confidence"`
+	Match          string   `json:"match"`
 	CorroboratedBy []string `json:"corroborated_by"`
+}
+
+// independentModels splits becky-identify's match label into the models that each
+// agreed on their own ("cosine+lvface" = ArcFace and LVFace, "cosine+gemma" = ArcFace
+// and Gemma's compare, "redimnet+campp" = two voice models). A label that only says
+// one model ("cosine", "redimnet", "cosine (needs voice)") gives one.
+func independentModels(typ, match string) []string {
+	if strings.Contains(match, "(") || strings.Contains(match, "disputed") {
+		return []string{typ}
+	}
+	parts := strings.Split(match, "+")
+	if len(parts) < 2 {
+		return []string{typ}
+	}
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = typ + "/" + strings.TrimSpace(p)
+	}
+	return out
 }
 
 type idUnidentified struct {
@@ -50,7 +70,9 @@ func IdentifyToClaims(raw []byte) []orchestrate.Claim {
 				sigs = append(sigs, orchestrate.Signal{Source: "identify/" + m, Kind: orchestrate.KindPrint, Confidence: id.Confidence})
 			}
 		} else {
-			sigs = append(sigs, orchestrate.Signal{Source: "identify/" + id.Type, Kind: orchestrate.KindPrint, Confidence: id.Confidence})
+			for _, m := range independentModels(id.Type, id.Match) {
+				sigs = append(sigs, orchestrate.Signal{Source: "identify/" + m, Kind: orchestrate.KindPrint, Confidence: id.Confidence})
+			}
 		}
 		cs = append(cs, orchestrate.Claim{Key: "person=" + id.Name, Signals: sigs})
 	}

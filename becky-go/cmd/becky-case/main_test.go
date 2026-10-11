@@ -8,7 +8,7 @@ import (
 // The regression: a bare `becky-case --file X` must transcribe AND label speakers (the old build
 // listed both in its plan and ran neither); only a caller-stated single speaker skips diarize.
 func TestTranscribeArgs(t *testing.T) {
-	cases := map[int]string{0: "v.mp4 --diarize", 1: "v.mp4 --speakers 1", 3: "v.mp4 --diarize --speakers 3"}
+	cases := map[int]string{0: "v.mp4 --forensic=false --diarize", 1: "v.mp4 --forensic=false --speakers 1", 3: "v.mp4 --forensic=false --diarize --speakers 3"}
 	for n, want := range cases {
 		if got := strings.Join(transcribeArgs("v.mp4", n), " "); got != want {
 			t.Errorf("speakers=%d: want %q, got %q", n, want, got)

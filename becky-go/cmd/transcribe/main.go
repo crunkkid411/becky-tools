@@ -2,12 +2,12 @@
 //
 //	becky-transcribe <input> [--output f] [--format json|srt|txt|vtt]
 //	                 [--diarize] [--speakers N] [--lang en] [--device auto|cuda|cpu] [--num-threads N] [--verbose]
-//	                 [--single-pass] [--lexicon words.txt] [--no-lexicon] [--cleanup]
+//	                 [--single-pass] [--lexicon words.txt] [--no-lexicon] [--cleanup=false] [--forensic=false]
 //
 // Every run listens twice: Parakeet, then WhisperX as a second opinion for
 // passages Parakeet missed (secondpass.go; --single-pass skips it). Jordan's
 // niche word list fixes misheard names (lexicon.go; --lexicon adds lines,
-// --no-lexicon skips it). --cleanup then lets Gemma-4 proofread for misheard
+// --no-lexicon skips it). Gemma-4 then proofreads (on by default) for misheard
 // words the list does not have yet (cleanup.go). All three are text-only for
 // the words Parakeet heard: no timestamp moves.
 //
@@ -107,10 +107,11 @@ type Output struct {
 	// words, why the proofreading did not run or stopped early.
 	CleanupFixes []CleanupFix `json:"cleanup_fixes,omitempty"`
 	CleanupNote  string       `json:"cleanup_note,omitempty"`
-	// Forensic is the SELF-REGULATING result, present ONLY with --forensic. It runs
-	// the protocol-enforcement engine (internal/forensicrun -> orchestrate) over this
-	// clip: corroborated names + watched on-screen intervals, with maybes HELD. Omitted
-	// by default so every existing consumer (becky-embed/clip/validate) is unchanged.
+	// Forensic is the SELF-REGULATING result, on by default for json output since
+	// 2026-10-10 (Jordan: escalation is the default way becky works). It runs the
+	// protocol-enforcement engine (internal/forensicrun -> orchestrate) over this
+	// clip: corroborated names + watched on-screen intervals, with maybes HELD.
+	// --forensic=false omits it.
 	Forensic *forensicrun.ForensicReport `json:"forensic,omitempty"`
 }
 
@@ -160,7 +161,7 @@ func main() {
 	noChunk := flag.Bool("no-chunk", false, "decode the whole file in one pass (equivalent to --chunk-seconds 0)")
 	keepTemp := flag.Bool("keep-temp", false, "keep the extracted temp WAV")
 	noVAD := flag.Bool("no-vad", false, "skip the VAD speech-mask gate (keep ASR segments over silence)")
-	forensicMode := flag.Bool("forensic", false, "after transcribing, run the self-regulating forensic resolution (corroborated names + watched on-screen intervals) and add a \"forensic\" block; default off so existing consumers are unchanged")
+	forensicMode := flag.Bool("forensic", true, "after transcribing, work out WHO is in the clip with becky-identify's own second opinions, then corroborate every name (a \"forensic\" block, json only); on by default - --forensic=false skips it")
 	subject := flag.String("subject", "", "with --forensic: who/what to locate on screen (presence is stated only where a model watched it)")
 	diarize := flag.Bool("diarize", false, "also work out WHO is speaking: every line gets a speaker label, and the result is saved next to the video as <name>.transcript.json")
 	speakers := flag.Int("speakers", 0, "known speaker count, if you know it (>1 also turns on --diarize; 0 = let becky work it out)")
@@ -168,7 +169,7 @@ func main() {
 	singlePass := flag.Bool("single-pass", false, "skip the WhisperX second opinion (faster; passages Parakeet misses stay missing)")
 	lexiconFile := flag.String("lexicon", "", "extra niche-word fixes (\"heard => meant\" per line) on top of the built-in list")
 	noLexicon := flag.Bool("no-lexicon", false, "skip the niche word list")
-	cleanup := flag.Bool("cleanup", false, "after the word list, Gemma-4 proofreads for misheard names and slang (text only, never moves a timestamp)")
+	cleanup := flag.Bool("cleanup", true, "after the word list, Gemma-4 proofreads for misheard names and slang (text only, never moves a timestamp); on by default - --cleanup=false skips it")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
 
 	input := parsePositional()
@@ -379,7 +380,7 @@ func main() {
 
 	// --forensic: self-regulate. Reuse the transcript we just produced (no second ASR pass) and
 	// run the protocol engine over this clip; the corroborated result rides under "forensic".
-	if *forensicMode {
+	if *forensicMode && *format == "json" { // srt/txt/vtt have nowhere to put it
 		beckyio.Logf(*verbose, "forensic resolution (identify + corroborate%s)...", forensicSubjectNote(*subject))
 		output.Forensic = buildForensic(input, *subject, *kb, *speakers, output)
 	}
