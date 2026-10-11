@@ -9,9 +9,27 @@
 
 harry jordan => Hair Jordan
 hairy jordan => Hair Jordan
+here jordan => Hair Jordan
 take it back 2007 => TakingBack2007
 taking back 2007 => TakingBack2007
 take it back two thousand seven => TakingBack2007
 taking back two thousand seven => TakingBack2007
 disc tracks => diss tracks
 disc track => diss track
+broke inside => Brokencyde
+pop tart => PopTart
+bop tart => PopTart
+bob tart => PopTart
+bop tar => PopTart
+bob tar => PopTart
+pop tar => PopTart
+poptar => PopTart
+repsion => Repzion
+rep sion => Repzion
+try aotic => Tryotic
+elk heart => Elkhart
+Kim Dragon => Kim Dracula
+Black Vale Brides => Black Veil Brides
+# Blackville Brides => Black Veil Brides   (off: 2 heard words -> 3 meant words is not allowed; listed in mishears instead)
+Johnny Guilbert => Johnnie Guilbert
+Johnny Gilbert => Johnnie Guilbert
