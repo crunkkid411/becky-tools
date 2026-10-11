@@ -266,6 +266,17 @@ asked twice. Agents: `becky-whois --list` (open questions + answers JSON); `beck
 window on demand. `--ask=false` on becky-identify for test runs; `BECKY_WHOIS_DIR` moves the queue
 (default `~/.becky/whois`), `BECKY_NO_POPUP=1` queues without opening. Another tool asking Jordan:
 `whois.Ask(whois.Question{...})` then `whois.Show(cfg)`, after its own checks.
+**Telling the people in one video apart (2026-10-11)** - works with 1 enrolled person or 100; nobody
+else needs a voice print. Speakers: `--diarized` file, else the video's `<stem>.transcript.json`, else
+becky-diarize (Nemotron); the old sherpa helper is only the last fallback (it merged 4 people into 1).
+With 2+ speakers (each >= 2 s), an enrolled person is the ONE label clearly closer to their voice than
+the others in that video (lead >= 0.10), plus any label that is the same voice split in two; two
+different voices that sound about equally like them = nobody named (`cmd/identify/invideo.go`). Then
+the words (`context.go`): Gemma-4 E4B reads the diarized transcript (who is called by name, who
+introduces whom) and its sure pick decides, unless that voice is under the detection bar or another
+speaker is clearly closer. No transcript yet -> becky-identify runs `becky-transcribe --diarize` itself
+(`--context=false` skips the words). A voice+words name (`redimnet+context`) counts as corroborated.
+Every speaker's raw scores and the decision are in `speakers[]`; the words' answer in `notes.words`.
 `becky-revsearch "<image>" --names "Name|alias;Other"` on its own: Yandex + Bing reverse search, both
 face models keep only same-face results (`same_face[]`, `names_seen`). **Building self-escalation into another tool:** settle the obvious cases in code, then call
 `route.Next(route.Case{Tool, Task, State, Images, Menu, Default, Extra})` with one `route.Step` per tool
@@ -275,7 +286,8 @@ token durations, windows that start and end in pauses) and then WhisperX (`X:\AI
 Jordan's settings) as a second opinion. A passage only WhisperX heard is re-listened by Parakeet
 first; else WhisperX's words are kept when its aligner is sure (score >= 0.5), shifted by the
 measured offset; else it is listed under `second_pass.unconfirmed`. Then Jordan's word list
-(`cmd/transcribe/lexicon.txt`; `--lexicon` adds lines) fixes misheard names. `--single-pass` skips
+(`cmd/transcribe/lexicon.txt`; `--lexicon` adds lines) fixes misheard names (any word count either
+side since 2026-10-11: "blackville brides => Black Veil Brides" shares the heard words' time). `--single-pass` skips
 WhisperX. None of this moves a timestamp of a word Parakeet heard. WhisperX starts words a median
 ~75 ms after Parakeet; becky-cut / auto-editor cut times stay the gold standard for cutting.
 `becky-validate` defaults to `--backend gemma4-local` — you don't need to pass it. See the

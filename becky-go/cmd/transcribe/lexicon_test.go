@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestLexiconFixesTextNeverTimes(t *testing.T) {
-	fixes, bad := parseLexicon(defaultLexicon + "\nbroken line\na b => x y z\n")
+	fixes, bad := parseLexicon(defaultLexicon + "\nbroken line\n => x\n")
 	if len(bad) != 2 {
 		t.Fatalf("both malformed lines must be reported, got %v", bad)
 	}
@@ -38,5 +38,20 @@ func TestLexiconLongestMatchWins(t *testing.T) {
 	got, _ := applyLexicon([]Word{{Word: "disc"}, {Word: "tracks"}}, fixes)
 	if wordsText(got) != "diss tracks" {
 		t.Fatalf("got %q", wordsText(got))
+	}
+}
+
+func TestLexiconTwoWordsIntoThree(t *testing.T) {
+	fixes, bad := parseLexicon("blackville brides => Black Veil Brides\n")
+	if len(bad) != 0 {
+		t.Fatalf("a 2-to-3 fix must be accepted: %v", bad)
+	}
+	words := []Word{{Word: "love", Start: 0, End: 0.5}, {Word: "Blackville", Start: 1.0, End: 1.6}, {Word: "Brides!", Start: 1.6, End: 2.2}}
+	got, log := applyLexicon(words, fixes)
+	if wordsText(got) != "love Black Veil Brides!" || len(log) != 1 {
+		t.Fatalf("got %q %+v", wordsText(got), log)
+	}
+	if got[1].Start != 1.0 || got[3].End != 2.2 || got[2].Start != got[1].End || got[3].Start != got[2].End {
+		t.Fatalf("the new words must share the heard span 1.0-2.2: %+v", got[1:])
 	}
 }

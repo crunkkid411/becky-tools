@@ -13,15 +13,20 @@
 package main
 
 import (
+	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"becky-go/internal/beckyio"
 	"becky-go/internal/config"
+	"becky-go/internal/forensicrun"
 	"becky-go/internal/mediainfo"
 	"becky-go/internal/pyhelpers"
+	"becky-go/internal/tts"
 )
 
 // voiceOptions bundles the knobs for the voice path.
@@ -49,6 +54,7 @@ type voiceOptions struct {
 	verbose       bool
 	python        string // interpreter for the helper (default cfg.Python)
 	backend       string // voice_embed.py --backend ("" = CAM++)
+	context       bool   // read the transcript for who is who (context.go)
 }
 
 // ReDimNet2+ scale, measured on Jordan's footage (research/kb-final-face-voice-check-2026-10-10.md):
@@ -78,54 +84,64 @@ type enrolledVoice struct {
 }
 
 // identifyVoices runs the full voice path and returns named + unidentified entries.
-func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Knowledge, opts voiceOptions) ([]Identification, []Unidentified, error) {
+func identifyVoices(cfg config.Config, info mediainfo.Info, input string, kb Knowledge, opts voiceOptions) ([]Identification, []Unidentified, []speakerAudit, string, error) {
 	if cfg.SpeakerEmbModel == "" || !fileExists(cfg.SpeakerEmbModel) {
-		return nil, nil, fmt.Errorf("speaker embedding model not found: %q", cfg.SpeakerEmbModel)
+		return nil, nil, nil, "", fmt.Errorf("speaker embedding model not found: %q", cfg.SpeakerEmbModel)
 	}
 
 	speakers, err := resolveSpeakers(cfg, info, input, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	if len(speakers) == 0 {
 		beckyio.Logf(opts.verbose, "no speakers detected")
-		return nil, nil, nil
+		return nil, nil, nil, "", nil
 	}
 
 	script, err := pyhelpers.Materialize("voice_embed.py", pyhelpers.VoiceEmbed)
 	if err != nil {
-		return nil, nil, fmt.Errorf("materialize voice helper: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("materialize voice helper: %w", err)
+	}
+	pcm, err := decodePCM16(cfg.FFmpeg, input)
+	if err != nil {
+		return nil, nil, nil, "", err
 	}
 
 	// CAM++ pass: the only pass when ReDimNet2+ is not installed, else the second opinion.
 	camSpeakers := append([]speakerAudio(nil), speakers...)
-	if err := embedSpeakers(cfg, script, cfg.SpeakerEmbModel, input, camSpeakers, opts); err != nil {
-		return nil, nil, err
+	if err := embedSpeakers(cfg, script, cfg.SpeakerEmbModel, pcm, camSpeakers, opts); err != nil {
+		return nil, nil, nil, "", err
 	}
 	camEnrolled, err := embedEnrolled(cfg, script, cfg.SpeakerEmbModel, kb, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	if len(camEnrolled) == 0 {
 		beckyio.Logf(opts.verbose, "no voice-prints enrolled; all speakers -> unidentified")
 	}
 	if !fileExists(cfg.SpeakerNameModel) || !fileExists(cfg.SoundLabelPython) {
-		return matchSpeakers(camSpeakers, camEnrolled, opts), unmatchedDescriptions(camSpeakers, camEnrolled, opts), nil
+		ids, unids := matchSpeakers(camSpeakers, camEnrolled, opts), unmatchedDescriptions(camSpeakers, camEnrolled, opts)
+		picks, note := wordsCheck(cfg, input, kb, camSpeakers, camEnrolled, opts)
+		ids, unids, audit := applyInVideo(camSpeakers, camEnrolled, ids, unids, picks, opts, "cosine")
+		return ids, unids, audit, note, nil
 	}
 
 	// ReDimNet2+ names; CAM++ can only dispute (see secondOpinion).
 	ro := opts
 	ro.python, ro.backend = cfg.SoundLabelPython, "redimnet"
 	ro.threshold, ro.nameThreshold, ro.nameMargin = redimDetect, redimName, redimMargin
-	if err := embedSpeakers(cfg, script, cfg.SpeakerNameModel, input, speakers, ro); err != nil {
-		return nil, nil, err
+	if err := embedSpeakers(cfg, script, cfg.SpeakerNameModel, pcm, speakers, ro); err != nil {
+		return nil, nil, nil, "", err
 	}
 	enrolled, err := embedEnrolled(cfg, script, cfg.SpeakerNameModel, kb, ro)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	ids := secondOpinion(matchSpeakers(speakers, enrolled, ro), camSpeakers, camEnrolled, opts)
-	return ids, unmatchedDescriptions(speakers, enrolled, ro), nil
+	unids := unmatchedDescriptions(speakers, enrolled, ro)
+	picks, note := wordsCheck(cfg, input, kb, speakers, enrolled, ro)
+	ids, unids, audit := applyInVideo(speakers, enrolled, ids, unids, picks, ro, "redimnet")
+	return ids, unids, audit, note, nil
 }
 
 // secondOpinion marks each ReDimNet2+ name with what CAM++ thinks of the same
@@ -204,30 +220,55 @@ func resolveSpeakers(cfg config.Config, info mediainfo.Info, input string, opts 
 		beckyio.Logf(opts.verbose, "loading speakers from %s", opts.diarizedPath)
 		return loadDiarizedSpeakers(opts.diarizedPath)
 	}
-	beckyio.Logf(opts.verbose, "no --diarized given; running diarization internally")
+	if t := siblingTranscript(input); t != "" {
+		if sp, err := loadDiarizedSpeakers(t); err == nil {
+			beckyio.Logf(opts.verbose, "using the speaker labels in %s", t)
+			return sp, nil
+		}
+	}
+	// becky-diarize (Nemotron) is the speaker split becky-transcribe uses. The old
+	// built-in sherpa split merged people: in a 4-person video it heard one speaker and
+	// handed everyone's lines to the enrolled person (hj-clone TOOL-ISSUES #13).
+	beckyio.Logf(opts.verbose, "running becky-diarize...")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer cancel()
+	raw, err := forensicrun.RunTool(ctx, "becky-diarize", input)
+	if err == nil {
+		var sp []speakerAudio
+		if sp, err = parseDiarized(raw); err == nil {
+			return sp, nil
+		}
+	}
+	beckyio.Logf(true, "becky-diarize failed (%v); falling back to the older built-in speaker split", err)
 	return runDiarization(cfg, info, input, opts)
 }
 
 // embedSpeakers concatenates each speaker's audio and fills in its embedding.
 // Speakers whose audio cannot be embedded keep a nil embedding (-> unidentified).
-func embedSpeakers(cfg config.Config, script, model, input string, speakers []speakerAudio, opts voiceOptions) error {
+func embedSpeakers(cfg config.Config, script, model string, pcm []int16, speakers []speakerAudio, opts voiceOptions) error {
+	var wavs []string
 	for i := range speakers {
-		sp := &speakers[i]
-		wav, err := concatSpeakerAudio(cfg.FFmpeg, input, sp.segments)
+		wav, err := concatSpeakerAudio(pcm, speakers[i].segments)
 		if err != nil {
-			return fmt.Errorf("concat audio for %s: %w", sp.id, err)
+			return fmt.Errorf("concat audio for %s: %w", speakers[i].id, err)
 		}
 		if !opts.keepTemp {
 			defer os.Remove(wav)
 		}
-		vecs, err := extractEmbeddings(cfg, script, model, []string{wav}, opts)
-		if err != nil {
-			return fmt.Errorf("embed %s: %w", sp.id, err)
+		wavs = append(wavs, wav)
+	}
+	// one helper run for every speaker: the model loads once, not once per speaker
+	vecs, err := extractEmbeddings(cfg, script, model, wavs, opts)
+	if err != nil {
+		return fmt.Errorf("embed speakers: %w", err)
+	}
+	if len(vecs) != len(speakers) {
+		return fmt.Errorf("embed speakers: got %d voices for %d speakers", len(vecs), len(speakers))
+	}
+	for i := range speakers {
+		if vecs[i] != nil {
+			speakers[i].embedding = normalize(vecs[i])
 		}
-		if len(vecs) == 1 {
-			sp.embedding = normalize(vecs[0])
-		}
-		beckyio.Logf(opts.verbose, "  %s: embedded (%d segment(s))", sp.id, len(sp.segments))
 	}
 	return nil
 }
@@ -237,9 +278,15 @@ func embedSpeakers(cfg config.Config, script, model, input string, speakers []sp
 func embedEnrolled(cfg config.Config, script, model string, kb Knowledge, opts voiceOptions) ([]enrolledVoice, error) {
 	var out []enrolledVoice
 	for _, v := range kb.Voices {
-		vecs, err := extractEmbeddings(cfg, script, model, v.Clips, opts)
+		all, err := extractEmbeddings(cfg, script, model, v.Clips, opts)
 		if err != nil {
 			return nil, fmt.Errorf("embed enrolled %q: %w", v.Name, err)
+		}
+		var vecs [][]float64
+		for _, x := range all {
+			if x != nil {
+				vecs = append(vecs, x)
+			}
 		}
 		if len(vecs) == 0 {
 			beckyio.Logf(opts.verbose, "  enrolled %q: no usable clips, skipping", v.Name)
@@ -529,53 +576,70 @@ func extractEmbeddings(cfg config.Config, script, model string, wavs []string, o
 	for _, e := range res.Embeddings {
 		if len(e.Vector) > 0 {
 			out = append(out, e.Vector)
+		} else if len(res.Embeddings) == len(wavs) {
+			out = append(out, nil) // keep one slot per wav so callers can match by position
 		}
 	}
 	return out, nil
 }
 
-// concatSpeakerAudio extracts and concatenates a speaker's spans into one 16 kHz
-// mono WAV using a single ffmpeg call with a trim/concat filtergraph. Spans are
-// merged so the embedding reflects only that speaker's voice.
-func concatSpeakerAudio(ffmpeg, input string, spans []SpeakerSpan) (string, error) {
+// concatSpeakerAudio writes one speaker's spans, cut from the already-decoded 16 kHz
+// mono pcm, into one WAV so the embedding reflects only that speaker's voice. Cutting
+// in Go (not an ffmpeg atrim filtergraph) keeps a long video's hundreds of spans from
+// overflowing the Windows command line ("The filename or extension is too long").
+func concatSpeakerAudio(pcm []int16, spans []SpeakerSpan) (string, error) {
 	if len(spans) == 0 {
 		return "", fmt.Errorf("speaker has no segments")
+	}
+	b, err := tts.WriteWAVPCM16(cutSpans(pcm, spans), 16000)
+	if err != nil {
+		return "", err
 	}
 	tmp, err := os.CreateTemp("", "becky_ident_*.wav")
 	if err != nil {
 		return "", err
 	}
-	path := tmp.Name()
-	tmp.Close()
-
-	filter := buildConcatFilter(spans)
-	args := []string{"-y", "-i", input,
-		"-filter_complex", filter,
-		"-map", "[out]",
-		"-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
-		"-loglevel", "error", path}
-
-	cmd := exec.Command(ffmpeg, args...)
-	var errBuf strings.Builder
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		os.Remove(path)
-		return "", fmt.Errorf("ffmpeg concat: %v\n%s", err, tail(errBuf.String()))
+	defer tmp.Close()
+	if _, err := tmp.Write(b); err != nil {
+		os.Remove(tmp.Name())
+		return "", err
 	}
-	return path, nil
+	return tmp.Name(), nil
 }
 
-// buildConcatFilter constructs an atrim+concat filtergraph for a speaker's spans.
-func buildConcatFilter(spans []SpeakerSpan) string {
-	var b strings.Builder
-	for i, s := range spans {
-		fmt.Fprintf(&b, "[0:a]atrim=start=%.3f:end=%.3f,asetpts=PTS-STARTPTS[a%d];", s.Start, s.End, i)
+// cutSpans joins the 16 kHz samples inside each span (pure).
+func cutSpans(pcm []int16, spans []SpeakerSpan) []int16 {
+	var out []int16
+	for _, s := range spans {
+		a, b := int(s.Start*16000), int(s.End*16000)
+		if a < 0 {
+			a = 0
+		}
+		if b > len(pcm) {
+			b = len(pcm)
+		}
+		if a < b {
+			out = append(out, pcm[a:b]...)
+		}
 	}
-	for i := range spans {
-		fmt.Fprintf(&b, "[a%d]", i)
+	return out
+}
+
+// decodePCM16 decodes the whole input's audio once to 16 kHz mono 16-bit samples.
+func decodePCM16(ffmpeg, input string) ([]int16, error) {
+	cmd := exec.Command(ffmpeg, "-i", input, "-vn", "-ac", "1", "-ar", "16000",
+		"-f", "s16le", "-acodec", "pcm_s16le", "-loglevel", "error", "-")
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg decode: %v\n%s", err, tail(errBuf.String()))
 	}
-	fmt.Fprintf(&b, "concat=n=%d:v=0:a=1[out]", len(spans))
-	return b.String()
+	pcm := make([]int16, len(raw)/2)
+	for i := range pcm {
+		pcm[i] = int16(binary.LittleEndian.Uint16(raw[2*i:]))
+	}
+	return pcm, nil
 }
 
 func round4(f float64) float64 { return float64(int(f*10000+0.5)) / 10000 }

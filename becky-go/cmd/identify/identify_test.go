@@ -2,6 +2,8 @@ package main
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -123,14 +125,14 @@ func TestMinHamming(t *testing.T) {
 	}
 }
 
-func TestBuildConcatFilter(t *testing.T) {
-	spans := []SpeakerSpan{{Start: 0.74, End: 6.038}, {Start: 19.032, End: 19.707}}
-	got := buildConcatFilter(spans)
-	want := "[0:a]atrim=start=0.740:end=6.038,asetpts=PTS-STARTPTS[a0];" +
-		"[0:a]atrim=start=19.032:end=19.707,asetpts=PTS-STARTPTS[a1];" +
-		"[a0][a1]concat=n=2:v=0:a=1[out]"
-	if got != want {
-		t.Errorf("buildConcatFilter mismatch:\n got=%s\nwant=%s", got, want)
+func TestCutSpans(t *testing.T) {
+	pcm := make([]int16, 16000*3) // 3 s
+	for i := range pcm {
+		pcm[i] = int16(i / 16000) // the second number
+	}
+	got := cutSpans(pcm, []SpeakerSpan{{Start: 0.5, End: 1.0}, {Start: 2.5, End: 9}})
+	if len(got) != 8000+8000 || got[0] != 0 || got[len(got)-1] != 2 {
+		t.Errorf("cutSpans: %d samples, first %d last %d", len(got), got[0], got[len(got)-1])
 	}
 }
 
@@ -172,5 +174,17 @@ func TestTitleize(t *testing.T) {
 		if got := titleize(in); got != want {
 			t.Errorf("titleize(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLoadDiarizedAcceptsTranscribeJSON(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "t.json")
+	os.WriteFile(p, []byte(`{"speakers":2,"segments":[
+		{"start":0,"end":2,"text":"hi","speaker":"SPEAKER_01"},
+		{"start":2,"end":3,"text":"yo","speaker":"SPEAKER_00"},
+		{"start":3,"end":5,"text":"ok","speaker":"SPEAKER_01"}]}`), 0o644)
+	sp, err := loadDiarizedSpeakers(p)
+	if err != nil || len(sp) != 2 || sp[0].id != "SPEAKER_00" || len(sp[1].segments) != 2 {
+		t.Fatalf("got %+v, %v", sp, err)
 	}
 }

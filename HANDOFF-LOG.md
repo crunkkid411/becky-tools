@@ -12,6 +12,31 @@
 
 ---
 
+## becky-identify tells the people in one video apart (2026-10-11, local, `master`)
+
+Jordan: *"Whether we have 3 people indexed or 100 the tools should be able to tell the difference between
+two people regardless. Look at how Claude Code got it to work and see if we can have those fixes and
+functionalities integrated by default please"* (source: `X:\AI-2\hj-clone-corpus\dataset\speaker-id\TOOL-ISSUES.md`).
+
+- Root cause of #13: becky-identify ran the old sherpa diarizer, which heard 1 speaker where Nemotron
+  heard 4 (E_EFk0WM9q0). `resolveSpeakers`: `--diarized` -> `<stem>.transcript.json` -> becky-diarize ->
+  sherpa last.
+- `invideo.go` `decideInVideo` (pure, tested): 2+ talkers (>= 2 s) -> the top label must lead the next by
+  0.10; labels whose voices are the same person (ReDimNet cosine >= 0.60) join it; a sure transcript pick
+  wins unless its voice is under the detection bar or another label leads it by 0.10. `applyInVideo`
+  demotes the losers to candidates (`why_unnamed: other-speaker`).
+- `context.go`: hj-clone p4_who's method on Gemma-4 E4B; runs `becky-transcribe --diarize` itself when
+  there is no transcript; `--context=false` skips. `redimnet+context` counts as corroborated (fuse.go);
+  fusion now keeps the segments of every label a person owns.
+- Output: `speakers[]` (raw score per enrolled person + decision), `notes.words`.
+- Also: `--diarized` reads transcribe JSON; per-speaker WAVs cut in Go from one decode (r-gPQuWTCNQ's
+  "filename or extension is too long"); one embed call for all speakers; voice_embed.py gives an empty
+  vector for a too-short speaker instead of failing all.
+- Word list (`lexicon.go`): any word count either side; unequal counts share the heard span evenly.
+- Measured on hj-clone's 50 checked videos (scratch `gate.py`): see the numbers in the commit message.
+  Known limit: a label that mixes two people (_ABrbJljKz0 SPEAKER_02) cannot be split here.
+- Pre-existing, not from this change: `internal/assistant` TestHandleTier2Funnel fails.
+
 ## The who-is-this window + never a bare last name (2026-10-11, local, `master`)
 
 Jordan: *"Yes, it can pop up and ask me who someone is. We've tried this in the past and it was too

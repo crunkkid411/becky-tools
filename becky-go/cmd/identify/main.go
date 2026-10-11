@@ -41,6 +41,8 @@ type Output struct {
 	// Routing is every unsure face becky escalated: which steps System One (or the
 	// code's safe lane) picked, what each step found, and the outcome.
 	Routing []FaceRoute `json:"routing,omitempty"`
+	// Speakers is every speaker's voice compared with each enrolled person, and the outcome.
+	Speakers []speakerAudit `json:"speakers,omitempty"`
 }
 
 // Identification is one named match. After the fusion pass (fuse.go) a single
@@ -121,6 +123,7 @@ func main() {
 	numThreads := flag.Int("num-threads", 4, "ONNX inference threads")
 	keepTemp := flag.Bool("keep-temp", false, "keep extracted temp WAVs")
 	verbose := flag.Bool("verbose", false, "show progress on stderr")
+	useWords := flag.Bool("context", true, "with several speakers, read the transcript (who is called by name) to tell them apart; runs becky-transcribe when the video has no .transcript.json")
 	ask := flag.Bool("ask", true, "a face no check could settle goes to Jordan's who-is-this window (--ask=false for test runs)")
 
 	input := parsePositional()
@@ -188,13 +191,18 @@ func main() {
 			numThreads:    *numThreads,
 			keepTemp:      *keepTemp,
 			verbose:       *verbose,
+			context:       *useWords,
 		}
-		ids, unids, verr := identifyVoices(cfg, info, input, knowledge, opts)
+		ids, unids, audit, wordsNote, verr := identifyVoices(cfg, info, input, knowledge, opts)
 		if verr != nil {
 			beckyio.Fatalf("voice identification: %v", verr)
 		}
 		report.Identifications = append(report.Identifications, ids...)
 		report.Unidentified = append(report.Unidentified, unids...)
+		report.Speakers = audit
+		if wordsNote != "" {
+			report.Notes["words"] = wordsNote
+		}
 		beckyio.Logf(*verbose, "voice: %d identified, %d unidentified", len(ids), len(unids))
 	} else {
 		report.Notes["voice"] = "skipped: input has no audio stream"

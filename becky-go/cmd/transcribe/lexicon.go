@@ -1,8 +1,9 @@
 package main
 
 // Niche word list (2026-10-05): fixes names and slang the speech models
-// mishear ("Harry Jordan" -> "Hair Jordan"). Deterministic and TEXT ONLY: a
-// fix never moves a timestamp, so every word keeps the time the audio gave it.
+// mishear ("Harry Jordan" -> "Hair Jordan"). Deterministic. A word-for-word swap
+// keeps every word's time; a fix with a different number of words shares the heard
+// words' time span among the new words, so nothing leaves the time the audio gave it.
 
 import (
 	_ "embed"
@@ -47,7 +48,7 @@ func parseLexicon(src string) (fixes []lexFix, bad []string) {
 			}
 		}
 		meant := strings.Fields(parts[1])
-		if len(heard) == 0 || len(meant) == 0 || (len(meant) != 1 && len(meant) != len(heard)) {
+		if len(heard) == 0 || len(meant) == 0 {
 			bad = append(bad, line)
 			continue
 		}
@@ -111,11 +112,31 @@ func applyLexicon(words []Word, fixes []lexFix) ([]Word, []LexiconFix) {
 			w.End = words[i+n-1].End
 			w.Confidence = minConfidence(words[i : i+n])
 			out = append(out, w)
-		} else {
+		} else if len(fix.meant) == n {
 			for k := 0; k < n; k++ {
 				w := words[i+k]
 				p, s := splitPunct(w.Word)
 				w.Word = p + fix.meant[k] + s
+				out = append(out, w)
+			}
+		} else {
+			// a different number of words ("blackville brides" => "Black Veil Brides"):
+			// the meant words share the heard words' time evenly, never leaving it
+			m := len(fix.meant)
+			start, end := words[i].Start, words[i+n-1].End
+			conf := minConfidence(words[i : i+n])
+			for k := 0; k < m; k++ {
+				w := words[i]
+				w.Word = fix.meant[k]
+				if k == 0 {
+					w.Word = pre + w.Word
+				}
+				if k == m-1 {
+					w.Word += suf
+				}
+				w.Start = start + (end-start)*float64(k)/float64(m)
+				w.End = start + (end-start)*float64(k+1)/float64(m)
+				w.Confidence = conf
 				out = append(out, w)
 			}
 		}

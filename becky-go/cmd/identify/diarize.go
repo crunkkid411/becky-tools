@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -35,15 +36,55 @@ type diarizeJSON struct {
 	} `json:"speakers"`
 }
 
-// loadDiarizedSpeakers reads a becky-diarize JSON file into []speakerAudio.
+// transcribeJSON is the part of a `becky-transcribe --diarize` JSON identify needs:
+// its "speakers" is a COUNT and the labels sit on each line instead.
+type transcribeJSON struct {
+	Segments []flatSegment `json:"segments"`
+}
+
+// loadDiarizedSpeakers reads a becky-diarize JSON file, or a becky-transcribe --diarize
+// JSON (its lines carry the speaker labels), into []speakerAudio.
 func loadDiarizedSpeakers(path string) ([]speakerAudio, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read diarized json: %w", err)
 	}
+	sp, err := parseDiarized(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return sp, nil
+}
+
+// siblingTranscript is <video>.transcript.json next to the video (the name becky-subtitle,
+// becky-clip and becky-livestream use) when it exists, else "".
+func siblingTranscript(video string) string {
+	for _, p := range []string{strings.TrimSuffix(video, filepath.Ext(video)) + ".transcript.json", video + ".transcript.json"} {
+		if fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// parseDiarized reads becky-diarize JSON or becky-transcribe --diarize JSON.
+func parseDiarized(data []byte) ([]speakerAudio, error) {
 	var dj diarizeJSON
 	if err := json.Unmarshal(data, &dj); err != nil {
-		return nil, fmt.Errorf("parse diarized json: %w", err)
+		var tj transcribeJSON
+		if json.Unmarshal(data, &tj) != nil {
+			return nil, fmt.Errorf("parse diarized json: %w", err)
+		}
+		var flat []flatSegment
+		for _, s := range tj.Segments {
+			if s.Speaker != "" && s.End > s.Start {
+				flat = append(flat, s)
+			}
+		}
+		if len(flat) == 0 {
+			return nil, fmt.Errorf("no speaker labels (run becky-transcribe with --diarize)")
+		}
+		return groupBySpeaker(flat), nil
 	}
 	var speakers []speakerAudio
 	for _, s := range dj.Speakers {

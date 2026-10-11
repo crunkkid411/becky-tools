@@ -74,6 +74,8 @@ type signal struct {
 // disputes never stands alone. A CAM++-only name keeps the old floor.
 func soloVoice(id Identification) bool {
 	switch {
+	case strings.HasSuffix(id.Match, "+context"): // the voice is closest AND the words name them
+		return true
 	case id.Match == "redimnet" || id.Match == "redimnet+campp":
 		return true
 	case strings.HasPrefix(id.Match, "redimnet"):
@@ -182,8 +184,10 @@ func groupSignalsByPerson(rawIDs []Identification) map[string]*personSignals {
 			if id.Confidence >= ps.bestVoiceConf {
 				ps.bestVoiceConf = id.Confidence
 				ps.voiceMatch = id.Match
-				ps.segments = id.Segments
 			}
+			// one person split across two speaker labels keeps the speech of both
+			ps.segments = append(ps.segments, id.Segments...)
+			sort.Slice(ps.segments, func(i, j int) bool { return ps.segments[i].Start < ps.segments[j].Start })
 		case "face":
 			ps.faceSolo = ps.faceSolo || soloFace(id)
 			if id.Confidence >= ps.bestFaceConf {

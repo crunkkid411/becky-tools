@@ -1,10 +1,10 @@
 # Jordan's niche word list: names, places and slang the speech models mishear.
 # One fix per line:   heard => meant
 # Matching ignores case and punctuation and only matches whole words.
-# TEXT ONLY: a fix never moves a timestamp. The "meant" side has either the
-# same number of words as the "heard" side (a word-for-word swap) or exactly
-# one word (the heard words merge into one word that spans from the first
-# word's start to the last word's end). Anything else is reported, not used.
+# A fix never moves speech to another time. Same number of words on both sides:
+# each word keeps its own time. Any other count ("blackville brides => Black
+# Veil Brides", or several words merged into one) shares the heard words' time
+# span evenly among the meant words.
 # Add more with:  becky-transcribe <file> --lexicon my-words.txt
 
 harry jordan => Hair Jordan
@@ -30,6 +30,6 @@ try aotic => Tryotic
 elk heart => Elkhart
 Kim Dragon => Kim Dracula
 Black Vale Brides => Black Veil Brides
-# Blackville Brides => Black Veil Brides   (off: 2 heard words -> 3 meant words is not allowed; listed in mishears instead)
+Blackville Brides => Black Veil Brides
 Johnny Guilbert => Johnnie Guilbert
 Johnny Gilbert => Johnnie Guilbert

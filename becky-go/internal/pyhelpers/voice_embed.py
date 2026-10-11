@@ -192,8 +192,12 @@ def main():
     for path in args.wavs:
         if not os.path.exists(path):
             raise FileNotFoundError(f"wav not found: {path}")
-        vector = extract_one(extractor, path, args.vad_model, args.vad_threshold)
-        dim = len(vector)
+        try:
+            vector = extract_one(extractor, path, args.vad_model, args.vad_threshold)
+        except RuntimeError as e:  # too short / no speech: an empty vector, the other wavs still count
+            print(f"voice_embed: {e}", file=sys.stderr)
+            vector = []
+        dim = max(dim, len(vector))
         out.append({"path": path, "vector": vector})
 
     print(json.dumps({"embeddings": out, "dim": dim}))

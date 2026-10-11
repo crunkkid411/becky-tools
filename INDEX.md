@@ -63,7 +63,11 @@
 - **Speaker engine = nvidia/Nemotron-3-Diarization** (since 2026-09-24): `becky-diarize` runs it
   through NVIDIA's native `nemo-speech.exe` (CPU, 0 VRAM). Setup `scripts\get-nemotron-diar.ps1`;
   config `nemo_speech` / `diar_model`; measurements and the known miss at the top of `HANDOFF-LOG.md`.
-  becky-identify still uses the old sherpa helper.
+  becky-identify uses it too since 2026-10-11 (or the video's transcript labels); the old sherpa helper
+  is only its last fallback.
+- **Telling people in one video apart = `cmd/identify/invideo.go` + `context.go`** (since 2026-10-11):
+  compares the speakers of one video with each other, then reads the transcript for who is called what.
+  Built from hj-clone's working method after TOOL-ISSUES #13 (69% of other people's lines called Jordan's).
 - **Self-escalation router = `internal/route`** (since 2026-10-10): one call, `route.Next(Case)`: code
   hands System One the evidence + a menu of next steps (each with its measured strength), follows the pick
   only when sure (>= 0.9), else the caller's safe lane; every decision logged. First user: becky-identify's

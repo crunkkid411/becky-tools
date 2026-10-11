@@ -6,6 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — becky-identify tells the people in one video apart (2026-10-11, local)
+
+Fixes hj-clone's TOOL-ISSUES #13 (other people's lines called Jordan's 69% of the time). Speakers now
+come from Nemotron (becky-diarize) or the video's transcript, not the old sherpa helper. With several
+speakers, an enrolled person is only the label clearly closer to their voice than the others in that
+video, and Gemma-4 reads the transcript for who is called by name (`cmd/identify/invideo.go`,
+`context.go`). Also fixed: `--diarized` takes a transcribe JSON; long videos no longer crash (no ffmpeg
+command line); the audio is decoded once. Word list: fixes may change the word count
+("Blackville Brides => Black Veil Brides"). Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — The who-is-this window; never a bare last name (2026-10-11, local)
 
 When becky-identify has run every check and still cannot name a face, it now asks Jordan in ONE popup
