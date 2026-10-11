@@ -17,6 +17,8 @@ import (
 	"os/exec"
 	"time"
 
+	"becky-go/internal/config"
+	"becky-go/internal/faceembed"
 	"becky-go/internal/forensicrun"
 )
 
@@ -113,4 +115,68 @@ func cropFilter(b [4]float64) string {
 	}
 	return fmt.Sprintf("crop=min(iw\\,%.0f):min(ih\\,%.0f):max(0\\,min(iw-%.0f\\,%.0f)):max(0\\,min(ih-%.0f\\,%.0f))",
 		w, h, w, x, h, y)
+}
+
+// Face-match bars (ArcFace cosine, the same scale as becky-identify's --face-threshold
+// 0.55: one person ~0.59+, the closest look-alike seen ~0.50). Between them is "unsure"
+// and the caller asks Gemma.
+const (
+	faceSame      = 0.55
+	faceDifferent = 0.30
+)
+
+// Compare embeds both groups of pictures in one face-model call and says whether they
+// show the same face: "yes" | "no" | "unsure", with the similarity (-1 when a side had
+// no face the model could read).
+func Compare(cfg config.Config, a, b []string) (string, float64) {
+	recs, err := faceembed.Embed(cfg, append(append([]string(nil), a...), b...), "", false)
+	if err != nil || len(recs) != len(a)+len(b) {
+		return "unsure", -1
+	}
+	va, vb := meanFace(recs[:len(a)]), meanFace(recs[len(a):])
+	if va == nil || vb == nil {
+		return "unsure", -1
+	}
+	sim := 0.0
+	for i := range va {
+		sim += va[i] * vb[i]
+	}
+	return verdict(sim), sim
+}
+
+func verdict(sim float64) string {
+	switch {
+	case sim >= faceSame:
+		return "yes"
+	case sim < faceDifferent:
+		return "no"
+	}
+	return "unsure"
+}
+
+// meanFace is the normalized mean of the found faces (nil when none was found).
+func meanFace(recs []faceembed.Face) []float64 {
+	var sum []float64
+	for _, r := range recs {
+		if !r.Found || len(r.Vector) == 0 {
+			continue
+		}
+		if sum == nil {
+			sum = make([]float64, len(r.Vector))
+		}
+		for i, x := range r.Vector {
+			sum[i] += x
+		}
+	}
+	n := 0.0
+	for _, x := range sum {
+		n += x * x
+	}
+	if n == 0 {
+		return nil
+	}
+	for i := range sum {
+		sum[i] /= math.Sqrt(n)
+	}
+	return sum
 }

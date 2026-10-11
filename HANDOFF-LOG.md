@@ -29,7 +29,17 @@ audio attempts are still unclear, we absolutely need to go with those 3 steps"* 
   12B rereads (ties only) -> `whois` "Who is talking here?" (`Question.Speaker`, popup shows the frame, no box).
 - Rule change from the 50-video data: a CLEAR voice decides; the words only break ties. E4B's reading named the
   wrong speaker in UfBEDayJDl4, UaWIuydbVMY, xiuPyYv1OFI, mVSrZRf-laA (it took "Hey Hair Jordan!" as said BY
-  him; the prompt now says the speaker of a name is talking TO that person).
+  him). The prompt asks it to work out whether a name is said BY or TO the person - no fixed rule (Jordan:
+  "hard rules ... are not helpful because they are not always true"). It still misreads UaWIuydbVMY; the
+  voice rule is what keeps that right.
+- Jordan: LR-ASD and DiarizationLM before Gemma. Both looks now go LR-ASD -> ArcFace on the talking face
+  (`talkingface.Compare`, >= 0.55 same / < 0.30 different) -> Gemma only in between. DiarizationLM fixes
+  words at turn changes and cannot say whether two labels are one person, so it is not a rung there.
+  Falcon-Perception (counts/boxes people) was weighed and left out: on-screen people are often silent and
+  speakers often off camera (the clip's "no face" stretch is a POV shot of feet).
+- becky-transcribe `sentences[]` (`sentences.go`): the words cut at sentence ends (., ?, !, not Mr./Dr./initials),
+  speaker changes and 1.5 s pauses; VAD-dropped words left out; `--format txt` prints them. `segments` unchanged
+  (captions). Clip test: "...expect you to pay | all our bills." is now one line.
 - Visual aid research (Haiku subagent, report in the session scratchpad): LR-ASD (IJCV 2025, MIT, 94.45 AVA mAP)
   is already installed (`becky-speaking`); nothing newer beats it and is usable (C3ASD/LASER 93.8; ROAM-ASD no
   license; GateFusion uses non-commercial AV-HuBERT). MediaPipe jawOpen fires on chewing/laughing: not used.

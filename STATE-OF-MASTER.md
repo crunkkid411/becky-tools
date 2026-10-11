@@ -12,7 +12,8 @@ becky-diarize now checks its own speaker split with voice prints and, when unsur
 the face that is actually talking (LR-ASD via becky-speaking). becky-identify, when two voices tie or the
 words and voice disagree, looks, rereads with the 12B, and finally asks Jordan "Who is talking here?" in
 the who-is-this window. Fixed: becky-transcribe and becky-identify could call each other forever.
-Detail: top of `HANDOFF-LOG.md`.
+Detail: top of `HANDOFF-LOG.md`. Later the same day: the face match (LR-ASD + ArcFace) now decides
+before Gemma is asked, and becky-transcribe also writes `sentences[]` (whole sentences; txt output).
 
 ### NEW — becky-identify tells the people in one video apart (2026-10-11, local)
 

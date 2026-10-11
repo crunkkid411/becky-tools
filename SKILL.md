@@ -234,6 +234,7 @@ Each prints JSON (or use `--format srt|txt|vtt` on transcribe):
 ```
 becky-transcribe "<video>" --format srt          # what's said + timestamps
 becky-transcribe "<video>" --diarize              # what's said, every line labelled with its speaker
+#   "segments" = caption-sized (srt/vtt); "sentences" = whole sentences (txt output uses them)
 becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads misheard names (text only)
 becky-diarize    "<video>"                        # how many speakers + when each talks (checks its own split)
 becky-diarfix    words.json                       # re-check speaker labels from the wording (DiarizationLM)
@@ -275,10 +276,10 @@ the others in that video (lead >= 0.10), plus any label that is the same voice s
 diarized transcript - who is called by name, who introduces whom) only break a tie. Measured: E4B's
 reading pointed at the wrong speaker in 4 of hj-clone's 50 videos where the voice was clear (0.71-0.87).
 **Unsure = escalate, never stop (`voicecheck.go`, 2026-10-11)**: two voices tie, or the words and
-the voice disagree -> (1) Gemma-4 E4B LOOKS at the person's enrolled photo next to a close-up of the
-face that is TALKING while each disputed speaker talks (`internal/talkingface`: becky-speaking /
-LR-ASD matches lip movement to the sound; a plain frame made Gemma say "yes" for whoever was merely on
-screen); one "yes" settles it (`redimnet+look`); (2) a tie only: Gemma-4 12B
+the voice disagree -> (1) LOOK: LR-ASD (`internal/talkingface` -> becky-speaking) finds the face whose
+lips move with the sound; ArcFace compares it with the enrolled photos (>= 0.55 yes, < 0.30 no); only
+in between, or with no talking face, Gemma-4 E4B looks at photo + close-up (a plain frame made Gemma
+say "yes" for whoever was merely on screen); one "yes" settles it (`redimnet+look`); (2) a tie only: Gemma-4 12B
 rereads the words; (3) still open and the voice named nobody: Jordan gets "Who is talking here?" in
 the who-is-this window (`whois.Question.Speaker`, no face box; his answer = `redimnet+jordan` next
 run). A clear voice the look could not overturn stays. No transcript yet -> becky-identify runs
@@ -289,8 +290,11 @@ Every speaker's raw scores and the decision are in `speakers[]`; the words' and 
 **becky-diarize checks its own speaker split (2026-10-11, `cmd/diarize/check.go`, on by default,
 `--check=false` skips)**: ReDimNet2+ voice prints of ~3 s clips per label (one helper call). One
 label holding two voices (two groups < 0.35 alike) is split; two labels of one voice (>= 0.72) are
-merged; in between, Gemma-4 E4B and then 12B LOOK at frames taken while each side talks ("same person
-talking?"), and only a sure answer changes anything. Measured on 5 checked videos: one person's clips
+merged; in between, LR-ASD + ArcFace compare the faces TALKING on each side (>= 0.55 same, < 0.30
+different), and only when that is unclear Gemma-4 E4B and then 12B LOOK ("same person talking?"); only a
+sure answer changes anything. DiarizationLM is not a step here: it decides which side of a turn change a
+WORD belongs to, not whether two labels are one person (it runs after, in becky-transcribe). Falcon-
+Perception is not a step either: it counts/boxes people, but who is on screen is not who is talking. Measured on 5 checked videos: one person's clips
 0.72-0.91 alike (even Jordan impersonating Johnnie Guilbert next to the real one: 0.86), different
 people 0.26-0.41. Output: `checks[]` + `speaker_check`; becky-transcribe passes `--video` (pictures)
 and carries the note into its own `speaker_check`, after DiarizationLM's word-level fix.

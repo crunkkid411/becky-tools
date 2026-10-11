@@ -27,9 +27,10 @@ func TestEmptyOutputMarshalsArrays(t *testing.T) {
 		words = []Word{}
 	}
 	o := Output{
-		File:     "x.mp4",
-		Words:    words,
-		Segments: segmentize(helperWords),
+		File:      "x.mp4",
+		Words:     words,
+		Segments:  segmentize(helperWords),
+		Sentences: sentencize(helperWords, nil),
 	}
 	b, err := json.Marshal(o)
 	if err != nil {

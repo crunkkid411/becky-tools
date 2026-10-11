@@ -50,16 +50,16 @@ func settleTie(cfg config.Config, input string, kb Knowledge, t voiceTie, lines 
 	if refs := refPhotos(kb, t.Key); len(refs) > 0 {
 		var yes []string
 		for _, l := range t.Labels {
-			ans := lookAtSpeaker(cfg, input, t.Name, refs, t.Spans[l], opts.verbose)
-			beckyio.Logf(opts.verbose, "voice check: %s talking = %s? Gemma-4 E4B looked: %s", l, t.Name, ans)
-			tried = append(tried, fmt.Sprintf("the picture while %s talks: %s", l, ans))
+			ans, by := lookAtSpeaker(cfg, input, t.Name, refs, t.Spans[l], opts.verbose)
+			beckyio.Logf(opts.verbose, "voice check: %s talking = %s? %s: %s", l, t.Name, by, ans)
+			tried = append(tried, fmt.Sprintf("the picture while %s talks: %s (%s)", l, ans, by))
 			if ans == "yes" {
 				yes = append(yes, l)
 			}
 		}
 		if len(yes) == 1 {
 			return &contextPick{Name: t.Name, Labels: yes, Confidence: "high", Via: "look",
-				Evidence: "Gemma-4 E4B saw them talking"}, t.Name + ": settled by looking - " + strings.Join(tried, "; ")
+				Evidence: "seen talking"}, t.Name + ": settled by looking - " + strings.Join(tried, "; ")
 		}
 	} else {
 		tried = append(tried, "no enrolled photo to look with")
@@ -141,7 +141,7 @@ func refPhotos(kb Knowledge, key string) []string {
 
 // lookAtSpeaker shows Gemma-4 E4B the reference photos and 2 frames from the middle of the
 // speaker's longest stretches: "yes" | "no" | "unsure".
-func lookAtSpeaker(cfg config.Config, input, name string, refs []string, spans []SpeakerSpan, verbose bool) string {
+func lookAtSpeaker(cfg config.Config, input, name string, refs []string, spans []SpeakerSpan, verbose bool) (string, string) {
 	s := append([]SpeakerSpan(nil), spans...)
 	sort.SliceStable(s, func(i, j int) bool { return s[i].End-s[i].Start > s[j].End-s[j].Start })
 	var frames []string
@@ -152,7 +152,7 @@ func lookAtSpeaker(cfg config.Config, input, name string, refs []string, spans [
 		}
 	}
 	if len(frames) == 0 {
-		return "unsure"
+		return "unsure", ""
 	}
 	// LR-ASD (becky-speaking) finds the face whose lips move with the sound: Gemma then
 	// compares THAT face, instead of guessing who is talking in a frame with several people.
@@ -163,6 +163,13 @@ func lookAtSpeaker(cfg config.Config, input, name string, refs []string, spans [
 		if crop != "" {
 			talking = crop
 			defer os.Remove(crop)
+			// the face model compares the talking face with the enrolled photos first;
+			// Gemma is only asked when that is unclear
+			ans, sim := talkingface.Compare(cfg, []string{crop}, refs)
+			beckyio.Logf(verbose, "voice check: talking face vs enrolled photos: %.2f -> %s", sim, ans)
+			if ans != "unsure" {
+				return ans, fmt.Sprintf("the talking face matched the photos %.2f", sim)
+			}
 		}
 	}
 	prompt := fmt.Sprintf(`The first %d picture(s) show %s. The last %d picture(s) were taken from a video while one speaker was talking.
@@ -181,9 +188,9 @@ Reply with JSON only: {"same": "yes" | "no" | "unsure", "why": "<short>"}`, len(
 		avlm.ImageOptions{Prompt: prompt, MaxTokens: 200, Temperature: 0.01})
 	if err != nil {
 		beckyio.Logf(verbose, "voice check: Gemma could not look: %v", err)
-		return "unsure"
+		return "unsure", ""
 	}
-	return parseSame(res.Text)
+	return parseSame(res.Text), "Gemma-4 E4B looked"
 }
 
 func parseSame(raw string) string {

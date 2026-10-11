@@ -168,9 +168,9 @@ speech-to-text mishears words, names included.
 People to find:
 ` + who.String() + `
 For each person, which speaker label(s) are them? Use who gets called by name, who introduces whom,
-who answers to the name, and who talks about that person's own life. Careful: whoever SAYS a name is
-talking TO that person, so the speaker of "Hey Hair Jordan!" is NOT Hair Jordan; Hair Jordan is the
-one who answers, or who says "I'm Hair Jordan" / "my channel". A last name alone never
+who answers to the name, and who talks about that person's own life. For each name, work out from
+the context whether it is said BY that person (introducing themselves) or TO them (talking to or
+about them). A last name alone never
 identifies anyone (families share it). If the transcript does not show it, give no labels and
 confidence "low". Never guess from how someone talks.
 

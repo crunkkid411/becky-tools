@@ -1,9 +1,12 @@
 package talkingface
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"testing"
+
+	"becky-go/internal/faceembed"
 )
 
 func TestPickBoxNeedsAClearTalker(t *testing.T) {
@@ -46,5 +49,23 @@ func TestCropFilterRuns(t *testing.T) {
 			t.Fatalf("box %v: %v %s", b, err, msg)
 		}
 		os.Remove(out)
+	}
+}
+
+func TestVerdictBars(t *testing.T) {
+	for sim, want := range map[float64]string{0.70: "yes", 0.55: "yes", 0.45: "unsure", 0.30: "unsure", 0.12: "no"} {
+		if got := verdict(sim); got != want {
+			t.Errorf("verdict(%.2f) = %s, want %s", sim, got, want)
+		}
+	}
+}
+
+func TestMeanFaceSkipsMissing(t *testing.T) {
+	m := meanFace([]faceembed.Face{{Found: true, Vector: []float64{3, 4}}, {Found: false}})
+	if len(m) != 2 || math.Abs(m[0]-0.6) > 1e-9 || math.Abs(m[1]-0.8) > 1e-9 {
+		t.Fatalf("mean = %v", m)
+	}
+	if meanFace([]faceembed.Face{{Found: false}}) != nil {
+		t.Fatal("no face found must give nil")
 	}
 }

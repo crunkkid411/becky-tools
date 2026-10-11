@@ -6,9 +6,11 @@ package main
 // matter: one label holding two people (FaO9hHNxP0I: one label, two people) and one
 // person split across two labels. Escalation, each step only when the one before is unsure:
 //  1. voice prints (ReDimNet2+, ~3 s clips of each label): code settles clear cases;
-//  2. Gemma-4 E4B LOOKS at frames taken while each side talks: same person talking?
-//  3. Gemma-4 12B looks when E4B is unsure;
-//  4. still unsure: Nemotron's labels stay, and the output says so in plain words.
+//  2. LR-ASD (becky-speaking) finds the face whose lips move with each side's voice, and
+//     the face model (ArcFace) compares the two faces: code settles clear cases;
+//  3. Gemma-4 E4B LOOKS at those faces / frames: same person talking?
+//  4. Gemma-4 12B looks when E4B is unsure;
+//  5. still unsure: Nemotron's labels stay, and the output says so in plain words.
 // (Who-said-which-word at turn changes is a separate check: becky-transcribe runs
 // becky-diarfix / DiarizationLM on the words.)
 
@@ -172,7 +174,7 @@ func twoGroups(cs []chunk) (float64, bool) {
 
 // looker asks a vision model whether the person talking in two sets of moments is the
 // same person: "yes" | "no" | "unsure", plus which model answered (swapped in tests).
-var looker = lookWithGemma
+var looker = lookAtTalkers
 
 // checkSpeakers runs the escalation over Nemotron's segments and returns the corrected
 // segments and what was checked. Degrades: anything missing leaves segs as they were.
@@ -402,10 +404,10 @@ func speakerOrder(segs []flatSegment) []string {
 	return out
 }
 
-// lookWithGemma shows Gemma-4 frames from the middle of the longest stretches of each
-// side and asks whether the same person is talking. E4B first; the 12B only when E4B is
-// unsure.
-func lookWithGemma(cfg config.Config, input string, a, b []voiceprint.Span, verbose bool) (string, string) {
+// lookAtTalkers compares the faces talking on each side (LR-ASD + ArcFace) and, when that
+// is unclear or no face talks, asks Gemma-4 whether the same person is talking. E4B
+// first; the 12B only when E4B is unsure.
+func lookAtTalkers(cfg config.Config, input string, a, b []voiceprint.Span, verbose bool) (string, string) {
 	dir, err := os.MkdirTemp("", "becky_diarlook_")
 	if err != nil {
 		return "unsure", ""
@@ -415,6 +417,15 @@ func lookWithGemma(cfg config.Config, input string, a, b []voiceprint.Span, verb
 	fb := frames(cfg.FFmpeg, input, dir, "b", b)
 	if len(fa) == 0 || len(fb) == 0 {
 		return "unsure", ""
+	}
+	// both sides have a face whose lips moved with the sound (LR-ASD): the face model
+	// compares those two faces first; Gemma is only asked when that is unclear
+	if isFace(fa[0]) && isFace(fb[0]) {
+		ans, sim := talkingface.Compare(cfg, fa[:1], fb[:1])
+		beckyio.Logf(verbose, "speaker check: the two talking faces match %.2f -> %s", sim, ans)
+		if ans != "unsure" {
+			return ans, fmt.Sprintf("LR-ASD + face match %.2f", sim)
+		}
 	}
 	prompt := fmt.Sprintf(`The first %d picture(s) were taken while VOICE A was talking (a picture of just one face is a close-up of the face whose lips moved with the sound). The last %d picture(s) were taken while VOICE B was talking. In each picture, find the person who is talking (mouth open mid-word, facing the camera or the listener, or the only person shown).
 Is the person talking in the VOICE A pictures the SAME person as the one talking in the VOICE B pictures? Compare face, hair, clothes and build. If you cannot tell who is talking, answer "unsure".
@@ -442,6 +453,8 @@ Reply with JSON only: {"same": "yes" | "no" | "unsure", "why": "<short>"}`, len(
 	}
 	return "unsure", "Gemma-4 E4B and 12B"
 }
+
+func isFace(p string) bool { return strings.HasSuffix(filepath.Base(p), "face.jpg") }
 
 // frames returns, for one side, a close-up of the face that is TALKING during its longest
 // stretch (LR-ASD via becky-speaking) plus the whole frame; or, when no face clearly talks,

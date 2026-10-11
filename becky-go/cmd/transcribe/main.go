@@ -85,6 +85,9 @@ type Output struct {
 	Text     string    `json:"text"`
 	Words    []Word    `json:"words"`
 	Segments []Segment `json:"segments"`
+	// Sentences is the same speech cut at whole sentences (and speaker changes) instead of
+	// at caption length; "txt" output uses it.
+	Sentences []Segment `json:"sentences"`
 	// VADApplied reports whether the VAD speech-mask gate ran. VADDropped lists
 	// any segments removed as no-speech hallucinations (empty when none / gate
 	// skipped). Both are honesty fields: they make the filtering auditable.
@@ -368,6 +371,7 @@ func main() {
 		Text:         text,
 		Words:        words,
 		Segments:     segments,
+		Sentences:    sentencize(words, vadDropped),
 		VADApplied:   vadApplied,
 		VADDropped:   vadDropped,
 		Speakers:     nSpeakers,
@@ -624,8 +628,12 @@ func render(o Output, format string) (string, error) {
 		if o.Speakers == 0 {
 			return o.Text + "\n", nil
 		}
+		lines := o.Sentences // whole sentences read better than caption-sized pieces
+		if len(lines) == 0 {
+			lines = o.Segments
+		}
 		var b strings.Builder
-		for _, s := range o.Segments {
+		for _, s := range lines {
 			fmt.Fprintf(&b, "[%s] %s%s\n", timecode(s.Start, "."), speakerPrefix(s), s.Text)
 		}
 		return b.String(), nil
