@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — YouTube video edit that follows his on-camera instructions (2026-10-13, night, local)
+
+`workflows/youtube/YouTube-Edit_System-One.bat` = `becky-livestream --video --model systemone`: the
+livestream edit for a recorded YouTube video, minus live chat. What Jordan tells the editor on camera is
+found by Qwen3.5 + Gemma-4, understood by Gemma-4 12B (lead) with the 4B models corroborating, and done
+in code (move / cut / region); his words to the editor are cut. OBS footage edits in sync (needs Prep OBS
+Footage first). First real edit: goodbye-youtube-update. Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — Prep OBS Footage.bat: OBS recordings into VEGAS, clap-synced (2026-10-12, night, local)
 
 `becky-obsprep` + `vegas/BeckyObsPrep.cs` do Jordan's `obs-workflow.md` with one double-click: files in

@@ -12,6 +12,39 @@
 
 ---
 
+## YouTube video edit: becky-livestream --video follows Jordan's on-camera instructions (2026-10-13, night, local, `master`)
+
+Jordan: edit the goodbye-youtube-update recording (not a livestream) with the livestream System One
+workflow minus live chat, ready for YouTube; "Qwen / Gemma MUST be utilized to catch instructions" like
+the one where he tells the editor a part goes at the beginning; a deterministic workflow calling local
+models, ending in a VEGAS timeline for human review. Launcher: `workflows/youtube/YouTube-Edit_System-One.bat`.
+
+- `video.go` (`--video`): video wording for every prompt; ONE fixed topic ("anything Jordan says to his
+  viewers") - with the guidance split into topics, Gemma read "Cut the clap and getting ready" as a topic
+  to KEEP; labels narrative / retake / instruction / meta / break; no live chat, no posture rule.
+- `instructions.go`: Qwen3.5 + Gemma-4 list editor talk 40 sentences at a time (+ voters' `instruction`
+  labels); groups up to 25 sentences apart (he says it before the part and confirms after); Gemma-4 12B
+  (lead), Gemma-4, Qwen3.5 answer in parts (action, request ids, part, then the place + its first words).
+  The LEAD decides (the 4B pair out-voted it and would have moved a viewer sentence); when he asked before
+  and after the part, the part is everything between (the 12B stopped 30 s early); a flagged line the 12B
+  reads as said to viewers goes back in if the vote cut it ("Oh wait, I forgot to mention." at 7:17 - my
+  own first label wording had taught the voters that phrase = instruction). Moves reorder the final
+  pieces (source times unchanged); regions say what was done.
+- `obs.go`: OBS files are listened to on `<stem>.synced.mkv`; VEGAS gets the original with the mic at
+  obsprep's VEGAS delay (`BeckyKeepList.cs` `audio` lines; obsprep's `sync.json` keeps `vegas_audio_delay_s`).
+- Visual moments: "face mesh lost him" fired in most of 288 stretches on this footage (he holds a mic);
+  a signal that fires in most stretches no longer triggers a 12B watch (93 left, ~2 h); the 12B now gets
+  `-ngl auto` (partial GPU) instead of all-CPU.
+- Result on the footage (6:04 "Put this at the beginning, back at the intro" ... 6:58 "Whoever's editing
+  this video, I want that to go at the beginning"): moved 6:11-6:56 to right after 0:28 "I'm Hair Jordan,
+  and we need to have a talk because my channel still exists."; his words to the editor cut.
+- Reviewing the first full build (renders of VEGAS's own output, re-transcribed): Falcon called his mic "a
+  bottle" and Gemma "holding a microphone toward the camera", so 145 breaths were left in as "holding
+  something up" (fixed: a microphone does not count; 249 breaths cut); the first section opened on 4 s of
+  him fixing the mic and reaching for the camera (fixed: it starts at his first word, Gemma put back the
+  2 s lunge that goes with "What's up?"). Final: `12_goodbye-youtube-update-systemone (3).veg`, 15.9 of
+  24.5 min, 413 pieces, 0 gaps/mismatches, 94.3% of planned words heard again.
+
 ## OBS prep: footage into VEGAS, clap-synced, one double-click (2026-10-12, night, local, `master`)
 
 Jordan's spec: `X:\Videos\2026\10_oct\12_goodbye-youtube-update\obs-workflow.md` (open the .mp4s in order,

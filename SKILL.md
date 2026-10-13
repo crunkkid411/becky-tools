@@ -791,9 +791,15 @@ editor, anything after the goodbye.
    start to just after the group and answer: action (move / cut / other / none), which sentences are
    the request, which are the part he means; for a move, a second call: the sentence the part comes
    right AFTER, plus its first 6 words (a place whose words do not match its id is not trusted).
-3. Apply in code: majority action; the first model in the majority gives the sentences. His request
-   sentences are cut, a moved part is kept, and its pieces are laid AFTER the anchor (source times never
-   change - only the order BeckyKeepList lays them in). "other" (add a picture...) gets a region with
+3. Apply in code: the LEAD (12B) decides the action and the sentences; the 4B models only fill in a place
+   whose quote did not match and are named as corroboration (on 2026-10-12 the two 4B models out-voted
+   the 12B and would have moved a sentence said to the viewers). Groups up to 25 sentences apart are one
+   reading: he says "put this at the beginning" BEFORE the part and "I want that to go at the beginning"
+   AFTER it, so when there are requests on both sides the part is everything between (`bracket`). His
+   request sentences are cut, a moved part is kept (the vote still cuts filler inside it), and its pieces
+   are laid AFTER the anchor (source times never change - only the order BeckyKeepList lays them in). A
+   sentence the finders flagged but the 12B reads as said to the viewers ("Oh wait, I forgot to mention.")
+   goes back in if the vote cut it, with a region. "other" (add a picture...) gets a region with
    his words. Every instruction gets a region saying what was done and by which models; the report has
    "What you told the editor on camera". Cache: `becky-edit\instructions-systemone.json`.
 
@@ -802,6 +808,19 @@ first (its `sync.json` holds `audio_delay_s` for ffmpeg and `vegas_audio_delay_s
 listening (transcript, silences, breaths, the edit check) uses `becky-edit\<stem>.synced.mkv` (picture
 copied, mic moved by the ffmpeg delay); VEGAS gets the ORIGINAL file with the mic (+ desktop audio
 when it is not silent, < -70 dB = left out) placed by the VEGAS delay via `audio` job lines.
+
+**Video-mode differences found on the first real run (goodbye-youtube-update, 2026-10-13):**
+- ONE fixed topic ("anything Jordan says to his viewers"); the labels do the cutting. Split into topics,
+  Gemma read "Cut the clap and getting ready" as a topic to KEEP.
+- Visual moments: a signal that fires in most stretches (>60% of 20+) does not get a stretch watched on
+  its own - holding a mic at his chin, "face mesh lost him" fired nearly everywhere (288 stretches, ~7 h
+  of 12B; 93 left, ~2 h). The 12B runs with `-ngl auto` (part on the graphics card).
+- Breath check: a frame Gemma calls "holding a microphone" is not "holding something up" (Falcon
+  calls the mic a bottle).
+- The first section starts at his first word, not at the file start; the stretch before it is a
+  "before" moment Gemma can put back.
+- Full run on a 24-minute video: ~4 h fresh (analysis ~65 min, vote ~90 min, moments ~2 h, Falcon ~1 h on
+  the processor); a re-run with the caches is ~15 min.
 
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
