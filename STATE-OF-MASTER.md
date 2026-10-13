@@ -6,6 +6,13 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — Prep OBS Footage.bat: OBS recordings into VEGAS, clap-synced (2026-10-12, night, local)
+
+`becky-obsprep` + `vegas/BeckyObsPrep.cs` do Jordan's `obs-workflow.md` with one double-click: files in
+order, project named after the folder, mix track deleted, audio moved so the clap lands on the first frame
+his hands meet, regrouped, saved. It checks the sync in VEGAS's own render (VEGAS plays OBS audio 43 ms
+earlier than ffmpeg). Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — Speakers escalate by themselves when unsure (2026-10-11, afternoon, local)
 
 becky-diarize now checks its own speaker split with voice prints and, when unsure, has Gemma-4 look at

@@ -12,6 +12,31 @@
 
 ---
 
+## OBS prep: footage into VEGAS, clap-synced, one double-click (2026-10-12, night, local, `master`)
+
+Jordan's spec: `X:\Videos\2026\10_oct\12_goodbye-youtube-update\obs-workflow.md` (open the .mp4s in order,
+project named after the folder minus the day, first clip sets frame rate/size, delete the mic+desktop mix
+track, keep desktop + mic, ungroup, put the clap spike on the first frame his hands meet, regroup; a .bat,
+no Claude/LLM).
+
+- `cmd/obsprep` (`becky-obsprep <folder|one.mp4> [--no-desktop] [--analyze-only]`): mic spike (sharpest
+  attack, onset = first sample at half the peak), BEATs confirms it sounds like a clap (`labels.go`,
+  `sound_labels.py`), contact frame inside +/-20 frames = the biggest hand swing that STOPS (OBS repeated
+  frames skipped). Checked by eye on 5 clips: 165, 87, 134, 537; a keyboard click (police 10-15-42) is
+  refused ("NO CLAP FOUND", audio left as recorded). Tests: `clap_test.go` (real motion series).
+- `vegas/BeckyObsPrep.cs` (modes build / probe / adjust): lays every file like a dropped OBS file, deletes
+  the mix track, moves audio on the frame grid + sub-frame take offset, regroups.
+- **Found and fixed: VEGAS plays OBS's AAC ~43.3 ms (1.3 frames) EARLIER than ffmpeg decodes it.** The
+  ffmpeg-only delay landed the clap at frame 163.70. becky-obsprep now renders the mic from VEGAS around
+  each clap, measures the spike, corrects, and re-checks (check 2: 0.00 ms). A full-mix render from VEGAS
+  afterwards: clap onset at frame 165.000. This also explains part of the ~2-frame gap in his older hand syncs.
+- Launchers: `Prep OBS Footage.bat` and `Prep OBS Footage (no desktop audio).bat` (repo root + a copy in
+  the test footage folder). Uses the bat's own folder when it holds .mp4s, else a dropped folder, else a picker.
+  Never overwrites an existing .veg; refuses over unsaved work in VEGAS.
+- Verified: the .bat run end to end on the test folder (exit 0, saved `goodbye-youtube-update.veg`, 30 fps
+  1920x1080, video + desktop + mic, grouped); VEGAS screenshot zoomed on frame 165 shows hands together
+  with the mic spike under the cursor.
+
 ## Speakers escalate by themselves: diarize checks its split, identify looks/rereads/asks (2026-10-11, afternoon, local, `master`)
 
 Jordan: *"the diarization absolutely needs to escalate ... when confidence scores are low, we verify with

@@ -37,6 +37,10 @@
   checkbox each, `[x]` = becky tool + whether it is actually USED, with the System One question, the
   deterministic parts, becky data sources and what is needed from Jordan. Full research notes per
   feature: `research/roadmap/01-05`. Its A0 table is the honest state of every watchdog (all off).
+- **`becky-obsprep`** (2026-10-12, `cmd/obsprep`, launcher `Prep OBS Footage.bat` + a "(no desktop
+  audio)" variant): Jordan's OBS prep (`obs-workflow.md`) - recordings into VEGAS in order, mix track
+  deleted, clap spike put on the first frame his hands meet (checked in VEGAS's own render), regrouped,
+  saved as `<folder minus day>.veg`. VEGAS side: `vegas/BeckyObsPrep.cs`. Recipe: `SKILL.md` `# OBS PREP`.
 - **`becky-livestream --model systemone`** (2026-10-08): System One + Gemma-4 + Qwen3.5 vote, then
   Gemma-4 E4B, Qwen3.5 and Gemma-4 12B READ the kept edit in order (posture from the picture,
   chat answers and chat questions as signals) and cut what does not belong (`together.go`,

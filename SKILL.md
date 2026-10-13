@@ -740,6 +740,33 @@ Every new tool: JSON in → JSON out → exit code, offline, deterministic, degr
 instead of crashing. After any change: `go build ./... && go test ./... && go run ./cmd/becky-short
 --selftest` **and** `build-all-tools.bat`.
 
+# OBS PREP — OBS recordings into VEGAS, clap-synced, one dumb call (2026-10-12)
+
+Spec: Jordan's `X:\Videos\2026\10_oct\12_goodbye-youtube-update\obs-workflow.md`.
+
+```bat
+REM in the footage folder, double-click; or drag a folder onto it
+"Prep OBS Footage.bat"                    :: keeps desktop audio + mic
+"Prep OBS Footage (no desktop audio).bat" :: mic only
+```
+```bash
+becky-obsprep <folder|one.mp4> [--no-desktop] [--analyze-only]
+```
+
+What it does, in his order: every .mp4 (name order = recording order) laid out like a dropped OBS file
+(video, mix, desktop, mic; the first file sets size + frame rate); mix track deleted; per file the mic
+spike (BEATs must call it a clap) and the contact frame (+/-20 frames, the biggest hand swing that stops)
+give the delay; audio moved (frame-grid start + sub-frame take offset) and regrouped; saved as
+`<folder minus "NN_">.veg` beside the footage. Sync file: `%LOCALAPPDATA%\becky\obsprep\<folder>\sync.json`.
+
+Rules learned the hard way:
+- **VEGAS plays OBS's AAC ~43 ms earlier than ffmpeg decodes it.** Never trust an ffmpeg-only delay:
+  becky-obsprep renders the mic out of VEGAS around each clap and corrects until it is < 0.25 ms off.
+- `-t` must come BEFORE `-i` in the frame-read ffmpeg call, or it decodes the whole 6 GB file.
+- No clap found (e.g. the loudest spike is a keyboard click) -> that file's audio stays as recorded and
+  the run says so; it never guesses.
+- Never overwrites a .veg; refuses when VEGAS has unsaved work open.
+
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
 ## THE SILENCE CUT WORKS — ONE CALL, cut from the AUDIO (2026-08-26)
