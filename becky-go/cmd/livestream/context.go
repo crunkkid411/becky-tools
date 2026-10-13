@@ -25,7 +25,7 @@ const (
 	readContext = 8  // lines before a chunk shown for context
 )
 
-const readPrompt = `You are the video editor for Hair Jordan, a YouTuber. You are checking the edit of one of his livestream recordings. You get ONLY the sentences still in the edit, in the order the viewer will hear them. "~ a part was cut here ~" shows where something was taken out between two lines.
+var readPrompt = `You are the video editor for Hair Jordan, a YouTuber. You are checking the edit of one of his livestream recordings. You get ONLY the sentences still in the edit, in the order the viewer will hear them. "~ a part was cut here ~" shows where something was taken out between two lines.
 
 The finished video is for people who did NOT watch the stream. It keeps only the WANTED TOPICS. Everything Jordan says about a wanted topic is the content and stays: his opinions, reasons, examples, jokes, rhetorical questions to the camera ("you know what I would do?") and short reactions that carry his point. "Topic #1" in the guidance means the first topic on his own list in the stream; what counts is the subject, not the words "topic one".
 

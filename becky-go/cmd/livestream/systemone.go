@@ -38,8 +38,8 @@ func s1Questions(ss []Sentence, i int, guidance string) (systemone.Question, sys
 	for k, l := range labels {
 		opts[k] = systemone.Option{Key: l, Desc: labelDesc[l]}
 	}
-	kind := systemone.Choice(fmt.Sprintf(`Hair Jordan is livestreaming. Just before, he said: "%s". Then he said: "%s". What kind of talk is that last sentence?`, ctx, ss[i].Text), opts...)
-	keep := systemone.NoulWith("`sentence` belongs in the edit: Jordan is talking about a topic the editor's `guidance` asks to keep - not reading or answering chat, thanking for a super chat, taking a break, starting a sentence he then says again, or doing stream housekeeping. A sentence counts while he is still on that topic, even when it does not name it (`before` is what he said just before).",
+	kind := systemone.Choice(fmt.Sprintf(rec.s1Kind+` Just before, he said: "%s". Then he said: "%s". What kind of talk is that last sentence?`, ctx, ss[i].Text), opts...)
+	keep := systemone.NoulWith(rec.s1Keep,
 		map[string]any{"sentence": ss[i].Text, "before": ctx, "guidance": guidance})
 	return kind, keep
 }
@@ -68,7 +68,7 @@ func runSystemOne(dec systemone.Decider, ss []Sentence, guidance string, logf fu
 	ds := make([]Decision, 0, len(ss))
 	for b := 0; b < len(ss); b += s1Batch {
 		e := min(b+s1Batch, len(ss))
-		req := systemone.Request{State: "A livestream recording by Hair Jordan, a YouTuber, being edited down to the topics the editor asks for.",
+		req := systemone.Request{State: rec.s1State,
 			Questions: map[string]systemone.Question{}}
 		for i := b; i < e; i++ {
 			k, p := s1Questions(ss, i, guidance)

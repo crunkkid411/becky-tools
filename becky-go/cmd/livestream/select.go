@@ -94,7 +94,7 @@ const rulesVersion = 3
 
 // editorRole is what every model is told; the local models then get topicRule
 // (systemPrompt), Claude gets keepRule (claudeOrder).
-const editorRole = `You are the video editor for Hair Jordan, a YouTuber. You are cutting one of his livestream recordings down to an edited video. You get the transcript one sentence at a time and decide, for every sentence, whether it stays in the edit.
+var editorRole = `You are the video editor for Hair Jordan, a YouTuber. You are cutting one of his livestream recordings down to an edited video. You get the transcript one sentence at a time and decide, for every sentence, whether it stays in the edit.
 
 The editor's GUIDANCE says which topics stay. Everything the guidance does not ask for is cut.
 
@@ -106,7 +106,7 @@ Give every sentence exactly one label:
 - retake: a false start or broken sentence that Jordan says again right after
 - meta: about the stream itself: can you hear me, camera or audio problems, start or end housekeeping, asking viewers to like or subscribe`
 
-const keepRule = `
+var keepRule = `
 
 keep is true only when the sentence belongs to a topic the guidance asks for AND it is narrative.
 Inside a wanted topic, still cut chat replies, super chats, breaks, meta and retakes (for a retake, cut the broken attempt and keep the attempt he finishes).
@@ -114,18 +114,18 @@ One exception: if Jordan reads a viewer's question and then answers it inside a 
 
 confidence is 0-100: how sure you are about keep. Use a number below 70 when you are unsure, for example where a topic starts or ends, or when a sentence could go either way.`
 
-const topicRule = `
+var topicRule = `
 
 The topics the guidance asks for are listed as numbered WANTED TOPICS. topic is the number of the wanted topic the sentence is part of, or 0 when it is part of none of them. A sentence is part of a topic while Jordan is talking about that topic, even when the sentence itself does not name it.
 A viewer's question that Jordan reads out and then answers inside a wanted topic is labeled narrative, so the answer makes sense. For a retake, label the broken attempt retake and the attempt he finishes narrative.
 
 confidence is 0-100: how sure you are about the topic. Use a number below 70 when you are unsure, for example where a topic starts or ends, or when a sentence could go either way.`
 
-const systemPrompt = editorRole + topicRule
+var systemPrompt = editorRole + topicRule
 
 // outlinePrompt is the outline's own instruction: under systemPrompt Gemma-4
 // once answered a part's outline with a list of labels (2026-10-05).
-const outlinePrompt = `You summarize one part of a livestream transcript by Hair Jordan, a YouTuber, in one short line that names the topics he talks about.`
+var outlinePrompt = `You summarize one part of a livestream transcript by Hair Jordan, a YouTuber, in one short line that names the topics he talks about.`
 
 // keeps is the keep rule the local models are not asked to apply themselves.
 func keeps(topic int, label string) bool { return topic > 0 && label == "narrative" }
@@ -168,7 +168,7 @@ func outlineText(outline []string) string {
 	if len(outline) == 0 {
 		return ""
 	}
-	return "WHAT THE WHOLE STREAM COVERS (rough outline, for orientation):\n" + strings.Join(outline, "\n") + "\n\n"
+	return "WHAT THE WHOLE " + rec.upper + " COVERS (rough outline, for orientation):\n" + strings.Join(outline, "\n") + "\n\n"
 }
 
 func wantedText(topics []string) string {
@@ -333,7 +333,7 @@ func (m localModel) wantedTopics(guidance string) ([]string, error) {
 func (m localModel) outline(ss []Sentence, ws [][2]int, logf func(string, ...any)) []string {
 	var out []string
 	for i, w := range ws {
-		user := "Here is one part of the livestream transcript:\n\n" + sentenceLines(ss, w[0], w[1]) +
+		user := "Here is one part of the " + rec.thing + " transcript:\n\n" + sentenceLines(ss, w[0], w[1]) +
 			"\nIn ONE short line (at most 15 words), what does Jordan talk about in this part? Name the topics. Answer with the line only."
 		ans, err := m.chat(outlinePrompt, user, nil, 60)
 		if err != nil {
@@ -417,7 +417,7 @@ func (m localModel) review(ss []Sentence, ws [][2]int, brief string, nTopics int
 		for k, id := range ids {
 			idText[k] = fmt.Sprint(id)
 		}
-		user := brief + "THIS PART OF THE STREAM (context):\n" + sentenceLines(ss, w[0], w[1]) +
+		user := brief + "THIS PART OF THE " + rec.upper + " (context):\n" + sentenceLines(ss, w[0], w[1]) +
 			"\nDECIDE ONLY THESE SENTENCE IDS, in this order: " + strings.Join(idText, ", ")
 		ds, err := m.decideIDs(user, ids, nTopics, fmt.Sprintf("review part %d/%d", i+1, len(ws)), logf)
 		if err != nil {

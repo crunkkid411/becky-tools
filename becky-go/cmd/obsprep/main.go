@@ -44,6 +44,9 @@ type fileSync struct {
 	// VegasFixMs is how much the audio moved again after hearing the clap in
 	// VEGAS's own render (VEGAS decodes the AAC a little differently).
 	VegasFixMs float64 `json:"vegas_fix_ms,omitempty"`
+	// VegasDelay is the delay as VEGAS needs it (Delay is ffmpeg's): what
+	// becky-livestream uses to put the mic under its picture again.
+	VegasDelay float64 `json:"vegas_audio_delay_s"`
 }
 
 func main() {
@@ -119,7 +122,18 @@ func run(arg string, noDesktop, analyzeOnly bool) error {
 		fmt.Println(string(b))
 		return nil
 	}
-	return buildInVegas(syncs, veg, work, noDesktop, fps)
+	ff := make([]float64, len(syncs))
+	for i, s := range syncs {
+		ff[i] = s.Delay
+	}
+	if err := buildInVegas(syncs, veg, work, noDesktop, fps); err != nil {
+		return err
+	}
+	for i := range syncs { // syncInVegas moved Delay to VEGAS's; keep both
+		syncs[i].VegasDelay, syncs[i].Delay = syncs[i].Delay, ff[i]
+	}
+	b, _ = json.MarshalIndent(syncs, "", "  ")
+	return os.WriteFile(filepath.Join(work, "sync.json"), b, 0o644)
 }
 
 // recordings lists the folder's .mp4 files in recording order (OBS names

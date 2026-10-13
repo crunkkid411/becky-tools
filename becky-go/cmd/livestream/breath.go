@@ -527,7 +527,7 @@ func breathSection(details []string) string {
 // save, and rewrite the breath lines of its report. Nothing else on the
 // timeline is touched, and becky-cut / BeckyCut.cs are never run.
 func (r *run) redoBreaths() {
-	veg := filepath.Join(filepath.Dir(r.media), filepath.Base(filepath.Dir(r.media))+"-"+r.tag+".veg")
+	veg := filepath.Join(filepath.Dir(r.footage), filepath.Base(filepath.Dir(r.footage))+"-"+r.tag+".veg")
 	wav := filepath.Join(r.work, "source16k.wav")
 	cutPath := filepath.Join(r.work, "becky-cut.json")
 	for _, p := range []string{veg, wav, cutPath} {
@@ -554,7 +554,7 @@ func (r *run) redoBreaths() {
 	if _, err := vegas(3*time.Minute, "open_project", "path="+veg); err != nil {
 		fatal(err.Error())
 	}
-	ps, health, err := readTimeline()
+	ps, health, err := readTimeline(r.audioDelay())
 	if err != nil {
 		fatal(err.Error())
 	}

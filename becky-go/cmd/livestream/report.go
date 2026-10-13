@@ -44,7 +44,7 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		}
 	}
 
-	fmt.Fprintf(&b, "# Livestream edit - %s\n\n", r.label)
+	fmt.Fprintf(&b, "# "+rec.title+" - %s\n\n", r.label)
 	fmt.Fprintf(&b, "**Result:** %.1f of %.1f minutes kept, in %d sections.", edit/60, r.duration/60, len(ranges))
 	if veg != "" {
 		fmt.Fprintf(&b, " Saved as `%s`.", filepath.Base(veg))
@@ -58,6 +58,9 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		b.WriteString("\n")
 	}
 
+	if r.video {
+		writeInstructions(&b, r.instr, ss)
+	}
 	b.WriteString("## What stays\n\n| # | In the stream | Length | Starts with | Ends with |\n|---|---|---|---|---|\n")
 	for i, rg := range ranges {
 		fmt.Fprintf(&b, "| %d | %s-%s | %.0f s | %s | %s |\n", i+1, clock(rg.In), clock(rg.Out), rg.Out-rg.In,
@@ -175,7 +178,7 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 	r.times = append(r.times, fmt.Sprintf("total %s", time.Since(r.started).Round(time.Second)))
 	fmt.Fprintf(&b, "\n## Time\n\n%s\n", strings.Join(r.times, ", "))
 
-	path := reportPath(r.work, r.tag, r.media, veg)
+	path := reportPath(r.work, r.tag, r.footage, veg)
 	_ = os.WriteFile(path, []byte(b.String()), 0o644)
 
 	fmt.Println()

@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,10 @@ const defaultGuidance = "Keep the main topics Jordan talks about. Cut chat inter
 
 type run struct {
 	media, work, stem, tag, label, guidance string
+	footage                                 string        // the file as recorded (media can be the synced copy, obs.go)
+	audio                                   []vegasAudio  // the audio VEGAS puts under the picture (nil: stream 0)
+	video                                   bool          // a YouTube video, not a livestream (--video)
+	instr                                   []Instruction // what he told his editor on camera (--video)
 	analyzeOnly                             bool
 	fps, duration, threshold                float64
 	cfg                                     config.Config
@@ -79,9 +84,13 @@ func main() {
 	fresh := flag.Bool("fresh", false, "decide again even if this model already decided with the same guidance")
 	breathsOnly := flag.Bool("breaths-only", false, "redo only the breath check on this model's saved VEGAS project")
 	analyzeOnly := flag.Bool("analyze", false, "only analyze the stream (transcript, silences, sound, picture) and keep it; no model, no VEGAS")
+	video := flag.Bool("video", false, "a YouTube video recording, not a livestream: no live chat, and the instructions Jordan gives the editor on camera are followed")
 	flag.Parse()
 
-	r := &run{cfg: config.Load(), started: time.Now()}
+	r := &run{cfg: config.Load(), started: time.Now(), video: *video}
+	if r.video {
+		useVideoWords()
+	}
 	if *analyzeOnly && *model == "" {
 		*model, r.analyzeOnly = "gemma", true // never asked: analysis runs no decision model
 	}
@@ -103,6 +112,7 @@ func main() {
 	if r.media, err = pickVideo(flag.Arg(0)); err != nil {
 		fatal(err.Error())
 	}
+	r.footage = r.media
 	r.stem = strings.TrimSuffix(filepath.Base(r.media), filepath.Ext(r.media))
 	r.work = filepath.Join(filepath.Dir(r.media), "becky-edit")
 	if err := os.MkdirAll(r.work, 0o755); err != nil {
@@ -113,7 +123,7 @@ func main() {
 		return
 	}
 	if !r.analyzeOnly {
-		r.guidance = pickGuidance(*guidance, r.media)
+		r.guidance = pickGuidance(*guidance, r.media, r.video)
 	}
 	r.logf("video: %s", filepath.Base(r.media))
 	if r.analyzeOnly {
@@ -124,6 +134,9 @@ func main() {
 		r.logf("keep: %s", r.guidance)
 	}
 	if err := r.probe(); err != nil {
+		fatal(err.Error())
+	}
+	if err := r.prepOBS(); err != nil {
 		fatal(err.Error())
 	}
 	r.workflow(*fresh, *noVegas)
@@ -149,6 +162,11 @@ func pickVideo(arg string) (string, error) {
 			vids = append(vids, filepath.Join(dir, e.Name()))
 		}
 	}
+	// OBS writes an .mkv and its .mp4 remux of the same recording: one video
+	vids = slices.DeleteFunc(vids, func(v string) bool {
+		_, err := os.Stat(strings.TrimSuffix(v, filepath.Ext(v)) + ".mp4")
+		return strings.EqualFold(filepath.Ext(v), ".mkv") && err == nil
+	})
 	switch len(vids) {
 	case 0:
 		return "", fmt.Errorf("no video here - drag the livestream video onto this .bat")
@@ -167,7 +185,7 @@ func pickVideo(arg string) (string, error) {
 	return vids[n-1], nil
 }
 
-func pickGuidance(flagged, media string) string {
+func pickGuidance(flagged, media string, video bool) string {
 	if s := strings.TrimSpace(flagged); s != "" {
 		return s
 	}
@@ -176,6 +194,9 @@ func pickGuidance(flagged, media string) string {
 		if b, err := os.ReadFile(f); err == nil && strings.TrimSpace(string(b)) != "" {
 			return strings.Join(strings.Fields(string(b)), " ")
 		}
+	}
+	if video { // a video he recorded to post: everything he says to the viewer is the content
+		return defaultVideoGuidance
 	}
 	fmt.Println("What should stay in the edit? Type one line and press Enter")
 	fmt.Println("(just Enter = keep the main topics, cut chat and breaks):")
@@ -316,6 +337,12 @@ func (r *run) workflow(fresh, noVegas bool) {
 		fatal(err.Error())
 	}
 	r.step("content decision", t0)
+	if r.video { // what he tells his editor on camera is followed (instructions.go)
+		t0 = time.Now()
+		r.instr = r.instructions(ss, fresh)
+		applyInstructions(sel.Decisions, r.instr)
+		r.step("his instructions", t0)
+	}
 
 	keep := make([]bool, len(words))
 	for _, d := range sel.Decisions {
@@ -352,6 +379,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, au, r.threshold, r.fps, predicted, r.logf)
 	predicted = cutBreaths(predicted, bc.Spots)
 	r.step("breath check", t0)
+	predicted = reorder(predicted, ss, r.instr, r.fps)
 
 	plan := map[string]any{"model": r.label, "guidance": r.guidance, "ranges": ranges, "predicted_pieces": predicted,
 		"loud_edges": loud, "findings": findings, "fps": r.fps, "moments": faces, "breaths": bc.Spots}
@@ -363,8 +391,8 @@ func (r *run) workflow(fresh, noVegas bool) {
 
 	// 7. VEGAS
 	t0 = time.Now()
-	veg := freeVegName(filepath.Join(filepath.Dir(r.media), filepath.Base(filepath.Dir(r.media))+"-"+r.tag+".veg"))
-	ps, health, err := buildInVegas(r.media, r.work, veg, predicted, r.fps, r.logf)
+	veg := freeVegName(filepath.Join(filepath.Dir(r.footage), filepath.Base(filepath.Dir(r.footage))+"-"+r.tag+".veg"))
+	ps, health, err := buildInVegas(r.footage, r.audio, r.work, veg, predicted, r.fps, r.logf)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -387,7 +415,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 			r.logf("VEGAS: %d face zoom(s) on kept facial expressions (%s)", n, res)
 		}
 	}
-	marks := r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps)
+	marks := append(r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps), instructionMarks(r.instr, ss, ps)...)
 	if err := addMarks(marks, r.fps, r.work, r.logf); err != nil {
 		fatal("the edit is saved, but the regions could not be added: " + err.Error())
 	}

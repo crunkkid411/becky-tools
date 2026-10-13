@@ -157,8 +157,11 @@ type tlEvent struct {
 	Grouped     bool    `json:"grouped"`
 }
 
-// readTimeline returns the audio events as pieces, plus a health line.
-func readTimeline() ([]piece, string, error) {
+// readTimeline returns the pieces as the picture plays them (an OBS recording's
+// audio sits delay seconds off its picture, obs.go), plus a health line: gaps
+// between pictures, and every audio event that is not exactly under its
+// picture (same place on the ruler, source moved by delay).
+func readTimeline(delay float64) ([]piece, string, error) {
 	r, err := vegas(2*time.Minute, "timeline")
 	if err != nil {
 		return nil, "", err
@@ -182,22 +185,32 @@ func readTimeline() ([]piece, string, error) {
 			v = append(v, e)
 		}
 	}
-	sort.Slice(a, func(i, j int) bool { return a[i].Timeline < a[j].Timeline })
 	sort.Slice(v, func(i, j int) bool { return v[i].Timeline < v[j].Timeline })
-	gaps, mismatch := 0, abs(len(a)-len(v))
-	for i := range a {
-		if i > 0 && a[i].Timeline-a[i-1].TimelineEnd > 1e-4 {
+	gaps, mismatch := 0, 0
+	for i := range v {
+		if i > 0 && v[i].Timeline-v[i-1].TimelineEnd > 1e-4 {
 			gaps++
 		}
-		if i < len(v) && (absf(a[i].In-v[i].In) > 1e-4 || absf(a[i].Timeline-v[i].Timeline) > 1e-4) {
+	}
+	for _, e := range a {
+		ok := false
+		for _, p := range v {
+			// the audio's media time zero sits delay later than the picture's
+			if e.Timeline >= p.Timeline-1e-4 && e.Timeline < p.TimelineEnd &&
+				absf((e.Timeline-e.In)-(p.Timeline-p.In)-delay) < 5e-4 {
+				ok = true
+				break
+			}
+		}
+		if !ok {
 			mismatch++
 		}
 	}
-	ps := make([]piece, len(a))
-	for i, e := range a {
+	ps := make([]piece, len(v))
+	for i, e := range v {
 		ps[i] = piece{In: e.In, Out: e.Out, TL: e.Timeline}
 	}
-	health := fmt.Sprintf("%d audio + %d video events, %d gaps, %d picture/sound mismatches, %d ungrouped", len(a), len(v), gaps, mismatch, ungrouped)
+	health := fmt.Sprintf("%d video + %d audio events, %d gaps, %d picture/sound mismatches, %d ungrouped", len(v), len(a), gaps, mismatch, ungrouped)
 	return ps, health, nil
 }
 
@@ -272,7 +285,7 @@ func runJob(script, job, body string, timeout time.Duration) (string, error) {
 
 // buildInVegas assembles the edit from the final pieces and returns the
 // timeline VEGAS actually made.
-func buildInVegas(media, work, veg string, pieces []span, fps float64, logf func(string, ...any)) ([]piece, string, error) {
+func buildInVegas(media string, audio []vegasAudio, work, veg string, pieces []span, fps float64, logf func(string, ...any)) ([]piece, string, error) {
 	logf("VEGAS: starting it (or using the open one)...")
 	if err := launchVegas(); err != nil {
 		return nil, "", err
@@ -282,6 +295,11 @@ func buildInVegas(media, work, veg string, pieces []span, fps float64, logf func
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "media\t%s\n", media)
+	delay := 0.0
+	for _, a := range audio {
+		fmt.Fprintf(&sb, "audio\t%d\t%.7f\n", a.Stream, a.Delay)
+		delay = a.Delay
+	}
 	for _, p := range pieces {
 		fmt.Fprintf(&sb, "range\t%d\t%d\n", int64(math.Round(p.A*fps)), int64(math.Round(p.B*fps)))
 	}
@@ -294,7 +312,7 @@ func buildInVegas(media, work, veg string, pieces []span, fps float64, logf func
 	if _, err := vegas(2*time.Minute, "save", "path="+veg); err != nil {
 		return nil, "", err
 	}
-	ps, health, err := readTimeline()
+	ps, health, err := readTimeline(delay)
 	if err != nil {
 		return nil, "", err
 	}

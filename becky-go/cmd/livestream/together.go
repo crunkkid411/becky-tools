@@ -90,15 +90,22 @@ func (r *run) together(ss []Sentence, fresh bool) (Selection, error) {
 			sel.Topics, sel.Outline = s.Topics, s.Outline
 		}
 	}
-	post, err := loadPosture(r.cfg, r.media, r.work, r.stem, r.duration, r.logf)
-	if err != nil {
-		sel.Notes = append(sel.Notes, "where he looks could not be measured ("+err.Error()+"), so his posture was not used")
-		r.logf("  posture: %v", err)
-	}
-	chat, asked, err := r.chatAnswers(ss)
-	if err != nil {
-		sel.Notes = append(sel.Notes, "the live chat could not be checked ("+err.Error()+"), so his answers to chat were not used")
-		r.logf("  live chat: %v", err)
+	// A YouTube video has no live chat, and looking down at his screen is not
+	// "reading chat" there (his notes), so neither signal is used.
+	var post *postureFrames
+	var chat, asked map[int]string
+	var err error
+	if !r.video {
+		post, err = loadPosture(r.cfg, r.media, r.work, r.stem, r.duration, r.logf)
+		if err != nil {
+			sel.Notes = append(sel.Notes, "where he looks could not be measured ("+err.Error()+"), so his posture was not used")
+			r.logf("  posture: %v", err)
+		}
+		chat, asked, err = r.chatAnswers(ss)
+		if err != nil {
+			sel.Notes = append(sel.Notes, "the live chat could not be checked ("+err.Error()+"), so his answers to chat were not used")
+			r.logf("  live chat: %v", err)
+		}
 	}
 	ds := vote3(ss, all, post, chat)
 	for i := range ds {
