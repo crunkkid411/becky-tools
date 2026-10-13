@@ -150,7 +150,7 @@ type Runner struct {
 	ServerURL string // reuse an already-running multimodal llama-server (optional)
 	FFmpeg    string // ffmpeg.exe
 	FFprobe   string // ffprobe.exe
-	NGL       int    // GPU layers to offload (99 = full)
+	NGL       int    // GPU layers to offload (99 = full, 0 = processor only, -1 = as many as fit)
 	CtxSize   int    // server context in tokens (0 = 16384); smaller saves memory on big models
 	Logf      func(format string, a ...any)
 }

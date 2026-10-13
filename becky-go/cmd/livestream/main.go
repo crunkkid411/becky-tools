@@ -341,6 +341,9 @@ func (r *run) workflow(fresh, noVegas bool) {
 		t0 = time.Now()
 		r.instr = r.instructions(ss, fresh)
 		applyInstructions(sel.Decisions, ss, r.instr)
+		// the filler rule again: a cut next to his instruction can leave a lone
+		// "Alright." that the vote kept as part of his talk
+		sel.Decisions = cutFiller(ss, sel.Decisions)
 		r.step("his instructions", t0)
 	}
 

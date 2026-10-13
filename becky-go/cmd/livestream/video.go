@@ -24,6 +24,11 @@ var rec = recWords{
 
 const defaultVideoGuidance = "Keep everything Jordan says to his viewers. Cut the clap and getting ready before he starts, false starts and flubbed sentences he says again (keep the attempt he finishes), whatever he tells the editor to cut, his instructions to the editor, and anything after he says goodbye."
 
+// fixedTopics, when set, replaces the wanted topics a model reads from the
+// guidance. A video has one: on 2026-10-12 Gemma read "Cut the clap and getting
+// ready" in the video guidance as a topic to KEEP.
+var fixedTopics []string
+
 // useVideoWords switches every prompt to a YouTube video recording.
 func useVideoWords() {
 	rec = recWords{
@@ -32,13 +37,14 @@ func useVideoWords() {
 		title:   "YouTube video edit",
 		s1Kind:  "Hair Jordan is recording a YouTube video.",
 		s1State: "The raw camera recording of a YouTube video by Hair Jordan, being edited into the video he will post.",
-		s1Keep:  "`sentence` belongs in the finished video: Jordan is saying it to his viewers - not talking to his video editor (cut this, move this, I forgot to mention something earlier), not getting ready or wrapping up the recording, not mumbling to himself, and not a sentence he breaks off and then says again. (`before` is what he said just before; `guidance` is what the editor was asked to keep.)",
+		s1Keep:  "`sentence` belongs in the finished video: Jordan is saying it to his viewers - not talking to his video editor (cut this, move this, put this part at the beginning), not getting ready or wrapping up the recording, not mumbling to himself, and not a sentence he breaks off and then says again. (`before` is what he said just before; `guidance` is what the editor was asked to keep.)",
 	}
+	fixedTopics = []string{"Anything Jordan says to his viewers"}
 	labels = []string{"narrative", "retake", "instruction", "meta", "break"}
 	labelDesc = map[string]string{
 		"narrative":   "Jordan talking to his viewers (the real content, including his intro and goodbye)",
 		"retake":      "a false start, flubbed or broken sentence that he says again right after",
-		"instruction": "talking to his video editor, not the viewers: cut this, move this, I forgot to mention something that goes earlier",
+		"instruction": "talking to his video editor, not the viewers: cut this, move this, put this part at the beginning (\"I forgot to mention\" said to the viewers is narrative)",
 		"meta":        "getting ready or wrapping up the recording: the clap, checking the camera or mic, is it recording, after the goodbye",
 		"break":       "a pause, drinking, mumbling to himself, filler while nothing happens",
 	}
@@ -49,7 +55,7 @@ Everything Jordan says to his viewers is the content and stays. The editor's GUI
 Give every sentence exactly one label:
 - narrative: Jordan talking to his viewers (the real content, including his intro, his asides, his jokes and his goodbye)
 - retake: a false start, flubbed or broken sentence that Jordan says again right after
-- instruction: Jordan talking to his video EDITOR instead of the viewers, e.g. "cut that out", "put this part earlier", "I forgot to mention something at the beginning", "that goes before the part about..."
+- instruction: Jordan talking to his video EDITOR instead of the viewers, e.g. "cut that out", "put this part earlier", "whoever edits this, that goes at the beginning", "that goes before the part about...". "Oh wait, I forgot to mention" said to the viewers, followed by more of his story, is narrative.
 - meta: getting ready or wrapping up the recording: the clap, checking the camera or microphone, "is it recording", "okay, let's go", what he does after the goodbye
 - break: a pause, drinking, mumbling to himself, filler while nothing happens`
 	outlinePrompt = `You summarize one part of the transcript of a YouTube video by Hair Jordan, a YouTuber, in one short line that names the topics he talks about.`
@@ -59,7 +65,7 @@ Give every sentence exactly one label:
 The finished video will be posted on YouTube. Everything Jordan says to his viewers stays: his story, opinions, reasons, examples, jokes, asides, rhetorical questions to the camera, short reactions that carry his point, his intro and his goodbye.
 
 Cut a line only when it clearly is one of these:
-- talking to his video editor instead of the viewers: "cut that", "put this earlier", "I forgot to mention something at the beginning", "edit this out".
+- talking to his video editor instead of the viewers: "cut that", "put this earlier", "whoever edits this, that goes at the beginning", "edit this out". ("Oh wait, I forgot to mention" said to the viewers is part of his story and stays.)
 - getting ready or wrapping up the recording: the clap, checking the camera or microphone, "is it recording", what he does after the goodbye.
 - a flubbed or broken sentence that he says again right after (keep the attempt he finishes), or a fragment that makes no sense next to the lines around it.
 - mumbling to himself or filling time, with nothing in it: "um", "ugh", "okay", "where was I".

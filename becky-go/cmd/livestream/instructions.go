@@ -45,6 +45,8 @@ type Instruction struct {
 	Models    []string `json:"models"`
 	Note      string   `json:"note,omitempty"`
 	Applied   bool     `json:"applied"`
+	Cleared   []int    `json:"cleared_ids,omitempty"` // flagged, but the lead reads them as said to the viewers
+	Restored  []int    `json:"-"`                     // cleared ones the vote had cut, put back (applyInstructions)
 }
 
 // modelRead is one model's reading of one group.
@@ -61,21 +63,21 @@ type modelRead struct {
 
 const instrRole = `You are the video editor for Hair Jordan, a YouTuber. You are editing the raw camera recording of one of his YouTube videos. While recording, Jordan sometimes stops talking to his viewers and talks to YOU, his editor, the way he would talk to a human editor: "cut that out", "I forgot to mention something at the beginning", "put this part earlier", "that goes before the part about...", "add a picture of it here".`
 
-var findSchema = map[string]any{"type": "object", "properties": map[string]any{
-	"ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}}, "required": []string{"ids"}}
+var findSchema = jsonSchema("instruction_ids", map[string]any{"type": "object", "properties": map[string]any{
+	"ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}}, "required": []string{"ids"}})
 
-var whatSchema = map[string]any{"type": "object", "properties": map[string]any{
+var whatSchema = jsonSchema("instruction", map[string]any{"type": "object", "properties": map[string]any{
 	"request_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
 	"action":        map[string]any{"type": "string", "enum": []string{"move", "cut", "other", "none"}},
 	"part_first_id": map[string]any{"type": "integer"},
 	"part_last_id":  map[string]any{"type": "integer"},
 	"request":       map[string]any{"type": "string"},
-}, "required": []string{"request_ids", "action", "part_first_id", "part_last_id", "request"}}
+}, "required": []string{"request_ids", "action", "part_first_id", "part_last_id", "request"}})
 
-var whereSchema = map[string]any{"type": "object", "properties": map[string]any{
+var whereSchema = jsonSchema("place", map[string]any{"type": "object", "properties": map[string]any{
 	"after_id":    map[string]any{"type": "integer"},
 	"after_words": map[string]any{"type": "string"},
-}, "required": []string{"after_id", "after_words"}}
+}, "required": []string{"after_id", "after_words"}})
 
 // instructions finds and understands every instruction (cached per guidance).
 func (r *run) instructions(ss []Sentence, fresh bool) []Instruction {
@@ -107,7 +109,7 @@ func (r *run) instructions(ss []Sentence, fresh bool) []Instruction {
 		}
 	}
 	var list []Instruction
-	for _, g := range groups(found, 4) {
+	for _, g := range groups(found, groupGap) {
 		var reads []modelRead
 		for _, spec := range readers {
 			mr, err := readInstruction(spec, ss, g)
@@ -118,10 +120,11 @@ func (r *run) instructions(ss []Sentence, fresh bool) []Instruction {
 			reads = append(reads, mr)
 		}
 		in := combine(reads, ss)
-		r.logf("  instructions at %s: %s - %s", clock(ss[g[0]].Start), in.Action, in.Note)
-		if in.Action != "none" {
-			list = append(list, in)
+		if len(reads) > 0 {
+			in.Cleared = slices.DeleteFunc(slices.Clone(g), func(id int) bool { return slices.Contains(reads[0].Request, id) })
 		}
+		r.logf("  instructions at %s: %s - %s", clock(ss[g[0]].Start), in.Action, in.Note)
+		list = append(list, in) // "none" too: its cleared sentences may go back in
 	}
 	saved.Sentences, saved.List = len(ss), list
 	writeJSON(path, saved)
@@ -150,6 +153,7 @@ func findInstructions(spec localModelSpec, ss []Sentence, logf func(string, ...a
 	if err != nil {
 		return nil, err
 	}
+	defer m.client.Close()
 	logf("instructions: %s is listing where Jordan talks to his editor...", spec.name)
 	var out []int
 	const size, overlap = 40, 8
@@ -177,6 +181,12 @@ func findInstructions(spec localModelSpec, ss []Sentence, logf func(string, ...a
 	sort.Ints(out)
 	return out, nil
 }
+
+// groupGap: he gives an instruction, talks through the part, then confirms it
+// ("put this at the beginning" ... "so that's the part, I want that to go at
+// the beginning" - 17 sentences apart on 2026-10-12), so one group spans it.
+// ponytail: two different instructions this close become one reading (one action).
+const groupGap = 25
 
 // groups joins found sentences that are at most gap apart.
 func groups(found map[int][]string, gap int) [][]int {
@@ -217,6 +227,7 @@ func readInstruction(spec localModelSpec, ss []Sentence, g []int) (modelRead, er
 	if err != nil {
 		return mr, err
 	}
+	defer m.client.Close()
 	a, b := contextFor(ss, g)
 	var quoted []string
 	for _, id := range g {
@@ -226,7 +237,9 @@ func readInstruction(spec localModelSpec, ss []Sentence, g []int) (modelRead, er
 		"\nThese sentences may be Jordan talking to his editor:\n" + strings.Join(quoted, "\n") +
 		"\n\nAnswer in parts:\n" +
 		"- action: what he asks the editor to do. \"move\" = put a part of the video somewhere else (e.g. he forgot to mention something and says it belongs earlier); \"cut\" = take a part out; \"other\" = anything else (add a picture, music, a title...); \"none\" = he is not talking to the editor here.\n" +
-		"- request_ids: the ids of every sentence where he talks to the editor about this, including when he repeats or confirms it. These are cut from the video.\n" +
+		"- request_ids: the ids of every sentence where he talks to the editor about this, including when he repeats or confirms it and when he points the part out (\"so that's the part\", \"from here\", \"up to here\"). These are cut from the video.\n" +
+		"  He often gives the instruction BEFORE the part (\"put this at the beginning\"), talks through the part to his viewers, and confirms it AFTER (\"so that's the part, I want that to go at the beginning\"). Then the part is everything he says between the two.\n" +
+		"  Not every listed sentence is for the editor: \"oh wait, I forgot to mention\" said to his viewers, followed by more of his story, is part of the video.\n" +
 		"- part_first_id, part_last_id: the first and last id of the part he means (what to move or cut). Not the sentences where he talks to the editor. -1 when there is no such part.\n" +
 		"- request: his request in at most 15 words."
 	raw, err := m.chat(instrRole, user, whatSchema, 400)
@@ -266,25 +279,18 @@ func spanText(ss []Sentence, a, b int) string {
 	return strings.Join(t, " ")
 }
 
-// combine: the majority's action stands (a tie goes to the lead, the first
-// read); the sentences come from the first model in the majority. A model
-// whose anchor words do not match its anchor id is not trusted for the place.
+// combine: the lead (Gemma-4 12B, the first read) decides the action - on
+// 2026-10-12 the two 4B models out-voted it and would have moved a sentence he
+// said to his viewers. The others corroborate; a model with the same action
+// fills in when the lead's place does not check out (its anchor words must
+// match its anchor id).
 func combine(reads []modelRead, ss []Sentence) Instruction {
 	in := Instruction{Action: "none", PartFirst: -1, PartLast: -1, After: -1}
 	if len(reads) == 0 {
 		in.Note = "no model could read it"
 		return in
 	}
-	count := map[string]int{}
-	for _, mr := range reads {
-		count[mr.Action]++
-	}
 	best := reads[0].Action
-	for a, n := range count {
-		if n > count[best] {
-			best = a
-		}
-	}
 	var said []string
 	for _, mr := range reads {
 		d := mr.Action
@@ -319,6 +325,7 @@ func combine(reads []modelRead, ss []Sentence) Instruction {
 	in.Request = slices.DeleteFunc(slices.Clone(in.Request), func(id int) bool {
 		return id < 0 || id >= len(ss)
 	})
+	bracket(&in)
 	switch {
 	case (best == "move" || best == "cut") && (in.PartFirst < 0 || in.PartLast < in.PartFirst || in.PartLast >= len(ss)):
 		in.Note += "; not applied: the part is not a valid range"
@@ -328,6 +335,27 @@ func combine(reads []modelRead, ss []Sentence) Instruction {
 		in.Applied = true
 	}
 	return in
+}
+
+// bracket: when he asked both before and after the part, the part is
+// everything between those two requests (the 12B ended the part early on
+// 2026-10-12: at 6:28, where he went on to 6:57 "so that's the part").
+func bracket(in *Instruction) {
+	if in.PartFirst < 0 || in.PartLast < in.PartFirst {
+		return
+	}
+	before, after := -1, -1
+	for _, id := range in.Request {
+		if id < in.PartFirst && id > before {
+			before = id
+		}
+		if id > in.PartLast && (after < 0 || id < after) {
+			after = id
+		}
+	}
+	if before >= 0 && after >= 0 {
+		in.PartFirst, in.PartLast = before+1, after-1
+	}
 }
 
 // anchorMatches: at least half of the quoted words are in that sentence.
@@ -351,27 +379,52 @@ func anchorMatches(ss []Sentence, id int, quote string) bool {
 	return n > 0 && 2*hit >= n
 }
 
-// applyInstructions overrides the content decision: request sentences are
-// cut, a moved part is kept (but not its filler: "So anyways."), a cut part is cut.
+// applyInstructions overrides the content decision. Request sentences are
+// cut; a cut part is cut; inside a moved part the vote stands (it had cut the
+// lone "Whatever." that opens it, 2026-10-13). A sentence the finders flagged
+// that the lead does NOT read as talk to the editor goes back in when the vote
+// cut it (and it is not filler): the voters cut "Oh wait, I forgot to mention."
+// - said to his viewers - as an instruction. Restored lists those, for a region.
 func applyInstructions(ds []Decision, ss []Sentence, list []Instruction) {
-	set := func(id int, keep bool, note string) {
+	at := func(id int) *Decision {
 		for i := range ds {
 			if ds[i].ID == id {
-				ds[i].Keep, ds[i].Note = keep, note
+				return &ds[i]
 			}
 		}
+		return nil
 	}
-	for _, in := range list {
+	for k := range list {
+		in := &list[k]
+		in.Restored = nil
+		for _, id := range in.Cleared {
+			if d := at(id); d != nil && !d.Keep && !isFiller(ss[id].Text) {
+				d.Keep, d.Note = true, "kept: the voters took it for talk to the editor; "+in.lead()+" reads it as said to the viewers"
+				in.Restored = append(in.Restored, id)
+			}
+		}
 		if !in.Applied {
 			continue
 		}
-		for id := in.PartFirst; id <= in.PartLast && in.Action != "other"; id++ {
-			set(id, in.Action == "move" && !isFiller(ss[id].Text), in.Action+": per Jordan's instruction (\""+short(in.Said, 60)+"\")")
+		for id := in.PartFirst; id <= in.PartLast && in.Action == "cut"; id++ {
+			if d := at(id); d != nil {
+				d.Keep, d.Note = false, "cut: per Jordan's instruction (\""+short(in.Said, 60)+"\")"
+			}
 		}
-		for _, id := range in.Request { // after the part: a request said inside it is still cut
-			set(id, false, "cut: Jordan talking to his editor (\""+short(in.Said, 60)+"\")")
+		for _, id := range in.Request { // last: a request said inside the part is still cut
+			if d := at(id); d != nil {
+				d.Keep, d.Note = false, "cut: Jordan talking to his editor (\""+short(in.Said, 60)+"\")"
+			}
 		}
 	}
+}
+
+// lead is the model that read this group first (the 12B when it is there).
+func (in Instruction) lead() string {
+	if m, _, ok := strings.Cut(in.Note, ":"); ok {
+		return m
+	}
+	return "the lead model"
 }
 
 // boundary is a cut point in the pause before sentence i (or after the last).
@@ -439,6 +492,14 @@ func reorder(ps []span, ss []Sentence, list []Instruction, fps float64) []span {
 func instructionMarks(list []Instruction, ss []Sentence, ps []piece) []mark {
 	var ms []mark
 	for _, in := range list {
+		for _, id := range in.Restored {
+			if t, _, ok := toTimeline(ps, ss[id].Start, ss[id].End); ok {
+				ms = append(ms, mark{At: t, Label: short(fmt.Sprintf("Kept \"%s\" - the voters took it for talk to the editor; %s reads it as said to the viewers", ss[id].Text, in.lead()), 230)})
+			}
+		}
+		if in.Action == "none" {
+			continue
+		}
 		at := ss[in.Request0()].Start
 		said := fmt.Sprintf("you said at %s: \"%s\"", clock(at), short(in.Said, 80))
 		switch {
@@ -473,11 +534,22 @@ func (in Instruction) Request0() int {
 
 // writeInstructions lists his on-camera instructions and what was done, for the report.
 func writeInstructions(b *strings.Builder, list []Instruction, ss []Sentence) {
-	fmt.Fprintf(b, "## What you told the editor on camera (%d)\n\n", len(list))
-	if len(list) == 0 {
-		b.WriteString("Nothing - no model heard you talk to the editor.\n\n")
-	}
+	var real []Instruction
+	var kept []string
 	for _, in := range list {
+		if in.Action != "none" {
+			real = append(real, in)
+		}
+		for _, id := range in.Restored {
+			kept = append(kept, fmt.Sprintf("- %s \"%s\" - kept: the voters took it for talk to the editor; %s reads it as said to the viewers\n", clock(ss[id].Start), ss[id].Text, in.lead()))
+		}
+	}
+	fmt.Fprintf(b, "## What you told the editor on camera (%d)\n\n", len(real))
+	if len(real) == 0 {
+		b.WriteString("Nothing - no model heard you talk to the editor.\n")
+	}
+	b.WriteString(strings.Join(kept, ""))
+	for _, in := range real {
 		done := "**not done**"
 		switch {
 		case in.Applied && in.Action == "move":

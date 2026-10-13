@@ -194,7 +194,7 @@ func writeTogether(b *strings.Builder, sel Selection, ss []Sentence) {
 // ("Like", "Yeah.", "Um", "Okay." - Jordan: "that's nonsense", 2026-10-08).
 // Not "no" or "what": those can be his answer or reaction.
 var fillerWords = map[string]bool{"like": true, "um": true, "uh": true, "yeah": true, "okay": true, "ok": true,
-	"so": true, "right": true, "oh": true, "well": true, "anyway": true, "anyways": true, "hmm": true,
+	"so": true, "right": true, "oh": true, "well": true, "anyway": true, "anyways": true, "whatever": true, "alright": true, "hmm": true,
 	"you": true, "know": true, "i": true, "mean": true, "dude": true, "man": true, "just": true, "and": true, "but": true}
 
 func cutFiller(ss []Sentence, ds []Decision) []Decision {

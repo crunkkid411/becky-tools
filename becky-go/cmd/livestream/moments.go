@@ -306,8 +306,8 @@ End with one line of JSON: {"actions": [{"label": "one of the labels", "what": "
 // momentKeeps: the labels that go with his line. Everything else stays cut.
 var momentKeeps = map[string]bool{"reaction": true, "gesture": true, "acting": true}
 
-// momentRunner is Gemma-4 12B, always on the processor (it does not fit the
-// 8 GB card). Measured on the 27-livestream's moments: E4B called the head drop,
+// momentRunner is Gemma-4 12B, split between the graphics card and the
+// processor (it does not fit the 8 GB card whole). Measured on the 27-livestream's moments: E4B called the head drop,
 // the excited face and the wave "head level, neutral expression" frame after
 // frame (it sees the picture - "bright green hair, black t-shirt" - but not
 // these details); 12B called them "head down" 3:17.5-3:18.5, "wide-eyed
@@ -324,7 +324,10 @@ func momentRunner(cfg config.Config) (*avlm.Runner, string) {
 		note = "Gemma 12B's picture file is missing, so the smaller Gemma watched (it misses head and face details)"
 	}
 	r := avlm.New(m, mp, cfg.LlamaServer, "", cfg.FFmpeg, cfg.FFprobe, nil)
-	r.NGL = 0
+	// As many layers on the graphics card as fit (llama.cpp's -ngl auto), the
+	// rest on the processor. All on the processor was ~1.5 min a stretch: a
+	// 24-minute YouTube video had 285 stretches, ~7 hours (2026-10-13).
+	r.NGL = -1
 	// ponytail: half the default context - at most momentMaxFrames frames
 	// (~5k tokens) plus the prompt and answer; at 16384 the 12B's cache alone was several GB
 	// and Claude Code stopped the run twice for low memory (2026-10-07)
@@ -481,11 +484,15 @@ func keepMoments(cfg config.Config, media, work, stem string, ranges []Range, pi
 	if err != nil {
 		return pieces, nil, "the visual-moment check did not run: " + err.Error()
 	}
-	var watch []int
+	var flagged []int
 	for i := range cands {
 		if cands[i].Signals = momentSignals(pics, cands[i].A, cands[i].B); cands[i].Signals != nil {
-			watch = append(watch, i)
+			flagged = append(flagged, i)
 		}
+	}
+	watch, everywhere := informative(cands, flagged)
+	if len(everywhere) > 0 {
+		logf("  on this footage %s fires in most stretches, so it alone does not get a stretch watched", strings.Join(everywhere, " and "))
 	}
 	logf("  %d of them show something; Gemma watches each one", len(watch))
 	cachePath := filepath.Join(work, "moments-cache.json")
@@ -548,6 +555,48 @@ func keepMoments(cfg config.Config, media, work, stem string, ranges []Range, pi
 	logf("  %d put back", len(add))
 	return addPieces(pieces, add), cands, note
 }
+
+// informative drops a signal that fires in most stretches of this footage: it
+// says nothing about any one of them. On the OBS recording of 2026-10-12 "face
+// mesh lost him" fired in most stretches, so Gemma would have watched 288
+// pauses (~7 hours of 12B); with it set aside, 93 had another signal.
+// A stretch is watched when one of its other signals fires.
+func informative(cands []moment, flagged []int) (watch []int, everywhere []string) {
+	kind := func(s string) string {
+		if i := strings.LastIndex(s, " x"); i > 0 {
+			return s[:i]
+		}
+		return s
+	}
+	n := map[string]int{}
+	for _, i := range flagged {
+		for _, s := range cands[i].Signals {
+			n[kind(s)]++
+		}
+	}
+	common := map[string]bool{}
+	for k, c := range n {
+		if len(flagged) >= momentCommonMin && float64(c) > momentCommonShare*float64(len(flagged)) {
+			common[k] = true
+			everywhere = append(everywhere, "\""+k+"\"")
+		}
+	}
+	sort.Strings(everywhere)
+	for _, i := range flagged {
+		for _, s := range cands[i].Signals {
+			if !common[kind(s)] {
+				watch = append(watch, i)
+				break
+			}
+		}
+	}
+	return watch, everywhere
+}
+
+const (
+	momentCommonMin   = 20  // fewer stretches than this: every signal counts
+	momentCommonShare = 0.6 // a signal in more than this share of them says nothing
+)
 
 // momentMarks: a marker where each put-back moment starts on the timeline.
 func momentMarks(ms []moment, ps []piece) []mark {

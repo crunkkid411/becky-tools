@@ -554,7 +554,9 @@ func runLead(lead localModelSpec, ss []Sentence, guidance, data string, logf fun
 		return sel, err
 	}
 	defer lm.client.Close()
-	if sel.Topics, err = lm.wantedTopics(guidance); err != nil {
+	if fixedTopics != nil { // --video: one topic; the labels do the cutting
+		sel.Topics = fixedTopics
+	} else if sel.Topics, err = lm.wantedTopics(guidance); err != nil {
 		sel.Topics = []string{guidance}
 		sel.Notes = append(sel.Notes, fmt.Sprintf("%s could not list the wanted topics (%v), so the whole guidance was one topic", lead.name, err))
 	}
