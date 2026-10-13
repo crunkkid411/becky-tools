@@ -340,7 +340,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 	if r.video { // what he tells his editor on camera is followed (instructions.go)
 		t0 = time.Now()
 		r.instr = r.instructions(ss, fresh)
-		applyInstructions(sel.Decisions, r.instr)
+		applyInstructions(sel.Decisions, ss, r.instr)
 		r.step("his instructions", t0)
 	}
 

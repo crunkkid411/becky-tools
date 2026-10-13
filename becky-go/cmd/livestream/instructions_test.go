@@ -38,7 +38,7 @@ func TestCombineMajorityAndAnchorCheck(t *testing.T) {
 		t.Fatalf("models %v", in.Models)
 	}
 	ds := []Decision{{ID: 0, Keep: true}, {ID: 1, Keep: true}, {ID: 2, Keep: true}, {ID: 3, Keep: true}, {ID: 4, Keep: false}, {ID: 5, Keep: true}}
-	applyInstructions(ds, []Instruction{in})
+	applyInstructions(ds, ss, []Instruction{in})
 	keep := []bool{}
 	for _, d := range ds {
 		keep = append(keep, d.Keep)

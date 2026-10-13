@@ -767,6 +767,42 @@ Rules learned the hard way:
   the run says so; it never guesses.
 - Never overwrites a .veg; refuses when VEGAS has unsaved work open.
 
+# YOUTUBE VIDEO EDIT — a raw YouTube recording to a VEGAS edit that follows his on-camera instructions (2026-10-12)
+
+```bat
+REM drag the video onto it, or put it in the footage folder and double-click
+workflows\youtube\YouTube-Edit_System-One.bat
+```
+```bash
+becky-livestream --video --model systemone <video>   # the livestream workflow, video mode
+```
+
+Everything the livestream edit does (System One + Gemma-4 + Qwen3.5 vote, the models read the kept
+edit, dead air, breaths, visual moments, publish check, VEGAS build, edit check, regions), minus the
+live chat and the "looking down = reading chat" rule. Default guidance (no `guidance.txt`): keep
+everything he says to his viewers; cut the clap/getting ready, flubs he says again, his words to the
+editor, anything after the goodbye.
+
+**His on-camera instructions (`instructions.go`) are followed, not just cut:**
+1. Find (recall first): Qwen3.5 and Gemma-4 each list, 40 sentences at a time, every sentence where he
+   talks to the editor; any voter that labelled a sentence `instruction` adds it. Nearby hits (<= 4
+   sentences apart) form one group.
+2. Understand, in parts: Gemma-4 12B (lead), Gemma-4 and Qwen3.5 each get the transcript from the
+   start to just after the group and answer: action (move / cut / other / none), which sentences are
+   the request, which are the part he means; for a move, a second call: the sentence the part comes
+   right AFTER, plus its first 6 words (a place whose words do not match its id is not trusted).
+3. Apply in code: majority action; the first model in the majority gives the sentences. His request
+   sentences are cut, a moved part is kept, and its pieces are laid AFTER the anchor (source times never
+   change - only the order BeckyKeepList lays them in). "other" (add a picture...) gets a region with
+   his words. Every instruction gets a region saying what was done and by which models; the report has
+   "What you told the editor on camera". Cache: `becky-edit\instructions-systemone.json`.
+
+**OBS recordings (`obs.go`):** a file with 3+ audio streams is OBS's. It needs `Prep OBS Footage.bat`
+first (its `sync.json` holds `audio_delay_s` for ffmpeg and `vegas_audio_delay_s` for VEGAS). All
+listening (transcript, silences, breaths, the edit check) uses `becky-edit\<stem>.synced.mkv` (picture
+copied, mic moved by the ffmpeg delay); VEGAS gets the ORIGINAL file with the mic (+ desktop audio
+when it is not silent, < -70 dB = left out) placed by the VEGAS delay via `audio` job lines.
+
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
 ## THE SILENCE CUT WORKS — ONE CALL, cut from the AUDIO (2026-08-26)

@@ -352,8 +352,8 @@ func anchorMatches(ss []Sentence, id int, quote string) bool {
 }
 
 // applyInstructions overrides the content decision: request sentences are
-// cut, a moved part is kept, a cut part is cut.
-func applyInstructions(ds []Decision, list []Instruction) {
+// cut, a moved part is kept (but not its filler: "So anyways."), a cut part is cut.
+func applyInstructions(ds []Decision, ss []Sentence, list []Instruction) {
 	set := func(id int, keep bool, note string) {
 		for i := range ds {
 			if ds[i].ID == id {
@@ -366,7 +366,7 @@ func applyInstructions(ds []Decision, list []Instruction) {
 			continue
 		}
 		for id := in.PartFirst; id <= in.PartLast && in.Action != "other"; id++ {
-			set(id, in.Action == "move", in.Action+": per Jordan's instruction (\""+short(in.Said, 60)+"\")")
+			set(id, in.Action == "move" && !isFiller(ss[id].Text), in.Action+": per Jordan's instruction (\""+short(in.Said, 60)+"\")")
 		}
 		for _, id := range in.Request { // after the part: a request said inside it is still cut
 			set(id, false, "cut: Jordan talking to his editor (\""+short(in.Said, 60)+"\")")
