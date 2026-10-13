@@ -117,7 +117,10 @@ func (r *run) report(sel Selection, ss []Sentence, ranges []Range, predicted []s
 		}
 	}
 	fmt.Fprintf(&b, "- %d sentences: %s\n", len(sel.Decisions), strings.Join(ls, ", "))
-	if together {
+	if together && r.video {
+		b.WriteString("- System One, Gemma-4 and Qwen3.5 each decided every sentence on their own; the majority stands\n")
+		b.WriteString("- Then Gemma-4, Qwen3.5 and Gemma-4 12B each read the kept lines in order. A line two of the three readers cut is cut; one reader's cut needs a voter to agree. Repeated until nothing changed\n")
+	} else if together {
 		b.WriteString("- System One, Gemma-4 and Qwen3.5 each decided every sentence on their own; the majority stands, and a split keep while he looks down at his screen or answers chat is cut\n")
 		b.WriteString("- Then Gemma-4, Qwen3.5 and Gemma-4 12B each read the kept lines in order, with where he is looking and what chat had just asked on each line. A line two of the three readers cut is cut; one reader's cut needs other signals (a voter, his posture) to agree. Repeated until nothing changed\n")
 	} else if sel.Reviewer != "" {

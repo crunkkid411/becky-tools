@@ -193,8 +193,14 @@ func contentRanges(words []Word, keep []bool, keeps []span, au *audio, fps, dura
 		r := Range{W0: fw, W1: lw, InHow: "file-start", OutHow: "file-end",
 			First: wordsText(words, fw, min(fw+5, lw)), Last: wordsText(words, max(fw, lw-5), lw)}
 
-		if fw > 0 {
-			pw := words[fw-1]
+		// the first section starts at his first word like every other one: on the
+		// 2026-10-12 recording it opened on 4 s of him reaching for the camera
+		// (getting ready); a "before" moment can still put that back
+		if fw > 0 || words[0].Start > maxLead {
+			pw := Word{} // nothing before the first word
+			if fw > 0 {
+				pw = words[fw-1]
+			}
 			K, ok := k.at(words[fw].Start + 0.15)
 			if !ok {
 				K, ok = k.after(words[fw].Start)

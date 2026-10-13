@@ -385,7 +385,16 @@ type heldCheck struct {
 	Done      bool   `json:"done"`
 }
 
-func (h heldCheck) yes() bool { return h.FalconYes || h.GemmaYes }
+// yes: Falcon or Gemma sees something held up - unless Gemma's own words say
+// it is his microphone. On the 2026-10-12 YouTube video he holds a mic at his
+// chin the whole time: Falcon called it "a bottle (0.95 sure)", Gemma "holding a
+// microphone toward the camera", and 145 breaths were left in for it.
+func (h heldCheck) yes() bool {
+	if g := strings.ToLower(h.Gemma); strings.Contains(g, "microphone") || strings.Contains(g, " mic") {
+		return false
+	}
+	return h.FalconYes || h.GemmaYes
+}
 
 func (h heldCheck) why() string {
 	var parts []string
@@ -398,7 +407,7 @@ func (h heldCheck) why() string {
 	return strings.Join(parts, "; ")
 }
 
-const heldPrompt = `Look at this frame from a livestream. Is the man holding something up toward the camera, for example raising a drink for a toast or showing an object to the viewer? Touching his hair or face does not count. Answer with JSON only: {"holding_up": true or false, "what": "what his hands are doing, at most 8 words"}`
+const heldPrompt = `Look at this frame from a livestream. Is the man holding something up toward the camera, for example raising a drink for a toast or showing an object to the viewer? Touching his hair or face does not count. Name a microphone when he holds one. Answer with JSON only: {"holding_up": true or false, "what": "what his hands are doing, at most 8 words"}`
 
 // vegasOpen: VEGAS is running. Gemma then runs on the processor: VEGAS (~3 GB
 // of graphics memory) + Gemma on the GPU (~5.2 GB) does not fit in 8 GB, and an

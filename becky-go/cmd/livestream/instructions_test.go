@@ -109,3 +109,13 @@ func TestInformativeDropsSignalEverywhere(t *testing.T) {
 		t.Fatalf("small footage: watch %v", w)
 	}
 }
+
+// His microphone is not "holding something up" (2026-10-13: 145 breaths left in for it).
+func TestHeldMicrophoneDoesNotCount(t *testing.T) {
+	if (heldCheck{FalconYes: true, Falcon: "a bottle (0.95 sure)", GemmaYes: true, Gemma: "holding a microphone toward the camera"}).yes() {
+		t.Fatal("the microphone counted as held up")
+	}
+	if !(heldCheck{GemmaYes: true, Gemma: "raising a drink for a toast"}).yes() {
+		t.Fatal("a toast did not count")
+	}
+}

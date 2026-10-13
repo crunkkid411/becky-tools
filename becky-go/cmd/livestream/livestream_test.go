@@ -833,3 +833,17 @@ func TestJudgeActions(t *testing.T) {
 		t.Error("an answer without actions must be an error")
 	}
 }
+
+// The first section starts at his first word, not at the file's start: the
+// 2026-10-12 video opened on 4 s of him reaching for the camera.
+func TestFirstSectionStartsAtFirstWord(t *testing.T) {
+	ws := []Word{{Word: "What's", Start: 2.5, End: 2.9}, {Word: "up?", Start: 3.0, End: 3.4}}
+	keeps := []span{{0.3, 3.8}}
+	rs := contentRanges(ws, []bool{true, true}, keeps, pcmWith(16000, 8000, 30), 30, 4.0)
+	if len(rs) != 1 || rs[0].In < 2.2 || rs[0].In > 2.61 {
+		t.Fatalf("first section starts at %+v", rs)
+	}
+	if ps := finalPieces(rs, keeps, ws, 30); len(ps) != 1 || ps[0].A < 2.2 {
+		t.Errorf("first piece = %+v", ps)
+	}
+}

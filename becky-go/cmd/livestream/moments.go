@@ -632,7 +632,7 @@ func momentLine(ms []moment, note string) string {
 	}
 	watched, kept := 0, 0
 	for _, m := range ms {
-		if m.Signals != nil {
+		if m.Gemma != "" { // Gemma watched it (a signal that fires everywhere alone does not get it watched)
 			watched++
 		}
 		if m.Keep {
