@@ -1,25 +1,32 @@
 @echo off
 setlocal
 REM ===========================================================================
-REM YouTube Video Edit - System One
+REM YouTube Video Edit
 REM
 REM Edits the raw recording of a YouTube video (not a livestream) into the
-REM video you post, and leaves a saved VEGAS Pro project next to it:
-REM   <folder name>-systemone.veg
+REM video you post, and saves ONE VEGAS Pro project next to it:
+REM   <folder name>-video.veg
+REM Run it again and it saves over that same project - unless you saved the
+REM project yourself since, then your version is kept and a new one is made.
 REM
-REM The same workflow as the livestream edits, minus the live chat:
-REM System One, Gemma-4 and Qwen3.5 vote on every sentence, the models read
-REM the whole edit, dead air and breaths come out, and the edit is checked.
-REM What you tell your editor on camera ("I forgot to mention...", "that goes
-REM earlier", "cut that") is heard by Gemma-4 12B, Gemma-4 and Qwen3.5 and
-REM followed; your words to the editor are cut, and a region says what was done.
+REM How it decides (the openshorts way, all on this PC):
+REM   - everything you say stays; the silences and breaths come out
+REM   - Gemma-4 12B reads the video in parts and names only the exceptions:
+REM     mic checks and getting ready, after your goodbye, and retakes (the
+REM     words must show you said it again, or it stays)
+REM   - what you tell your editor on camera is followed, and your words to
+REM     the editor are cut
+REM   - then it reads the edit like a viewer and puts back any cut line the
+REM     story needs
+REM   - it writes title options, a description and chapters for the upload:
+REM     becky-edit\youtube-upload.txt
+REM No notes are put on the timeline; only a short region where something
+REM may not be postable (another creator's video, an address on screen).
 REM
-REM OBS recordings: run "Prep OBS Footage.bat" on the folder first (it lines
-REM the sound up with the picture); this edit reuses that sync.
+REM OBS recordings: run "Prep OBS Footage.bat" on the folder first.
 REM
 REM Drag the video onto this file, or put this file in the footage folder and
-REM double-click it. Your video is NEVER changed. Everything it writes goes
-REM into <footage folder>\becky-edit\  plus the new .veg project.
+REM double-click it. Your video is NEVER changed.
 REM ===========================================================================
 
 cd /d "%~dp0"
@@ -32,6 +39,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-becky-livestream --video --model systemone %*
+becky-livestream --video %*
 echo.
 pause
