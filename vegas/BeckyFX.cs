@@ -23,15 +23,23 @@
  *         top-left origin) - one keyframe per line, so the mask follows the thing frame by frame.
  *   duck  <TAB> <first frame> <TAB> <length> <TAB> <dB, e.g. -60 to silence>
  *   audio <TAB> <first frame> <TAB> <file.wav> <TAB> <track name>
+ *   bleep <TAB> <first frame> <TAB> <length> <TAB> <sound file> <TAB> <gain dB> <TAB> <audio track number, 0 = top>
+ *         Jordan's censor: his speech in the range is cut out and the sound fills the gap ON that track.
+ *   trackfx <TAB> 0 <TAB> 0 <TAB> <media file> <TAB> <plug-in> <TAB> <preset> [<TAB> <plug-in> <TAB> <preset> ...]
+ *         track effects, in order, on every video track showing the media (his hj-starter package).
+ *   overlay <TAB> <first frame> <TAB> <length> <TAB> <file> <TAB> <speech track number>
+ *   insert  <TAB> <first frame> <TAB> <length> <TAB> <file> <TAB> <speech track number>
+ *         a file of his: over his picture on a B-ROLL track, or inserted (everything after moves later).
  * fx and zoom go on the TOP video track that has footage (not a title) at <first frame>. duck puts
  * points on the volume envelope of every audio track with sound there. audio places a file
  * (e.g. a bleep tone) on the named audio track, made if missing.
+ * A job is ONE Undo step and all or nothing: a line that fails cancels it.
  *
  * HOW TO RUN
  *   On the open project: becky-vegas run_script path=<this file> job=<job.txt>  (one Undo step)
  *   Headless on a COPY:  BECKY_FX_JOB=<job> BECKY_FX_VEG=<copy.veg> BECKY_FX_OUT=<new.veg>
  *                        vegas180.exe -SCRIPT:<this file>   (refuses to save over BECKY_FX_VEG)
- * Never a dialog. Writes <job>.result.txt: "ok fx=N duck=N audio=N" or "error: ...".
+ * Never a dialog. Writes <job>.result.txt: "ok fx=N duck=N audio=N bleep=N placed=N trackfx=N" or "error: ...".
  * ----------------------------------------------------------------------------
  */
 
@@ -75,9 +83,11 @@ public class EntryPoint
         if (headless) vegas.Exit();
     }
 
+    // Apply runs every line as ONE Undo step, all or nothing: a line that fails
+    // cancels the whole job, so the project is left exactly as it was.
     static string Apply(Vegas vegas, string[] lines)
     {
-        int fx = 0, duck = 0, audio = 0;
+        int fx = 0, duck = 0, audio = 0, bleep = 0, placed = 0, trackfx = 0;
         using (UndoBlock u = new UndoBlock("Becky: effects"))
         {
             foreach (string line in lines)
@@ -86,16 +96,34 @@ public class EntryPoint
                 if (f.Length < 4) continue;
                 try
                 {
-                    ApplyOne(vegas, f, ref fx, ref duck, ref audio);
+                    switch (f[0])
+                    {
+                        case "bleep":
+                            bleep += Bleep(vegas.Project, Timecode.FromFrames(long.Parse(f[1].Trim())), Timecode.FromFrames(Len(f[2])),
+                                           f[3].Trim(), Num(f[4]), int.Parse(f[5].Trim()));
+                            break;
+                        case "trackfx":
+                            trackfx += TrackFx(vegas, f);
+                            break;
+                        case "overlay":
+                        case "insert":
+                            placed += Place(vegas.Project, f[0] == "insert", Timecode.FromFrames(long.Parse(f[1].Trim())), Timecode.FromFrames(Len(f[2])),
+                                            f[3].Trim(), int.Parse(f[4].Trim()));
+                            break;
+                        default:
+                            ApplyOne(vegas, f, ref fx, ref duck, ref audio);
+                            break;
+                    }
                 }
                 catch (Exception ex)
                 {
+                    u.Cancel = true;
                     string where = ex.StackTrace == null ? "" : ex.StackTrace.Trim().Split('\n')[0].Trim();
                     throw new ApplicationException("\"" + line.Trim().Replace('\t', ' ') + "\": " + ex.Message + " (" + where + ")");
                 }
             }
         }
-        return "fx=" + fx + " duck=" + duck + " audio=" + audio;
+        return "fx=" + fx + " duck=" + duck + " audio=" + audio + " bleep=" + bleep + " placed=" + placed + " trackfx=" + trackfx;
     }
 
     static void ApplyOne(Vegas vegas, string[] f, ref int fx, ref int duck, ref int audio)
@@ -346,6 +374,194 @@ public class EntryPoint
         }
         if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);
         return n;
+    }
+
+    // Bleep is Jordan's censor (2026-10-14, vegas\censor-example.JPG): his speech
+    // in the range is cut out of the speech track and the censor sound goes in
+    // the gap, ON that track, trimmed to the gap, its own gain lowered to <dB>
+    // (the blue handle in the middle of the event = FadeIn.Gain). The cut-out
+    // speech is taken out of its group first - VEGAS deletes grouped events
+    // together, and that would take his picture with it - and the rest of the
+    // group is grouped again (VEGAS's own idiom: new group, add it, then events).
+    static int Bleep(Project p, Timecode at, Timecode len, string file, double db, int trackNo)
+    {
+        if (!File.Exists(file)) throw new ApplicationException("no file " + file);
+        AudioTrack track = null;
+        int k = 0;
+        foreach (Track t in p.Tracks)
+        {
+            if (!t.IsAudio()) continue;
+            if (k++ == trackNo) { track = (AudioTrack)t; break; }
+        }
+        if (track == null) throw new ApplicationException("no audio track number " + trackNo);
+        Timecode end = at + len;
+        SplitAt(track, at);
+        SplitAt(track, end);
+        List<TrackEvent> speech = new List<TrackEvent>();
+        foreach (TrackEvent ev in track.Events) if (ev.Start >= at && ev.End <= end) speech.Add(ev);
+        if (speech.Count == 0) throw new ApplicationException("no speech on the track in frames " + at.FrameCount + "-" + end.FrameCount);
+        foreach (TrackEvent ev in speech) Ungroup(p, ev);
+        foreach (TrackEvent ev in speech) track.Events.Remove(ev);
+        Media media = Media.CreateInstance(p, file);
+        MediaStream stream = media.GetAudioStreamByIndex(0);
+        if (stream == null) throw new ApplicationException("no audio in " + file);
+        AudioEvent bleep = track.AddAudioEvent(at, len);
+        bleep.AddTake(stream);
+        bleep.Name = "censor";
+        bleep.FadeIn.Gain = (float)Math.Pow(10.0, db / 20.0);
+        return 1;
+    }
+
+    // Ungroup takes one event out of its group without touching the others:
+    // the group is dissolved (an event cannot leave a group on its own without
+    // E_FAIL) and the other members are grouped again.
+    static void Ungroup(Project p, TrackEvent ev)
+    {
+        if (!ev.IsGrouped || ev.Group == null) return;
+        TrackEventGroup g = ev.Group;
+        List<TrackEvent> rest = new List<TrackEvent>();
+        foreach (TrackEvent m in g) if (!m.Equals(ev)) rest.Add(m);
+        p.TrackEventGroups.Remove(g);
+        if (rest.Count < 2) return;
+        TrackEventGroup ng = new TrackEventGroup();
+        p.TrackEventGroups.Add(ng);
+        foreach (TrackEvent m in rest) ng.Add(m);
+    }
+
+    // TrackFx puts plug-ins with presets, in order, on every video track that
+    // shows the media (Jordan's "primary" tracks - two for a split screen, never
+    // b-roll): his hj-starter package, one plug-in at a time (scripts cannot add
+    // a filter package). Every plug-in and preset is checked before anything is
+    // added; a plug-in a track already has is not added twice (a rerun is safe).
+    //   trackfx <TAB> 0 <TAB> 0 <TAB> <media file> <TAB> <plug-in> <TAB> <preset> [<TAB> <plug-in> <TAB> <preset> ...]
+    static int TrackFx(Vegas vegas, string[] f)
+    {
+        string media = f[3].Trim();
+        List<PlugInNode> nodes = new List<PlugInNode>();
+        List<string> presets = new List<string>();
+        for (int i = 4; i + 1 < f.Length; i += 2)
+        {
+            PlugInNode node = FindLoose(vegas.VideoFX, f[i].Trim());
+            if (node == null) throw new ApplicationException("no video effect named \"" + f[i].Trim() + "\" is installed");
+            nodes.Add(node);
+            presets.Add(f[i + 1].Trim());
+        }
+        List<Track> tracks = new List<Track>();
+        foreach (Track t in vegas.Project.Tracks)
+        {
+            if (!t.IsVideo() || t.Name == "B-ROLL") continue;
+            foreach (TrackEvent ev in t.Events)
+            {
+                if (ev.ActiveTake == null || ev.ActiveTake.Media == null) continue;
+                if (ev.ActiveTake.Media.FilePath.Equals(media, StringComparison.OrdinalIgnoreCase)) { tracks.Add(t); break; }
+            }
+        }
+        if (tracks.Count == 0) throw new ApplicationException("no video track shows " + media);
+        int n = 0;
+        foreach (Track t in tracks)
+        {
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                bool has = false;
+                foreach (Effect e in t.Effects)
+                    if (e.PlugIn != null && e.PlugIn.Name == nodes[i].Name && e.CurrentPreset != null && e.CurrentPreset.Name == presets[i]) has = true;
+                if (has) continue;
+                Effect fx = new Effect(nodes[i]);
+                t.Effects.Add(fx);
+                bool known = false;
+                foreach (EffectPreset ep in fx.Presets) if (ep.Name == presets[i]) known = true;
+                if (!known) throw new ApplicationException("\"" + nodes[i].Name + "\" has no preset \"" + presets[i] + "\"");
+                fx.Preset = presets[i];
+                n++;
+            }
+        }
+        return n;
+    }
+
+    // Place puts one of Jordan's files at the frame. overlay: its picture on a
+    // B-ROLL track above his (a still for the length; his voice goes on).
+    // insert: everything at or after the frame moves later by the length, and
+    // the clip's picture and sound go in the gap on his own tracks, grouped.
+    static int Place(Project p, bool insert, Timecode at, Timecode len, string file, int speechTrack)
+    {
+        if (!File.Exists(file)) throw new ApplicationException("no file " + file);
+        Media media = Media.CreateInstance(p, file);
+        MediaStream vs = media.GetVideoStreamByIndex(0);
+        if (vs == null) throw new ApplicationException("no picture in " + file);
+        if (!insert)
+        {
+            VideoTrack top = null;
+            foreach (Track t in p.Tracks) if (t.IsVideo() && t.Name == "B-ROLL") top = (VideoTrack)t;
+            if (top == null)
+            {
+                top = new VideoTrack(p, 0, "B-ROLL");
+                p.Tracks.Add(top);
+            }
+            VideoEvent ov = top.AddVideoEvent(at, len);
+            ov.AddTake(vs);
+            return 1;
+        }
+        Track footage = null;
+        AudioTrack speech = null;
+        int k = 0;
+        foreach (Track t in p.Tracks)
+        {
+            if (t.IsVideo() && footage == null && t.Name != "B-ROLL") footage = t;
+            if (t.IsAudio() && k++ == speechTrack) speech = (AudioTrack)t;
+        }
+        if (footage == null || speech == null) throw new ApplicationException("no footage or speech track to insert into");
+        foreach (Track t in p.Tracks) SplitAt(t, at);
+        // later first, to absolute places: nothing overlaps on the way, and a
+        // grouped partner VEGAS may have moved already lands where it belongs
+        List<TrackEvent> later = new List<TrackEvent>();
+        foreach (Track t in p.Tracks) foreach (TrackEvent ev in t.Events) if (ev.Start >= at) later.Add(ev);
+        later.Sort(delegate (TrackEvent a, TrackEvent b) { return b.Start.CompareTo(a.Start); });
+        List<Timecode> to = new List<Timecode>();
+        foreach (TrackEvent ev in later) to.Add(ev.Start + len);
+        for (int i = 0; i < later.Count; i++) later[i].Start = to[i];
+        foreach (Marker m in p.Markers) if (m.Position >= at) m.Position = m.Position + len;
+        foreach (Region r in p.Regions) if (r.Position >= at) r.Position = r.Position + len;
+        VideoEvent ve = ((VideoTrack)footage).AddVideoEvent(at, len);
+        ve.AddTake(vs);
+        TrackEventGroup g = new TrackEventGroup();
+        p.TrackEventGroups.Add(g);
+        g.Add(ve);
+        MediaStream au = media.GetAudioStreamByIndex(0);
+        if (au != null)
+        {
+            AudioEvent ae = speech.AddAudioEvent(at, len);
+            ae.AddTake(au);
+            g.Add(ae);
+        }
+        return 1;
+    }
+
+    // FindLoose: the exact name, else VEGAS's own ("Color Curves" is "VEGAS
+    // Color Curves"), else the one plug-in whose name contains it ("Beauty Box").
+    static PlugInNode FindLoose(PlugInNode root, string name)
+    {
+        PlugInNode hit = Find(root, name);
+        if (hit == null) hit = Find(root, "VEGAS " + name);
+        if (hit != null) return hit;
+        List<PlugInNode> all = new List<PlugInNode>();
+        Collect(root, all);
+        PlugInNode only = null;
+        foreach (PlugInNode c in all)
+        {
+            if (c.IsContainer || c.Name.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            if (only != null && only.Name != c.Name) throw new ApplicationException("\"" + name + "\" matches both \"" + only.Name + "\" and \"" + c.Name + "\"");
+            only = c;
+        }
+        return only;
+    }
+
+    static void Collect(PlugInNode root, List<PlugInNode> all)
+    {
+        foreach (PlugInNode c in root)
+        {
+            all.Add(c);
+            if (c.IsContainer) Collect(c, all);
+        }
     }
 
     static PlugInNode Find(PlugInNode root, string name)

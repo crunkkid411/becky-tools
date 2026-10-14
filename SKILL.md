@@ -771,7 +771,7 @@ Rules learned the hard way:
 
 ```bat
 REM drag the video onto it, or put it in the footage folder and double-click
-workflows\youtube\YouTube-Edit_System-One.bat
+workflows\youtube\YouTube-Edit.bat
 ```
 ```bash
 becky-livestream --video --model systemone <video>   # the livestream workflow, video mode
@@ -822,6 +822,45 @@ when it is not silent, < -70 dB = left out) placed by the VEGAS delay via `audio
 - Full run on a 24-minute video: ~4 h fresh (analysis ~65 min, vote ~90 min, moments ~2 h, Falcon ~1 h on
   the processor); a re-run with the caches is ~15 min.
 
+**Jordan's review of the first edit (2026-10-14, `user-feedback.md` in the goodbye-youtube-update folder),
+now part of every `--video` run:**
+- **One project, no date:** `<folder minus "NN_">-video.veg` (`projectBase`). Verticals only from it (below).
+- **Thinking out loud** (`polish.go` `thinking`): a word or two said alone between 0.5 s pauses ("Whatever.",
+  "Here's", "So uh") is an island. Filler-only islands (and/so/like/but/or + um/uh) are cut by the words
+  alone; the rest go to the lead model with 15 words before and 12 after, 12 at a time: cut only the ones
+  he says while thinking. An island right after his own question is never one. Cache `thinking-<tag>.json`.
+- **A stretch with no transcript words is not silence** (`secondListen`): Parakeet missed a whole sentence
+  at 1:47-1:50. Every word-less piece (breath cuts leave them) is cut out, joined with 1 s gaps into
+  `second-listen.wav` and transcribed again; it goes only when that hears no word (a laugh, a sound).
+- **Cuts on his voice** (`tighten`): each piece's edge moves off room noise onto the frame his voice starts
+  / ends, measured against THAT piece's own peak (onset 25 dB under it for 30 ms, tail 30 dB, never under
+  the room's noise floor + 6 dB), so another mic or room adjusts by itself. A 30-200 ms hiss against the
+  voice (an "f", "s", "h") is the word and stays; a longer one is a breath and goes. His example: 375.267
+  -> 375.400. On the goodbye update 393 of 431 pieces moved, 53 s of noise out, median 1 frame an edge.
+- **Censor** (`censor.go`, BeckyFX `bleep`): every "fuck" word gets
+  `X:\Videos\Video Editing Assets\1 - HAIR JORDAN SFX\Censor 2.mp3` ON his speech track (the speech under
+  it is cut out of its group and the rest regrouped), gain -12.1 dB on that event only (its middle blue
+  handle = `FadeIn.Gain`), from one frame after the word starts to one frame before it ends (2 frames at
+  least). Word edges come from the AUDIO, never the transcript (5 frames early on his example, and it put
+  "fuck" on "Go" once): the start is the vowel after the "f"'s hiss (a soft "f": the near-silence before
+  its vowel), the end is the "k" (15 dB drop) or, for "fucking", where the "-ing" falls 4 dB. His
+  example: word 194.167-194.367, censor 194.200-194.333.
+- **Look:** a slow Picture-In-Picture creep (1.11x, 8-12 s) and a still crop (1.12x, 3-8 s) take turns about
+  once a minute, whole pieces, so each starts and ends on a cut (`looksJob`). His **hj-starter** track
+  effects, one plug-in at a time in his order (scripts cannot add a filter package), on every video track
+  that shows the recording, never b-roll: Beauty Box POLISH, AutoLooks polish, Color Corrector hj-simple,
+  Color Curves hair-help, Color Curves POLISH-subtle (BeckyFX `trackfx`; plug-in names are matched exactly,
+  then "VEGAS <name>", then the one plug-in containing the name; a missing plug-in or preset fails the job
+  and the report says so).
+- **What he means to show** (`assets.go`): the lead model finds the lines where he shows the viewer
+  something ("he blackmailed me into an apology saying this"). A file of his in the footage folder (or
+  named in a notes .txt / .md there) goes in: a picture over his picture on a B-ROLL track for 4 s, a clip
+  inserted with its sound (everything after moves later). Otherwise a marker with a few-word label ("blackmail
+  apology"), and `MARKERS.txt` beside the project lists every marker: time on the timeline, label, what to
+  add, his words and the lines around them. Resolving MARKERS.txt is a separate job.
+- Each BeckyFX job is ONE Undo step, all or nothing: a line that fails cancels it and the report's
+  "Not done" says which.
+
 # VERTICAL SHORTS IN VEGAS — becky-vertical, a widescreen project to vertical shorts on the timeline (2026-10-13)
 
 Spec: Jordan's `vegas\JORDANS-WORKFLOWS.md` section 2 ("Create Vertical Shorts from existing widescreen
@@ -829,17 +868,23 @@ video"), every step. Unlike `becky-short` (which burns everything into an MP4), 
 project he can adjust by hand: crops are Pan/Crop keyframes, captions and the hook are Titles & Text
 events on their own tracks, effects are BeckyFX zooms, each short is a named region.
 
+**The LAST step, only from the EDITED project** (Jordan, 2026-10-14: "VERTICAL versions of the .veg are
+only created once the video is edited"): `becky-vertical` reads `becky-edit\project-stamp.json` (written by
+the YouTube / livestream edit) and refuses the raw recording's project, naming the edited one. **No
+on-screen title, captions only** (same day); the title names the region and the rendered file.
+
 ```bat
-REM drag the widescreen .veg onto it, or put it in the footage folder and double-click
+REM put it in the footage folder and double-click (or drag the edited .veg onto it)
 workflows\vertical\Make-Vertical-Shorts.bat      :: a shorts.txt beside the .veg = his own list
 ```
 ```bash
-becky-vertical <project.veg> [--shorts list.txt] [--count 3] [--min 20] [--max 60] [--no-render] [--fresh]
+becky-vertical <edited project.veg | its folder> [--shorts list.txt] [--count 3] [--min 20] [--max 60] [--no-render] [--fresh]
 # list.txt: one short per line, "<start> <end> <title>" in the widescreen timeline's time (83, 1:23, 0:01:23)
 ```
 
 What it does, in his order (`cmd/vertical`, VEGAS side `vegas/BeckyVertical.cs`, driver `internal/vegasctl`):
-1. Opens his project, **Save As `<name>-VERTICAL.veg`** first (never saves over his; becky's own earlier
+1. Opens the edited project, **Save As `<name>-VERTICAL.veg`** first ("-video" dropped:
+   `goodbye-youtube-update-VERTICAL.veg`; never saves over his; becky's own earlier
    VERTICAL is reused only while its stamp matches, else `(2)`), 1080x1920, then VEGAS's own Match
    Output Aspect math on every video event (`match`).
 2. Words on the timeline: becky-transcribe's `becky-edit\<stem>.transcript.json`, mapped through the AUDIO
@@ -859,11 +904,7 @@ What it does, in his order (`cmd/vertical`, VEGAS side `vegas/BeckyVertical.cs`,
 5. Captions: the cli-cut chunker (`subs.ShortOptions`, 22 characters, lowercase), his "becky-captions"
    preset, Location y 0.4 (60% down, his September vertical); a caption never shows before its first
    word. Moved to 79% down only when a head covers the line on a third of the short.
-6. On-screen title (the short's title, else becky-moment's hook line): first 5 s, his title look
-   (Montserrat Black, 1.52, no shadow - his September title "TakingBack2007" sat 14.6% down, over his
-   hair). At most 3 lines (12 letters a line at 1.52, more as it shrinks), placed like openshorts'
-   choose_y but scored on his FACE, not his head (hair may be covered, eyes never), pulled toward his spot,
-   never on the captions.
+6. ~~On-screen title~~ - removed 2026-10-14 (Jordan: no titles on verticals, captions only).
 7. Effects (single layout only): Gemma-4 12B reads the short's lines and names the ones that earn
    `punch_in` (1.27x, his median) or `face_zoom` (2.0x in 4 frames, the livestream edit's); code keeps
    the limits (8 s apart, one per 12 s, none in the first 1 s / last 2 s, a zoom holds <= 3 s). Model down

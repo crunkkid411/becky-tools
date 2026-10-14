@@ -1,14 +1,13 @@
 package main
 
 // frame.go - the pure decisions: which layout a short gets, the source
-// rectangle each piece shows, where the captions and the hook go, where the
-// punch-ins land. Every rule that came from openshorts says so; Jordan's own
-// habits win where they disagree (vegas\edit-learning\habits.md).
+// rectangle each piece shows, where the captions go, where the punch-ins land.
+// Every rule that came from openshorts says so; Jordan's own habits win where
+// they disagree (vegas\edit-learning\habits.md).
 
 import (
 	"math"
 	"slices"
-	"strings"
 )
 
 // box is a face, fractions of the picture, top-left origin.
@@ -276,100 +275,6 @@ func captionY(layout string, heads []box, samples int) float64 {
 		}
 	}
 	return y
-}
-
-// The on-screen title. Jordan's own (September goodbye-youtube-VERTICAL): one
-// short line, "TakingBack2007", Montserrat Black at 1.52, centred 14.6% down -
-// over his hair. So: at most 3 lines, his size shrunk only as far as needed to
-// fit them; placed like openshorts choose_y (pulled toward his spot, the text
-// shrinks when every spot is bad) but scored on FACES, not heads: his own title
-// sits on his hair, never on his eyes. Never over the captions or the
-// platform's bottom buttons. Line height and letter width are measured on the
-// first real renders (2026-10-13): a 5-line spoken "hook" at 1.52 covered his
-// face and the captions because the old guess (0.045 a line) was half the truth.
-const (
-	hookTopMargin  = 0.06
-	hookBottomUI   = 0.80
-	hookHisSpot    = 0.146 // his title's centre (Location y 0.854)
-	hookMove       = 0.05
-	hookStep       = 0.005
-	hookGoodEnough = 0.10 // a tenth of his face covered, on average
-	hookScale      = 1.52
-	hookLineH      = 0.08 // one line at 1.52, fraction of the frame (measured: 150 of 1920 px)
-	hookLineChars  = 12   // letters a line at 1.52 (~83 px a letter, measured) with a margin
-	hookMaxLines   = 3
-	hookCapGap     = 0.03 // clear space to the captions: touching, they read as one block (render 2026-10-14)
-	hookMinScale   = 0.9
-)
-
-// hookLines wraps the text for a scale: more letters fit as it shrinks.
-func hookLines(text string, scale float64) ([]string, bool) {
-	n := int(float64(hookLineChars) * hookScale / scale)
-	ls := wrap(text, n)
-	fits := len(ls) <= hookMaxLines
-	for _, l := range ls {
-		fits = fits && len(l) <= n
-	}
-	return ls, fits
-}
-
-// hookPlace returns the block's centre (fraction from the top), its scale and
-// its lines.
-func hookPlace(text string, faces []box, samples int, capY float64) (float64, float64, []string) {
-	fit := hookScale
-	for ; fit > hookMinScale; fit -= 0.04 {
-		if _, ok := hookLines(text, fit); ok {
-			break
-		}
-	}
-	samples = max(samples, 1)
-	bestY, bestS, bestCost := hookHisSpot, fit, math.Inf(1)
-	for _, sc := range []float64{fit, fit * 0.85, fit * 0.72} {
-		ls, _ := hookLines(text, sc)
-		bh := float64(len(ls)) * hookLineH * sc / hookScale
-		for y := hookTopMargin; y+bh <= hookBottomUI+1e-9; y += hookStep {
-			if y < capY+captionLine+hookCapGap && y+bh > capY-captionLine-hookCapGap {
-				continue // never over the captions, and never touching them
-			}
-			cost := hookMove * math.Abs(y+bh/2-hookHisSpot)
-			for _, f := range faces {
-				if a := f.W * f.H; a > 0 {
-					cost += overlap(f, y, y+bh) / a / float64(samples)
-				}
-			}
-			if cost < bestCost {
-				bestY, bestS, bestCost = y+bh/2, sc, cost
-			}
-		}
-		if bestCost <= hookGoodEnough {
-			break
-		}
-	}
-	ls, _ := hookLines(text, bestS)
-	return bestY, bestS, ls
-}
-
-// wrap breaks text into lines of at most n characters, on spaces.
-func wrap(text string, n int) []string {
-	var lines []string
-	cur := ""
-	for _, w := range strings.Fields(text) {
-		if cur != "" && len(cur)+1+len(w) > n {
-			lines = append(lines, cur)
-			cur = ""
-		}
-		if cur != "" {
-			cur += " "
-		}
-		cur += w
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
-	if len(lines) == 0 {
-		return []string{""}
-	}
-	return lines
 }
 
 // Punch-ins (openshorts punch_in.emphasis_times): a beat is a 0.2 s window

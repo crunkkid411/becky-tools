@@ -65,6 +65,7 @@ func (r *run) videoReport(sel Selection, ss []Sentence, restarted []int, words [
 		i = j + 1
 	}
 	fmt.Fprintf(&b, "## Words you started again inside a sentence (%d)\n\n%s\n\n", len(rs), strings.Join(rs, "\n"))
+	r.writeVideoExtra(&b)
 
 	b.WriteString("## Checks of the finished edit\n\n")
 	fmt.Fprintf(&b, "- Timeline: %s\n", ver.Timeline)
@@ -93,4 +94,74 @@ func (r *run) videoReport(sel Selection, ss []Sentence, restarted []int, words [
 	fmt.Printf("  VEGAS project: %s (open in VEGAS now)\n", filepath.Base(veg))
 	fmt.Printf("  Report: %s\n", path)
 	fmt.Printf("  Titles, description and chapters: %s\n", filepath.Join(r.work, "youtube-upload.txt"))
+	if r.vx.markers != "" {
+		fmt.Printf("  Things to add (markers on the timeline): %s\n", r.vx.markers)
+	}
+}
+
+// writeVideoExtra: the thinking taken out, the second listen, the cuts on his
+// voice, the censor, the zooms, his track effects and the things to show.
+func (r *run) writeVideoExtra(b *strings.Builder) {
+	var cut []string
+	kept := 0
+	for _, t := range r.vx.thoughts {
+		if t.Cut {
+			cut = append(cut, fmt.Sprintf("- %s \"%s\" - %s", t.At, t.Text, t.By))
+		} else {
+			kept++
+		}
+	}
+	fmt.Fprintf(b, "## Thinking out loud, taken out (%d)\n\nShort words you said on their own between pauses. %d more were kept: they finish or start a sentence.\n\n%s\n\n", len(cut), kept, strings.Join(cut, "\n"))
+
+	dropped, back := 0, []string{}
+	for _, h := range r.vx.heard {
+		if h.Heard == "" {
+			dropped++
+		} else {
+			back = append(back, fmt.Sprintf("\"%s\" at %s", short(h.Heard, 60), clock(h.A)))
+		}
+	}
+	if len(r.vx.heard) > 0 {
+		fmt.Fprintf(b, "## Stretches with no words in the transcript (%d)\n\nListened to again: %d had no words (a laugh, a sound) and were taken out; %d had words the transcript missed and stayed%s.\n\n",
+			len(r.vx.heard), dropped, len(back), listOrNone(back))
+	}
+	fmt.Fprintf(b, "## Cuts\n\n%d pieces were moved onto the first and last frame of your voice.\n\n", r.vx.tightened)
+
+	d := r.vx.done
+	var cs []string
+	for _, x := range d.Bleeps {
+		cs = append(cs, fmt.Sprintf("- %s \"%s\"", clock(x.At), x.Word))
+	}
+	fmt.Fprintf(b, "## Censored (%d)\n\nCensor 2.mp3 at %.1f dB, from one frame after the word starts to one frame before it ends.\n\n%s\n\n", len(cs), censorGain, strings.Join(cs, "\n"))
+	fmt.Fprintf(b, "## Look\n\n- Slow zooms and crops: %d\n", d.Looks)
+	if d.Starter != "" {
+		b.WriteString("- Your hj-starter track effects are on the main video track (Beauty Box, AutoLooks, Color Corrector, Color Curves x2)\n")
+	}
+	b.WriteString("\n")
+	var ls []string
+	for _, p := range d.Placed {
+		how := "over your picture"
+		if p.Insert {
+			how = "inserted"
+		}
+		ls = append(ls, fmt.Sprintf("- %s \"%s\" - %s %s", clock(p.Line.At), p.Line.Label, filepath.Base(p.Line.Asset), how))
+	}
+	for k, m := range d.Markers {
+		ls = append(ls, fmt.Sprintf("- %s marker \"%s\" - %s", frameClock(m.At, r.fps), m.Label, d.MarkLines[k].What))
+	}
+	fmt.Fprintf(b, "## Things you mean to show (%d)\n\n%s\n", len(ls), strings.Join(ls, "\n"))
+	if r.vx.markers != "" {
+		fmt.Fprintf(b, "\nThe markers are listed in %s\n", r.vx.markers)
+	}
+	b.WriteString("\n")
+	if len(d.Problems) > 0 {
+		fmt.Fprintf(b, "## Not done\n\n- %s\n\n", strings.Join(d.Problems, "\n- "))
+	}
+}
+
+func listOrNone(xs []string) string {
+	if len(xs) == 0 {
+		return ""
+	}
+	return ": " + strings.Join(xs, ", ")
 }

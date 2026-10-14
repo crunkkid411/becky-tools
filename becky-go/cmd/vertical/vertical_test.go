@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"becky-go/internal/vegasctl"
@@ -75,27 +79,37 @@ func TestFaceSeenThroughTheCrop(t *testing.T) {
 	}
 }
 
-// The first real renders (goodbye update, 2026-10-13): a 5-line hook at 1.52
-// covered his face and the captions. His own title is one short line over his
-// hair, 14.6% down.
-func TestTitleIsShortAndNeverOnHisFace(t *testing.T) {
-	if y, s, ls := hookPlace("Goodbye YouTube", nil, 1, 0.60); math.Abs(y-hookHisSpot) > 0.01 || s != hookScale || len(ls) != 2 {
-		t.Errorf("a short title: centre %.3f scale %.2f lines %q, want near his spot at 1.52 on two lines", y, s, ls)
+// Jordan, 2026-10-14: the first verticals came from his RAW project (OBS sound
+// not synced, silences in, his instructions to the editor not followed). Shorts
+// come only from the edited video the YouTube edit recorded.
+func TestShortsOnlyFromTheEditedVideo(t *testing.T) {
+	dir := t.TempDir()
+	raw, edited := filepath.Join(dir, "goodbye-youtube-update.veg"), filepath.Join(dir, "goodbye-youtube-update-video.veg")
+	for _, p := range []string{raw, edited} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// a long title shrinks until it is 3 lines
-	_, s, ls := hookPlace("Why I Refused To Apologize For The Truth", nil, 1, 0.60)
-	if len(ls) > hookMaxLines || s >= hookScale || s < hookMinScale {
-		t.Errorf("long title: scale %.2f lines %q", s, ls)
+	if _, err := editedProject(raw); err == nil {
+		t.Fatal("no edit recorded yet: the raw project must be refused")
 	}
-	// his face where his title usually goes: the title moves off it, and off the captions
-	f := box{0.35, 0.06, 0.3, 0.2}
-	y, s, ls := hookPlace("He's Now Threatening My Child", []box{f}, 1, 0.60)
-	bh := float64(len(ls)) * hookLineH * s / hookScale
-	if cov := overlap(f, y-bh/2, y+bh/2) / (f.W * f.H); cov > hookGoodEnough {
-		t.Errorf("title at %.3f (%.3f tall) covers %.0f%% of his face", y, bh, cov*100)
+	if err := os.MkdirAll(filepath.Join(dir, "becky-edit"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if y-bh/2 < 0.60+captionLine+hookCapGap && y+bh/2 > 0.60-captionLine-hookCapGap {
-		t.Errorf("title at %.3f (%.3f tall) sits on or against the captions", y, bh)
+	b, _ := json.Marshal(map[string]string{"path": edited})
+	if err := os.WriteFile(filepath.Join(dir, "becky-edit", "project-stamp.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := editedProject(raw); err == nil || !strings.Contains(err.Error(), "goodbye-youtube-update-video.veg") {
+		t.Errorf("the raw project must be refused and the edited one named, got %v", err)
+	}
+	for _, arg := range []string{edited, dir} {
+		if got, err := editedProject(arg); err != nil || got != edited {
+			t.Errorf("editedProject(%s) = %s, %v; want the edited project", arg, got, err)
+		}
+	}
+	if got := verticalName(edited); got != filepath.Join(dir, "goodbye-youtube-update-VERTICAL.veg") {
+		t.Errorf("vertical name = %s", got)
 	}
 }
 

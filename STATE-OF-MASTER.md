@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — YouTube edit fixed from Jordan's review: censor, cuts on his voice, look, markers (2026-10-14, local)
+
+`YouTube-Edit.bat` now: project `<folder minus day>-video.veg`; thinking-out-loud islands cut; word-less
+pieces listened to again; every cut moved onto his voice (his 4-frames-early example fixed); every "fuck"
+censored his way (Censor 2.mp3, -12.1 dB, one frame inside the word); slow zooms / crops; his hj-starter
+track effects; his files placed or a marker + `MARKERS.txt`. Verticals only from the edited project, no
+on-screen title. New VEGAS verbs compile-checked, not yet run in VEGAS. Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — Vertical shorts built on the VEGAS timeline (2026-10-13, night, local)
 
 `workflows/vertical/Make-Vertical-Shorts.bat` = `becky-vertical <widescreen.veg>`: Jordan's own vertical

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -249,6 +250,16 @@ func projectPath(want, work string) (string, bool) {
 	}
 	return freeVegName(want), false
 }
+
+// projectBase is the project's name: the footage folder's name without the day
+// in front ("12_goodbye-youtube-update" -> "goodbye-youtube-update"). Jordan,
+// 2026-10-14: "we do not add the date to the .veg file because the folder
+// system already handles the date".
+func projectBase(dir string) string {
+	return dayPrefix.ReplaceAllString(filepath.Base(dir), "")
+}
+
+var dayPrefix = regexp.MustCompile(`^\d+[_ -]+`)
 
 // stampProject records the project as becky left it (see projectPath).
 func stampProject(veg, work string) {

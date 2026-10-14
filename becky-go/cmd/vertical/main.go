@@ -15,13 +15,15 @@
 //     month's "rendered" folder with his Voukoder "TikTok NVENC" template
 //
 // plus captions as Titles & Text events (his "becky-captions" preset, cut by the
-// cli-cut chunker), a short on-screen title kept off his face (openshorts choose_y),
+// cli-cut chunker) - no on-screen title, captions only (Jordan, 2026-10-14) -
 // and punch-ins / face zooms that Gemma-4 picks line by line (his 1.27x size, via
 // BeckyFX; the loudest beats when no model can start).
 // The shorts are the ones Jordan lists (--shorts), else becky-moment picks them;
 // footage with no speech gets a picture description every few seconds instead of words.
+// It works ONLY from the edited video (the one the YouTube edit recorded in
+// becky-edit\project-stamp.json) - never a raw project - so it runs last.
 //
-//	becky-vertical <project.veg> [--shorts list.txt] [--count 3] [--no-render] [--fresh]
+//	becky-vertical <edited project.veg | its folder> [--shorts list.txt] [--count 3] [--no-render] [--fresh]
 package main
 
 import (
@@ -54,7 +56,6 @@ type short struct {
 	End       float64  `json:"end"`
 	Title     string   `json:"title"`
 	Hook      string   `json:"hook"`
-	OnScreen  string   `json:"on_screen,omitempty"`
 	Layout    string   `json:"layout,omitempty"`
 	Why       string   `json:"why,omitempty"`
 	Captions  int      `json:"captions,omitempty"`
@@ -73,7 +74,7 @@ func main() {
 	fresh := flag.Bool("fresh", false, "pick the shorts and look at the faces again")
 	flag.Parse()
 	if flag.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: becky-vertical <project.veg> [--shorts list.txt]")
+		fmt.Fprintln(os.Stderr, "usage: becky-vertical [--shorts list.txt] <edited project.veg | its folder>")
 		os.Exit(2)
 	}
 	if err := run(flag.Arg(0), *list, *count, *minSec, *maxSec, !*noRender, *fresh); err != nil {
@@ -87,16 +88,10 @@ func logf(f string, a ...any) {
 	fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(f, a...))
 }
 
-func run(veg, list string, count int, minSec, maxSec float64, render, fresh bool) error {
-	veg, _ = filepath.Abs(veg)
-	if !strings.EqualFold(filepath.Ext(veg), ".veg") {
-		return fmt.Errorf("%s is not a VEGAS project (.veg)", veg)
-	}
-	if _, err := os.Stat(veg); err != nil {
-		return fmt.Errorf("%s was not found", veg)
-	}
-	if strings.HasSuffix(strings.ToUpper(strings.TrimSuffix(filepath.Base(veg), ".veg")), "-VERTICAL") {
-		return fmt.Errorf("that is already a vertical project - give the widescreen one")
+func run(arg, list string, count int, minSec, maxSec float64, render, fresh bool) error {
+	veg, err := editedProject(arg)
+	if err != nil {
+		return err
 	}
 	cfg := config.Load()
 	dir := filepath.Dir(veg)
@@ -104,7 +99,7 @@ func run(veg, list string, count int, minSec, maxSec float64, render, fresh bool
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return err
 	}
-	out, overwrite := vegasctl.ProjectPath(strings.TrimSuffix(veg, filepath.Ext(veg))+"-VERTICAL.veg", work)
+	out, overwrite := vegasctl.ProjectPath(verticalName(veg), work)
 
 	// steps 1-2 happen on a copy: open his project, Save As the vertical one
 	logf("VEGAS: starting it (or using the open one)...")
@@ -257,17 +252,8 @@ func run(veg, list string, count int, minSec, maxSec float64, render, fresh bool
 			}
 		}
 
-		// the on-screen title: the first 5 s, short like his ("TakingBack2007"),
-		// so the title rather than the spoken hook line, never on his face
-		if s.OnScreen = s.Title; s.OnScreen == "" {
-			s.OnScreen = s.Hook
-		}
-		if s.OnScreen != "" {
-			fs, n := seen(s.Start, s.Start+5, false)
-			y, scale, lines := hookPlace(s.OnScreen, fs, n, capY)
-			f0 := frameOf(s.Start)
-			fmt.Fprintf(&job, "text\thook\t%d\t%d\t0.5\t%.3f\t%.3f\t%s\n", f0, frameOf(math.Min(s.End, s.Start+5))-f0, 1-y, scale, clean(strings.Join(lines, "\n")))
-		}
+		// no on-screen title: captions only (Jordan, 2026-10-14). The title names
+		// the region and the rendered file.
 		fmt.Fprintf(&job, "region\t%d\t%d\t%s\n", frameOf(s.Start), frameOf(s.End)-frameOf(s.Start), clean(s.Title))
 
 		// effects: single layout only (a split or screencast already moves the eye).
@@ -339,6 +325,45 @@ func run(veg, list string, count int, minSec, maxSec float64, render, fresh bool
 		logf("VEGAS: %s", res)
 	}
 	return report(work, veg, out, shorts)
+}
+
+// editedProject is the project the shorts come from: ONLY the edited video, the
+// one the YouTube edit saved and recorded in becky-edit\project-stamp.json.
+// arg is that .veg or its folder. Jordan, 2026-10-14: "VERTICAL versions of
+// the .veg are only created once the video is edited" - the first verticals came
+// from his raw project (OBS sound not synced, silences in, his instructions to
+// the editor not followed), so a raw project is refused, never used.
+func editedProject(arg string) (string, error) {
+	arg, _ = filepath.Abs(arg)
+	dir := arg
+	if st, err := os.Stat(arg); err != nil {
+		return "", fmt.Errorf("%s was not found", arg)
+	} else if !st.IsDir() {
+		dir = filepath.Dir(arg)
+		if !strings.EqualFold(filepath.Ext(arg), ".veg") {
+			return "", fmt.Errorf("%s is not a VEGAS project (.veg)", arg)
+		}
+		if strings.HasSuffix(strings.ToUpper(strings.TrimSuffix(filepath.Base(arg), filepath.Ext(arg))), "-VERTICAL") {
+			return "", fmt.Errorf("that is already a vertical project - give the edited widescreen one")
+		}
+	}
+	var stamp struct {
+		Path string `json:"path"`
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "becky-edit", "project-stamp.json"))
+	_ = json.Unmarshal(b, &stamp)
+	if _, err := os.Stat(stamp.Path); stamp.Path == "" || err != nil {
+		return "", fmt.Errorf("this video has not been edited yet - run the YouTube edit on its folder first (YouTube-Edit.bat); vertical shorts are only made from the edited video")
+	}
+	if arg != dir && !strings.EqualFold(filepath.Clean(stamp.Path), arg) {
+		return "", fmt.Errorf("%s is not the edited video - the edited one is %s. Vertical shorts are only made from the edited video", filepath.Base(arg), filepath.Base(stamp.Path))
+	}
+	return filepath.Clean(stamp.Path), nil
+}
+
+// verticalName: "goodbye-youtube-update-video.veg" -> "goodbye-youtube-update-VERTICAL.veg".
+func verticalName(veg string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(veg, filepath.Ext(veg)), "-video") + "-VERTICAL.veg"
 }
 
 // pick asks becky-moment (the openshorts two-pass picker) for the shorts, from
@@ -538,8 +563,8 @@ func report(work, veg, out string, shorts []short) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Vertical shorts\n\nFrom `%s`, saved as `%s` (your project is untouched).\n\n", veg, out)
 	for i, s := range shorts {
-		fmt.Fprintf(&b, "## %d. %s\n\n- %s to %s on the widescreen timeline\n- Layout: %s (%s)\n- On-screen title (first 5 s): %s\n- Captions: %d\n- Cuts to a new framing when he moves: %d\n- Effects, chosen by %s:\n",
-			i+1, s.Title, clock(s.Start), clock(s.End), s.Layout, s.Why, s.OnScreen, s.Captions, s.Reframes, s.EffectsBy)
+		fmt.Fprintf(&b, "## %d. %s\n\n- %s to %s on the widescreen timeline\n- Layout: %s (%s)\n- Captions: %d (no on-screen title)\n- Cuts to a new framing when he moves: %d\n- Effects, chosen by %s:\n",
+			i+1, s.Title, clock(s.Start), clock(s.End), s.Layout, s.Why, s.Captions, s.Reframes, s.EffectsBy)
 		for _, e := range s.Effects {
 			fmt.Fprintf(&b, "  - %.1f s %s: %q (%s)\n", e.T, e.Kind, e.Line, e.Why)
 		}

@@ -61,6 +61,17 @@ type run struct {
 	cfg                                     config.Config
 	started                                 time.Time
 	times                                   []string
+	vx                                      videoExtra // --video: what polish/censor/assets did, for the report
+}
+
+// videoExtra is what the --video passes did (polish.go, censor.go, assets.go).
+type videoExtra struct {
+	thoughts  []island
+	heard     []unheard
+	tightened int
+	lines     []showLine
+	done      videoDone
+	markers   string // MARKERS.txt, when written
 }
 
 func (r *run) logf(f string, a ...any) {
@@ -362,6 +373,15 @@ func (r *run) workflow(fresh, noVegas bool) {
 		for _, w := range restarted {
 			keep[w] = false
 		}
+		// the word or two he says on their own while he thinks (polish.go)
+		r.vx.thoughts = r.thinking(words, keep, fresh)
+		for _, t := range r.vx.thoughts {
+			for w := t.W0; t.Cut && w <= t.W1; w++ {
+				keep[w] = false
+			}
+		}
+		// what he means to show (assets.go) - before VEGAS, which needs the graphics card
+		r.vx.lines = r.showLines(ss, providedAssets(filepath.Dir(r.footage), r.footage), fresh)
 	}
 
 	// 4. cut points
@@ -395,10 +415,16 @@ func (r *run) workflow(fresh, noVegas bool) {
 	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, au, r.threshold, r.fps, predicted, r.logf)
 	predicted = cutBreaths(predicted, bc.Spots)
 	r.step("breath check", t0)
+	if r.video { // a stretch with no word heard twice goes; every edge goes onto his voice (polish.go)
+		predicted, r.vx.heard = r.secondListen(predicted, words, au)
+		predicted, r.vx.tightened = tighten(predicted, au, r.fps)
+		r.logf("cuts: %d piece(s) moved onto the first and last frame of his voice", r.vx.tightened)
+	}
 	predicted = reorder(predicted, ss, r.instr, r.fps)
 
 	plan := map[string]any{"model": r.label, "guidance": r.guidance, "ranges": ranges, "predicted_pieces": predicted,
-		"loud_edges": loud, "findings": findings, "fps": r.fps, "moments": faces, "breaths": bc.Spots}
+		"loud_edges": loud, "findings": findings, "fps": r.fps, "moments": faces, "breaths": bc.Spots,
+		"thinking": r.vx.thoughts, "second_listen": r.vx.heard, "show": r.vx.lines}
 	writeJSON(filepath.Join(r.work, "plan-"+r.tag+".json"), plan)
 	if r.video { // before VEGAS: the model and VEGAS never share the GPU
 		r.youtubeCopy(ss, sel.Decisions, predicted)
@@ -410,7 +436,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 
 	// 7. VEGAS
 	t0 = time.Now()
-	veg, overwrite := projectPath(filepath.Join(filepath.Dir(r.footage), filepath.Base(filepath.Dir(r.footage))+"-"+r.tag+".veg"), r.work)
+	veg, overwrite := projectPath(filepath.Join(filepath.Dir(r.footage), projectBase(filepath.Dir(r.footage))+"-"+r.tag+".veg"), r.work)
 	ps, health, err := buildInVegas(r.footage, r.audio, r.work, veg, overwrite, predicted, r.fps, r.logf)
 	if err != nil {
 		fatal(err.Error())
@@ -435,8 +461,22 @@ func (r *run) workflow(fresh, noVegas bool) {
 		}
 	}
 	var marks []mark
-	if r.video { // Jordan, 2026-10-13: no notes on his timeline; only what may not be posted
-		marks = publishRegions(findings, ps)
+	if r.video { // Jordan, 2026-10-13: no notes on his timeline; only what may not be posted,
+		// and (2026-10-14) a marker for each thing to show that he has not provided
+		r.vx.done = r.videoVegas(words, keep, au, ps, ss, r.vx.lines)
+		for _, m := range publishRegions(findings, ps) {
+			m.At = shiftAfterInserts(m.At, r.vx.done.Placed, r.fps)
+			marks = append(marks, m)
+		}
+		marks = append(marks, r.vx.done.Markers...)
+		mpath := filepath.Join(filepath.Dir(veg), "MARKERS.txt")
+		if len(r.vx.done.Markers) > 0 {
+			if err := writeMarkers(mpath, r.vx.done.MarkLines, ss, r.vx.done.Markers, r.fps); err == nil {
+				r.vx.markers = mpath
+			}
+		} else if b, err := os.ReadFile(mpath); err == nil && strings.HasPrefix(string(b), "MARKERS - things to add") {
+			_ = os.Remove(mpath) // becky's old list; nothing is missing now
+		}
 	} else {
 		marks = append(r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps), instructionMarks(r.instr, ss, ps)...)
 	}

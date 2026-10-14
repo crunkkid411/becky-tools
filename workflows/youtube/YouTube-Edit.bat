@@ -16,12 +16,28 @@ REM     mic checks and getting ready, after your goodbye, and retakes (the
 REM     words must show you said it again, or it stays)
 REM   - what you tell your editor on camera is followed, and your words to
 REM     the editor are cut
+REM   - a word or two said on its own while you think ("Whatever.", "So uh")
+REM     is cut; a lone word that finishes or starts a sentence stays
 REM   - then it reads the edit like a viewer and puts back any cut line the
 REM     story needs
+REM   - every cut sits on the first and last frame of your voice, not on room
+REM     noise; a stretch with no words is listened to again and goes if no
+REM     word is heard (a laugh, a sound)
+REM   - every "fuck" gets Censor 2.mp3 at -12.1 dB on your speech track, from
+REM     one frame after the word starts to one frame before it ends
+REM   - your hj-starter track effects go on the main video track (Beauty Box,
+REM     AutoLooks, Color Corrector, Color Curves x2), and a slow zoom or crop
+REM     about once a minute
+REM   - something you mean to show ("he said this"): your file from this
+REM     folder (or named in a notes .txt here) goes in; otherwise a marker,
+REM     all listed in MARKERS.txt next to the project
 REM   - it writes title options, a description and chapters for the upload:
 REM     becky-edit\youtube-upload.txt
-REM No notes are put on the timeline; only a short region where something
-REM may not be postable (another creator's video, an address on screen).
+REM Regions only where something may not be postable (another creator's
+REM video, an address on screen).
+REM
+REM Vertical shorts come AFTER this, from the edited project:
+REM Make-Vertical-Shorts.bat on the same folder.
 REM
 REM OBS recordings: run "Prep OBS Footage.bat" on the folder first.
 REM

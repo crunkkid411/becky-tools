@@ -42,16 +42,21 @@
   deleted, clap spike put on the first frame his hands meet (checked in VEGAS's own render), regrouped,
   saved as `<folder minus day>.veg`. VEGAS side: `vegas/BeckyObsPrep.cs`. Recipe: `SKILL.md` `# OBS PREP`.
 - **`becky-livestream --video`** (2026-10-12, `video.go`, `instructions.go`, `obs.go`; launcher
-  `workflows/youtube/YouTube-Edit_System-One.bat`): a raw YouTube recording (not a livestream) edited
+  `workflows/youtube/YouTube-Edit.bat`): a raw YouTube recording (not a livestream) edited
   by the same workflow minus live chat; what Jordan tells the editor on camera ("put this at the
   beginning") is found by Qwen3.5 + Gemma-4, understood by Gemma-4 12B + Gemma-4 + Qwen3.5, and done
   in code (move / cut / region). OBS files are listened to on a synced copy and laid in VEGAS from the
-  original with obsprep's VEGAS delay (`BeckyKeepList.cs` `audio` lines). Recipe: `SKILL.md` `# YOUTUBE VIDEO EDIT`.
+  original with obsprep's VEGAS delay (`BeckyKeepList.cs` `audio` lines). Since 2026-10-14 (his review,
+  `polish.go`, `censor.go`, `assets.go`, `videovegas.go`, BeckyFX `bleep` / `trackfx` / `overlay` /
+  `insert`): thinking-out-loud islands cut, word-less pieces listened to again, cuts on his voice,
+  every "fuck" censored, slow zooms / crops, his hj-starter track effects, his files placed or a
+  marker + `MARKERS.txt`. Recipe: `SKILL.md` `# YOUTUBE VIDEO EDIT`.
 - **`becky-vertical`** (2026-10-13, `cmd/vertical`, `internal/vegasctl`, `vegas/BeckyVertical.cs`; launcher
   `workflows/vertical/Make-Vertical-Shorts.bat`): Jordan's "vertical shorts from a widescreen video"
-  workflow ON the VEGAS timeline - Save As `-VERTICAL.veg`, Match Output Aspect, every clip framed on his
-  face (single / split / screencast, a hard cut to a new framing when he moves), captions + hook as Titles
-  & Text events, Gemma-4-picked punch-ins / face zooms, a region per short, rendered with his Voukoder
+  workflow ON the VEGAS timeline, the LAST step and only from the EDITED project (`project-stamp.json`;
+  the raw one is refused) - Save As `-VERTICAL.veg`, Match Output Aspect, every clip framed on his
+  face (single / split / screencast, a hard cut to a new framing when he moves), captions as Titles
+  & Text events (no on-screen title since 2026-10-14), Gemma-4-picked punch-ins / face zooms, a region per short, rendered with his Voukoder
   "TikTok NVENC". Shorts from his `shorts.txt` or becky-moment; silent footage gets picture lines.
   Recipe: `SKILL.md` `# VERTICAL SHORTS IN VEGAS`.
 - **`becky-livestream --model systemone`** (2026-10-08): System One + Gemma-4 + Qwen3.5 vote, then

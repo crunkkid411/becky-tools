@@ -12,6 +12,46 @@
 
 ---
 
+## YouTube edit + verticals after Jordan's review of the first edit (2026-10-14, local, `master`)
+
+Jordan's `X:\Videos\2026\10_oct\12_goodbye-youtube-update\user-feedback.md`: "Do not make changes to this
+video ... confirm that the workflow will not repeat these mistakes next time". His video and its project
+were not touched; every check below read its `becky-edit` files only.
+
+- **Naming:** `<folder minus "NN_">-video.veg` (`projectBase`; was `<NN_folder>-video.veg`).
+- **Verticals only from the edited project:** `becky-vertical` takes the edited .veg or its folder, checks
+  `becky-edit\project-stamp.json` and refuses the raw project with a plain message naming the edited one;
+  `Make-Vertical-Shorts.bat` passes its folder. Output `<name>-VERTICAL.veg` ("-video" dropped). The
+  on-screen title is gone (captions only); hook placement code deleted.
+- **Precision (`polish.go`):** `tighten` moves each piece edge from room noise onto his voice (onset 25 dB
+  under the piece's own peak for 30 ms, tail 30 dB, floor guard = room noise floor + 6 dB), keeping a
+  30-200 ms hiss against the voice (f / s / h). His example 375.267 -> 375.400 reproduced on the real audio;
+  392 of 431 pieces moved, 53 s of noise out; the whole tightened edit re-transcribed heard 2849 of
+  2994 kept words against 2845 for the old cuts (nothing lost). `secondListen` re-transcribes word-less pieces (Parakeet
+  missed a whole sentence at 107.8-110.5) and drops only those where nothing is heard. `thinking` cuts
+  "thinking out loud" islands (filler-only by the words; the rest by the lead model in context) - his
+  22.11-24.26 example is "Whatever." + "Here's" (islands) + a laugh (word-less piece).
+- **Censor (`censor.go`, BeckyFX `bleep`):** Censor 2.mp3 at -12.1 dB on his speech track, one frame inside
+  the word at each end, word edges from the audio (hiss of the "f" before the vowel; the "k" drop; the
+  "-ing" fall). Read-only check on all 14 f-words of the goodbye update: every censor inside its word
+  (his own example exact: 194.200-194.333); the censored audio re-transcribed turns the long "fucking"s
+  into "f" / "fing", while short "fuck" / "fucked" (3-4 frame words, 2-frame censor) stay guessable from
+  context, as his own rule keeps the "f" and the end audible.
+- **Look (`videovegas.go`, BeckyFX `pipzoom` / `zoom` / `trackfx`):** slow creep 1.11x and still crop 1.12x
+  taking turns about once a minute on whole pieces; his hj-starter package as five track effects in his
+  order on every video track showing the recording.
+- **What he means to show (`assets.go`, BeckyFX `overlay` / `insert`):** the lead model finds the lines;
+  his files in the folder or named in a notes .txt/.md are placed (picture over, clip inserted with
+  everything after moved), else a short-label marker and `MARKERS.txt` beside the project. Notes named
+  *feedback* / *workflow* / *instruction* / *readme* are for becky and never offer files (his
+  `user-feedback.md` names his two screenshots by full path).
+- BeckyFX jobs are now one Undo step, all or nothing (`UndoBlock.Cancel` on a failing line).
+  `check-vegas-script.ps1`: COMPILE OK against VEGAS 18's ScriptPortal.Vegas.dll.
+- **Not yet run inside VEGAS** (Jordan needed the computer): the new BeckyFX verbs (`bleep`, `trackfx`,
+  `overlay`, `insert`) are compile-checked only; Beauty Box / AutoLooks plug-in names and his five presets
+  are found by name at run time and a miss fails that job by name. The thinking / show-me model passes run
+  on the next real edit.
+
 ## becky-vertical: vertical shorts built ON the VEGAS timeline (2026-10-13, night, local, `master`)
 
 Jordan: captions on the VEGAS timeline so he can adjust them (BeckyCaptions.cs "very buggy"); the vertical
