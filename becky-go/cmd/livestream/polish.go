@@ -29,6 +29,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Levels are read against the voice's own loudest moment near the edge, so a
@@ -275,12 +276,45 @@ func islands(words []Word, keep []bool) []island {
 			continue
 		}
 		w0, w1 := runs[j][0], runs[j][len(runs[j])-1]
-		if strings.HasSuffix(strings.TrimRight(words[runs[j-1][len(runs[j-1])-1]].Word, `"')`), "?") {
+		prev, next := words[runs[j-1][len(runs[j-1])-1]], words[runs[j+1][0]]
+		text := wordsText(words, w0, w1)
+		if strings.HasSuffix(strings.TrimRight(prev.Word, `"')`), "?") {
 			continue // an answer to his own question ("Yeah.") is never thinking
 		}
-		out = append(out, island{W0: w0, W1: w1, Text: wordsText(words, w0, w1), At: clock(words[w0].Start)})
+		// A pause inside his sentence is emphasis, not thinking (goodbye update
+		// 23:41: "on this platform... or to... violate multiple... protection
+		// orders"; 9:22: "against him... for her."). Only a fragment between two
+		// sentences is one: the sentence before it has ended, and it ends itself
+		// or what follows starts a new one (or he stops for 2 s).
+		if allFiller(text) {
+			if len(runs[j]) == 1 && conjunctions[normWord(text)] && !sentenceDone(prev) && !startsSentence(next) {
+				continue // "kids... and... wife": a real "and" between his words
+			}
+		} else if !sentenceDone(prev) || !(sentenceDone(words[w1]) || startsSentence(next) || next.Start-words[w1].End >= 2) {
+			continue
+		}
+		out = append(out, island{W0: w0, W1: w1, Text: text, At: clock(words[w0].Start)})
 	}
 	return out
+}
+
+var conjunctions = map[string]bool{"and": true, "or": true, "but": true}
+
+// sentenceDone: the word ends a sentence (. ? !) or is a hesitation ("um").
+func sentenceDone(w Word) bool {
+	return endsSentence(w.Word) || hesitations[normWord(w.Word)]
+}
+
+// startsSentence: the word starts a new sentence - a capital letter that is
+// not "I" (always capital), or a hesitation.
+func startsSentence(w Word) bool {
+	n := normWord(w.Word)
+	switch n {
+	case "i", "i'm", "i've", "i'll", "i'd":
+		return false
+	}
+	r := []rune(strings.TrimLeft(w.Word, `"'(`))
+	return hesitations[n] || len(r) > 0 && unicode.IsUpper(r[0])
 }
 
 func allFiller(text string) bool {
@@ -308,6 +342,7 @@ func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 		return saved
 	}
 	var ask []int
+	missed := false
 	for k := range is {
 		if allFiller(is[k].Text) {
 			is[k].Cut, is[k].By = true, "only filler words"
@@ -320,6 +355,7 @@ func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 		m, err := spec.open()
 		if err != nil {
 			r.logf("thinking: %s could not start (%v) - only the filler fragments are cut", spec.name, err)
+			missed = true
 		} else {
 			r.logf("thinking: %s is reading %d short fragments he said on their own...", spec.name, len(ask))
 			for a := 0; a < len(ask); a += thinkBatch {
@@ -335,8 +371,12 @@ func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 				var ans struct {
 					Thinking []int `json:"thinking"`
 				}
-				if err != nil || json.Unmarshal([]byte(raw), &ans) != nil {
-					r.logf("  thinking: %s could not answer (%v) - those fragments stay", spec.name, err)
+				if err == nil {
+					err = json.Unmarshal([]byte(raw), &ans)
+				}
+				if err != nil {
+					missed = true
+					r.logf("  thinking: %s could not answer: %v (%s) - those fragments stay this time", spec.name, err, tail(raw, 80))
 					continue
 				}
 				for _, k := range ans.Thinking {
@@ -348,7 +388,9 @@ func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 			m.client.Close()
 		}
 	}
-	writeJSON(path, is)
+	if !missed { // a part the model could not answer is asked again next run
+		writeJSON(path, is)
+	}
 	return is
 }
 

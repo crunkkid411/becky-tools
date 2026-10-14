@@ -50,7 +50,9 @@
   `polish.go`, `censor.go`, `assets.go`, `videovegas.go`, BeckyFX `bleep` / `trackfx` / `overlay` /
   `insert`): thinking-out-loud islands cut, word-less pieces listened to again, cuts on his voice,
   every "fuck" censored, slow zooms / crops, his hj-starter track effects, his files placed or a
-  marker + `MARKERS.txt`. Recipe: `SKILL.md` `# YOUTUBE VIDEO EDIT`.
+  marker + `MARKERS.txt` (only where he points: `pointsAt`). The publish check hands Gemma
+  1280-wide frames (`gemmaFrame`, 30 s -> 2 s a frame), and `internal/llmlocal` starts every local
+  text model with `-ngl auto` so it never spills into RAM. Recipe: `SKILL.md` `# YOUTUBE VIDEO EDIT`.
 - **`becky-vertical`** (2026-10-13, `cmd/vertical`, `internal/vegasctl`, `vegas/BeckyVertical.cs`; launcher
   `workflows/vertical/Make-Vertical-Shorts.bat`): Jordan's "vertical shorts from a widescreen video"
   workflow ON the VEGAS timeline, the LAST step and only from the EDITED project (`project-stamp.json`;

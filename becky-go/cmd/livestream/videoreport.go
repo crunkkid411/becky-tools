@@ -111,7 +111,7 @@ func (r *run) writeVideoExtra(b *strings.Builder) {
 			kept++
 		}
 	}
-	fmt.Fprintf(b, "## Thinking out loud, taken out (%d)\n\nShort words you said on their own between pauses. %d more were kept: they finish or start a sentence.\n\n%s\n\n", len(cut), kept, strings.Join(cut, "\n"))
+	fmt.Fprintf(b, "## Thinking out loud, taken out (%d)\n\nShort words you said on their own between pauses (times in the recording; they are not on the timeline). %d more were kept: they finish or start a sentence.\n\n%s\n\n", len(cut), kept, strings.Join(cut, "\n"))
 
 	dropped, back := 0, []string{}
 	for _, h := range r.vx.heard {
@@ -130,9 +130,10 @@ func (r *run) writeVideoExtra(b *strings.Builder) {
 	d := r.vx.done
 	var cs []string
 	for _, x := range d.Bleeps {
-		cs = append(cs, fmt.Sprintf("- %s \"%s\"", clock(x.At), x.Word))
+		at := shiftAfterInserts(float64(x.F0)/r.fps, d.Placed, r.fps)
+		cs = append(cs, fmt.Sprintf("- %s \"%s\" (%s in the recording)", frameClock(at, r.fps), x.Word, clock(x.At)))
 	}
-	fmt.Fprintf(b, "## Censored (%d)\n\nCensor 2.mp3 at %.1f dB, from one frame after the word starts to one frame before it ends.\n\n%s\n\n", len(cs), censorGain, strings.Join(cs, "\n"))
+	fmt.Fprintf(b, "## Censored (%d)\n\nCensor 2.mp3 at %.1f dB, from one frame after the word starts to one frame before it ends. Times are on the VEGAS timeline.\n\n%s\n\n", len(cs), censorGain, strings.Join(cs, "\n"))
 	fmt.Fprintf(b, "## Look\n\n- Slow zooms and crops: %d\n", d.Looks)
 	if d.Starter != "" {
 		b.WriteString("- Your hj-starter track effects are on the main video track (Beauty Box, AutoLooks, Color Corrector, Color Curves x2)\n")

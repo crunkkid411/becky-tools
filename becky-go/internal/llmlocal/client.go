@@ -67,7 +67,7 @@ type Options struct {
 type Client struct {
 	model  string   // text GGUF path
 	server string   // llama-server.exe path (or a name resolvable on PATH)
-	ngl    int      // GPU layers to offload (99 = full; a 4B Q4 fits 8 GB)
+	ngl    int      // GPU layers to offload (-1 = as many as fit, 0 = processor only)
 	ctxLen int      // context window
 	extra  []string // extra llama-server flags (the embedding client's pooling)
 	mmproj string   // multimodal projector (NewMediaEmbedClient), checked by EmbedMedia
@@ -82,13 +82,20 @@ type Client struct {
 	startErr error  // warm: a sticky spawn error so we don't retry a dead box
 }
 
-// NewClient builds a spawn-per-call client. logf may be nil. Defaults: -ngl 99,
-// 4096-token context — ample for a short classification or action parse.
+// NewClient builds a spawn-per-call client. logf may be nil. Defaults: as many
+// layers on the graphics card as fit, 4096-token context — ample for a short
+// classification or action parse.
+//
+// Never -ngl 99: a fixed count turns off llama.cpp's fit, so when Jordan's
+// always-on models already hold graphics memory, Windows spills the overflow
+// into RAM. The 12B grew to 14 GB of RAM next to the System One model and the PC
+// ran out of memory (YouTube edit, 2026-10-14). "auto" keeps 1 GB of the card
+// free and puts the rest of the layers on the processor.
 func NewClient(model, server string, logf func(string, ...any)) *Client {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &Client{model: model, server: server, ngl: 99, ctxLen: 4096, logf: logf}
+	return &Client{model: model, server: server, ngl: -1, ctxLen: 4096, logf: logf}
 }
 
 // NewWarmClient builds a client that keeps one llama-server resident for the
@@ -272,16 +279,20 @@ func (c *Client) spawnServer(ctx context.Context) (string, func(), error) {
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 
+	ngl := strconv.Itoa(c.ngl)
+	if c.ngl < 0 {
+		ngl = "auto"
+	}
 	args := []string{
 		"-m", c.model,
-		"-ngl", strconv.Itoa(c.ngl),
+		"-ngl", ngl,
 		"-c", strconv.Itoa(c.ctxLen),
 		"--no-warmup",
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
 	}
 	args = append(args, c.extra...)
-	c.logf("llmlocal: spawning llama-server on %s (-ngl %d)…", url, c.ngl)
+	c.logf("llmlocal: spawning llama-server on %s (-ngl %s)…", url, ngl)
 
 	cmd := exec.Command(c.server, args...)
 	logFile, _ := os.CreateTemp("", "becky_llmlocal_*.log")

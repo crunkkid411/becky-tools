@@ -204,6 +204,28 @@ func TestIslands(t *testing.T) {
 	if allFiller("Whatever.") || allFiller("Here's") || !allFiller("And um") || !allFiller("So uh") {
 		t.Error("only filler words are cut without the model")
 	}
+	// pauses INSIDE his sentence are emphasis (goodbye update 23:41, 9:22), a
+	// lone "and" between his words is meant; "another note" + a 7.8 s stop is not
+	at := func(text []string, starts []float64) []Word {
+		var ws []Word
+		for i, s := range text {
+			ws = append(ws, Word{Word: s, Start: starts[i], End: starts[i] + 0.2})
+		}
+		return ws
+	}
+	ws = at([]string{"on", "this", "platform", "or", "to", "violate", "multiple", "protection", "orders", "against", "him", "for", "her.", "So", "kids", "and", "wife.", "Um", "another", "note", "I", "know."},
+		[]float64{0, 0.2, 0.4, 1.6, 1.8, 2.8, 3.0, 4.0, 4.2, 4.4, 4.6, 5.6, 5.8, 8.5, 8.7, 9.5, 10.3, 10.5, 12.5, 12.7, 20.7, 20.9})
+	keep = make([]bool, len(ws))
+	for i := range keep {
+		keep[i] = true
+	}
+	got = nil
+	for _, is := range islands(ws, keep) {
+		got = append(got, is.Text)
+	}
+	if strings.Join(got, "|") != "another note" {
+		t.Errorf("islands = %q, want only \"another note\"", got)
+	}
 }
 
 func TestProjectNameHasNoDay(t *testing.T) {
@@ -216,6 +238,28 @@ func TestProjectNameHasNoDay(t *testing.T) {
 
 // A provided file goes on the timeline; anything else is a short marker, and
 // an insert moves every marker after it.
+// The goodbye update: the 12B flagged all of these; he points at the first three.
+func TestMarkersOnlyWhereHePoints(t *testing.T) {
+	var ss []Sentence
+	var ls []showLine
+	for i, s := range []string{
+		"In fact, he blackmailed me into an apology saying this.",
+		"Here's this short, and he tagged me and PopTart in, which fucking no contact order, right?",
+		"Like this is the stuff he's been threatening.",
+		"Cause he made this documentary that I didn't want to watch.",
+		"So on September 30th, I did a live stream where I apologized.",
+		"I'm also gonna link all the videos if you do want to like watch them in depth, but I'm just gonna summarize here real quick.",
+		"Unfortunately, all the drama has caused, you know, this other guy's live streams to like get better numbers.",
+		"we should not be incentivizing people to threaten children on this platform",
+	} {
+		ss = append(ss, Sentence{Text: s})
+		ls = append(ls, showLine{ID: i})
+	}
+	if got := pointed(ss, ls); len(got) != 3 || got[2].ID != 2 {
+		t.Errorf("pointed = %+v, want sentences 0-2", got)
+	}
+}
+
 func TestAssetsAndMarkers(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "2026-10-12_16-38-12.mp4")

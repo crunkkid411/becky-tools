@@ -101,6 +101,19 @@ func providedAssets(dir, footage string) []string {
 // still offer its files to the model, which picks only a file that fits a line.
 var forBecky = regexp.MustCompile(`(?i)feedback|workflow|instruction|readme`)
 
+// pointsAt: a sentence where he points at something the viewer should see right
+// then - "an apology saying this.", "Here's this short", "this is the stuff he's
+// been threatening". The 12B also lists everything he merely mentions (54
+// places in the goodbye update, 3 of them pointed at); a marker is a chore for
+// Jordan, so only a sentence that points gets one.
+var pointsAt = regexp.MustCompile(`(?i)\b(?:this|these)[.!?"')]*$|\bhere(?:['’]s| is| are)\b|\b(?:this|these) (?:is|are) (?:the|what|how|where|him|his|her|it)\b|\blook at\b|\bcheck (?:this|it) out\b|\byou can see\b|\bwatch this\b|\bon (?:the )?screen\b`)
+
+func pointed(ss []Sentence, ls []showLine) []showLine {
+	return slices.DeleteFunc(slices.Clone(ls), func(l showLine) bool {
+		return l.ID < 0 || l.ID >= len(ss) || !pointsAt.MatchString(strings.TrimSpace(ss[l.ID].Text))
+	})
+}
+
 var noteFile = regexp.MustCompile(`(?i)(?:[a-z]:\\[^\r\n"<>|]*?|[\w .'()-]+?)\.(?:mp4|mov|mkv|webm|avi|m4v|jpe?g|png|gif|webp|bmp)\b`)
 
 // showLines finds the lines and matches what he provided (cached per edit).
@@ -112,8 +125,9 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 		Lines     []showLine `json:"lines"`
 	}
 	if b, err := os.ReadFile(path); err == nil && !fresh && json.Unmarshal(b, &saved) == nil && saved.Sentences == len(ss) && slices.Equal(saved.Assets, assets) {
-		r.logf("contextual pass: using the earlier reading (%d place(s) to show something)", len(saved.Lines))
-		return saved.Lines
+		lines := pointed(ss, saved.Lines)
+		r.logf("contextual pass: using the earlier reading (%d place(s) to show something)", len(lines))
+		return lines
 	}
 	spec := r.coarseModel()
 	m, err := spec.open()
@@ -124,18 +138,32 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 	defer m.client.Close()
 	r.logf("contextual pass: %s is looking for things you mean to show...", spec.name)
 	var lines []showLine
+	missed := 0
 	for _, p := range parts(len(ss)) {
 		a, b := p[0], p[1]
+		if !slices.ContainsFunc(ss[a:b], func(s Sentence) bool { return pointsAt.MatchString(strings.TrimSpace(s.Text)) }) {
+			continue // he points at nothing in this part
+		}
 		user := "THE TRANSCRIPT (one part):\n" + sentenceLines(ss, a, b) +
 			"\nList every sentence where Jordan means something to be SHOWN on screen that is not him talking to the camera: a clip, a video, a livestream, a post, a screenshot, a message, a picture of something - \"saying this\", \"look at this\", \"here's what he posted\", \"he made a video saying...\" when he is about to show it.\n" +
 			"- id: the sentence\n- label: 2 to 4 words naming the thing to show, like \"blackmail apology\" or \"kickflip website\"\n- what: one short sentence: what should be shown there\n" +
 			"Only places where showing it is clearly his intent. Most parts have none: answer {\"show\": []}."
-		raw, err := m.chat(videoRole, user, showSchema, 400)
 		var ans struct {
 			Show []showLine `json:"show"`
 		}
-		if err != nil || json.Unmarshal([]byte(raw), &ans) != nil {
-			r.logf("  contextual pass: %s could not read %s-%s (%v)", spec.name, clock(ss[a].Start), clock(ss[b-1].End), err)
+		// 1200 tokens: at 400 a part with several things to show was cut off
+		// mid-answer (goodbye update 6:04-8:28). One more try before giving up.
+		var raw string
+		for try := 0; try < 2; try++ {
+			if raw, err = m.chat(videoRole, user, showSchema, 1200); err == nil {
+				if err = json.Unmarshal([]byte(raw), &ans); err == nil {
+					break
+				}
+			}
+		}
+		if err != nil {
+			missed++
+			r.logf("  contextual pass: %s could not read %s-%s: %v (%s)", spec.name, clock(ss[a].Start), clock(ss[b-1].End), err, tail(raw, 80))
 			continue
 		}
 		for _, s := range ans.Show {
@@ -146,6 +174,7 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 		}
 	}
 	slices.SortFunc(lines, func(x, y showLine) int { return x.ID - y.ID })
+	lines = pointed(ss, lines)
 	if len(assets) > 0 {
 		var names []string
 		for _, a := range assets {
@@ -166,6 +195,9 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 		}
 	}
 	r.logf("  %d place(s) to show something, %d with a file you provided", len(lines), countAssets(lines))
+	if missed > 0 {
+		return lines // not saved: the next run reads the parts it missed
+	}
 	saved.Sentences, saved.Assets, saved.Lines = len(ss), assets, lines
 	writeJSON(path, saved)
 	return lines

@@ -87,6 +87,16 @@ func TestWarmClientFlag(t *testing.T) {
 	}
 }
 
+// A fixed -ngl 99 turns off llama.cpp's fit, and next to Jordan's always-on
+// models the 12B spilled 14 GB into RAM (2026-10-14): every text client fits.
+func TestLayersFitTheCard(t *testing.T) {
+	for _, c := range []*Client{NewClient("m", "s", nil), NewWarmClientCtx("m", "s", 12288, nil)} {
+		if c.ngl != -1 {
+			t.Errorf("ngl = %d, want -1 (llama.cpp -ngl auto)", c.ngl)
+		}
+	}
+}
+
 // TestOptionDefaults documents the deterministic defaults the request builder
 // relies on (nil Temperature → 0.0, zero MaxTokens → 256, EnableThinking false).
 func TestOptionDefaults(t *testing.T) {

@@ -47,6 +47,25 @@ were not touched; every check below read its `becky-edit` files only.
   `user-feedback.md` names his two screenshots by full path).
 - BeckyFX jobs are now one Undo step, all or nothing (`UndoBlock.Cancel` on a failing line).
   `check-vegas-script.ps1`: COMPILE OK against VEGAS 18's ScriptPortal.Vegas.dll.
+- **Re-run on the goodbye update for his review (same day) found three more:**
+  - The thinking pass cut words out of the middle of his sentences ("on this platform... or to...
+    violate multiple... protection orders", "against him... for her."). `islands` now takes a fragment
+    only between sentences (the line before ended with . ? ! or um/uh; it ends one, or the next starts,
+    or he stops 2 s); a lone and/or/but inside a sentence stays. 12 fragments to the model -> 3.
+  - The show-me pass flagged 54 lines (everything he mentions); `pointsAt` keeps the 3 that point
+    ("saying this.", "Here's this short", "this is the stuff"). A part answer cut off at 400 tokens failed
+    as JSON with a `<nil>` error and the miss was cached: now 1200 tokens, one retry, the real error and
+    the answer's tail in the log, and neither pass saves a reading with a failed part.
+  - The 12B ran with `-ngl 99` next to his always-on System One / ai-memory models (4.6 GB of the card),
+    Windows spilled the overflow into RAM (14 GB working set) and free RAM hit 0.6 GB. `llmlocal`
+    now passes `-ngl auto` (llama.cpp fits the free memory, 1 GB margin, rest on the processor) for
+    every local text model; the re-run's lowest free RAM was 5.1 GB.
+  - The publish check took 30 s a frame (99 frames ~50 min; earlier runs 36-46 min per 25): frames are
+    pulled 1280 TALL, so widescreen is 2276x1280 = 1121 picture tokens, and with `-fa off` (the Gemma-4
+    picture reader needs it) that is 30 s. Measured on one frame: 1280 wide 2.1 s, 768 wide 1.2 s.
+    `gemmaFrame` gives Gemma a 1280-wide copy (`<frame>.gemma.jpg`); becky-ocr still reads the full frame.
+    Same flags on 7 of his frames as the full-size answers; a made-up court paper (names + address) and a
+    made-up live post were both still caught.
 - **Not yet run inside VEGAS** (Jordan needed the computer): the new BeckyFX verbs (`bleep`, `trackfx`,
   `overlay`, `insert`) are compile-checked only; Beauty Box / AutoLooks plug-in names and his five presets
   are found by name at run time and a miss fails that job by name. The thinking / show-me model passes run

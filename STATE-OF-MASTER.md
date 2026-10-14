@@ -12,7 +12,10 @@
 pieces listened to again; every cut moved onto his voice (his 4-frames-early example fixed); every "fuck"
 censored his way (Censor 2.mp3, -12.1 dB, one frame inside the word); slow zooms / crops; his hj-starter
 track effects; his files placed or a marker + `MARKERS.txt`. Verticals only from the edited project, no
-on-screen title. New VEGAS verbs compile-checked, not yet run in VEGAS. Detail: top of `HANDOFF-LOG.md`.
+on-screen title. Detail: top of `HANDOFF-LOG.md`. Second pass the same day: thinking fragments only
+between sentences, markers only where he points (3, not 54), and every local text model (`llmlocal`) fits
+the free graphics memory instead of `-ngl 99` (the 12B had spilled 14 GB into RAM); the publish check
+gives Gemma 1280-wide frames (30 s -> 2 s a frame).
 
 ### NEW — Vertical shorts built on the VEGAS timeline (2026-10-13, night, local)
 

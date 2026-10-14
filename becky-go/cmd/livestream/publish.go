@@ -96,6 +96,22 @@ func extractFrame(ffmpeg, media string, t float64, out string) error {
 	return nil
 }
 
+// gemmaFrame is the frame at most 1280 wide, for Gemma only (becky-ocr reads the
+// full one). A widescreen frame is 2276x1280: 1121 picture tokens and 30 s a
+// frame with flash attention off (the Gemma-4 picture reader needs it off);
+// 1280 wide is 426 tokens and 2 s (goodbye update, 2026-10-14). The original
+// is used when the copy cannot be made.
+func gemmaFrame(ffmpeg, frame string) string {
+	small := strings.TrimSuffix(frame, filepath.Ext(frame)) + ".gemma.jpg"
+	if _, err := os.Stat(small); err == nil {
+		return small
+	}
+	if exec.Command(ffmpeg, "-v", "error", "-y", "-i", frame, "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", small).Run() != nil {
+		return frame
+	}
+	return small
+}
+
 // thumb is a 16x16 grey thumbnail for "did the picture change?".
 func thumb(path string) []float64 {
 	f, err := os.Open(path)
@@ -340,7 +356,7 @@ func publishCheck(media, ffmpeg, ffprobe, gemma, mmproj, server string, pieces [
 			bad := 0
 			for k, f := range ask {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				res, err := r.AnalyzeImage(ctx, f.File, avlm.ImageOptions{Prompt: visionPrompt, MaxTokens: 160, Temperature: 0.01})
+				res, err := r.AnalyzeImage(ctx, gemmaFrame(ffmpeg, f.File), avlm.ImageOptions{Prompt: visionPrompt, MaxTokens: 160, Temperature: 0.01})
 				cancel()
 				if err == nil {
 					f.Vision, err = parseVision(res.Text)

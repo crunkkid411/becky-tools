@@ -826,9 +826,13 @@ when it is not silent, < -70 dB = left out) placed by the VEGAS delay via `audio
 now part of every `--video` run:**
 - **One project, no date:** `<folder minus "NN_">-video.veg` (`projectBase`). Verticals only from it (below).
 - **Thinking out loud** (`polish.go` `thinking`): a word or two said alone between 0.5 s pauses ("Whatever.",
-  "Here's", "So uh") is an island. Filler-only islands (and/so/like/but/or + um/uh) are cut by the words
-  alone; the rest go to the lead model with 15 words before and 12 after, 12 at a time: cut only the ones
-  he says while thinking. An island right after his own question is never one. Cache `thinking-<tag>.json`.
+  "Here's", "So uh") is an island only BETWEEN sentences: the line before it has ended (. ? ! or um/uh),
+  and it ends one itself, or a new sentence starts after it, or he stops 2 s. A pause inside his sentence
+  is emphasis ("on this platform... or to... violate multiple... protection orders" was cut on the first
+  run), and so is a lone "and"/"or"/"but" between his words. Filler-only islands (and/so/like/but/or +
+  um/uh) are cut by the words alone; the rest go to the lead model with 15 words before and 12 after, 12
+  at a time: cut only the ones he says while thinking. An island right after his own question is never
+  one. Cache `thinking-<tag>.json` (not saved when the model failed a batch, so it is asked again).
 - **A stretch with no transcript words is not silence** (`secondListen`): Parakeet missed a whole sentence
   at 1:47-1:50. Every word-less piece (breath cuts leave them) is cut out, joined with 1 s gaps into
   `second-listen.wav` and transcribed again; it goes only when that hears no word (a laugh, a sound).
@@ -853,7 +857,11 @@ now part of every `--video` run:**
   then "VEGAS <name>", then the one plug-in containing the name; a missing plug-in or preset fails the job
   and the report says so).
 - **What he means to show** (`assets.go`): the lead model finds the lines where he shows the viewer
-  something ("he blackmailed me into an apology saying this"). A file of his in the footage folder (or
+  something ("he blackmailed me into an apology saying this"), and code keeps only lines that POINT
+  (`pointsAt`: "... saying this." at the end, "here's", "this is the ...", "look at", "you can see", "on
+  screen"). The 12B alone flagged 54 lines of the goodbye update, everything he mentions; 3 point. A
+  marker is a chore for Jordan, so a mention never gets one. Parts with no pointing line skip the model.
+  1200-token answers, one retry (at 400 a busy part was cut off mid-answer). A file of his in the footage folder (or
   named in a notes .txt / .md there) goes in: a picture over his picture on a B-ROLL track for 4 s, a clip
   inserted with its sound (everything after moves later). Otherwise a marker with a few-word label ("blackmail
   apology"), and `MARKERS.txt` beside the project lists every marker: time on the timeline, label, what to
