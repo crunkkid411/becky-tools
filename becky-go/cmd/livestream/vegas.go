@@ -228,8 +228,36 @@ func absf(x float64) float64 {
 	return x
 }
 
-// freeVegName returns path, or "name (2).veg", "name (3).veg"... when taken:
-// an earlier project is never overwritten.
+// projectPath: ONE project per edit. Jordan, 2026-10-13: "If you change your
+// work, just fucking save the project you're working on. Making a duplicate is
+// fine if you're changing a project I've already started". becky saves over the
+// project it wrote last time; when Jordan has saved that project himself since
+// (its size or time no longer match becky's stamp), the edit gets a new name.
+func projectPath(want, work string) (string, bool) {
+	st, err := os.Stat(want)
+	if err != nil {
+		return want, false
+	}
+	var stamp struct {
+		Path string `json:"path"`
+		Size int64  `json:"size"`
+		Mod  int64  `json:"mod"`
+	}
+	b, _ := os.ReadFile(filepath.Join(work, "project-stamp.json"))
+	if json.Unmarshal(b, &stamp) == nil && strings.EqualFold(stamp.Path, want) && stamp.Size == st.Size() && stamp.Mod == st.ModTime().UnixNano() {
+		return want, true
+	}
+	return freeVegName(want), false
+}
+
+// stampProject records the project as becky left it (see projectPath).
+func stampProject(veg, work string) {
+	if st, err := os.Stat(veg); err == nil {
+		writeJSON(filepath.Join(work, "project-stamp.json"), map[string]any{"path": veg, "size": st.Size(), "mod": st.ModTime().UnixNano()})
+	}
+}
+
+// freeVegName returns path, or "name (2).veg", "name (3).veg"... when taken.
 func freeVegName(path string) string {
 	if _, err := os.Stat(path); err != nil {
 		return path
@@ -285,7 +313,7 @@ func runJob(script, job, body string, timeout time.Duration) (string, error) {
 
 // buildInVegas assembles the edit from the final pieces and returns the
 // timeline VEGAS actually made.
-func buildInVegas(media string, audio []vegasAudio, work, veg string, pieces []span, fps float64, logf func(string, ...any)) ([]piece, string, error) {
+func buildInVegas(media string, audio []vegasAudio, work, veg string, overwrite bool, pieces []span, fps float64, logf func(string, ...any)) ([]piece, string, error) {
 	logf("VEGAS: starting it (or using the open one)...")
 	if err := launchVegas(); err != nil {
 		return nil, "", err
@@ -309,7 +337,11 @@ func buildInVegas(media string, audio []vegasAudio, work, veg string, pieces []s
 		return nil, "", err
 	}
 	logf("  %s", res)
-	if _, err := vegas(2*time.Minute, "save", "path="+veg); err != nil {
+	save := []string{"save", "path=" + veg}
+	if overwrite {
+		save = append(save, "overwrite=true")
+	}
+	if _, err := vegas(2*time.Minute, save...); err != nil {
 		return nil, "", err
 	}
 	ps, health, err := readTimeline(delay)

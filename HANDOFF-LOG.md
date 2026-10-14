@@ -12,6 +12,40 @@
 
 ---
 
+## becky-vertical: vertical shorts built ON the VEGAS timeline (2026-10-13, night, local, `master`)
+
+Jordan: captions on the VEGAS timeline so he can adjust them (BeckyCaptions.cs "very buggy"); the vertical
+reframe on the VEGAS timeline following `JORDANS-WORKFLOWS.md` section 2 ("becky-clip ... is not usable");
+the openshorts features (silent-footage fallback, SPLIT / SCREENCAST on two tracks, hook text away from
+faces, punch-ins + an AI effect list he "absolutely NEED"s); habits.md beats generic best practice.
+Launcher: `workflows/vertical/Make-Vertical-Shorts.bat`.
+
+- `cmd/vertical` (`becky-vertical`): opens his widescreen .veg, Save As `<name>-VERTICAL.veg` (becky's
+  stamp = one project, never his), `vegas/BeckyVertical.cs` does size / Match Output Aspect / place / text /
+  region / render in one Undo step. Words through the AUDIO events; shorts from `shorts.txt` or becky-moment
+  (`--no-face --no-audio` on the timeline transcript); faces = InsightFace on the processor at 1 fps;
+  layout single / split / screencast (closed choice, single default); a hard cut to a new framing when his
+  face leaves the crop's middle half for 2 s (he pans 19 times in 90 projects); captions = cli-cut chunker
+  + his becky-captions preset at Location y 0.4; on-screen title = the short's title, his Montserrat Black
+  look, <= 3 lines, never on his face; effects = Gemma-4 12B picks punch_in / face_zoom per line, code
+  limits them (beats when the model is down).
+- `internal/vegasctl`: the becky-vegas driver (launch, open, save, timeline, RunJob that answers and reports
+  message boxes, ProjectPath/Stamp/FreeName, Restore).
+- Found by watching the renders, all fixed: VEGAS's MAGIX "TikTok QSV" writes a sheared picture at 1080
+  wide (his verticals are all Voukoder -> his "TikTok NVENC"); a minimized VEGAS renders pure black
+  (`vegasctl.Restore`); one framing per clip lost half his face; the first caption stretched back over 15 s
+  of silence; one lean moved every caption to the bottom; the spoken "hook" at 1.52 was 5-7 lines over his
+  face and the captions (the line-height guess was half the measured 0.08); all three shorts opened on
+  "And ..." and ended mid-sentence at becky-moment's 60 s cap (now whole sentences, `wholeSentences`);
+  the 12B stayed loaded through the render (11 GB, 1 GB left free) - now closed once effects are picked.
+- First real run, goodbye-youtube-update: becky-moment (Gemma-4 12B, ~15 min) picked "He's Now Threatening
+  My Child" (9:06-10:08), "Why I Refused To Apologize For The Truth" (4:48-5:51), "The FBI Actually
+  Showed Up At My House" (15:58-17:00); 3-4 effects each; rendered to `X:\Videos\2026\10_oct\rendered`
+  (Voukoder HEVC 1080x1920). Watched: frames, titles, every effect, and the first/last 7 s transcribed.
+- Also in this commit: `coarse.go` (`--video` rebuilt the openshorts way) can no longer put back a line the
+  model called not-for-viewers (`TestNotForViewersIsNeverPutBack`).
+- Pre-existing, not from this work: `internal/assistant` `TestHandleTier2Funnel` fails on master 77c1dc0.
+
 ## YouTube video edit: becky-livestream --video follows Jordan's on-camera instructions (2026-10-13, night, local, `master`)
 
 Jordan: edit the goodbye-youtube-update recording (not a livestream) with the livestream System One

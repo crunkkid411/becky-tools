@@ -47,6 +47,13 @@
   beginning") is found by Qwen3.5 + Gemma-4, understood by Gemma-4 12B + Gemma-4 + Qwen3.5, and done
   in code (move / cut / region). OBS files are listened to on a synced copy and laid in VEGAS from the
   original with obsprep's VEGAS delay (`BeckyKeepList.cs` `audio` lines). Recipe: `SKILL.md` `# YOUTUBE VIDEO EDIT`.
+- **`becky-vertical`** (2026-10-13, `cmd/vertical`, `internal/vegasctl`, `vegas/BeckyVertical.cs`; launcher
+  `workflows/vertical/Make-Vertical-Shorts.bat`): Jordan's "vertical shorts from a widescreen video"
+  workflow ON the VEGAS timeline - Save As `-VERTICAL.veg`, Match Output Aspect, every clip framed on his
+  face (single / split / screencast, a hard cut to a new framing when he moves), captions + hook as Titles
+  & Text events, Gemma-4-picked punch-ins / face zooms, a region per short, rendered with his Voukoder
+  "TikTok NVENC". Shorts from his `shorts.txt` or becky-moment; silent footage gets picture lines.
+  Recipe: `SKILL.md` `# VERTICAL SHORTS IN VEGAS`.
 - **`becky-livestream --model systemone`** (2026-10-08): System One + Gemma-4 + Qwen3.5 vote, then
   Gemma-4 E4B, Qwen3.5 and Gemma-4 12B READ the kept edit in order (posture from the picture,
   chat answers and chat questions as signals) and cut what does not belong (`together.go`,

@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — Vertical shorts built on the VEGAS timeline (2026-10-13, night, local)
+
+`workflows/vertical/Make-Vertical-Shorts.bat` = `becky-vertical <widescreen.veg>`: Jordan's own vertical
+workflow done in VEGAS (Save As `-VERTICAL.veg`, Match Output Aspect, every clip framed on his face, a
+region per short, rendered with his Voukoder "TikTok NVENC"), plus captions and a title as Titles & Text
+events he can edit, and Gemma-4-picked punch-ins / face zooms. Shorts from his `shorts.txt` or
+becky-moment. Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — YouTube video edit that follows his on-camera instructions (2026-10-13, night, local)
 
 `workflows/youtube/YouTube-Edit_System-One.bat` = `becky-livestream --video --model systemone`: the

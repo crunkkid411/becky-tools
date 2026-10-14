@@ -558,7 +558,7 @@ func writeInstructions(b *strings.Builder, list []Instruction, ss []Sentence) {
 		case in.Applied && in.Action == "cut":
 			done = fmt.Sprintf("cut %s-%s", clock(ss[in.PartFirst].Start), clock(ss[in.PartLast].End))
 		case in.Applied:
-			done = "a region marks it for you to do"
+			done = "for you to do - becky cannot"
 		}
 		fmt.Fprintf(b, "- %s \"%s\" - %s. Your words to the editor are cut (%d sentences). Models: %s\n",
 			clock(ss[in.Request0()].Start), in.Said, done, len(in.Request), in.Note)

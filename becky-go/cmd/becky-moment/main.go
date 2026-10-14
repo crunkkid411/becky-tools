@@ -77,6 +77,12 @@ type momentOut struct {
 	Basis      string  `json:"basis"`
 	Extended   bool    `json:"extended"`
 	Text       string  `json:"text"`
+	// the openshorts picker's copy for the clip (windows.go)
+	Hook        string `json:"hook,omitempty"`
+	Title       string `json:"title,omitempty"`
+	TikTok      string `json:"tiktok,omitempty"`
+	Instagram   string `json:"instagram,omitempty"`
+	WindowScore int    `json:"window_score,omitempty"`
 }
 
 type report struct {
@@ -106,6 +112,7 @@ func main() {
 		noFace     = flag.Bool("no-face", false, "skip the face coverage pass (is a talking head actually on screen)")
 		facePeriod = flag.Float64("face-sample-period", facesig.DefaultSamplePeriod, "seconds between sampled frames for the face coverage pass (lower = slower, finer)")
 		maxOverlap = flag.Float64("max-overlap", moment.DefaultMaxOverlap, "how much of a shorter moment may repeat a better one before it is dropped as the same moment (0 disables)")
+		picker     = flag.String("picker", "windows", "windows: the model ranks whole windows of the transcript, then picks the clips inside the best ones (openshorts); structure: the old structural candidates + judge")
 		selftest   = flag.Bool("selftest", false, "run the offline proof and exit")
 		verbose    = flag.Bool("verbose", false, "progress to stderr")
 	)
@@ -149,6 +156,25 @@ func main() {
 	rep := report{Tool: toolVersion, Transcripts: len(sources)}
 	if made > 0 {
 		rep.Notes = append(rep.Notes, fmt.Sprintf("transcribed %d file(s) that had no transcript", made))
+	}
+	if strings.ToLower(*picker) != "structure" {
+		lo, hi := 15.0, 60.0 // openshorts' band, unless --min/--max were given
+		flag.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "min":
+				lo = *minDur
+			case "max":
+				hi = *maxDur
+			}
+		})
+		ms, used, notes := pickWindows(cfg, sources, *top, lo, hi, func(f string, a ...any) { logIf(true, f, a...) })
+		rep.JudgeModel, rep.Notes, rep.Moments = used, append(rep.Notes, notes...), ms
+		for _, m := range ms {
+			rep.Hits = append(rep.Hits, hit{SRT: pathx.Base(m.Source), In: formatTC(m.Start), Out: formatTC(m.End), Q: firstLine(m.Text)})
+		}
+		rep.Candidates = len(ms)
+		emit(rep, *out)
+		return
 	}
 	var allCands []moment.Candidate
 

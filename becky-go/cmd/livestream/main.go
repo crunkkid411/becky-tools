@@ -94,7 +94,12 @@ func main() {
 	if *analyzeOnly && *model == "" {
 		*model, r.analyzeOnly = "gemma", true // never asked: analysis runs no decision model
 	}
+	if r.video && !r.analyzeOnly { // coarse.go: one local model, whatever --model says
+		*model = "video"
+	}
 	switch strings.ToLower(*model) {
+	case "video":
+		r.tag, r.label = "video", "Gemma-4 12B reading the whole video (local)"
 	case "gemma", "gemma4":
 		r.tag, r.label = "gemma4", "Gemma-4 E4B (reviewed by Qwen3.5-4B)"
 	case "qwen", "qwen3.5":
@@ -332,20 +337,16 @@ func (r *run) workflow(fresh, noVegas bool) {
 	t0 = time.Now()
 	ss := splitSentences(words)
 	r.logf("%d words, %d sentences", len(words), len(ss))
-	sel, err := r.decide(ss, fresh)
+	var sel Selection
+	if r.video {
+		sel, err = r.coarse(ss, fresh) // also follows his instructions to the editor
+	} else {
+		sel, err = r.decide(ss, fresh)
+	}
 	if err != nil {
 		fatal(err.Error())
 	}
 	r.step("content decision", t0)
-	if r.video { // what he tells his editor on camera is followed (instructions.go)
-		t0 = time.Now()
-		r.instr = r.instructions(ss, fresh)
-		applyInstructions(sel.Decisions, ss, r.instr)
-		// the filler rule again: a cut next to his instruction can leave a lone
-		// "Alright." that the vote kept as part of his talk
-		sel.Decisions = cutFiller(ss, sel.Decisions)
-		r.step("his instructions", t0)
-	}
 
 	keep := make([]bool, len(words))
 	for _, d := range sel.Decisions {
@@ -353,6 +354,13 @@ func (r *run) workflow(fresh, noVegas bool) {
 			for w := ss[d.ID].W0; w <= ss[d.ID].W1; w++ {
 				keep[w] = true
 			}
+		}
+	}
+	var restarted []int
+	if r.video {
+		restarted = restarts(words, ss)
+		for _, w := range restarted {
+			keep[w] = false
 		}
 	}
 
@@ -366,9 +374,14 @@ func (r *run) workflow(fresh, noVegas bool) {
 	r.logf("%d kept sections, %.1f of %.1f minutes before the dead air comes out", len(ranges), sumRanges(ranges)/60, r.duration/60)
 
 	// 4b. visual moments: a gesture, face or movement that goes with his line comes back
-	t0 = time.Now()
-	predicted, faces, faceNote := keepMoments(r.cfg, r.media, r.work, r.stem, ranges, predicted, words, r.fps, r.logf)
-	r.step("visual moments", t0)
+	// (not for --video: Gemma's put-back gestures were "random movements" to Jordan, 2026-10-13)
+	var faces []moment
+	faceNote := "not used for a YouTube video"
+	if !r.video {
+		t0 = time.Now()
+		predicted, faces, faceNote = keepMoments(r.cfg, r.media, r.work, r.stem, ranges, predicted, words, r.fps, r.logf)
+		r.step("visual moments", t0)
+	}
 
 	// 5. publish check (before VEGAS: Gemma's vision model and VEGAS never share the GPU)
 	t0 = time.Now()
@@ -387,6 +400,9 @@ func (r *run) workflow(fresh, noVegas bool) {
 	plan := map[string]any{"model": r.label, "guidance": r.guidance, "ranges": ranges, "predicted_pieces": predicted,
 		"loud_edges": loud, "findings": findings, "fps": r.fps, "moments": faces, "breaths": bc.Spots}
 	writeJSON(filepath.Join(r.work, "plan-"+r.tag+".json"), plan)
+	if r.video { // before VEGAS: the model and VEGAS never share the GPU
+		r.youtubeCopy(ss, sel.Decisions, predicted)
+	}
 	if noVegas {
 		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, faces, faceNote, nil, nil, "")
 		return
@@ -394,8 +410,8 @@ func (r *run) workflow(fresh, noVegas bool) {
 
 	// 7. VEGAS
 	t0 = time.Now()
-	veg := freeVegName(filepath.Join(filepath.Dir(r.footage), filepath.Base(filepath.Dir(r.footage))+"-"+r.tag+".veg"))
-	ps, health, err := buildInVegas(r.footage, r.audio, r.work, veg, predicted, r.fps, r.logf)
+	veg, overwrite := projectPath(filepath.Join(filepath.Dir(r.footage), filepath.Base(filepath.Dir(r.footage))+"-"+r.tag+".veg"), r.work)
+	ps, health, err := buildInVegas(r.footage, r.audio, r.work, veg, overwrite, predicted, r.fps, r.logf)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -418,9 +434,19 @@ func (r *run) workflow(fresh, noVegas bool) {
 			r.logf("VEGAS: %d face zoom(s) on kept facial expressions (%s)", n, res)
 		}
 	}
-	marks := append(r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps), instructionMarks(r.instr, ss, ps)...)
+	var marks []mark
+	if r.video { // Jordan, 2026-10-13: no notes on his timeline; only what may not be posted
+		marks = publishRegions(findings, ps)
+	} else {
+		marks = append(r.marks(sel, ss, ranges, findings, bc.Spots, faces, &ver, ps), instructionMarks(r.instr, ss, ps)...)
+	}
 	if err := addMarks(marks, r.fps, r.work, r.logf); err != nil {
 		fatal("the edit is saved, but the regions could not be added: " + err.Error())
+	}
+	stampProject(veg, r.work)
+	if r.video {
+		r.videoReport(sel, ss, restarted, words, bc, findings, &ver, veg)
+		return
 	}
 	r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, faces, faceNote, &ver, marks, veg)
 }

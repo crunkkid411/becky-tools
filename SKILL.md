@@ -822,6 +822,69 @@ when it is not silent, < -70 dB = left out) placed by the VEGAS delay via `audio
 - Full run on a 24-minute video: ~4 h fresh (analysis ~65 min, vote ~90 min, moments ~2 h, Falcon ~1 h on
   the processor); a re-run with the caches is ~15 min.
 
+# VERTICAL SHORTS IN VEGAS — becky-vertical, a widescreen project to vertical shorts on the timeline (2026-10-13)
+
+Spec: Jordan's `vegas\JORDANS-WORKFLOWS.md` section 2 ("Create Vertical Shorts from existing widescreen
+video"), every step. Unlike `becky-short` (which burns everything into an MP4), the result is a VEGAS
+project he can adjust by hand: crops are Pan/Crop keyframes, captions and the hook are Titles & Text
+events on their own tracks, effects are BeckyFX zooms, each short is a named region.
+
+```bat
+REM drag the widescreen .veg onto it, or put it in the footage folder and double-click
+workflows\vertical\Make-Vertical-Shorts.bat      :: a shorts.txt beside the .veg = his own list
+```
+```bash
+becky-vertical <project.veg> [--shorts list.txt] [--count 3] [--min 20] [--max 60] [--no-render] [--fresh]
+# list.txt: one short per line, "<start> <end> <title>" in the widescreen timeline's time (83, 1:23, 0:01:23)
+```
+
+What it does, in his order (`cmd/vertical`, VEGAS side `vegas/BeckyVertical.cs`, driver `internal/vegasctl`):
+1. Opens his project, **Save As `<name>-VERTICAL.veg`** first (never saves over his; becky's own earlier
+   VERTICAL is reused only while its stamp matches, else `(2)`), 1080x1920, then VEGAS's own Match
+   Output Aspect math on every video event (`match`).
+2. Words on the timeline: becky-transcribe's `becky-edit\<stem>.transcript.json`, mapped through the AUDIO
+   events (an OBS recording's sound sits frames off its picture). The shorts: his list, else `becky-moment`
+   (the openshorts window picker, Gemma-4 12B) on that timeline transcript, then made **whole sentences**:
+   the start walks back (<= 10 s) over sentences that carry on from the one before (And / But / Because /
+   Or / Then, or a lowercase first word), the end is the last sentence finished by becky-moment's end. His
+   own list's times are used exactly as he wrote them. Under 30 words (silent footage) -> Gemma-4 writes
+   one line per picture every 3 s and the same picker reads those.
+3. Faces: InsightFace on the processor, 1 picture a second, cached per short. Layout is a closed choice
+   with a safe default: **single** (default), **split** (two usable faces side by side on half the
+   samples: left person on top, copy on a "Becky Layout" track), **screencast** (one small face off to
+   the side on 60%: whole picture on top, face below). Placement is Pan/Crop only (the part of a crop box
+   outside the source is see-through, so no masks).
+4. **Re-aim, never pan** (he pans 19 times in 90 projects): when his face sits off the crop's middle half
+   for 2 samples running, a hard cut to a new framing; a framing is never under 2 s.
+5. Captions: the cli-cut chunker (`subs.ShortOptions`, 22 characters, lowercase), his "becky-captions"
+   preset, Location y 0.4 (60% down, his September vertical); a caption never shows before its first
+   word. Moved to 79% down only when a head covers the line on a third of the short.
+6. On-screen title (the short's title, else becky-moment's hook line): first 5 s, his title look
+   (Montserrat Black, 1.52, no shadow - his September title "TakingBack2007" sat 14.6% down, over his
+   hair). At most 3 lines (12 letters a line at 1.52, more as it shrinks), placed like openshorts'
+   choose_y but scored on his FACE, not his head (hair may be covered, eyes never), pulled toward his spot,
+   never on the captions.
+7. Effects (single layout only): Gemma-4 12B reads the short's lines and names the ones that earn
+   `punch_in` (1.27x, his median) or `face_zoom` (2.0x in 4 frames, the livestream edit's); code keeps
+   the limits (8 s apart, one per 12 s, none in the first 1 s / last 2 s, a zoom holds <= 3 s). Model down
+   -> punch-ins on the loudest beats (openshorts: 60% of the way from median to peak, 18 s apart). The
+   12B is shut down as soon as the effects are picked (it held 11 GB through a render and left 1 GB free).
+8. A region per short named with its title; rendered with **his Voukoder "TikTok NVENC" template** into
+   `<year>\<month>\rendered\<kebab-title>.mp4` (never over an existing file). Report:
+   `becky-edit\vertical\report.md` + `shorts.json`.
+
+Rules learned the hard way (2026-10-13):
+- **VEGAS's MAGIX "TikTok QSV" template writes a sheared, unwatchable picture at 1080 wide**, and MAGIX
+  "TikTok" fails outright. His own verticals were all rendered with Voukoder (`encoder=Voukoder (VEGAS)`).
+- **A minimized VEGAS renders pure black.** `vegasctl.Restore()` un-minimizes it (without taking the
+  keyboard) before every render.
+- One fixed framing per clip lost half his face when he leaned (hence re-aim); one lean toward the camera
+  moved every caption to the bottom (hence "a third of the short").
+- The spoken "hook" line at 1.52 came out 5-7 lines tall over his face and the captions: a line is 0.08
+  of the frame (measured), not the 0.045 first guessed. Measure text on a render, never guess it.
+- All three first shorts opened on "And ..." and stopped mid-sentence at becky-moment's 60 s cap; found by
+  transcribing the RENDER, not by looking at frames. Listen to a render's first and last seconds.
+
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
 ## THE SILENCE CUT WORKS — ONE CALL, cut from the AUDIO (2026-08-26)
