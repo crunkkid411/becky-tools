@@ -15,7 +15,7 @@
 - If there are multiple sources (example - Talking head style footage of Jordan, but also some vertical clips or widescreen clips from a different person / filming environment), then the secondary media types get all belong on a separate video and audio track
 - Save the project again
 
-## 2. Create Shorts from existing video
+## 2. Create Vertical Shorts from existing widescreen video
 
 1. File -> Properties OR use "Alt + Enter". This opens a popup box
 - Change "Width" to 1080 and change "Height" to 1920
@@ -34,7 +34,7 @@
 
 6. If Jordan gave specific clips to get from the video, create Regions around the specified subjects
 
-7. Render all regions. Name them the name of the short's title Jordan Provides
+7. Name each region the name of the short's title Jordan Provides. Render all regions.
 
 ## Rules
 

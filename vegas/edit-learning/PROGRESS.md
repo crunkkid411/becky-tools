@@ -22,7 +22,7 @@ session scratchpad as `jordan-2026-10-07-night.md`; the binding ones are copied 
   overlook, and why? Use a decision model to triage.
 - Consider EmbeddingGemma 2 and Google's 4B Gemma DiarizationLM. Remember research better
   (sqlite database / modern RAG).
-- Free models for grunt work: Space Bunny Free (OpenCode Zen), ling-3.1-flash (OpenRouter free);
+- Free models for grunt work: Deepseek V4.1 Flash Free (OpenCode Zen), thinkingmachines/inkling:free (OpenRouter free);
   Haiku 5.5 when free limits bite.
 - Document progress and push to GitHub after milestones.
 
