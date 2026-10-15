@@ -1,10 +1,14 @@
-// Package imagegen is becky's thin, deterministic wrapper around LOCAL text→image
-// generation with the FLUX.1 "Krea-2" model, run via stable-diffusion.cpp's
-// `sd-cli` binary. It turns a text prompt into a PNG on disk.
+// Package imagegen is becky's thin, deterministic wrapper around LOCAL image
+// generation and editing, run via stable-diffusion.cpp's `sd-cli` binary. It
+// turns a text prompt (plus, for an edit, reference images) into a PNG on disk.
 //
-// Krea-2 has three pieces, all local GGUF/safetensors (docs/krea2.md in
-// leejet/stable-diffusion.cpp): a Krea-2 diffusion transformer (--diffusion-model),
-// the Wan 2.1 VAE (--vae), and Qwen3-VL-4B as the text encoder (--llm). This
+// The DEFAULT model is Qwen-Image-2.1 (Jordan, 2026-10-14; docs/
+// qwen_image_2.1.md in leejet/stable-diffusion.cpp): the diffusion GGUF
+// (--diffusion-model), its own Qwen-Image-2.1 VAE (--vae), Qwen3-VL-8B as the
+// text encoder (--llm) and, for edits only, that model's vision file
+// (--llm_vision) with each reference image passed as -r. It runs 40 steps (Qwen's
+// own card) at CFG 6 (sd.cpp's docs). The older FLUX.1 "Krea-2" model (Wan 2.1 VAE
+// + Qwen3-VL-4B, docs/krea2.md) still works when its files are selected. This
 // package only assembles the argv and captures the result; the heavy compute
 // lives in sd-cli.
 //
@@ -38,14 +42,20 @@ const ToolName = "becky-imagegen"
 // Defaults a caller can override via flags/env. Self-contained on purpose — the
 // package does not import internal/config (the CLI passes config paths in).
 const (
-	// DefaultSDCli is stable-diffusion.cpp's CLI binary on Jordan's PC.
-	DefaultSDCli = `C:/stable-diffusion.cpp/build/bin/Release/sd-cli.exe`
-	// DefaultModelDir is where the Krea-2 GGUFs + VAE + text encoder live.
-	DefaultModelDir = `X:/AI-2/becky-tools/models/krea2/`
+	// DefaultSDCli is stable-diffusion.cpp's CLI binary on Jordan's PC. The
+	// master-964 release build: the older build/bin/Release one predates
+	// Qwen-Image-2.1 support.
+	DefaultSDCli = `C:/stable-diffusion.cpp/bin-master-964/sd-cli.exe`
 	// DefaultOut is where the generated PNG is written when no --out is given.
 	DefaultOut = "becky-image.png"
 
-	// DefaultWidth / DefaultHeight are Krea-2's native 1-megapixel square.
+	// DefaultStepsQwen / DefaultCFGQwen: Qwen-Image-2.1's own card samples 40
+	// steps; it needs real classifier-free guidance (sd.cpp's docs and unsloth's
+	// card use 6.0), not FLUX's distilled --guidance.
+	DefaultStepsQwen = 40
+	DefaultCFGQwen   = 6.0
+
+	// DefaultWidth / DefaultHeight: a 1-megapixel square (native for both models).
 	DefaultWidth  = 1024
 	DefaultHeight = 1024
 	// DefaultStepsRaw / DefaultStepsTurbo: the Turbo variant is distilled for far
@@ -78,10 +88,12 @@ type Options struct {
 	Negative string // optional negative prompt (-n); omitted when empty
 	Out      string // output PNG path (DefaultOut when empty)
 
-	SDCli string // path to sd-cli (DefaultSDCli when empty)
-	Model string // diffusion-transformer GGUF (REQUIRED; no safe default to invent)
-	VAE   string // Wan 2.1 VAE safetensors (REQUIRED)
-	LLM   string // Qwen3-VL-4B text-encoder GGUF (REQUIRED)
+	SDCli  string   // path to sd-cli (DefaultSDCli when empty)
+	Model  string   // diffusion-transformer GGUF (REQUIRED; no safe default to invent)
+	VAE    string   // the model's VAE safetensors (REQUIRED)
+	LLM    string   // text-encoder GGUF (REQUIRED)
+	Vision string   // text encoder's vision file (--llm_vision); Qwen-Image edits need it
+	Refs   []string // reference images (-r, in order): set = edit these instead of drawing from scratch
 
 	Width    int     // image width (DefaultWidth when <= 0)
 	Height   int     // image height (DefaultHeight when <= 0)
@@ -121,7 +133,8 @@ type Result struct {
 	Negative string   `json:"negative,omitempty"`
 	Output   string   `json:"output"`
 	Model    string   `json:"model"`
-	Variant  string   `json:"variant"` // krea-2-raw | krea-2-turbo
+	Variant  string   `json:"variant"` // qwen-image-2.1 | krea-2-turbo | krea-2-raw
+	Refs     []string `json:"refs,omitempty"`
 	Seed     int64    `json:"seed"`
 	Width    int      `json:"width"`
 	Height   int      `json:"height"`
@@ -192,6 +205,7 @@ func newResult(o Options) Result {
 		Output:   o.Out,
 		Model:    o.Model,
 		Variant:  variantLabel(o),
+		Refs:     o.Refs,
 		Seed:     o.Seed,
 		Width:    o.Width,
 		Height:   o.Height,
@@ -222,15 +236,22 @@ func withDefaults(o Options) Options {
 	if o.Height <= 0 {
 		o.Height = DefaultHeight
 	}
+	qwen := isQwenImage(o)
 	if o.Steps <= 0 {
-		if o.Turbo {
+		switch {
+		case qwen:
+			o.Steps = DefaultStepsQwen
+		case o.Turbo:
 			o.Steps = DefaultStepsTurbo
-		} else {
+		default:
 			o.Steps = DefaultStepsRaw
 		}
 	}
 	if o.CFGScale <= 0 {
 		o.CFGScale = DefaultCFGScale
+		if qwen {
+			o.CFGScale = DefaultCFGQwen
+		}
 	}
 	if o.Guidance <= 0 {
 		o.Guidance = DefaultGuidance
@@ -241,24 +262,33 @@ func withDefaults(o Options) Options {
 	return o
 }
 
-// BuildArgs assembles the sd-cli argv for one deterministic text→image run. It
-// mirrors the verified-good Krea-2 invocation from docs/krea2.md
-// (--diffusion-model / --llm / --vae / -p ...) and adds the standard
-// output/seed/size/steps/sampler flags. Order is fixed for stable, testable
-// argv and reproducible provenance.
+// BuildArgs assembles the sd-cli argv for one deterministic run. It mirrors the
+// documented invocations (docs/qwen_image_2.1.md, docs/krea2.md:
+// --diffusion-model / --llm / --vae / -p ...) and adds the standard
+// output/seed/size/steps/sampler flags. Qwen-Image takes no distilled
+// --guidance; an edit adds --llm_vision and one -r per reference image. Order
+// is fixed for stable, testable argv and reproducible provenance.
 func BuildArgs(o Options) []string {
 	args := []string{
 		"--diffusion-model", o.Model,
 		"--llm", o.LLM,
 		"--vae", o.VAE,
-		"-p", o.Prompt,
 	}
+	if len(o.Refs) > 0 && o.Vision != "" {
+		args = append(args, "--llm_vision", o.Vision)
+	}
+	for _, r := range o.Refs {
+		args = append(args, "-r", r)
+	}
+	args = append(args, "-p", o.Prompt)
 	if o.Negative != "" {
 		args = append(args, "-n", o.Negative)
 	}
+	args = append(args, "--cfg-scale", trimFloat(o.CFGScale))
+	if !isQwenImage(o) {
+		args = append(args, "--guidance", trimFloat(o.Guidance))
+	}
 	args = append(args,
-		"--cfg-scale", trimFloat(o.CFGScale),
-		"--guidance", trimFloat(o.Guidance),
 		"--sampling-method", o.Sampler,
 		"--steps", strconv.Itoa(o.Steps),
 		"-W", strconv.Itoa(o.Width),
@@ -272,7 +302,13 @@ func BuildArgs(o Options) []string {
 	if o.FlashAttn {
 		args = append(args, "--diffusion-fa")
 	}
-	if o.OffloadCPU {
+	if isQwenImage(o) {
+		// Qwen's 5 GB text encoder never fits on the 8 GB card next to the
+		// diffusion model (sd-cli fails "workspace capacity check"); on the CPU it
+		// reads a prompt in ~10 s (measured 2026-10-15). sd.cpp's auto-fit places
+		// the rest, so --offload-to-cpu is not passed.
+		args = append(args, "--backend", "te=cpu", "--mmap")
+	} else if o.OffloadCPU {
 		args = append(args, "--offload-to-cpu")
 	}
 	if o.Verbose {
@@ -281,18 +317,25 @@ func BuildArgs(o Options) []string {
 	return args
 }
 
-// checkInputs verifies the binary + the three Krea-2 model files exist (and a
-// prompt was given) so a missing piece becomes a precise degrade note instead of
-// an exec failure. The output is NOT checked here (it does not exist yet).
+// checkInputs verifies the binary + the model files (+ any reference images)
+// exist and a prompt was given, so a missing piece becomes a precise degrade
+// note instead of an exec failure. The output is NOT checked here (it does not
+// exist yet).
 func checkInputs(o Options) error {
 	if strings.TrimSpace(o.Prompt) == "" {
 		return fmt.Errorf("no --prompt given (a text prompt is required)")
 	}
 	checks := []struct{ path, what string }{
 		{o.SDCli, "sd-cli binary"},
-		{o.Model, "Krea-2 diffusion model GGUF"},
-		{o.VAE, "Wan 2.1 VAE"},
-		{o.LLM, "Qwen3-VL-4B text encoder GGUF"},
+		{o.Model, "diffusion model GGUF"},
+		{o.VAE, "VAE"},
+		{o.LLM, "text encoder GGUF"},
+	}
+	if len(o.Refs) > 0 && isQwenImage(o) {
+		checks = append(checks, struct{ path, what string }{o.Vision, "text encoder vision file (mmproj, needed to edit an image)"})
+	}
+	for _, r := range o.Refs {
+		checks = append(checks, struct{ path, what string }{r, "reference image"})
 	}
 	for _, c := range checks {
 		if strings.TrimSpace(c.path) == "" {
@@ -305,13 +348,23 @@ func checkInputs(o Options) error {
 	return nil
 }
 
-// variantLabel reports which Krea-2 variant an Options resolves to, for the
+// variantLabel reports which model variant an Options resolves to, for the
 // Result and the plain-language report.
 func variantLabel(o Options) string {
-	if o.Turbo || strings.Contains(strings.ToLower(pathx.Base(o.Model)), "turbo") {
+	switch {
+	case isQwenImage(o):
+		return "qwen-image-2.1"
+	case o.Turbo || strings.Contains(strings.ToLower(pathx.Base(o.Model)), "turbo"):
 		return "krea-2-turbo"
 	}
 	return "krea-2-raw"
+}
+
+// isQwenImage reports whether the diffusion model file is a Qwen-Image one
+// (unsloth names it qwen-image-*, leejet/Comfy-Org qwen_image_*).
+func isQwenImage(o Options) bool {
+	b := strings.ToLower(pathx.Base(o.Model))
+	return strings.Contains(b, "qwen-image") || strings.Contains(b, "qwen_image")
 }
 
 // degrade folds an error into a degraded Result (never returns the error).

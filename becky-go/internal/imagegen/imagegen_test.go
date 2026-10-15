@@ -143,6 +143,79 @@ func TestBuildArgs_cfgFloatsTrimmed(t *testing.T) {
 	}
 }
 
+// Qwen-Image-2.1 (the default model) ------------------------------------------
+
+const qwenFile = `X:\HuggingFace\models\unsloth\Qwen-Image-2.1-GGUF\qwen-image-2.1-Q5_K_S.gguf`
+
+func TestBuildArgs_qwenImageUsesRealCFGAndNoFluxGuidance(t *testing.T) {
+	args := BuildArgs(withDefaults(Options{Prompt: "x", Model: qwenFile, VAE: "v", LLM: "l"}))
+	if got := argValue(args, "--steps"); got != "40" {
+		t.Errorf("--steps: got %q want 40 (Qwen's own card)", got)
+	}
+	if got := argValue(args, "--cfg-scale"); got != "6" {
+		t.Errorf("--cfg-scale: got %q want 6", got)
+	}
+	if hasFlag(args, "--guidance") {
+		t.Errorf("Qwen-Image must not get FLUX's --guidance: %v", args)
+	}
+	if hasFlag(args, "-r") || hasFlag(args, "--llm_vision") {
+		t.Errorf("no edit flags without a reference image: %v", args)
+	}
+	// The text encoder must run on the CPU (it fails on the 8 GB card), even with
+	// OffloadCPU set, which Qwen skips in favor of sd.cpp's auto-fit.
+	off := BuildArgs(withDefaults(Options{Prompt: "x", Model: qwenFile, VAE: "v", LLM: "l", OffloadCPU: true}))
+	if argValue(off, "--backend") != "te=cpu" || !hasFlag(off, "--mmap") || hasFlag(off, "--offload-to-cpu") {
+		t.Errorf("Qwen wants --backend te=cpu --mmap and no --offload-to-cpu: %v", off)
+	}
+}
+
+func TestBuildArgs_qwenEditPassesVisionAndRefsInOrder(t *testing.T) {
+	args := BuildArgs(withDefaults(Options{
+		Prompt: "x", Model: qwenFile, VAE: "v", LLM: "l", Vision: "mm.gguf",
+		Refs: []string{"a.jpg", "b.png"},
+	}))
+	if got := argValue(args, "--llm_vision"); got != "mm.gguf" {
+		t.Errorf("--llm_vision: got %q", got)
+	}
+	var refs []string
+	for i, a := range args {
+		if a == "-r" && i+1 < len(args) {
+			refs = append(refs, args[i+1])
+		}
+	}
+	if strings.Join(refs, ",") != "a.jpg,b.png" {
+		t.Errorf("refs: got %v want [a.jpg b.png] in order", refs)
+	}
+}
+
+func TestGenerate_qwenEditDegradesWithoutVisionFile(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "f")
+	writeFile(t, f)
+	model := filepath.Join(dir, "qwen-image-2.1-Q5_K_S.gguf")
+	writeFile(t, model)
+	res := generateWith(&fakeRunner{}, Options{
+		Prompt: "x", SDCli: f, Model: model, VAE: f, LLM: f, Refs: []string{f},
+		Out: filepath.Join(dir, "o.png"),
+	})
+	if !res.Degraded || !strings.Contains(res.Error, "vision file") {
+		t.Fatalf("expected vision-missing degrade, got %+v", res)
+	}
+}
+
+func TestGenerate_degradesWhenReferenceImageMissing(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "f")
+	writeFile(t, f)
+	res := generateWith(&fakeRunner{}, Options{
+		Prompt: "x", SDCli: f, Model: f, VAE: f, LLM: f, Vision: f,
+		Refs: []string{filepath.Join(dir, "nope.jpg")}, Out: filepath.Join(dir, "o.png"),
+	})
+	if !res.Degraded || !strings.Contains(res.Error, "reference image not found") {
+		t.Fatalf("expected ref-missing degrade, got %+v", res)
+	}
+}
+
 // (b) defaults ----------------------------------------------------------------
 
 func TestWithDefaults_rawVsTurboSteps(t *testing.T) {
@@ -196,6 +269,11 @@ func TestVariantLabel(t *testing.T) {
 	if got := variantLabel(Options{Model: "anything.gguf", Turbo: true}); got != "krea-2-turbo" {
 		t.Errorf("turbo by flag: got %q", got)
 	}
+	for _, m := range []string{qwenFile, "qwen_image_2.1-Q4_K.gguf"} {
+		if got := variantLabel(Options{Model: m}); got != "qwen-image-2.1" {
+			t.Errorf("qwen %s: got %q", m, got)
+		}
+	}
 }
 
 // (d) degrade paths -----------------------------------------------------------
@@ -216,7 +294,7 @@ func TestGenerate_degradesWhenModelMissing(t *testing.T) {
 		Prompt: "x", SDCli: bin, Model: filepath.Join(dir, "nope.gguf"),
 		VAE: bin, LLM: bin, Out: filepath.Join(dir, "o.png"),
 	})
-	if !res.Degraded || !strings.Contains(res.Error, "Krea-2 diffusion model") {
+	if !res.Degraded || !strings.Contains(res.Error, "diffusion model GGUF not found") {
 		t.Fatalf("expected model-missing degrade, got %+v", res)
 	}
 }

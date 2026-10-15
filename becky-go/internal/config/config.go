@@ -71,7 +71,8 @@ type Config struct {
 	QwenModel  string `json:"qwen_model"`  // Qwen3.5-4B GGUF (UD-Q4_K_XL): text routing/reasoning + single-image corroboration
 	QwenMMProj string `json:"qwen_mmproj"` // Qwen3.5-4B's own F16 image projector (SINGLE-IMAGE only; NOT video; NOT a "Qwen3.5-VL")
 	// Krea2 local image GENERATION (text→image) via stable-diffusion.cpp's sd-cli.
-	// becky's DEFAULT local image-gen model: the FLUX.1 "Krea-2" diffusion
+	// becky's default image model until 2026-10-14 (now the --krea fallback; the
+	// default is Qwen-Image-2.1, below): the FLUX.1 "Krea-2" diffusion
 	// transformer + the Wan 2.1 VAE + Qwen3-VL-4B as the text encoder (the --llm),
 	// all run by the sd-cli binary. This is GENERATION only — it does NOT replace
 	// the forensic vision READERS (Gemma-4 / LFM2.5-VL / Qwen). Krea-2 *Turbo* is
@@ -84,19 +85,26 @@ type Config struct {
 	Krea2ModelTurbo  string `json:"krea2_model_turbo"`  // Turbo diffusion GGUF (becky-imagegen --turbo; default is already Turbo)
 	Krea2VAE         string `json:"krea2_vae"`          // Wan 2.1 VAE safetensors (--vae)
 	Krea2TextEncoder string `json:"krea2_text_encoder"` // Qwen3-VL-4B text-encoder GGUF (--llm)
-	LlamaMtmdCLI     string `json:"llama_mtmd_cli"`     // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
-	LlamaServer      string `json:"llama_server"`       // llama-server.exe (becky-validate spawns/reuses this for multimodal inference)
-	Web2mdPython     string `json:"web2md_python"`      // interpreter with trafilatura/markdownify/bs4/pyyaml/lxml
-	FacePython       string `json:"face_python"`        // interpreter with insightface + onnxruntime + cv2
-	FacePyLib        string `json:"face_pylib"`         // extra site-packages dir put on PYTHONPATH for face deps
-	FaceModelRoot    string `json:"face_model_root"`    // insightface root (holds models/<name>/)
-	FaceModelName    string `json:"face_model_name"`    // insightface model pack, e.g. buffalo_l
-	FaceSecondModel  string `json:"face_second_model"`  // LVFace ONNX: becky-identify names a face only when it and ArcFace agree
-	RevSearchPython  string `json:"rev_search_python"`  // Camoufox venv python: becky-revsearch drives Yandex + Bing reverse image search
-	PoseModel        string `json:"pose_model"`         // MediaPipe pose_landmarker_*.task (body-aware 9:16 framing)
-	LRASDRepo        string `json:"lrasd_repo"`         // LR-ASD checkout (model/ + loss.py + weight/): who is speaking
-	Codec            string `json:"codec"`              // h264_nvenc (never libx264)
-	Device           string `json:"device"`             // cpu or cuda
+	// Qwen-Image-2.1: becky's DEFAULT image model since 2026-10-14 (Jordan: newer
+	// and better than Krea-2; generates AND edits). Same sd-cli; ImageGen falls
+	// back to Krea-2 only when the Qwen diffusion file is missing.
+	QwenImageModel       string `json:"qwen_image_model"`        // Qwen-Image-2.1 diffusion GGUF (--diffusion-model)
+	QwenImageVAE         string `json:"qwen_image_vae"`          // qwen_image_2.1_vae_bf16 (--vae); not interchangeable with older Qwen/Wan VAEs
+	QwenImageTextEncoder string `json:"qwen_image_text_encoder"` // Qwen3-VL-8B-Instruct GGUF (--llm)
+	QwenImageVision      string `json:"qwen_image_vision"`       // Qwen3-VL-8B mmproj (--llm_vision), edits only
+	LlamaMtmdCLI         string `json:"llama_mtmd_cli"`          // DEPRECATED: llama-mtmd-cli.exe hard-crashes on Gemma-4; avlm uses llama-server instead
+	LlamaServer          string `json:"llama_server"`            // llama-server.exe (becky-validate spawns/reuses this for multimodal inference)
+	Web2mdPython         string `json:"web2md_python"`           // interpreter with trafilatura/markdownify/bs4/pyyaml/lxml
+	FacePython           string `json:"face_python"`             // interpreter with insightface + onnxruntime + cv2
+	FacePyLib            string `json:"face_pylib"`              // extra site-packages dir put on PYTHONPATH for face deps
+	FaceModelRoot        string `json:"face_model_root"`         // insightface root (holds models/<name>/)
+	FaceModelName        string `json:"face_model_name"`         // insightface model pack, e.g. buffalo_l
+	FaceSecondModel      string `json:"face_second_model"`       // LVFace ONNX: becky-identify names a face only when it and ArcFace agree
+	RevSearchPython      string `json:"rev_search_python"`       // Camoufox venv python: becky-revsearch drives Yandex + Bing reverse image search
+	PoseModel            string `json:"pose_model"`              // MediaPipe pose_landmarker_*.task (body-aware 9:16 framing)
+	LRASDRepo            string `json:"lrasd_repo"`              // LR-ASD checkout (model/ + loss.py + weight/): who is speaking
+	Codec                string `json:"codec"`                   // h264_nvenc (never libx264)
+	Device               string `json:"device"`                  // cpu or cuda
 }
 
 // GemmaAVLM resolves the ACTIVE audio-visual model (GGUF path, BF16 mmproj path,
@@ -130,22 +138,29 @@ func (c Config) Qwen() (model, mmproj, label string) {
 	return model, c.QwenMMProj, qwenLabel(model)
 }
 
-// ImageGen resolves the ACTIVE local image-generation backend for becky-imagegen:
-// the sd-cli binary, the diffusion-transformer GGUF, the Wan 2.1 VAE, the
-// Qwen3-VL-4B text encoder, and a short honest label. The default is the Krea-2
-// Raw variant; passing turbo=true (becky-imagegen --turbo) selects the lighter
-// Turbo transformer WHEN its file is present, otherwise it stays on Raw (degrade,
-// never crash). BECKY_IMAGEGEN_VARIANT=turbo is the env equivalent. Mirrors
-// GemmaAVLM()/Qwen(): config drives every path, nothing hardcodes it.
-func (c Config) ImageGen(turbo bool) (sdcli, model, vae, llm, label string) {
-	if strings.EqualFold(os.Getenv("BECKY_IMAGEGEN_VARIANT"), "turbo") {
-		turbo = true
+// ImageGen resolves the ACTIVE local image backend for becky-imagegen: the sd-cli
+// binary, the diffusion GGUF, its VAE, its text encoder, the text encoder's
+// vision file (edits; empty for Krea-2) and a short honest label. The default is
+// Qwen-Image-2.1. krea=true (becky-imagegen --krea, or
+// BECKY_IMAGEGEN_VARIANT=krea) picks the older Krea-2, as does a missing Qwen
+// diffusion file (degrade, never crash); for Krea-2, turbo=true
+// (BECKY_IMAGEGEN_VARIANT=turbo) picks its Turbo transformer when present.
+// Mirrors GemmaAVLM()/Qwen(): config drives every path, nothing hardcodes it.
+func (c Config) ImageGen(krea, turbo bool) (sdcli, model, vae, llm, vision, label string) {
+	switch strings.ToLower(os.Getenv("BECKY_IMAGEGEN_VARIANT")) {
+	case "krea":
+		krea = true
+	case "turbo":
+		krea, turbo = true, true
+	}
+	if !krea && fileExists(c.QwenImageModel) {
+		return c.SDCli, c.QwenImageModel, c.QwenImageVAE, c.QwenImageTextEncoder, c.QwenImageVision, "qwen-image-2.1"
 	}
 	model = c.Krea2Model
 	if turbo && fileExists(c.Krea2ModelTurbo) {
 		model = c.Krea2ModelTurbo
 	}
-	return c.SDCli, model, c.Krea2VAE, c.Krea2TextEncoder, krea2Label(model)
+	return c.SDCli, model, c.Krea2VAE, c.Krea2TextEncoder, "", krea2Label(model)
 }
 
 // krea2Label derives a short, honest display label from a Krea2 GGUF filename so
@@ -348,7 +363,12 @@ func defaults() Config {
 		// (+ AUP), NOT apache-2.0 despite the GGUF repo's mistag. Downloaded by
 		// scripts/get-krea2.ps1; first existing path wins, so a step-up (Q6_K) or the
 		// legacy Q8 file is picked up automatically if present. docs/krea2.md.
-		SDCli: resolve("sd-cli", `C:\stable-diffusion.cpp\build\bin\Release\sd-cli.exe`),
+		// sd-cli: the master-964 release build first (the older build/bin/Release
+		// one predates Qwen-Image-2.1 and cannot load it).
+		SDCli: resolve("sd-cli", firstExisting(
+			`C:\stable-diffusion.cpp\bin-master-964\sd-cli.exe`,
+			`C:\stable-diffusion.cpp\build\bin\Release\sd-cli.exe`,
+		)),
 		Krea2Model: firstExisting(
 			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q4_K_M.gguf`,
 			`X:\AI-2\becky-tools\models\krea2\Krea-2-Turbo-Q6_K.gguf`,
@@ -366,6 +386,28 @@ func defaults() Config {
 			`X:\AI-2\becky-tools\models\krea2\Qwen3VL-4B-Instruct-Q8_0.gguf`,
 			`X:\AI-2\becky-tools\models\krea2\Qwen3VL-4B-Instruct-Q4_K_M.gguf`,
 			`X:\AI-2\becky-tools\models\krea2\Qwen3-VL-4B-Instruct-Q4_K_M.gguf`,
+		),
+		// Qwen-Image-2.1, the DEFAULT image model (Jordan, 2026-10-14). The full
+		// model, NOT the 8-step Turbo distill: the full one is what the
+		// leaderboards ranked #1 open (theopenweights, 2026-10-13). All unsloth
+		// (Qwen publishes no GGUF): unsloth/Qwen-Image-2.1-GGUF Q5_K_S (4.5 GB;
+		// unsloth's Turbo card, same per-tensor layout, measures it drifting ~40%
+		// less from bf16 than Q4_K_M for 0.3 GB more), the VAE from
+		// unsloth/Qwen-Image-2.1-FP8, and unsloth/Qwen3-VL-8B-Instruct-GGUF
+		// UD-Q4_K_XL + mmproj-F16 (the pair unsloth's card names). License: Qwen
+		// Research License; Jordan read it and approved using the outputs.
+		QwenImageModel: firstExisting(
+			`X:\HuggingFace\models\unsloth\Qwen-Image-2.1-GGUF\qwen-image-2.1-Q5_K_S.gguf`,
+			`X:\HuggingFace\models\unsloth\Qwen-Image-2.1-GGUF\qwen-image-2.1-Q4_K_M.gguf`,
+		),
+		QwenImageVAE: firstExisting(
+			`X:\HuggingFace\models\unsloth\Qwen-Image-2.1-FP8\vae\qwen_image_2.1_vae_bf16.safetensors`,
+		),
+		QwenImageTextEncoder: firstExisting(
+			`X:\HuggingFace\models\unsloth\Qwen3-VL-8B-Instruct-GGUF\Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf`,
+		),
+		QwenImageVision: firstExisting(
+			`X:\HuggingFace\models\unsloth\Qwen3-VL-8B-Instruct-GGUF\mmproj-F16.gguf`,
 		),
 		LlamaMtmdCLI: resolve("llama-mtmd-cli", `C:\llama.cpp\build\bin\llama-mtmd-cli.exe`),
 		LlamaServer:  resolve("llama-server", `C:\llama.cpp\build\bin\llama-server.exe`),
@@ -602,6 +644,18 @@ func merge(base, over Config) Config {
 	}
 	if over.Krea2TextEncoder != "" {
 		base.Krea2TextEncoder = over.Krea2TextEncoder
+	}
+	if over.QwenImageModel != "" {
+		base.QwenImageModel = over.QwenImageModel
+	}
+	if over.QwenImageVAE != "" {
+		base.QwenImageVAE = over.QwenImageVAE
+	}
+	if over.QwenImageTextEncoder != "" {
+		base.QwenImageTextEncoder = over.QwenImageTextEncoder
+	}
+	if over.QwenImageVision != "" {
+		base.QwenImageVision = over.QwenImageVision
 	}
 	if over.LlamaMtmdCLI != "" {
 		base.LlamaMtmdCLI = over.LlamaMtmdCLI

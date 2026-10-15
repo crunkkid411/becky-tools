@@ -934,6 +934,36 @@ Rules learned the hard way (2026-10-13):
 - All three first shorts opened on "And ..." and stopped mid-sentence at becky-moment's 60 s cap; found by
   transcribing the RENDER, not by looking at frames. Listen to a render's first and last seconds.
 
+# IMAGES — make or edit a picture, one dumb call: becky-imagegen (Qwen-Image-2.1, 2026-10-14)
+
+```
+becky-imagegen --prompt "a neon sign that reads BECKY" --out sign.png      # draw from scratch
+becky-imagegen --ref me.jpg --prompt "put me on a sunset beach" --out beach.png   # edit a photo
+```
+
+`--ref` repeats (several reference images, in order). `--json` for agents, `--dry-run` prints the sd-cli
+command, `--selftest` is the offline proof (17/17). Fully local: stable-diffusion.cpp's `sd-cli`
+(`C:\stable-diffusion.cpp\bin-master-964\`) running **Qwen-Image-2.1**, Jordan's pick (2026-10-14): the #1 open
+model for both making (Elo 1037) and editing (Elo 1074) images on the Artificial Analysis arena.
+
+- Files (unsloth, `X:\HuggingFace\models\unsloth\`): `Qwen-Image-2.1-GGUF\qwen-image-2.1-Q5_K_S.gguf`,
+  `Qwen-Image-2.1-FP8\vae\qwen_image_2.1_vae_bf16.safetensors`,
+  `Qwen3-VL-8B-Instruct-GGUF\Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf` (text encoder) and `mmproj-F16.gguf` (vision,
+  edits only). Paths come from config (`qwen_image_*`), never the tool.
+- Settings: 40 steps (Qwen's card), CFG 6 (sd.cpp docs), euler, seed 42, 1024x1024, no FLUX `--guidance`.
+- The full model, NOT the 8-step Turbo distill: the leaderboard ranked the full one; Turbo was never measured.
+- Measured on this PC (2026-10-15, 1024x1024): a new picture 10-12 min, text spelled right; an edit 35 min
+  with only 3.5 GB of the card free. Slow: run it detached, never inside a short timeout.
+- Transparent PNG: start the prompt with "This is an RGBA image with transparency." and end it with "The image
+  has alpha channel and the background is transparent." (sd.cpp docs; .png keeps the alpha, .jpg drops it).
+- `--krea` = the old Krea-2 model (still on disk). It is also the automatic fallback when the Qwen file is missing.
+- Memory: the 5 GB text encoder runs on the CPU (`--backend te=cpu --mmap`; on the 8 GB card next to the
+  diffusion model it fails with "workspace capacity check"), and sd.cpp's auto-fit places the rest; the tool adds
+  this by itself. Peak RAM ~11.5 GB: check free RAM (11 GB+) and free graphics memory (3.5 GB+) first. Another
+  agent's llama-server can hold most of the 8 GB card; wait for it, never kill it.
+- License: Qwen Research License. Jordan read it (2026-10-14): it restricts the model files, not the pictures.
+  The one rule about outputs: "Built with Qwen" if they are used to train an AI model that is shared.
+
 # ROUGH CUT — raw takes to a populated Vegas Pro timeline, one dumb call
 
 ## THE SILENCE CUT WORKS — ONE CALL, cut from the AUDIO (2026-08-26)

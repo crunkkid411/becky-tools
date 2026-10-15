@@ -1,5 +1,8 @@
 # SPEC — becky-imagegen — the DEFAULT local image generator (Krea-2 via stable-diffusion.cpp)
 
+> **2026-10-14 (local): the default model is now Qwen-Image-2.1 (Jordan's pick), and `--ref` edits photos.
+> Krea-2, described below, is the `--krea` fallback. Current use: SKILL.md "IMAGES"; detail: HANDOFF-LOG.md.**
+
 > ## STATUS — 2026-06-28 (cloud, `claude/default-local-image-gen-lyw127`)
 > **Deterministic Go core BUILT + proven offline.** `becky-imagegen` is a new,
 > single-purpose tool: a text prompt → a PNG on disk, generated entirely on-device

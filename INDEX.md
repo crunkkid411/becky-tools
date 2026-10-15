@@ -514,7 +514,9 @@
 - `SPEC-HANDOFF-HARDENING.md` (**ASSIGNED TO CLOUD, 2026-06-17 overnight** — make the
   "Get Becky Updates" button drain the whole branch queue, self-heal a poisoned tree,
   and detect two branches editing one tool; the union-merge doc fix already shipped).
-- `SPEC-BECKY-IMAGEGEN.md` (BUILT 2026-06-28, cloud — `becky-imagegen`: becky's DEFAULT
+- `SPEC-BECKY-IMAGEGEN.md` (**2026-10-14: the default model is now Qwen-Image-2.1, and `--ref` edits a
+  photo; Krea-2 below is the `--krea` fallback. How to use: SKILL.md "IMAGES"; detail: HANDOFF-LOG.md.**)
+  (BUILT 2026-06-28, cloud — `becky-imagegen`: becky's DEFAULT
   local **text→image** generator. Deterministic Go wrapper (`cmd/imagegen` +
   `internal/imagegen`) around **stable-diffusion.cpp's `sd-cli`** running **FLUX.1
   "Krea-2"** (Krea-2 transformer + Wan 2.1 VAE + Qwen3-VL-4B text encoder; docs/krea2.md).

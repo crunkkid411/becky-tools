@@ -6,6 +6,14 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — becky-imagegen draws AND edits with Qwen-Image-2.1, the new default image model (2026-10-14, local)
+
+`becky-imagegen --prompt "..."` now draws with Qwen-Image-2.1 (Jordan's pick: the top open model for making and
+editing images) instead of Krea-2; `--ref photo.jpg` edits that photo to match the prompt; `--krea` keeps the old
+model. Unsloth GGUFs in `X:\HuggingFace\models\unsloth\`; sd-cli is now the master-964 build (the old build cannot
+load it). Proven on this PC 2026-10-15: a 1024x1024 picture in 10-12 min with text spelled right; an edit took
+35 min with half the card held by other programs. Detail: top of `HANDOFF-LOG.md`.
+
 ### NEW — YouTube edit fixed from Jordan's review: censor, cuts on his voice, look, markers (2026-10-14, local)
 
 `YouTube-Edit.bat` now: project `<folder minus day>-video.veg`; thinking-out-loud islands cut; word-less

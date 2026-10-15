@@ -12,6 +12,41 @@
 
 ---
 
+## becky-imagegen: Qwen-Image-2.1 is the default image model, and it edits photos (2026-10-14, local, `local/qwen-image-default`)
+
+Jordan, 2026-10-14: "set it up to be the new default model in becky-tools (we already have an image model, but
+this one is newer and seems to be better)", after reading the Qwen Research License himself (it restricts the
+"Materials", not the outputs). He then asked for the researched full model, not the Turbo distill, and for
+Unsloth's GGUFs because Qwen publishes none.
+
+- **Model:** Qwen-Image-2.1, #1 open text-to-image (Elo 1037) and #1 open image editing (Elo 1074) on the
+  Artificial Analysis arena via theopenweights.com (2026-10-13). Turbo (8 steps, CFG 1) is a distill that was
+  never measured, so it is not used. Files in `X:\HuggingFace\models\unsloth\`: `Qwen-Image-2.1-GGUF\
+  qwen-image-2.1-Q5_K_S.gguf` (4.5 GB; unsloth's LPIPS table for the same per-tensor layout: ~40% less drift
+  from bf16 than Q4_K_M for 0.3 GB more), `Qwen-Image-2.1-FP8\vae\qwen_image_2.1_vae_bf16.safetensors`,
+  `Qwen3-VL-8B-Instruct-GGUF\Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf` (text encoder) + `mmproj-F16.gguf` (vision,
+  edits only). Qwen's LICENSE is saved next to the model.
+- **Engine:** the old `C:\stable-diffusion.cpp\build\bin\Release\sd-cli.exe` cannot load Qwen-Image-2.1 (its
+  binary has no `qwen_image_2_1`); config now prefers `C:\stable-diffusion.cpp\bin-master-964\sd-cli.exe`
+  (release master-964-1d0a58a), old build as fallback.
+- **Code:** `config.ImageGen(krea, turbo)` returns the Qwen set when its file exists, else Krea-2 (degrade, never
+  crash); new config keys `qwen_image_model` / `_vae` / `_text_encoder` / `_vision`. `internal/imagegen` spots a
+  Qwen-Image file by name: 40 steps (Qwen's card), CFG 6 (sd.cpp docs, unsloth's card), no FLUX `--guidance`.
+  Edits: `--ref` (repeatable, order kept) becomes `-r`, plus `--llm_vision`; a missing vision file or reference
+  image degrades with a plain note. `--krea` / `BECKY_IMAGEGEN_VARIANT=krea` = the old model. Catalog summary and
+  keywords now say it edits photos.
+- **Memory fix found on the real run:** the first run failed in 9 s (`qwen3vl segment 1/1 (graph) failed during
+  workspace capacity check`): the 5 GB text encoder did not fit on the card next to other agents' llama-servers.
+  Qwen runs now pass `--backend te=cpu --mmap` and no `--offload-to-cpu` (sd.cpp's auto-fit places the rest):
+  prompt read on the CPU in 9.7 s, peak RAM 11.5 GB.
+- **Proof:** `becky-imagegen --selftest` 17/17; new tests (Qwen argv, edit flags in order, vision/ref degrades,
+  config default + fallback). `go build` / `go vet` green; `go test ./...` green except
+  `internal/assistant` TestHandleTier2Funnel, which fails the same way on unchanged master (not touched here).
+  Real runs on this PC (2026-10-15, worktree build, default settings, 1024x1024, 40 steps), each picture opened
+  and checked: draw "BECKY TOOLS" neon sign 594 s (spelled right); `--ref` edit of it to "QWEN WORKS" in blue
+  2086 s with only 3.5 GB of the card free (text and color right, man kept; his hand picked up a pink tint);
+  draw a coffee-shop chalkboard "TODAY: OAT LATTE $4" 720 s (exact; unrequested menu filler is gibberish).
+
 ## YouTube edit + verticals after Jordan's review of the first edit (2026-10-14, local, `master`)
 
 Jordan's `X:\Videos\2026\10_oct\12_goodbye-youtube-update\user-feedback.md`: "Do not make changes to this
