@@ -2,3 +2,6 @@
 ffinc/
 engine_*.png
 verify-engine-log.txt
+*.obj
+*.map
+crash.log
