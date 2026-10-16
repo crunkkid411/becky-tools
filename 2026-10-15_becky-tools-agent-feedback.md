@@ -165,6 +165,198 @@ In order of how much time they would likely save. Per Jordan's rules, each one b
 10. **Corpus tools:** a `--only <id>` mode for p4_who / p4_mishear, ids that change when the transcript
     changes, one shared line-numbering helper, and an embedding cache keyed by the transcript's hash.
 
+### 11. Names the speech recognition should expect (asked for by Jordan, 2026-10-15)
+
+The word list (`cmd/transcribe/lexicon.txt`) only swaps an exact misheard phrase after the fact. It cannot
+recognise a name: it catches the SAME mistake made the same way again, nothing else. Tonight Jordan answered
+the unclear lines himself, and his answers show the limit: "A trigue the band" was Atreyu, "Let's buy broken
+hearts" was Blessed By A Broken Heart, "the U Girl" was the Uwu Girl. Next time those names will come out as
+different wrong words, and no list line will catch them.
+
+What would fix it: give the speech recognition the list of names it should expect WHILE it listens, so it
+hears them right the first time (often called hotwords, phrase boosting or context biasing). becky-transcribe
+has no option for this today (checked: no hotword / initial-prompt / vocabulary code in `cmd/transcribe`).
+Not checked yet, for the builder: whether the Parakeet model becky uses can take a boosting list, and how
+WhisperX's prompt option would carry it for the second-opinion pass. Measure it on the 9 redone livestreams
+(`E:\hair_jordan\youtube`, list in `E:\hair_jordan\mishear-check\cloud-videos.txt`), whose corrected
+transcripts are now the answer key.
+
+The list below is every name and title in the word list plus the Hair Jordan corpus list, cut out of those
+files by a script (not retyped). Sources: `becky-go\cmd\transcribe\lexicon.txt` (right-hand side) and
+`E:\hair_jordan\mishear-check\corpus-words.txt`. 169 names:
+
+```
+2007
+3OH!3
+AC/DC
+Allahna Gray
+Alley Kat
+Amor Fati
+Andy Biersack
+ASAP
+Asking Alexandria
+ASMR
+Atreyu
+Automatonophobia
+Ayesha Erotica
+Beat Saber
+Beauty School Dropout
+Before Jacksepticeye
+Billie Eilish
+Black Veil Brides
+Blessed By A Broken Heart
+Blessthefall
+Braulio
+Braulio's
+Breathe Carolina
+Bring Me The Horizon
+Brokencyde
+Brokencyde's
+Camila
+Christopher Walken
+Christopher Waycaster
+Chuck E Cheese
+Claude Code
+Courtney
+COVID
+Cubase
+Dankmus
+Deftones
+DistroKid
+Doc Martens
+Elkhart
+Elmer's
+Emo Nite
+FaceTracker
+Falling in Reverse
+Fan Friday
+FaZe Rug
+FBI
+Freddie Van Halen
+Fruit Bat
+G-Eazy
+Gatorade
+Get Naked
+Ghostiiiekun6636
+Gimme S'mores
+Glastonbury
+Gone with the Wind
+Grammy's
+GTA 6
+H8 Hate Spawn
+Hair Jordan
+Hair Jordan Discord
+Hall of the Elders
+Harley Quinn Ash
+Hawthorne Heights
+Hazbin Hotel
+Helluva Boss
+Hollywood Undead
+Holo Taco
+Honda
+Honda Accord
+Honest Emo
+I Set My Friends on Fire
+IShowSpeed
+Jack in the Box
+Jake Bateman
+Jake Webber
+Jay D Stryder
+Johnnie
+Johnnie Guilbert
+Johnnie's
+Johnny Black
+Johnny Cash
+Johnny Johnny
+Jordan
+Kegra
+Kegra's
+Kevanita
+Kim Dracula
+King for a Day
+Koalas
+Korn
+L'Oréal
+Leader Anonymous
+Leader Nims
+Lensa
+Lil Nas X
+Limp Bizkit
+Linquan Temple
+Log Cabin
+Lorna Shore
+Megan Fox
+MixConsole
+Mod Sun
+Moonfaye
+Mr Robculbreth
+MrBallen
+National Emo
+Nicocado
+Nicocado Avocado
+Nikki Sixx
+No Time to Bleed
+Oceans Ate Alaska
+OnlyFans
+Oompa Loompa
+Orajel
+Osceola County
+PackGod
+Pantene
+Paralyzed by Sueco
+Pierce the Veil
+Pop-Tarts
+PopTart
+PopTart Barbie
+PopTart Barbie's
+PopTart's
+Powrice
+Ragecore
+Reels
+Repo The Genetic Opera
+Repzion
+Rikki-Tikki-Tavi
+Ronnie Radke
+Rudyard Kipling
+Sai Baba
+Scene Core
+Skillshare
+Social Repose
+Stephen Jerzak
+Stray Kids
+Styling Powder
+Sueco
+Take You Back Truth
+Taking Back
+TakingBack2007
+Tattoo Far
+The Devil Wears Prada
+The Used
+Therian
+Therians
+Thomas the Tank Engine
+TikToks
+Tiptoeing in My Jordans
+Top 8
+Toxic
+Trap Metal
+Triscuit
+Tryotic
+Turn the Lights Off
+TX2's
+TX3
+Uwu Girl
+VIP
+Warheads
+Warped Tour
+When We Were Young Fest
+Whitney Peyton
+Wolverine
+YouNow
+YouTuber
+Zillow
+```
+
 ## 5. State when this was written (updated 20:05)
 
 - Videos 1 to 5 are re-transcribed (video 5 took 3,121 s for 3,955 s); 1 to 4 are checked.
