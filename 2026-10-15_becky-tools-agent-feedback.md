@@ -12,9 +12,10 @@ the 9 were done; a large part of that time could have been saved (how much is no
 Three things caused it:
 
 1. **I did not check what becky would run on.** I copied the corpus command and started it.
-2. **becky's built-in setting is "use the processor"** for speaker matching, faces and voices, and
-   `becky-transcribe` also runs a whole "who is in this video" check (faces, voices, on-screen
-   text) on every video by default. Our job never used that result.
+2. **becky's built-in setting is "use the processor"** for speaker matching, faces and voices. The
+   extra checking passes (the built-in "who is in this video" check, the second transcription, the
+   Gemma proofread) are on purpose, for accuracy, and should stay. The problem is that several of
+   them run on the processor when the graphics card could do them.
 3. **Every becky tool starts its own copy of the Gemma model.** With 3 copies plus another
    agent's model on the 8 GB card, mine did not fit and ran on the processor.
 
@@ -71,12 +72,11 @@ mostly idle except when other agents' jobs used it.
    `internal/voiceprint/voiceprint.go:98` hard-codes `--device cpu`.
    Only the speech recognition (Parakeet, `--device auto`) and WhisperX (`--compute_type float16`)
    use the GPU.
-2. **`becky-transcribe --forensic` is on by default** (`cmd/transcribe/main.go:167`). Every transcribe
-   call, after the transcript is done, runs `becky-identify` over the **whole video** (face prints,
-   voice prints, on-screen text plan) on the processor. In video 5 this step had been running for
-   9+ minutes at 19:55. Our pipeline throws the result away: `p4_who.py` works out who Jordan is
-   on its own, with its own voice embeddings. So the same voices get embedded **three times** per
-   video (becky-diarize, forensic identify, p4_who), all on the processor.
+2. **The forensic pass runs on the processor.** `becky-transcribe --forensic` is on by default
+   (`cmd/transcribe/main.go:167`), and that is intentional: becky corroborates who is in the clip
+   with more than one signal. But the `becky-identify` it starts takes its device from the config
+   (item 1), so its face prints and voice prints for the **whole video** run on the processor. In
+   video 5 this step had been running for 9+ minutes at 19:55. Keep the pass; move it to the GPU.
 3. **becky-diarize is processor-only on purpose** (`cmd/diarize/main.go` header): nemo-speech.exe is
    built without CUDA and upstream hard-codes 4 threads, "so diarization never takes VRAM from
    the shared 8 GB GPU". The model is a 107 MB GGUF. Keeping 107 MB off an 8 GB card in exchange
@@ -118,9 +118,9 @@ mostly idle except when other agents' jobs used it.
 
 ### C. My own mistakes (agent behaviour)
 
-13. **I copied a command without reading what it does.** `--kb` turns on the forensic step's naming,
-    and `--forensic` is on by default. `--forensic=false` would have skipped a whole processor-only
-    stage that we never used.
+13. *(Correction from Jordan, 20:00: the forensic pass and the multiple passes are intentional. I had
+    briefly switched the last two videos to `--forensic=false`; that is undone and they run with the
+    normal command.)*
 14. **I never checked which device each stage used.** I assumed "transcription = GPU".
 15. **I only measured free graphics memory, never how busy the card was.** The 17:05 to 17:11
     numbers (204 MB free, my Gemma burning 4 processor cores) were a clear sign, and I wrote it off
@@ -144,9 +144,8 @@ In order of how much time they would likely save. Per Jordan's rules, each one b
 1. **Make the GPU the default.** Change `Device: "cpu"` to `"auto"` (try CUDA, fall back to CPU, the
    way `transcribe_parakeet.py` already does) for identify, voice, face and the sherpa diarizer.
    Then measure graphics-memory use with two becky jobs at once.
-2. **Don't run `--forensic` when nobody reads it.** Either default it off for batch callers, or have
-   the corpus command (`p3_process.py`) pass `--forensic=false`. Whoretana's "one dumb call" can keep
-   it on if it needs it.
+2. **Keep every pass** (forensic, WhisperX second opinion, Gemma proofread, escalation): accuracy comes
+   before speed. The goal is only that each pass runs on the GPU when there is room.
 3. **One shared llama-server per model.** Before starting a server, reuse one already serving the same
    GGUF (fixed port or a lock file), so three tools share one Gemma-4 E4B instead of loading three.
 4. **Enforce the "-ngl auto" rule in code**: route scout, ground, validate, avlm and vision through
@@ -166,9 +165,9 @@ In order of how much time they would likely save. Per Jordan's rules, each one b
 10. **Corpus tools:** a `--only <id>` mode for p4_who / p4_mishear, ids that change when the transcript
     changes, one shared line-numbering helper, and an embedding cache keyed by the transcript's hash.
 
-## 5. State when this was written (19:58)
+## 5. State when this was written (updated 20:05)
 
-- Videos 1 to 4 are done, checked, and their word fixes recorded.
-- Video 5 (PU-6WD32AHc) is in its forensic step; video xoPYYgZcqj8 is running in parallel on a
-  second worker; 3 more (Wx9U031VRlE, XyzqNMeIm7c, Y5uaqn7cw1U) are queued.
+- Videos 1 to 5 are re-transcribed (video 5 took 3,121 s for 3,955 s); 1 to 4 are checked.
+- xoPYYgZcqj8 and Wx9U031VRlE now run side by side, both with the normal command (forensic on);
+  XyzqNMeIm7c and Y5uaqn7cw1U follow on the same two workers.
 - I have not changed any becky-tools code or settings; the fixes above are for the builder to decide.
