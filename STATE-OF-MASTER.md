@@ -14,6 +14,10 @@ listens, and `--progress-file` keeps that line in `%TEMP%\becky-transcribe-progr
 shows in its busy box with a filling bar. The word list is read live from `cmd/transcribe/lexicon.txt` (built-in
 copy is the fallback). `Transcribe Videos.bat` batch-transcribes dropped videos/folders to the same
 `_parakeet_transcription.srt` Becky Review makes. Open items: `TODO-becky-transcribe-2026-10-17.md`.
+Later that night: clicking "+" on 6 videos ran all 6 at once (6 WhisperX on the 8 GB card, 2.5 h, none
+finished). Now becky-clip runs one transcription at a time (`transcribeQueue`), and Becky Review's transcribe
+is Parakeet + word list only (`--single-pass --cleanup=false`; 1m42s -> 16s on a 1.5 min clip). Word list
+gained the Uwu variants and 29 band/people fixes from the 2026-10-15 checked list.
 
 ### NEW — becky-imagegen draws AND edits with Qwen-Image-2.1, the new default image model (2026-10-14, local)
 

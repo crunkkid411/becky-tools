@@ -271,3 +271,35 @@ Rip Show and Tell => Repzion, tell
 AI slob => AI slop
 A trigue => Atreyu
 U Girl => Uwu Girl
+# 2026-10-17 (Jordan): every Uwu mishearing from the 2026-10-15 checked fixes, plus the band and
+# people names from that list's section D that are not normal speech. A lone "U" is NOT swapped:
+# it was heard 32 times as an ordinary word.
+the oo dude => the Uwu dude
+the u dude => the Uwu dude
+the U guy => the Uwu guy
+oo girl => Uwu Girl
+uwu girl => Uwu Girl
+a tag attack => Attack Attack
+Alley Cat => Alley Kat
+Ali cat => Alley Kat
+Big milbit seven => Big Milk 77
+Dragon Balls eat => Dragon Ball Z
+Falling Into Verse => Falling in Reverse
+Geezy => G-Eazy
+K Grid TV => Kegra TV
+Keger TV => Kegra TV
+Lincoln Park => Linkin Park
+Moon Faye => Moonfaye
+Mr. Ballin => MrBallen
+paramorphile => Paramore
+Ricky TikTok => Rikki-Tikki-Tavi
+Tiki Tavvy => Rikki-Tikki-Tavi
+straight kids => Stray Kids
+Swago => Sueco
+three oh three => 3OH!3
+young blood => Yungblud
+When We're Young => When We Were Young
+on you now => on YouNow
+take it back to seven => TakingBack2007
+take back to that => TakingBack2007
+Taking Back two => TakingBack2007

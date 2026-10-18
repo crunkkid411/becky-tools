@@ -57,13 +57,17 @@ void requestTranscribe(const std::string& path, const std::string& baseName) {
         if (g_transcribeInFlight.count(path)) return; // already running - never double-fire
         g_transcribeInFlight.insert(path);
     }
-    beginWork("Transcribing " + baseName + "...");
+    size_t queued;
+    { std::lock_guard<std::mutex> lk(g_transcribeMx); queued = g_transcribeInFlight.size(); }
+    // The engine runs these one at a time; say how many are lined up.
+    beginWork(queued > 1 ? "Transcribing " + std::to_string(queued) + " videos, one at a time..."
+                         : "Transcribing " + baseName + "...");
     std::thread([path, baseName] {
         t_threadTag = "transcribeWorker";
         struct WorkGuard { ~WorkGuard() { endWork(); } } wg;   // clears on EVERY exit path, including a throw
         TranscribeDone d; d.name = path;
         try {
-            json r = engineCall("transcribe", { {"name", baseName} }, 6.5 * 3600.0); // real ASR: a long livestream takes over an hour; the old 900s gave up on every long video (2026-10-17). becky-clip's own limit is 6h.
+            json r = engineCall("transcribe", { {"name", baseName} }, 48.0 * 3600.0); // real ASR, and the engine runs one transcription at a time, so a click may wait behind several long livestreams (2026-10-17). The old 900s gave up on every long video.
             d.ok = r.value("ok", false);
             if (!d.ok) d.err = r.value("error", std::string("transcribe failed"));
         } catch (const std::exception& e) {

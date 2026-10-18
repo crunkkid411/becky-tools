@@ -38,6 +38,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"becky-go/internal/captions"
@@ -51,6 +52,9 @@ import (
 // 30-minute limit killed long videos part way (2026-10-17), so the limit is 6 hours;
 // BECKY_TRANSCRIBE_TIMEOUT (a Go duration like "45m") overrides it.
 const transcribeTimeout = 6 * time.Hour
+
+// transcribeQueue makes transcriptions run one after another (see transcribeOne).
+var transcribeQueue sync.Mutex
 
 // TranscribeProgressFile is where becky-transcribe keeps its latest progress line
 // (--progress-file); becky-review reads the same path to show the step and percentage.
@@ -73,8 +77,11 @@ const captionsTimeout = 10 * time.Minute
 // the whole transcribe→re-index flow is exercised offline. Production never
 // reassigns it.
 var runTranscribe = func(ctx context.Context, transcribeBin, videoPath, srtOut string) error {
+	// Becky Review wants plain review transcripts fast (Jordan 2026-10-17): Parakeet + the
+	// deterministic word list only. The WhisperX second listen re-transcribes the WHOLE video
+	// and the Gemma proofread is slow; both stay available on the becky-transcribe CLI.
 	cmd := exec.CommandContext(ctx, transcribeBin, videoPath, "--format", "srt", "--output", srtOut,
-		"--progress-file", TranscribeProgressFile())
+		"--single-pass", "--cleanup=false", "--progress-file", TranscribeProgressFile())
 	proc.NoWindow(cmd) // becky-transcribe is a console app; no flash when the GUI spawns it
 	// Diagnostics (Parakeet/ffmpeg progress) go to the clip's stderr; stdout is
 	// unused for --output runs. Capture stderr so a failure carries a readable tail.
@@ -293,6 +300,11 @@ func captionsContext(parent context.Context) (context.Context, context.CancelFun
 //
 // It does NOT re-index — the caller re-indexes once after a batch.
 func (a *App) transcribeOne(transcribeBin string, v footage.Video, forceLocal bool) error {
+	// One transcription at a time: clicking "+" on six videos started six at once and six
+	// speech models fought over the 8 GB card for 2.5 hours (2026-10-17). Extra clicks now
+	// wait their turn here, so several clicks are a batch.
+	transcribeQueue.Lock()
+	defer transcribeQueue.Unlock()
 	// (1) Caption decision (optional tool — absence is not fatal). Skipped for a
 	// forced re-transcribe, which always wants a fresh local Parakeet secondary.
 	if !forceLocal {

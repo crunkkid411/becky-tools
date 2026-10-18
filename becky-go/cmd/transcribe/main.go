@@ -304,7 +304,11 @@ func main() {
 		beckyio.Logf(*verbose, "second opinion recovered %d passage(s); %d unconfirmed", len(second.Recovered), len(second.Unconfirmed))
 	}
 	if !*noLexicon || *cleanup {
-		prog.stepf("fixing names (word list + Gemma proofread)")
+		if *cleanup {
+			prog.stepf("fixing names (word list + Gemma proofread)")
+		} else {
+			prog.stepf("fixing names (word list)")
+		}
 	}
 	var lexFixes []LexiconFix
 	if !*noLexicon {
