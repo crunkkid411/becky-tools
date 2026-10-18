@@ -232,7 +232,9 @@ becky "this is Shelby" "<clip>"            # teach a new person from a clip — 
 ## Ingest ONE video — the forensic pass
 Each prints JSON (or use `--format srt|txt|vtt` on transcribe):
 ```
-becky-transcribe "<video>" --format srt          # what's said + timestamps
+becky-transcribe "<video>" --format srt          # what's said + timestamps (always prints "step N of M"; --progress-file f keeps the latest line in f)
+# many videos: drag them / a folder onto "Transcribe Videos.bat" -> <stem>_parakeet_transcription.srt beside each
+# word list: cmd/transcribe/lexicon.txt is read live each run (no rebuild needed)
 becky-transcribe "<video>" --diarize              # what's said, every line labelled with its speaker
 #   "segments" = caption-sized (srt/vtt); "sentences" = whole sentences (txt output uses them)
 becky-transcribe "<video>" --cleanup              # + Gemma-4 proofreads misheard names (text only)

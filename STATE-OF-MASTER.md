@@ -6,6 +6,15 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — becky-transcribe works from Becky Review on long videos, shows progress, batch launcher (2026-10-17, local)
+
+Becky Review's "+" gave up after 900 s, so every long video failed; it now waits 6.5 h (becky-clip 6 h,
+"Transcribe all" 7 days). becky-transcribe always prints "step N of M: ..." with a percentage while Parakeet
+listens, and `--progress-file` keeps that line in `%TEMP%\becky-transcribe-progress.txt`, which Becky Review
+shows in its busy box with a filling bar. The word list is read live from `cmd/transcribe/lexicon.txt` (built-in
+copy is the fallback). `Transcribe Videos.bat` batch-transcribes dropped videos/folders to the same
+`_parakeet_transcription.srt` Becky Review makes. Open items: `TODO-becky-transcribe-2026-10-17.md`.
+
 ### NEW — becky-imagegen draws AND edits with Qwen-Image-2.1, the new default image model (2026-10-14, local)
 
 `becky-imagegen --prompt "..."` now draws with Qwen-Image-2.1 (Jordan's pick: the top open model for making and

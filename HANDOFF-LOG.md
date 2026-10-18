@@ -12,6 +12,27 @@
 
 ---
 
+## becky-transcribe in Becky Review: long videos, progress, live word list, batch .bat (2026-10-17, local)
+
+Jordan, 2026-10-17: transcribing in Becky Review failed, there was no progress indicator, and he needs
+plain single-speaker transcription of his livestreams tonight (no speakers, no forensic).
+
+- **Root cause of the Becky Review failures:** `ui_panels.cpp` `requestTranscribe` waited 900 s for the
+  `transcribe` verb and becky-clip killed becky-transcribe at 30 min; a livestream takes far longer. Now
+  6.5 h / 6 h (`cmd/clip/transcribe.go` `transcribeTimeout`), `transcribe_all` 7 days.
+- Becky Review asks for `--format srt`, so speakers and the forensic block never ran there; it runs
+  Parakeet + WhisperX second listen + word list + Gemma-4 E4B proofread.
+- **Progress:** `cmd/transcribe/progress.go`: step lines always on stderr; the Parakeet helpers print
+  `[progress] window i/n` (parsed, not echoed); `--progress-file` (becky-clip passes
+  `%TEMP%\becky-transcribe-progress.txt`); `main.cpp` `transcribeProgressLine()` shows it, determinate bar.
+- **Word list live:** `lexicon.go` `liveLexicon()` reads the repo `lexicon.txt` (or `BECKY_LEXICON_FILE`),
+  embedded copy as fallback.
+- **Batch:** `Transcribe Videos.bat` / `.ps1` (repo root), ASCII, parse-checked under PowerShell 5.1.
+- Rebuilt: becky-review.exe, build-all-tools, `becky-go\bin\becky-review-engine.exe` (Review 3's engine
+  is only built when missing, so it was 3 days stale).
+- Also fixed two backspace bytes in `main.cpp` comments (one pre-existing at the E: evidence note).
+- Next steps: `TODO-becky-transcribe-2026-10-17.md` (hotwords for names, stacked becky-intake, shared Gemma).
+
 ## becky-imagegen: Qwen-Image-2.1 is the default image model, and it edits photos (2026-10-14, local, `local/qwen-image-default`)
 
 Jordan, 2026-10-14: "set it up to be the new default model in becky-tools (we already have an image model, but

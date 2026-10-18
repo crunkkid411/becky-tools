@@ -63,7 +63,7 @@ void requestTranscribe(const std::string& path, const std::string& baseName) {
         struct WorkGuard { ~WorkGuard() { endWork(); } } wg;   // clears on EVERY exit path, including a throw
         TranscribeDone d; d.name = path;
         try {
-            json r = engineCall("transcribe", { {"name", baseName} }, 900.0); // real ASR - generous timeout
+            json r = engineCall("transcribe", { {"name", baseName} }, 6.5 * 3600.0); // real ASR: a long livestream takes over an hour; the old 900s gave up on every long video (2026-10-17). becky-clip's own limit is 6h.
             d.ok = r.value("ok", false);
             if (!d.ok) d.err = r.value("error", std::string("transcribe failed"));
         } catch (const std::exception& e) {

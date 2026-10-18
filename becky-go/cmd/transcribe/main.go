@@ -31,6 +31,7 @@ import (
 	"becky-go/internal/config"
 	"becky-go/internal/forensicrun"
 	"becky-go/internal/mediainfo"
+	"becky-go/internal/pathx"
 	"becky-go/internal/proc"
 	"becky-go/internal/pyhelpers"
 )
@@ -173,7 +174,8 @@ func main() {
 	lexiconFile := flag.String("lexicon", "", "extra niche-word fixes (\"heard => meant\" per line) on top of the built-in list")
 	noLexicon := flag.Bool("no-lexicon", false, "skip the niche word list")
 	cleanup := flag.Bool("cleanup", true, "after the word list, Gemma-4 proofreads for misheard names and slang (text only, never moves a timestamp); on by default - --cleanup=false skips it")
-	verbose := flag.Bool("verbose", false, "show progress on stderr")
+	verbose := flag.Bool("verbose", false, "show every detail on stderr (the step-by-step progress lines always show)")
+	progressFile := flag.String("progress-file", "", "keep the latest progress line in this text file (becky-review reads it); removed when done")
 
 	input := parsePositional()
 	if input == "" {
@@ -199,6 +201,22 @@ func main() {
 		beckyio.Fatalf("%v", err)
 	}
 
+	prog.file, prog.name = *progressFile, pathx.Base(input)
+	defer prog.done()
+	prog.total = 3 // audio, listening, finishing
+	if !*singlePass {
+		prog.total++
+	}
+	if !*noLexicon || *cleanup {
+		prog.total++
+	}
+	if *diarize || *speakers > 1 {
+		prog.total++
+	}
+	if *forensicMode && *format == "json" {
+		prog.total++
+	}
+	prog.stepf("taking the sound out of the video")
 	beckyio.Logf(*verbose, "extracting 16kHz mono audio with ffmpeg...")
 	wav, err := extractAudio(cfg.FFmpeg, input)
 	if err != nil {
@@ -225,6 +243,7 @@ func main() {
 	// on the GPU with NO CUDA setup (the "Handy" approach). It falls back to the
 	// sherpa CPU path below if DirectML is unavailable or the helper degrades, so
 	// the proven CPU Parakeet always stays available ("keep the CPU one in case").
+	prog.stepf("listening (Parakeet)")
 	var res helperResult
 	usedDML := false
 	var dmlScript, dmlDev string
@@ -269,6 +288,7 @@ func main() {
 	// moves a timestamp of a word Parakeet heard.
 	var second *SecondPass
 	if !*singlePass {
+		prog.stepf("second listen for missed words (WhisperX)")
 		beckyio.Logf(*verbose, "second opinion: WhisperX (Jordan's settings)...")
 		var recheck recheckFunc
 		if usedDML {
@@ -282,6 +302,9 @@ func main() {
 			beckyio.Logf(true, "becky-transcribe: %s", second.Note)
 		}
 		beckyio.Logf(*verbose, "second opinion recovered %d passage(s); %d unconfirmed", len(second.Recovered), len(second.Unconfirmed))
+	}
+	if !*noLexicon || *cleanup {
+		prog.stepf("fixing names (word list + Gemma proofread)")
 	}
 	var lexFixes []LexiconFix
 	if !*noLexicon {
@@ -319,6 +342,7 @@ func main() {
 	var speakerFixes []SpeakerFix
 	speakerCheck := ""
 	if wantSpeakers {
+		prog.stepf("working out who is speaking")
 		beckyio.Logf(*verbose, "working out who is speaking (becky-diarize)...")
 		var splitCheck string
 		nSpeakers, speakerNote, splitCheck = labelSpeakers(res.Words, wav, input, *speakers)
@@ -347,6 +371,7 @@ func main() {
 	// Degrades gracefully: if VAD can't run, segments pass through unchanged.
 	var vadDropped []DroppedSegment
 	vadApplied := false
+	prog.stepf("checking lines against real speech and saving")
 	if !*noVAD {
 		beckyio.Logf(*verbose, "VAD speech-mask gate...")
 		segments, vadDropped, vadApplied = gateSegmentsByVAD(cfg, wav, segments, *verbose)
@@ -389,6 +414,7 @@ func main() {
 	// --forensic: self-regulate. Reuse the transcript we just produced (no second ASR pass) and
 	// run the protocol engine over this clip; the corroborated result rides under "forensic".
 	if *forensicMode && *format == "json" { // srt/txt/vtt have nowhere to put it
+		prog.stepf("forensic check (who is in the clip)")
 		beckyio.Logf(*verbose, "forensic resolution (identify + corroborate%s)...", forensicSubjectNote(*subject))
 		output.Forensic = buildForensic(input, *subject, *kb, *speakers, output)
 	}
@@ -498,13 +524,10 @@ func runHelper(python, script, wav, modelDir, device, lang string, numThreads in
 		"--chunk-overlap", strconv.FormatFloat(chunkOverlap, 'f', -1, 64)}
 	cmd := exec.Command(python, args...)
 	proc.NoWindow(cmd) // no console flash when becky-clip spawns us windowless
-	var stdout, stderr strings.Builder
+	var stdout strings.Builder
+	stderr := &helperStderr{verbose: verbose}
 	cmd.Stdout = &stdout
-	if verbose {
-		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = &stderr
-	}
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return helperResult{}, fmt.Errorf("transcribe helper failed: %v\n%s", err, tail(stderr.String()))
 	}
@@ -524,13 +547,10 @@ func runDMLHelper(python, script, wav, device, lang string, chunkSeconds, chunkO
 		"--chunk-overlap", strconv.FormatFloat(chunkOverlap, 'f', -1, 64)}
 	cmd := exec.Command(python, args...)
 	proc.NoWindow(cmd)
-	var stdout, stderr strings.Builder
+	var stdout strings.Builder
+	stderr := &helperStderr{verbose: verbose}
 	cmd.Stdout = &stdout
-	if verbose {
-		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = &stderr
-	}
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return helperResult{}, fmt.Errorf("DML transcribe helper failed: %v\n%s", err, tail(stderr.String()))
 	}

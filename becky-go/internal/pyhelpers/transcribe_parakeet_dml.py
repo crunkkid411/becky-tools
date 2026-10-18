@@ -378,6 +378,8 @@ def main():
 
     all_words = []
     for i, (lo, hi) in enumerate(windows):
+        _log(f"[progress] window {i + 1}/{num_windows}")
+        sys.stderr.flush()
         is_last = i == num_windows - 1
         try:
             ws = decode(max(0, lo - pad_n), min(total, hi + pad_n))

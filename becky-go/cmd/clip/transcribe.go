@@ -46,10 +46,17 @@ import (
 	"becky-go/internal/qmdindex"
 )
 
-// transcribeTimeout bounds one becky-transcribe exec. Transcription of a long
-// video is slow (audio extraction + Parakeet inference), so the default is
-// generous; BECKY_TRANSCRIBE_TIMEOUT (a Go duration like "45m") overrides it.
-const transcribeTimeout = 30 * time.Minute
+// transcribeTimeout bounds one becky-transcribe exec. A 3-hour livestream with the
+// second listen and the Gemma proofread can take well over an hour, and the old
+// 30-minute limit killed long videos part way (2026-10-17), so the limit is 6 hours;
+// BECKY_TRANSCRIBE_TIMEOUT (a Go duration like "45m") overrides it.
+const transcribeTimeout = 6 * time.Hour
+
+// TranscribeProgressFile is where becky-transcribe keeps its latest progress line
+// (--progress-file); becky-review reads the same path to show the step and percentage.
+func TranscribeProgressFile() string {
+	return filepath.Join(os.TempDir(), "becky-transcribe-progress.txt")
+}
 
 // captionsTimeout bounds one becky-captions exec. It probes the video and may do
 // a single yt-dlp subtitle fetch (no media download), so it is far quicker than
@@ -66,7 +73,8 @@ const captionsTimeout = 10 * time.Minute
 // the whole transcribe→re-index flow is exercised offline. Production never
 // reassigns it.
 var runTranscribe = func(ctx context.Context, transcribeBin, videoPath, srtOut string) error {
-	cmd := exec.CommandContext(ctx, transcribeBin, videoPath, "--format", "srt", "--output", srtOut)
+	cmd := exec.CommandContext(ctx, transcribeBin, videoPath, "--format", "srt", "--output", srtOut,
+		"--progress-file", TranscribeProgressFile())
 	proc.NoWindow(cmd) // becky-transcribe is a console app; no flash when the GUI spawns it
 	// Diagnostics (Parakeet/ffmpeg progress) go to the clip's stderr; stdout is
 	// unused for --output runs. Capture stderr so a failure carries a readable tail.

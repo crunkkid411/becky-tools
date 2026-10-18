@@ -165,6 +165,8 @@
   action (reaction / gesture / acting / grooming / looking away / object / still) and whether it fits
   the line; Go puts back reaction/gesture/acting that fits. Research + measurements:
   `research/visual-moments-2026-10.md`.
+- **Transcribe progress + batch (2026-10-17):** `cmd/transcribe/progress.go` (step lines, `--progress-file`),
+  `Transcribe Videos.bat` (batch), open items in `TODO-becky-transcribe-2026-10-17.md`.
 - **Transcription fixed at the root (2026-10-05):** `becky-transcribe` builds word times from
   Parakeet-TDT's own durations (no zero-length words), windows start and end in pauses, and every
   run adds a WhisperX second opinion (`cmd/transcribe/secondpass.go`) + Jordan's word list

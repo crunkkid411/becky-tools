@@ -59,9 +59,27 @@ func parseLexicon(src string) (fixes []lexFix, bad []string) {
 	return fixes, bad
 }
 
-// loadLexicon returns the built-in list plus an optional extra file.
+// lexiconSourcePath is the word list in the repo. Agents add names there; reading it at run
+// time means a new name works on the next run without rebuilding the .exe (a running copy
+// locks the file, 2026-10-15 feedback item 7). BECKY_LEXICON_FILE overrides it.
+const lexiconSourcePath = `X:\AI-2\becky-tools\becky-go\cmd\transcribe\lexicon.txt`
+
+// liveLexicon returns the repo's lexicon.txt when it can be read, else the copy built into
+// the program.
+func liveLexicon() string {
+	p := os.Getenv("BECKY_LEXICON_FILE")
+	if p == "" {
+		p = lexiconSourcePath
+	}
+	if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
+		return string(data)
+	}
+	return defaultLexicon
+}
+
+// loadLexicon returns the word list (live file, else built-in) plus an optional extra file.
 func loadLexicon(extraPath string) (fixes []lexFix, bad []string, err error) {
-	src := defaultLexicon
+	src := liveLexicon()
 	if extraPath != "" {
 		data, rerr := os.ReadFile(extraPath)
 		if rerr != nil {

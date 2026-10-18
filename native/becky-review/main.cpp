@@ -194,6 +194,25 @@ static std::string g_workLabel;
 static int g_workCount = 0;
 static double g_workSince = 0;
 
+// becky-transcribe keeps its latest step in the temp folder (becky-transcribe-progress.txt)
+// (becky-clip passes --progress-file). Read at most once a second while a
+// transcribe is running, so the indicator says "step 2 of 5: listening 40%"
+// instead of only a moving bar (Jordan 2026-10-17: no indicator of progress).
+static std::string transcribeProgressLine() {
+    static double lastRead = 0; static std::string cached;
+    double now = nowSec();
+    if (now - lastRead < 1.0) return cached;
+    lastRead = now; cached.clear();
+    char tmp[MAX_PATH]; DWORD n = GetTempPathA(MAX_PATH, tmp);
+    if (n == 0 || n >= MAX_PATH) return cached;
+    std::string path = std::string(tmp) + "becky-transcribe-progress.txt";
+    if (FILE* f = fopen(path.c_str(), "rb")) {
+        char buf[512]; size_t r = fread(buf, 1, sizeof(buf) - 1, f); fclose(f);
+        buf[r] = 0; cached = buf;
+    }
+    return cached;
+}
+
 void beginWork(const std::string& label) {
     std::lock_guard<std::mutex> lk(g_workMx);
     if (g_workCount == 0) g_workSince = nowSec();
@@ -3618,7 +3637,7 @@ int main(int argc, char** argv) {
                 // exactly when "the render lands on another drive" is true.
                 //
                 // This mirror used to carry an extra rule the engine no longer has:
-                // it refused the E: evidence drive and pointed at %TEMP%ecky-clip
+                // it refused the E: evidence drive and pointed at the temp folder's becky-clip
                 // instead. That is what Jordan saw as "renders -> C:", and it was
                 // TRUE - renders really were going to temp, where Windows later
                 // deleted forensic clips he had already delivered to law enforcement.
@@ -4374,7 +4393,7 @@ int main(int argc, char** argv) {
                             // Whole-folder ASR: minutes to hours, so it goes through
                             // engineCallAsync (never the UI thread) and its reply lands on
                             // the UI thread via drainAsync.
-                            engineCallAsync("transcribe_all", json::object(), 7200.0, "Transcribing every video...",
+                            engineCallAsync("transcribe_all", json::object(), 7.0 * 86400.0, "Transcribing every video...",
                                 [](const json& r) {
                                     g_transcribeAllBusy = false;
                                     // g_renderMsgAt must be set on BOTH paths: the status
@@ -5140,6 +5159,20 @@ int main(int argc, char** argv) {
                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove)) {
                     double el = nowSec() - since;
                     ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.45f, 1.0f), "%s", label.c_str());
+                    // Transcribe reports real steps + a percentage while listening.
+                    int pct = -1;
+                    if (label.rfind("Transcrib", 0) == 0) {
+                        std::string pl = transcribeProgressLine();
+                        if (!pl.empty()) {
+                            ImGui::TextColored(ImVec4(0.55f, 0.90f, 1.0f, 1.0f), "%s", pl.c_str());
+                            size_t pc = pl.rfind('%');
+                            if (pc != std::string::npos) {
+                                size_t b = pc;
+                                while (b > 0 && isdigit((unsigned char)pl[b - 1])) b--;
+                                if (b < pc) pct = atoi(pl.substr(b, pc - b).c_str());
+                            }
+                        }
+                    }
                     // Indeterminate: none of these operations report real progress, and
                     // a fake percentage that stalls at 90% is worse than none. A moving
                     // bar says "alive", the elapsed count says how long - which is what
@@ -5149,10 +5182,15 @@ int main(int argc, char** argv) {
                     float bw = 220 * ImGui::GetIO().FontGlobalScale, bh = 6;
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     d->AddRectFilled(p0, ImVec2(p0.x + bw, p0.y + bh), IM_COL32(255, 255, 255, 40), 3);
-                    float sw = bw * 0.30f, sx = (bw + sw) * t - sw;
-                    d->AddRectFilled(ImVec2(p0.x + std::max(0.0f, sx), p0.y),
-                                     ImVec2(p0.x + std::min(bw, sx + sw), p0.y + bh),
-                                     IM_COL32(242, 217, 115, 220), 3);
+                    if (pct >= 0) {
+                        d->AddRectFilled(p0, ImVec2(p0.x + bw * std::min(100, pct) / 100.0f, p0.y + bh),
+                                         IM_COL32(140, 230, 255, 230), 3);
+                    } else {
+                        float sw = bw * 0.30f, sx = (bw + sw) * t - sw;
+                        d->AddRectFilled(ImVec2(p0.x + std::max(0.0f, sx), p0.y),
+                                         ImVec2(p0.x + std::min(bw, sx + sw), p0.y + bh),
+                                         IM_COL32(242, 217, 115, 220), 3);
+                    }
                     ImGui::Dummy(ImVec2(bw, bh));
                     ImGui::TextDisabled("%.0fs", el);
                 }

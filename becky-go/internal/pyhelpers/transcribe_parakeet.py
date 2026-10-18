@@ -267,6 +267,8 @@ def main():
 
         all_words = []
         for i in range(num_windows):
+            sys.stderr.write(f"[progress] window {i + 1}/{num_windows}\n")
+            sys.stderr.flush()
             start_frame = i * step_frames
             is_last = i == num_windows - 1
             n_frames = total_frames - start_frame if is_last else win_frames
