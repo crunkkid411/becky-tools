@@ -43,7 +43,9 @@
   saved as `<folder minus day>.veg`. VEGAS side: `vegas/BeckyObsPrep.cs`. Recipe: `SKILL.md` `# OBS PREP`.
 - **`becky-livestream --video`** (2026-10-12, `video.go`, `instructions.go`, `obs.go`; launchers
   `workflows/youtube/YouTube-Edit.bat` and, for OBS footage, `YouTube-Edit (OBS).bat` (obsprep first,
-  2026-10-18; GPU + one-session batching + per-frame saves in `picture.go` / `publish.go` / `select.go`)): a raw YouTube recording (not a livestream) edited
+  2026-10-18; GPU + one-session batching + per-frame saves in `picture.go` / `publish.go` / `select.go`;
+  picture measure on the graphics card 2026-10-19: `internal/pyhelpers/mp_gpu.py` + `picture_signals.py --gpu`,
+  venv from `scripts/setup-picture-gpu.ps1`)): a raw YouTube recording (not a livestream) edited
   by the same workflow minus live chat; what Jordan tells the editor on camera ("put this at the
   beginning") is found by Qwen3.5 + Gemma-4, understood by Gemma-4 12B + Gemma-4 + Qwen3.5, and done
   in code (move / cut / region). OBS files are listened to on a synced copy and laid in VEGAS from the

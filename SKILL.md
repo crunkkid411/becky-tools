@@ -783,8 +783,13 @@ Graphics card (2026-10-18; Jordan: nothing processor-only that can run on the GP
 the breath check's held frames and the publish check share ONE Gemma vision session (`gemmaVision`), and its
 answers are saved per frame (`held-gemma.json`, publish every 5) with "n/N" progress. Falcon runs on DirectML,
 all three queries in one load. Text passes reuse one resident model (`select.go` `resident`). The picture
-measure (`picture_signals.py`) stays on the processor: insightface crashes on DirectML here and MediaPipe's
-Python has no GPU on Windows. Slow creeps are Event Pan/Crop (`panzoom`), not Picture In Picture.
+measure (`picture_signals.py`) runs on the graphics card (2026-10-19) when `config.PictureGPUPython`
+(`models\picture\venv-gpu`, built by `scripts/setup-picture-gpu.ps1`) exists: `--gpu` puts insightface on CUDA
+and MediaPipe's networks on LiteRT through `pyhelpers/mp_gpu.py` (MediaPipe's processing ported from its
+source; 3.5x faster, within MediaPipe's own noise). Any network the card cannot run whole goes to the
+processor (split, the pose detector returned wrong scores). A failed card run falls back to the processor run.
+Never put DirectML under insightface (det_10g crashes); never trust the mediapipe wheel's `delegate=GPU` on
+Windows (built without GPU). Slow creeps are Event Pan/Crop (`panzoom`), not Picture In Picture.
 ```bash
 becky-livestream --video --model systemone <video>   # the livestream workflow, video mode
 ```

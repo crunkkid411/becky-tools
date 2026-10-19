@@ -12,6 +12,45 @@
 
 ---
 
+## Picture check on the graphics card: insightface on CUDA, MediaPipe networks through LiteRT (2026-10-19, local)
+
+Jordan, 2026-10-19: "We NEED to set it up so it uses the GPU for mediapipe; that one step alone could take
+longer than the whole rest of the workflow without it" and "We have CUDA, there is no reason why we should be
+running insight face on DirectML". Commit d7f4116.
+
+- Why MediaPipe could not just be switched on: the Windows mediapipe 1.0.1 wheel is built with GPU disabled
+  (`delegate=GPU` -> "ImageCloneCalculator: GPU processing is disabled in build flags"; the object detector
+  silently stays on XNNPACK), and upstream turns the OpenGL path off on Windows. ANGLE / Vulkan-Hpp / Lluvia
+  were looked at; none runs TFLite networks. LiteRT (`ai-edge-litert` 2.3.0) does: ML Drift -> WebGPU (Dawn)
+  -> Direct3D 12 on the RTX 3070, once Microsoft DXC v1.9.2609 `dxcompiler.dll` + `dxil.dll` sit next to
+  `libLiteRtWebGpuAccelerator.dll`.
+- `internal/pyhelpers/mp_gpu.py` (new): MediaPipe's own .tflite networks out of the .task bundles, with
+  MediaPipe's processing ported from its C++ source: letterbox, SSD anchors, box decode, weighted NMS, rotated
+  crops, heatmap refinement, landmark projection, next-frame tracking rects, visibility low-pass + one-euro
+  smoothing (VIDEO mode), blendshapes, face geometry (Procrustes) for head pitch/yaw, hand landmarks + gesture
+  embedder/classifier, EfficientDet boxes from the model's DETECTOR_METADATA. `python mp_gpu.py` self-checks
+  anchor counts, Procrustes and rect maths.
+- Bug found and fixed: the pose detector (sparse weights, DENSIFY) split between card and processor returns
+  wrong scores (best 0.11 vs 0.85), so no body was ever found. `Net` now runs any network the card cannot run
+  whole wholly on the processor (pose detector, blendshapes; both cheap).
+- `picture_signals.py --gpu`: insightface 2.1 on `CUDAExecutionProvider` (`onnxruntime.preload_dlls()`,
+  onnxruntime-gpu 1.31 with CUDA 13/cuDNN 9 wheels; det_10g does NOT crash on CUDA) + mp_gpu. Without `--gpu`
+  it is the old processor path (refactored into `cpu_models`, same output).
+- InsightFace model-zoo checked: buffalo_l files are byte-identical; the new raccoon/cheetah packs have no 3D
+  68-point landmarks, so buffalo_l stays (the mouth measure needs 62/66 over 36/45).
+- Go: `config.PictureGPUPython` (auto-detects `models\picture\venv-gpu`), `measureFrames` tries it first
+  (PYTHONPATH dropped so FacePyLib cannot shadow the venv), falls back to the processor run on failure.
+  `pyhelpers.MPGPU` embed; `TestMPGPUEmbedded` guards the fallback rule and the CUDA wiring.
+- `scripts/setup-picture-gpu.ps1` builds the venv + DXC DLLs (ran on Jordan's PC: "CUDA + LiteRT ok"; the
+  DXC download step tested separately, same file hash). ASCII-only, PS 5.1 parse-checked.
+- Measured on `test-for-clips.mp4` (100-130 s + 200-215 s, 10 fps, 450 frames): 22 s on the card vs 77 s
+  processor. Face/jaw/head/gestures/drinks match closely (jaw median diff 0.004, head 0.2 deg, gestures
+  448/450). Body: same totals (hands-up 76 vs 74 frames); per-frame flips are within MediaPipe's own noise
+  (MediaPipe vs itself with +-1 pixel-value noise: hands-up flips 33, card 13; big-move flips 47, card 49).
+- `becky-livestream --analyze --video` on a fresh copy of test-for-clips.mp4 finished (exit 0, 9 min total,
+  picture measured to 4:59 of 5:00, no "graphics card failed" fallback line). Full YouTube-Edit.bat run: Jordan
+  tests. go build/vet/test green, build-all-tools.bat built 122 tools.
+
 ## YouTube edit: graphics card, one session per model, per-frame saves, OBS launcher, Pan/Crop creeps (2026-10-18, local)
 
 Jordan, 2026-10-18: YouTube-Edit.bat on a 28-min OBS video ran 4 h+. Measured: picture measure 51 min

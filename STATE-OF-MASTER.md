@@ -6,7 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — YouTube edit uses the graphics card, batches models, saves as it goes; OBS launcher (2026-10-18, local)
+### NEW — The picture check runs on the graphics card (2026-10-19, local)
+
+becky-livestream's picture measure (face, mouth, body, gestures, drinks) was the slowest step, all on the
+processor. insightface now runs on CUDA, and MediaPipe's own networks run on the card through LiteRT (the
+Windows mediapipe package has no GPU mode), with MediaPipe's processing rebuilt in `pyhelpers/mp_gpu.py`.
+3.5x faster on his footage, results within MediaPipe's own noise; falls back to the processor if the card run
+fails. Venv: `scripts/setup-picture-gpu.ps1`. Analyze run verified; full YouTube-Edit.bat run: Jordan tests.
+`Claude-Video-Editor(Copy).md` / `-(Copy).html` at the repo root: a blueprint Jordan added for cloud agents.
+
+### YouTube edit uses the graphics card, batches models, saves as it goes; OBS launcher (2026-10-18, local)
 
 A 28-minute YouTube edit took 4 h: Gemma-4 vision ran on the processor whenever VEGAS was open, and Falcon was
 processor-only. Gemma now takes the card (`-ngl auto`) regardless of VEGAS; the breath and publish checks share
