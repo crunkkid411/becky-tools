@@ -12,6 +12,30 @@
 
 ---
 
+## YouTube edit: graphics card, one session per model, per-frame saves, OBS launcher, Pan/Crop creeps (2026-10-18, local)
+
+Jordan, 2026-10-18: YouTube-Edit.bat on a 28-min OBS video ran 4 h+. Measured: picture measure 51 min
+(insightface CPU), publish-check Gemma 42 min and held-check Gemma ~85 min (`NGL = 0` whenever vegas180.exe
+ran - obsprep had opened VEGAS), Falcon 41 min (CPU, 3 loads). GPU idle at 4 %. He: the VEGAS rule is
+"poison", nothing processor-only that can run on the GPU, add progress + saves, one .bat for OBS footage.
+
+- `picture.go`: `gemmaVision` / `closeGemmaVision` - one Gemma vision server (`-ngl auto`) shared by the held
+  check and the publish check; `vegasOpen` no longer changes anything. `gemmaHeld` saves each answer to
+  `becky-edit\held-gemma.json`, re-runs ask only the rest, logs n/N every 25.
+- `main.go`: breath check now runs BEFORE the publish check so Gemma loads once; vision closed after the
+  publish check; text model closed before VEGAS and on `fatal`.
+- `publish.go`: uses the shared session; saves every 5 answers.
+- `select.go`: `resident` text model - `open()` reuses the loaded model, swaps only on a different model;
+  per-pass `client.Close()` calls removed.
+- Falcon: `falcon_detect.py` takes `--query a,b,c` (one load) and prefers DirectML; the falcon-perception venv's
+  onnxruntime swapped for onnxruntime-directml 1.24.4 (tested on two held frames: boxes returned).
+- Picture measure NOT moved: insightface det_10g crashes with an access violation on DirectML (also in
+  venv-dml, also with mem-pattern off); MediaPipe Python has no Windows GPU. Comment in `measureFrames`.
+- `workflows/youtube/YouTube-Edit (OBS).bat`: obsprep on the folder unless its sync.json exists, then the edit.
+- BeckyFX `panzoom`: the creep as Event Pan/Crop keyframes (linear, each piece its share); `videovegas.go` uses
+  it instead of `pipzoom`. Compiled with csc against ScriptPortal.Vegas.dll; not yet run in VEGAS.
+- Not run end to end (Jordan tests). go build/vet/test green.
+
 ## becky-transcribe in Becky Review: long videos, progress, live word list, batch .bat (2026-10-17, local)
 
 Jordan, 2026-10-17: transcribing in Becky Review failed, there was no progress indicator, and he needs

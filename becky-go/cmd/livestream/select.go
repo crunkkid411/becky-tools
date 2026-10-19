@@ -531,7 +531,6 @@ func runLocal(lead, reviewer localModelSpec, ss []Sentence, guidance, data strin
 		rm, rerr := reviewer.open()
 		if rerr == nil {
 			reviews, rerr = rm.review(ss, ws, brief, len(sel.Topics), targets, logf)
-			rm.client.Close()
 		}
 		if rerr != nil {
 			sel.Notes = append(sel.Notes, fmt.Sprintf("the review by %s did not finish (%v); %s's unsure calls are marked unsure instead", reviewer.name, rerr, lead.name))
@@ -553,7 +552,6 @@ func runLead(lead localModelSpec, ss []Sentence, guidance, data string, logf fun
 	if err != nil {
 		return sel, err
 	}
-	defer lm.client.Close()
 	if fixedTopics != nil { // --video: one topic; the labels do the cutting
 		sel.Topics = fixedTopics
 	} else if sel.Topics, err = lm.wantedTopics(guidance); err != nil {
@@ -580,10 +578,33 @@ type localModelSpec struct {
 	name, model, server string
 }
 
+// resident is the text model that stays loaded between passes: the content read,
+// the viewer read, the thinking pass, the contextual pass and the upload text all
+// reuse it while they ask the same model, and it is swapped only when a pass needs
+// a different one (or the vision model needs the graphics card). Callers never
+// close it; main closes it at the end.
+var resident struct {
+	model string
+	c     *llmlocal.Client
+}
+
 func (s localModelSpec) open() (localModel, error) {
+	if resident.c != nil && resident.model == s.model {
+		return localModel{name: s.name, client: resident.c}, nil
+	}
 	c := llmlocal.NewWarmClientCtx(s.model, s.server, localCtx, func(f string, a ...any) {})
 	if err := c.Available(); err != nil {
 		return localModel{}, fmt.Errorf("%s is not available: %w", s.name, err)
 	}
+	closeResident()
+	resident.model, resident.c = s.model, c
 	return localModel{name: s.name, client: c}, nil
+}
+
+// closeResident unloads the resident text model, if one is loaded.
+func closeResident() {
+	if resident.c != nil {
+		resident.c.Close()
+	}
+	resident.model, resident.c = "", nil
 }

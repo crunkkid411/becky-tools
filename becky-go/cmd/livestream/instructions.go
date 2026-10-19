@@ -153,7 +153,6 @@ func findInstructions(spec localModelSpec, ss []Sentence, logf func(string, ...a
 	if err != nil {
 		return nil, err
 	}
-	defer m.client.Close()
 	logf("instructions: %s is listing where Jordan talks to his editor...", spec.name)
 	var out []int
 	const size, overlap = 40, 8
@@ -227,7 +226,6 @@ func readInstruction(spec localModelSpec, ss []Sentence, g []int) (modelRead, er
 	if err != nil {
 		return mr, err
 	}
-	defer m.client.Close()
 	a, b := contextFor(ss, g)
 	var quoted []string
 	for _, id := range g {

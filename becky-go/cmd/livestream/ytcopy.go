@@ -72,7 +72,6 @@ func (r *run) youtubeCopy(ss []Sentence, ds []Decision, pieces []span) {
 		r.logf("upload text: %v", err)
 		return
 	}
-	defer m.client.Close()
 	type line struct {
 		id int
 		at float64

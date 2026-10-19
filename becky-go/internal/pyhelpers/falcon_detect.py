@@ -44,8 +44,19 @@ def load_detector(model_dir):
     mod = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(mod)
-        return mod.FalconPerception(), ""
     except Exception as e:  # degrade, never crash - the Go caller wants a reason
+        return None, "%s: %s" % (type(e).__name__, e)
+    # Graphics card first (DirectML, Jordan 2026-10-18: nothing processor-only that
+    # can run on the GPU); a session the card cannot build falls back to the processor.
+    try:
+        import onnxruntime as ort
+        if "DmlExecutionProvider" in ort.get_available_providers():
+            return mod.FalconPerception(["DmlExecutionProvider", "CPUExecutionProvider"]), ""
+    except Exception:
+        pass
+    try:
+        return mod.FalconPerception(), ""
+    except Exception as e:
         return None, "%s: %s" % (type(e).__name__, e)
 
 
@@ -79,22 +90,30 @@ def main():
         print(json.dumps({"ok": False, "error": "cannot read frames dir: %s" % e}))
         return 0
 
+    # --query may list several ("bottle,cup,phone"): the model loads once for all.
+    queries = [q.strip() for q in args.query.split(",") if q.strip()]
     for n in names:
         try:
             im = Image.open(os.path.join(args.frames, n)).convert("RGB")
             # 256x256 is what the reference pipeline uses end to end (incl. AnyUp
             # and the segmentation head); the boxes come back as fractions, so
             # the source resolution never enters into it.
-            res = fp.generate(im.resize((256, 256), Image.BILINEAR), args.query, verbose=False)
-            boxes = [dict(x=round(d["box"]["x1"], 4), y=round(d["box"]["y1"], 4),
-                          w=round(d["box"]["x2"] - d["box"]["x1"], 4),
-                          h=round(d["box"]["y2"] - d["box"]["y1"], 4),
-                          confidence=round(d["score"], 4)) for d in res]
+            im = im.resize((256, 256), Image.BILINEAR)
         except Exception as e:
             print(json.dumps({"ok": False, "frame": n, "error": str(e)}), flush=True)
             continue
-        print(json.dumps({"ok": True, "frame": n, "query": args.query,
-                          "count": len(boxes), "boxes": boxes}), flush=True)
+        for q in queries:
+            try:
+                res = fp.generate(im, q, verbose=False)
+                boxes = [dict(x=round(d["box"]["x1"], 4), y=round(d["box"]["y1"], 4),
+                              w=round(d["box"]["x2"] - d["box"]["x1"], 4),
+                              h=round(d["box"]["y2"] - d["box"]["y1"], 4),
+                              confidence=round(d["score"], 4)) for d in res]
+            except Exception as e:
+                print(json.dumps({"ok": False, "frame": n, "query": q, "error": str(e)}), flush=True)
+                continue
+            print(json.dumps({"ok": True, "frame": n, "query": q,
+                              "count": len(boxes), "boxes": boxes}), flush=True)
     return 0
 
 

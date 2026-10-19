@@ -66,7 +66,8 @@ func looksJob(ps []piece, fps float64) (string, int) {
 		f0 := int64(math.Round(ps[i].TL * fps))
 		f1 := int64(math.Round((ps[i].TL + dur) * fps))
 		if creep {
-			fmt.Fprintf(&sb, "pipzoom\t%d\t%d\t%.2f\t0.5\n", f0, f1-f0, creepScale)
+			// Event Pan/Crop, not the Picture In Picture plug-in (Jordan, 2026-10-18)
+			fmt.Fprintf(&sb, "panzoom\t%d\t%d\t%.2f\t0.5\n", f0, f1-f0, creepScale)
 		} else {
 			fmt.Fprintf(&sb, "zoom\t%d\t%d\t%.2f\t0.5\t0.4\t1\n", f0, f1-f0, cropScale)
 		}

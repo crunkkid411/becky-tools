@@ -6,7 +6,16 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
-### NEW — becky-transcribe works from Becky Review on long videos, shows progress, batch launcher (2026-10-17, local)
+### NEW — YouTube edit uses the graphics card, batches models, saves as it goes; OBS launcher (2026-10-18, local)
+
+A 28-minute YouTube edit took 4 h: Gemma-4 vision ran on the processor whenever VEGAS was open, and Falcon was
+processor-only. Gemma now takes the card (`-ngl auto`) regardless of VEGAS; the breath and publish checks share
+one Gemma session and save every answer; Falcon is on DirectML with one load for all queries; text passes keep
+one model loaded. Picture measuring stays on the processor (insightface crashes on DirectML, MediaPipe has no
+Windows GPU). `YouTube-Edit (OBS).bat` runs obsprep then the edit. Creeps are Event Pan/Crop. Not yet run end
+to end - Jordan tests it.
+
+### becky-transcribe works from Becky Review on long videos, shows progress, batch launcher (2026-10-17, local)
 
 Becky Review's "+" gave up after 900 s, so every long video failed; it now waits 6.5 h (becky-clip 6 h,
 "Transcribe all" 7 days). becky-transcribe always prints "step N of M: ..." with a percentage while Parakeet

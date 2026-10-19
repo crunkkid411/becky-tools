@@ -41,8 +41,9 @@
   audio)" variant): Jordan's OBS prep (`obs-workflow.md`) - recordings into VEGAS in order, mix track
   deleted, clap spike put on the first frame his hands meet (checked in VEGAS's own render), regrouped,
   saved as `<folder minus day>.veg`. VEGAS side: `vegas/BeckyObsPrep.cs`. Recipe: `SKILL.md` `# OBS PREP`.
-- **`becky-livestream --video`** (2026-10-12, `video.go`, `instructions.go`, `obs.go`; launcher
-  `workflows/youtube/YouTube-Edit.bat`): a raw YouTube recording (not a livestream) edited
+- **`becky-livestream --video`** (2026-10-12, `video.go`, `instructions.go`, `obs.go`; launchers
+  `workflows/youtube/YouTube-Edit.bat` and, for OBS footage, `YouTube-Edit (OBS).bat` (obsprep first,
+  2026-10-18; GPU + one-session batching + per-frame saves in `picture.go` / `publish.go` / `select.go`)): a raw YouTube recording (not a livestream) edited
   by the same workflow minus live chat; what Jordan tells the editor on camera ("put this at the
   beginning") is found by Qwen3.5 + Gemma-4, understood by Gemma-4 12B + Gemma-4 + Qwen3.5, and done
   in code (move / cut / region). OBS files are listened to on a synced copy and laid in VEGAS from the

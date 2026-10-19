@@ -310,7 +310,7 @@ func TestLooksTakeTurnsOnCuts(t *testing.T) {
 	job, n := looksJob(ps, 30)
 	lines := strings.Split(strings.TrimSpace(job), "\n")
 	// a 12 s creep from 21 s, a 6 s crop a minute after it ends, then a creep again
-	if n != 3 || !strings.HasPrefix(lines[0], "pipzoom\t630\t360\t1.11") || !strings.HasPrefix(lines[1], "zoom\t2790\t180\t1.12") || !strings.HasPrefix(lines[2], "pipzoom\t4770\t360\t") {
+	if n != 3 || !strings.HasPrefix(lines[0], "panzoom\t630\t360\t1.11") || !strings.HasPrefix(lines[1], "zoom\t2790\t180\t1.12") || !strings.HasPrefix(lines[2], "panzoom\t4770\t360\t") {
 		t.Errorf("looks (%d):\n%s", n, job)
 	}
 	if s := starterJob(`X:\v\a.mp4`); s != "trackfx\t0\t0\tX:\\v\\a.mp4\tBeauty Box\tPOLISH\tAutoLooks\tpolish\tColor Corrector\thj-simple\tColor Curves\thair-help\tColor Curves\tPOLISH-subtle\n" {

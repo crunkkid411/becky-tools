@@ -15,6 +15,7 @@
  * Job file: plain text, TAB-separated, one item per line, positions in FRAMES:
  *   fx    <TAB> <first frame> <TAB> <length> <TAB> <plug-in> [<TAB> <preset>]
  *   zoom  <TAB> <first frame> <TAB> <length> <TAB> <scale> [<TAB> <cx> <TAB> <cy> [<TAB> <ramp frames>]]
+ *   panzoom <TAB> <first frame> <TAB> <length> <TAB> <scale> [<TAB> <end height, 0.5 = none>]  (pipzoom's move, in Event Pan/Crop)
  *   pipzoom <TAB> <first frame> <TAB> <length> <TAB> <scale, his: 1.11 or 1.447> [<TAB> <end height, 0.5 = none>]
  *   censor <TAB> <first frame> <TAB> <length> <TAB> <cx> <TAB> <cy> <TAB> <w> <TAB> <h> [<TAB> Oval|Rectangle]
  *   censor <TAB> <first frame> <TAB> <length> <TAB> <boxes.tsv> [<TAB> Oval|Rectangle]
@@ -138,6 +139,9 @@ public class EntryPoint
                 fx += Zoom(vegas, at, Timecode.FromFrames(Len(f[2])), Num(f[3]), f.Length > 5 ? Num(f[4]) : 0.5, f.Length > 5 ? Num(f[5]) : 0.5,
                            f.Length > 6 ? long.Parse(f[6].Trim()) : 6);
                 break;
+            case "panzoom":
+                fx += PanZoom(vegas, at, Timecode.FromFrames(Len(f[2])), Num(f[3]), f.Length > 4 ? Num(f[4]) : 0.5);
+                break;
             case "pipzoom":
                 fx += PipZoom(vegas, at, Timecode.FromFrames(Len(f[2])), Num(f[3]), f.Length > 4 ? Num(f[4]) : 0.5);
                 break;
@@ -201,6 +205,51 @@ public class EntryPoint
         }
         if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);
         return n;
+    }
+
+    // PanZoom is the slow creep as an Event Pan/Crop move (Jordan, 2026-10-18: Pan/Crop, not
+    // the Picture In Picture plug-in): the framing goes linearly from normal to <scale>x across
+    // the range, its centre's height from 0.5 to <y>. One continuous move across his jump cuts:
+    // each piece carries its share, like PipZoom.
+    static int PanZoom(Vegas vegas, Timecode at, Timecode len, double scale, double y)
+    {
+        if (scale <= 1) throw new ApplicationException("zoom scale must be above 1, got " + scale);
+        Track track = FootageTrack(vegas.Project, at);
+        if (track == null) throw new ApplicationException("no footage on a video track at frame " + at.FrameCount);
+        Timecode end = at + len;
+        at = Snap(track, at);
+        end = Snap(track, end);
+        SplitAt(track, at);
+        SplitAt(track, end);
+        double total = (end - at).ToMilliseconds();
+        int n = 0;
+        foreach (TrackEvent ev in track.Events)
+        {
+            if (ev.Start < at || ev.End > end) continue;
+            double a = (ev.Start - at).ToMilliseconds() / total, b = (ev.End - at).ToMilliseconds() / total;
+            VideoMotion vm = ((VideoEvent)ev).VideoMotion;
+            VideoMotionKeyframe k0 = vm.Keyframes[0];
+            float x0 = k0.TopLeft.X, y0 = k0.TopLeft.Y, x1 = k0.BottomRight.X, y1 = k0.BottomRight.Y;
+            k0.Bounds = Framed(x0, y0, x1, y1, 1 + (scale - 1) * a, 0.5 + (y - 0.5) * a);
+            k0.Type = VideoKeyframeType.Linear;
+            VideoMotionKeyframe k1 = new VideoMotionKeyframe(Timecode.FromFrames(Math.Max(1, ev.Length.FrameCount - 1)));
+            vm.Keyframes.Add(k1);
+            k1.Bounds = Framed(x0, y0, x1, y1, 1 + (scale - 1) * b, 0.5 + (y - 0.5) * b);
+            k1.Type = VideoKeyframeType.Linear;
+            n++;
+        }
+        if (n == 0) throw new ApplicationException("nothing on the track inside frames " + at.FrameCount + "-" + end.FrameCount);
+        return n;
+    }
+
+    // Framed is the Pan/Crop rectangle <scale>x closer than (x0,y0)-(x1,y1), centred
+    // across and at <cy> (a fraction from the top) down, kept inside the picture.
+    static VideoMotionBounds Framed(float x0, float y0, float x1, float y1, double scale, double cy)
+    {
+        float w = (float)((x1 - x0) / scale), h = (float)((y1 - y0) / scale);
+        float mx = (x0 + x1) / 2;
+        float my = Clamp((float)(y0 + cy * (y1 - y0)), y0 + h / 2, y1 - h / 2);
+        return new VideoMotionBounds(mx - w / 2, my - h / 2, mx + w / 2, my - h / 2, mx + w / 2, my + h / 2, mx - w / 2, my + h / 2);
     }
 
     // PipZoom is Jordan's own slow zoom, measured from his projects (2026-10-08, 17 of them):

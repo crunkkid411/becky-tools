@@ -152,7 +152,10 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 }
 
 // measureFrames runs pyhelpers/picture_signals.py over the spans at fps (one
-// helper call). scratch names the temporary span file.
+// helper call). scratch names the temporary span file. It stays on the processor
+// (tested 2026-10-18): insightface's face detector crashes the process on DirectML
+// on this PC (access violation in det_10g, venv-dml too), and MediaPipe's Python
+// package has no graphics-card mode on Windows.
 func measureFrames(cfg config.Config, media, scratch string, spans []span, fps float64) ([]picFrame, error) {
 	mesh, objects := mediapipeModel(cfg, "face_landmarker.task"), mediapipeModel(cfg, "efficientdet_lite0_int8.tflite")
 	gestures := mediapipeModel(cfg, "gesture_recognizer.task")
@@ -423,15 +426,43 @@ func vegasCount() int {
 	return strings.Count(strings.ToLower(string(out)), "vegas180.exe")
 }
 
-// gemmaRunner is the Gemma-4 vision runner, on the processor while VEGAS is open.
-func gemmaRunner(cfg config.Config, logf func(string, ...any)) *avlm.Runner {
-	gm, gp, _ := cfg.GemmaAVLM()
-	r := avlm.New(gm, gp, cfg.LlamaServer, "", cfg.FFmpeg, cfg.FFprobe, nil)
-	if vegasOpen() {
-		r.NGL = 0
-		logf("  (VEGAS is open, so Gemma runs on the processor and leaves the graphics card to VEGAS)")
+// visionGemma is ONE Gemma-4 vision server for the run: the breath check's held
+// frames and the publish check share it, so it loads once. It takes as many layers
+// as the graphics card has room for (-ngl auto), VEGAS open or not. Jordan,
+// 2026-10-18: the old "VEGAS is open, so Gemma runs on the processor" rule turned a
+// 28-minute video into a 4-hour run.
+var visionGemma struct {
+	r    *avlm.Runner
+	stop func()
+	err  error
+}
+
+func gemmaVision(gemma, mmproj, server, ffmpeg, ffprobe string) (*avlm.Runner, error) {
+	if visionGemma.r != nil || visionGemma.err != nil {
+		return visionGemma.r, visionGemma.err
 	}
-	return r
+	closeResident() // the text model's graphics memory goes to the vision model
+	r := avlm.New(gemma, mmproj, server, "", ffmpeg, ffprobe, nil)
+	r.NGL = -1
+	err := r.Ready()
+	var stop func()
+	if err == nil {
+		stop, err = r.Start(context.Background())
+	}
+	if err != nil {
+		visionGemma.err = err
+		return nil, err
+	}
+	visionGemma.r, visionGemma.stop = r, stop
+	return r, nil
+}
+
+// closeGemmaVision frees the graphics card once the vision checks are done.
+func closeGemmaVision() {
+	if visionGemma.stop != nil {
+		visionGemma.stop()
+	}
+	visionGemma.r, visionGemma.stop, visionGemma.err = nil, nil, nil
 }
 
 // checkHeld asks Falcon and Gemma about one frame at each time (cached by time
@@ -469,7 +500,7 @@ func checkHeld(cfg config.Config, media, work string, times []float64, logf func
 	if err != nil {
 		notes = append(notes, "Falcon did not run: "+err.Error())
 	}
-	gemma, err := gemmaHeld(cfg, dir, todo, logf)
+	gemma, err := gemmaHeld(cfg, work, dir, todo, logf)
 	if err != nil {
 		notes = append(notes, "Gemma did not run: "+err.Error())
 	}
@@ -515,27 +546,26 @@ func falconBoxes(cfg config.Config, dir string, keys []string) (map[string]heldC
 		}
 		_ = os.WriteFile(filepath.Join(tmp, k+".jpg"), b, 0o644)
 	}
+	// one Falcon load for every query, on the graphics card when it can (falcon_detect.py)
 	out := map[string]heldCheck{}
-	for _, q := range heldQueries {
-		raw, err := exec.Command(py, script, "--model-dir", fdir, "--frames", tmp, "--query", q).Output()
-		if err != nil && len(raw) == 0 {
-			return out, fmt.Errorf("%v", err)
+	raw, err := exec.Command(py, script, "--model-dir", fdir, "--frames", tmp, "--query", strings.Join(heldQueries, ",")).Output()
+	if err != nil && len(raw) == 0 {
+		return out, fmt.Errorf("%v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		var fl falconLine
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &fl) != nil || !fl.OK {
+			continue
 		}
-		for _, line := range strings.Split(string(raw), "\n") {
-			var fl falconLine
-			if json.Unmarshal([]byte(strings.TrimSpace(line)), &fl) != nil || !fl.OK {
-				continue
+		k := strings.TrimSuffix(fl.Frame, ".jpg")
+		h := out[k]
+		for _, b := range fl.Boxes {
+			if b.Confidence >= heldConf && b.H >= heldHeight && !h.FalconYes {
+				h.FalconYes = true
+				h.Falcon = fmt.Sprintf("a %s (%.2f sure, %.0f%% of the frame tall)", fl.Query, b.Confidence, 100*b.H)
 			}
-			k := strings.TrimSuffix(fl.Frame, ".jpg")
-			h := out[k]
-			for _, b := range fl.Boxes {
-				if b.Confidence >= heldConf && b.H >= heldHeight && !h.FalconYes {
-					h.FalconYes = true
-					h.Falcon = fmt.Sprintf("a %s (%.2f sure, %.0f%% of the frame tall)", q, b.Confidence, 100*b.H)
-				}
-			}
-			out[k] = h
 		}
+		out[k] = h
 	}
 	return out, nil
 }
@@ -543,25 +573,41 @@ func falconBoxes(cfg config.Config, dir string, keys []string) (map[string]heldC
 type falconLine struct {
 	OK    bool   `json:"ok"`
 	Frame string `json:"frame"`
+	Query string `json:"query"`
 	Boxes []struct {
 		X, Y, W, H float64
 		Confidence float64
 	} `json:"boxes"`
 }
 
-// gemmaHeld asks Gemma the held-up question about each frame.
-func gemmaHeld(cfg config.Config, dir string, keys []string, logf func(string, ...any)) (map[string]heldCheck, error) {
-	r := gemmaRunner(cfg, logf)
-	if err := r.Ready(); err != nil {
-		return nil, err
-	}
-	stop, err := r.Start(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	defer stop()
+// gemmaHeld asks Gemma the held-up question about each frame. Every answer is
+// saved as it comes (becky-edit\held-gemma.json), so a crash or a closed window
+// only loses the frame being looked at; a re-run asks only the rest.
+func gemmaHeld(cfg config.Config, work, dir string, keys []string, logf func(string, ...any)) (map[string]heldCheck, error) {
+	path := filepath.Join(work, "held-gemma.json")
 	out := map[string]heldCheck{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &out)
+	}
+	var ask []string
 	for _, k := range keys {
+		if _, ok := out[k]; !ok {
+			ask = append(ask, k)
+		}
+	}
+	if len(ask) == 0 {
+		return out, nil
+	}
+	gm, gp, _ := cfg.GemmaAVLM()
+	r, err := gemmaVision(gm, gp, cfg.LlamaServer, cfg.FFmpeg, cfg.FFprobe)
+	if err != nil {
+		return out, err
+	}
+	logf("  Gemma is looking at %d frames (%d answered before)", len(ask), len(keys)-len(ask))
+	for n, k := range ask {
+		if n > 0 && n%25 == 0 {
+			logf("  %d/%d", n, len(ask))
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		res, err := r.AnalyzeImage(ctx, filepath.Join(dir, k+".jpg"), avlm.ImageOptions{Prompt: heldPrompt, MaxTokens: 80, Temperature: 0.01})
 		cancel()
@@ -575,6 +621,7 @@ func gemmaHeld(cfg config.Config, dir string, keys []string, logf func(string, .
 		s := res.Text
 		if i, j := strings.Index(s, "{"), strings.LastIndex(s, "}"); i >= 0 && j > i && json.Unmarshal([]byte(s[i:j+1]), &v) == nil {
 			out[k] = heldCheck{Gemma: strings.TrimSpace(v.What), GemmaYes: v.HoldingUp}
+			writeJSON(path, out)
 		}
 	}
 	return out, nil

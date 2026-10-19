@@ -774,7 +774,17 @@ Rules learned the hard way:
 ```bat
 REM drag the video onto it, or put it in the footage folder and double-click
 workflows\youtube\YouTube-Edit.bat
+REM recorded in OBS: this one lines the sound up first (becky-obsprep, skipped once synced), then edits
+workflows\youtube\YouTube-Edit (OBS).bat
 ```
+
+Graphics card (2026-10-18; Jordan: nothing processor-only that can run on the GPU): Gemma-4 vision runs
+`-ngl auto` whether VEGAS is open or not (the old "VEGAS open -> processor" rule turned 28 min into 4 h);
+the breath check's held frames and the publish check share ONE Gemma vision session (`gemmaVision`), and its
+answers are saved per frame (`held-gemma.json`, publish every 5) with "n/N" progress. Falcon runs on DirectML,
+all three queries in one load. Text passes reuse one resident model (`select.go` `resident`). The picture
+measure (`picture_signals.py`) stays on the processor: insightface crashes on DirectML here and MediaPipe's
+Python has no GPU on Windows. Slow creeps are Event Pan/Crop (`panzoom`), not Picture In Picture.
 ```bash
 becky-livestream --video --model systemone <video>   # the livestream workflow, video mode
 ```

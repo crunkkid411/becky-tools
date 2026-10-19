@@ -201,7 +201,6 @@ func contextPass(readers []localModelSpec, ss []Sentence, ds []Decision, brief s
 			}
 			logf("reading the edit, round %d: %s reads %d kept lines...", round, spec.name, len(lines))
 			got, err := m.readEdit(lines, brief, logf)
-			m.client.Close()
 			if err != nil {
 				notes = append(notes, fmt.Sprintf("%s could not finish reading the edit in round %d: %v", spec.name, round, err))
 			}

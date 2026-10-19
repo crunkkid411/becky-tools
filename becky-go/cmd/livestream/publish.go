@@ -343,15 +343,9 @@ func publishCheck(media, ffmpeg, ffprobe, gemma, mmproj, server string, pieces [
 	}
 	if len(ask) > 0 {
 		logf("publish check: Gemma-4 is looking at %d frames...", len(ask))
-		r := avlm.New(gemma, mmproj, server, "", ffmpeg, ffprobe, nil)
-		if vegasOpen() {
-			r.NGL = 0 // never take the graphics memory an open VEGAS needs (picture.go)
-			logf("  (VEGAS is open, so Gemma runs on the processor and leaves the graphics card to VEGAS)")
-		}
-		if err := r.Ready(); err != nil {
+		// the same Gemma session as the breath check (picture.go gemmaVision), on the graphics card
+		if r, err := gemmaVision(gemma, mmproj, server, ffmpeg, ffprobe); err != nil {
 			notes = append(notes, "the vision check did not run: "+err.Error())
-		} else if stop, err := r.Start(context.Background()); err != nil {
-			notes = append(notes, "the vision check did not start: "+err.Error())
 		} else {
 			bad := 0
 			for k, f := range ask {
@@ -364,12 +358,13 @@ func publishCheck(media, ffmpeg, ffprobe, gemma, mmproj, server string, pieces [
 				if err != nil {
 					bad++
 				}
-				if (k+1)%25 == 0 {
-					logf("  %d/%d", k+1, len(ask))
+				if (k+1)%5 == 0 { // a crash loses at most 5 answers
 					save()
 				}
+				if (k+1)%25 == 0 {
+					logf("  %d/%d", k+1, len(ask))
+				}
 			}
-			stop()
 			if bad > 0 {
 				notes = append(notes, fmt.Sprintf("Gemma gave no usable answer for %d of %d frames", bad, len(ask)))
 			}

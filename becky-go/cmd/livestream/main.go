@@ -83,6 +83,8 @@ func (r *run) step(name string, since time.Time) {
 }
 
 func fatal(msg string) {
+	closeResident()
+	closeGemmaVision()
 	fmt.Println()
 	fmt.Println("STOPPED: " + msg)
 	os.Exit(1)
@@ -403,18 +405,20 @@ func (r *run) workflow(fresh, noVegas bool) {
 		r.step("visual moments", t0)
 	}
 
-	// 5. publish check (before VEGAS: Gemma's vision model and VEGAS never share the GPU)
-	t0 = time.Now()
-	gm, gp, _ := r.cfg.GemmaAVLM()
-	findings, pubNotes := publishCheck(r.media, r.cfg.FFmpeg, r.cfg.FFprobe, gm, gp, r.cfg.LlamaServer, predicted, r.work, r.logf)
-	r.step("publish check", t0)
-
-	// 6. breath check: every checked breath is cut (Jordan, 2026-10-07: "the breaths
+	// 5. breath check: every checked breath is cut (Jordan, 2026-10-07: "the breaths
 	// identified are spot on - definitely those should all be removed")
 	t0 = time.Now()
 	bc := runBreathCheck(r.cfg, r.media, r.work, r.stem, wav, au, r.threshold, r.fps, predicted, r.logf)
 	predicted = cutBreaths(predicted, bc.Spots)
 	r.step("breath check", t0)
+
+	// 6. publish check, right after: the breath check's Gemma vision session is still
+	// loaded (picture.go gemmaVision), so Gemma loads once for both
+	t0 = time.Now()
+	gm, gp, _ := r.cfg.GemmaAVLM()
+	findings, pubNotes := publishCheck(r.media, r.cfg.FFmpeg, r.cfg.FFprobe, gm, gp, r.cfg.LlamaServer, predicted, r.work, r.logf)
+	closeGemmaVision()
+	r.step("publish check", t0)
 	if r.video { // a stretch with no word heard twice goes; every edge goes onto his voice (polish.go)
 		predicted, r.vx.heard = r.secondListen(predicted, words, au)
 		predicted, r.vx.tightened = tighten(predicted, au, r.fps)
@@ -429,6 +433,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 	if r.video { // before VEGAS: the model and VEGAS never share the GPU
 		r.youtubeCopy(ss, sel.Decisions, predicted)
 	}
+	closeResident() // the last model pass: the text model leaves the graphics card
 	if noVegas {
 		r.report(sel, ss, ranges, predicted, loud, findings, pubNotes, bc, faces, faceNote, nil, nil, "")
 		return

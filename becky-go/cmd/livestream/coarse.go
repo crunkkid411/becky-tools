@@ -170,7 +170,6 @@ func exceptions(spec localModelSpec, ss []Sentence, logf func(string, ...any)) (
 	if err != nil {
 		return nil, nil, err
 	}
-	defer m.client.Close()
 	logf("content: %s is reading the recording in parts...", spec.name)
 	var off []int
 	var rts []retake
@@ -289,7 +288,6 @@ func restoreCuts(spec localModelSpec, ss []Sentence, ds []Decision, protect map[
 	if err != nil {
 		return nil, err
 	}
-	defer m.client.Close()
 	logf("content: %s is reading the edit like a viewer...", spec.name)
 	var back []int
 	for _, p := range parts(len(ss)) {

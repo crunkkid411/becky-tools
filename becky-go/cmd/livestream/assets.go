@@ -135,7 +135,6 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 		r.logf("contextual pass: %s could not start (%v) - no markers this time", spec.name, err)
 		return nil
 	}
-	defer m.client.Close()
 	r.logf("contextual pass: %s is looking for things you mean to show...", spec.name)
 	var lines []showLine
 	missed := 0

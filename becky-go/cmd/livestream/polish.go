@@ -385,7 +385,6 @@ func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 					}
 				}
 			}
-			m.client.Close()
 		}
 	}
 	if !missed { // a part the model could not answer is asked again next run
