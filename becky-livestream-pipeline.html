@@ -1,0 +1,506 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Becky YouTube Editor · becky-livestream --video (blueprint vs. Jason Cooperson's Claude Video Editor)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,700&display=swap">
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0e1014; --bg-2:#12151a; --panel:#171a20; --raised:#1d2027; --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.12);
+    --ink:#f5f5f7; --ink-2:#a1a1aa; --mute:#6e6e76;
+    --blue:#0a84ff; --teal:#64d2ff; --green:#30d158; --orange:#ff9f0a; --pink:#ff375f; --violet:#bf5af2; --yellow:#ffd60a; --gray:#98989f;
+    --display:"SF Pro Display",-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI Variable Display","Segoe UI",sans-serif;
+    --text:"SF Pro Text",-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI Variable Text","Segoe UI",sans-serif;
+    --rounded:"SF Pro Rounded",ui-rounded,-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    --serif:"Playfair Display",Georgia,"Times New Roman",serif;
+    --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{background:var(--bg)}
+  body{color:var(--ink);font-family:var(--text);font-size:15px;line-height:1.55;margin:0;padding-block:0 80px;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(1200px 520px at 78% -8%,rgba(10,132,255,.13),transparent 60%),radial-gradient(900px 420px at -10% 4%,rgba(191,90,242,.08),transparent 60%),var(--bg);background-repeat:no-repeat}
+  .wrap{max-width:1180px;margin:0 auto;padding-inline:32px}
+  code{font-family:var(--mono);font-size:.84em;color:var(--ink);background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px}
+  h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+  h1{font-size:64px;line-height:1;font-weight:700;letter-spacing:-.035em}
+  h2{font-size:32px;line-height:1.1;font-weight:700;letter-spacing:-.022em}
+  h3{font-size:17px;line-height:1.25;font-weight:600;letter-spacing:-.01em}
+  p{margin:0}
+  .lead{color:var(--ink-2);max-width:70ch;font-size:17px;line-height:1.55}
+
+  /* toolbar */
+  .bar{position:sticky;top:0;z-index:10;background:rgba(14,16,20,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;gap:20px;height:52px}
+  .brand{font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:-.01em;white-space:nowrap;display:flex;align-items:center;gap:9px}
+  .rec{width:9px;height:9px;border-radius:50%;background:var(--pink);box-shadow:0 0 0 3px rgba(255,55,95,.18)}
+  .nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;margin-left:auto}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{font-family:var(--text);font-size:13px;font-weight:500;color:var(--ink-2);text-decoration:none;padding:6px 12px;border-radius:999px;white-space:nowrap;transition:background .15s,color .15s}
+  .nav a:hover,.nav a:focus-visible{background:rgba(255,255,255,.08);color:var(--ink);outline:none}
+
+  /* hero */
+  .hero{padding:64px 0 40px;display:grid;grid-template-columns:1.35fr 1fr;gap:48px;align-items:end}
+  .kicker{font-family:var(--mono);font-size:12px;color:var(--mute);margin-bottom:18px;display:flex;flex-wrap:wrap;gap:6px 14px}
+  .kicker span{white-space:nowrap}
+  .hero h1{margin-bottom:22px}
+  .hero h1 em{display:block;font-family:var(--serif);font-style:italic;font-weight:700;font-size:.9em;letter-spacing:-.01em;line-height:1.12;padding-bottom:.06em;background:linear-gradient(90deg,#ffc4a3,#e8896a 35%,#d97757 60%,#b8522f);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+  section{padding:56px 0 0;scroll-margin-top:60px}
+  .head{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:28px}
+  .marker{font-family:var(--mono);font-size:12px;color:var(--mute);display:flex;align-items:center;gap:10px}
+  .marker i{display:inline-block;width:10px;height:14px;background:var(--c,var(--blue));clip-path:polygon(0 0,100% 0,100% 70%,50% 100%,0 70%)}
+  .marker b{color:var(--ink-2);font-weight:500}
+
+  /* graph */
+  .canvas{background:linear-gradient(180deg,#14171d,#111318);border:1px solid var(--line);border-radius:18px;overflow-x:auto;box-shadow:0 30px 80px -40px rgba(0,0,0,.8),inset 0 1px 0 rgba(255,255,255,.04)}
+  .graph{display:block;width:1180px;max-width:none;height:auto}
+  @media (min-width:1244px){.graph{width:100%}}
+  .graph .nd{fill:url(#ndg);stroke:rgba(255,255,255,.1);stroke-width:1}
+  .graph .n-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.02em}
+  .graph .n-title{font-family:var(--display);font-size:16px;font-weight:600;fill:#f5f5f7;letter-spacing:-.01em}
+  .graph .n-sub{font-family:var(--text);font-size:11px;fill:#a1a1aa}
+  .graph .region{fill:rgba(255,255,255,.018);stroke:rgba(255,255,255,.09);stroke-width:1}
+  .graph .r-title{font-family:var(--text);font-size:10.5px;font-weight:600;letter-spacing:.12em;fill:#d1d1d6}
+  .graph .r-sub{font-family:var(--text);font-size:11px;fill:#6e6e76}
+  .graph .grp{fill:rgba(10,132,255,.055);stroke:rgba(10,132,255,.35);stroke-width:1}
+  .graph .g-head{font-family:var(--text);font-size:10.5px;font-weight:600;letter-spacing:.1em;fill:#5eb0ff}
+  .graph .tab{fill:rgba(255,255,255,.05);stroke:rgba(255,255,255,.1)}
+  .graph .tab.on{fill:#0a84ff;stroke:#0a84ff}
+  .graph .tab-t{font-family:var(--text);font-size:10.5px;font-weight:500;fill:#a1a1aa}
+  .graph .tab-t.on{fill:#fff;font-weight:600}
+  .graph .pin{fill:#111318;stroke:#7c7c84;stroke-width:1.2}
+  .graph .jn{fill:#8e8e93}
+  .graph .wire{fill:none;stroke:#62646b;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+  .graph .wire.cond{stroke:#ff9f0a;stroke-dasharray:5 4}
+  .graph .wire.read{stroke:#0a84ff;stroke-dasharray:2 4}
+  .graph .wire.loop{stroke:#55575e}
+  .graph .gate{fill:#30d158;filter:drop-shadow(0 0 5px rgba(48,209,88,.6))}
+  .graph .w-lbl{font-family:var(--text);font-size:11px;fill:#8e8e93}
+  .graph .w-lbl.mono{font-family:var(--mono);font-size:10.5px}
+  .graph .s9{font-size:9.5px}
+  .graph .g-lbl{font-family:var(--text);font-size:11px;font-weight:600;fill:#30d158}
+  .graph .c-org{fill:#ff9f0a}
+  /* RED OVERLAY: a step that is missing from becky-livestream today (30% opacity, text stays readable) */
+  .graph .node.miss rect.nd{fill:rgba(255,55,95,.30);stroke:#ff375f;stroke-width:1.4;stroke-dasharray:6 4}
+  .graph .node.amber rect.nd{fill:rgba(255,159,10,.28);stroke:#ff9f0a;stroke-width:1.4;stroke-dasharray:6 4}
+  .misschip{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.02em}
+
+  .legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:16px;font-size:12.5px;color:var(--ink-2)}
+  .legend span{display:inline-flex;align-items:center;gap:8px}
+  .sw{display:inline-block;width:24px;border-top:1.5px solid #8e8e93}
+  .sw.cond{border-top-style:dashed;border-color:var(--orange)}
+  .sw.read{border-top-style:dotted;border-top-width:2px;border-color:var(--blue)}
+  .sw.gate{width:9px;height:9px;border:0;background:var(--green);transform:rotate(45deg);border-radius:1.5px}
+  .sw.red{width:24px;height:14px;border:1px dashed var(--pink);background:rgba(255,55,95,.3);border-radius:5px;transform:none}
+  .explain{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}
+  .explain h3{font-size:15px;margin-bottom:6px}
+  .explain p{font-size:14px;color:var(--ink-2)}
+
+  /* steps */
+  .steps{border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--panel)}
+  .step{display:grid;grid-template-columns:72px minmax(0,1.15fr) minmax(0,1fr);gap:28px;padding:22px 26px;border-top:1px solid var(--line);position:relative}
+  .step:first-child{border-top:0}
+  .step::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c);opacity:.9}
+  .step .no{font-family:var(--rounded);font-size:30px;font-weight:700;line-height:1;color:var(--c);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .step .no small{display:block;font-family:var(--mono);font-size:10.5px;font-weight:400;color:var(--mute);margin-top:6px;letter-spacing:.02em}
+  .step h3{font-size:20px;margin-bottom:6px}
+  .step p{font-size:14px;color:var(--ink-2)}
+  .step dl{display:grid;grid-template-columns:62px 1fr;gap:7px 12px;margin:0;font-size:13.5px}
+  .step dt{font-family:var(--text);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);padding-top:2px}
+  .step dd{margin:0;color:var(--ink-2)}
+  .pill{display:inline-block;font-family:var(--rounded);font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--ink-2);vertical-align:3px;margin-left:8px;letter-spacing:.01em}
+  .step.missing{background:rgba(255,55,95,.30)}
+  .step.missing::after{content:"MISSING FROM BECKY-LIVESTREAM — description kept as-is from Jason's blueprint";position:absolute;right:14px;top:12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.03em;color:#ff8fa3;background:rgba(255,55,95,.25);border:1px solid rgba(255,55,95,.5);padding:3px 10px;border-radius:999px}
+  .step.different{background:rgba(255,159,10,.10)}
+  .step.different::after{content:"IN MY PIPELINE — but wired differently (see the note)";position:absolute;right:14px;top:12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.03em;color:#ffb340;background:rgba(255,159,10,.14);border:1px solid rgba(255,159,10,.4);padding:3px 10px;border-radius:999px}
+  .step.beyond{background:rgba(48,209,88,.07)}
+  .step.beyond::after{content:"MINE ONLY — his pipeline has no equivalent";position:absolute;right:14px;top:12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.03em;color:#6ee391;background:rgba(48,209,88,.14);border:1px solid rgba(48,209,88,.4);padding:3px 10px;border-radius:999px}
+  .stepnote{grid-column:1/-1;font-size:13px;color:var(--ink-2);border-top:1px dashed var(--line-2);padding-top:10px}
+  .stepnote b{color:var(--ink)}
+
+  /* inside */
+  .repo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .layer{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:10px}
+  .layer.wide{grid-column:1/-1}
+  .layer .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .layer .role{font-family:var(--text);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--c)}
+  .layer h3{font-family:var(--mono);font-size:15px;font-weight:600;letter-spacing:0}
+  .layer p{font-size:14px;color:var(--ink-2)}
+  .files{display:flex;flex-wrap:wrap;gap:6px}
+  .files code{background:transparent;border:1px solid var(--line-2);color:var(--ink-2);padding:3px 8px;border-radius:7px;font-size:11.5px}
+  .files code.hot{color:var(--ink);border-color:color-mix(in srgb,var(--c) 55%,transparent);background:color-mix(in srgb,var(--c) 10%,transparent)}
+  .files code.miss{border-color:rgba(255,55,95,.55);background:rgba(255,55,95,.30);color:#ffd7de}
+
+  .foot{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--mute);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  @media (max-width:900px){
+    h1{font-size:44px}
+    .hero{grid-template-columns:1fr;gap:32px;padding-top:48px}
+    .explain,.repo{grid-template-columns:1fr}
+    .step{grid-template-columns:56px 1fr}
+    .step dl{grid-column:2}
+    .step.missing::after,.step.different::after,.step.beyond::after{position:static;display:inline-block;margin-top:8px}
+  }
+</style></head><body>
+
+<div class="bar"><div class="wrap">
+  <div class="brand"><i class="rec"></i><span class="t">Becky YouTube Editor</span></div>
+  <nav class="nav" aria-label="Sections">
+    <a href="#graph">Pipeline</a><a href="#steps">Steps</a><a href="#inside">What's inside</a><a href="#rebuild">Going further</a>
+  </nav>
+</div></div>
+
+<div class="wrap">
+<header class="hero">
+  <div>
+    <div class="kicker"><span>blueprint comparison</span><span>by crunkkid411 (Jordan)</span><span>build 2026.10.20</span><span>Windows + Vegas Pro 18</span><span>vs. Claude Video Editor · Jason Cooperson</span></div>
+    <h1>Becky YouTube Editor<em>The Same Blueprint, Drawn From becky-livestream</em></h1>
+    <p class="lead">One double-click (<code>YouTube-Edit.bat</code> → <code>becky-livestream --video &lt;file.mp4&gt;</code>) runs every step below in order and leaves a saved, checked VEGAS project on the footage. This page mirrors Jason Cooperson's eight-step diagram exactly: anything he does that I don't keeps his description word-for-word under a <b style="color:#ff8fa3">red overlay</b>; anything I do that he doesn't gets a green tag.</p>
+  </div>
+</header>
+
+<section id="graph">
+  <div class="head">
+    <div class="marker" style="--c:var(--blue)"><i></i><b>Pipeline</b> · raw footage to review-ready timeline, as wired</div>
+    <h2>The whole line on one screen</h2>
+    <p class="lead">Left to right, then down. The top row happens before VEGAS opens. The shaded region is Vegas Pro 18: the cut lands there as real events, checked, and the finishing passes run on that timeline. Red nodes are steps in Jason's pipeline that becky-livestream does not have yet.</p>
+  </div>
+  <figure style="margin:0">
+    <div class="canvas">
+<svg class="graph" viewBox="0 0 1180 660" role="img" aria-label="The becky-livestream --video pipeline as a node graph. Raw footage goes through intake and the two-pass transcript into the coarse content decision; the cut is rebuilt in Vegas Pro through an edit check. Inside the app: censor, looks and motion, second listen and tighten, then assets and inserts, breath check, publish check, upload copy, review, and vertical shorts. Audio polish (missing), grade placement (different), graphics QA loop (missing), sound effects (missing) and export specs (missing) are overlaid in red or amber where they differ from Jason's blueprint.">
+<defs>
+<linearGradient id="ndg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#23262e"/><stop offset="1" stop-color="#1a1d23"/></linearGradient>
+<pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="rgba(255,255,255,.045)"/></pattern>
+<marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#8e8e93"/></marker>
+<marker id="ah-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#ff9f0a"/></marker>
+<marker id="ah-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#0a84ff"/></marker>
+<marker id="ah-l" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#6e6e76"/></marker>
+</defs>
+<rect width="1180" height="660" fill="url(#dots)"/>
+<path class="region" d="M24 178 H1156 V446 H792 V626 H24 Z"/>
+<text class="r-title" x="44" y="203" text-anchor="start">VEGAS PRO 18</text>
+<text class="r-sub" x="176" y="203" text-anchor="start">the cut lands as real events; finishing runs on the timeline</text>
+<rect class="tab on" x="636" y="189" width="150" height="21" rx="10.5"/>
+<text class="tab-t on" x="711.0" y="203.5" text-anchor="middle">Vegas Pro 18 · only</text>
+<rect class="tab" x="794" y="189" width="120" height="21" rx="10.5"/>
+<text class="tab-t" x="854.0" y="203.5" text-anchor="middle">.veg never flattened</text>
+
+<g class="node">
+<rect class="nd" x="24" y="36" width="156" height="64" rx="10"/>
+<circle cx="40" cy="52" r="3.5" fill="#98989f"/>
+<text class="n-tag" x="50" y="55.5" fill="#98989f">SOURCE</text>
+<text class="n-title" x="38" y="75">Raw footage</text>
+<text class="n-sub" x="38" y="90">camera or OBS (prep first)</text></g>
+<g class="node">
+<rect class="nd" x="216" y="36" width="156" height="64" rx="10"/>
+<circle cx="232" cy="52" r="3.5" fill="#98989f"/>
+<text class="n-tag" x="242" y="55.5" fill="#98989f">01 · automatic</text>
+<text class="n-title" x="230" y="75">Intake</text>
+<text class="n-sub" x="230" y="90">read-only, becky-edit\</text></g>
+<g class="node">
+<rect class="nd" x="408" y="36" width="156" height="64" rx="10"/>
+<circle cx="424" cy="52" r="3.5" fill="#64d2ff"/>
+<text class="n-tag" x="434" y="55.5" fill="#64d2ff">02 · cached</text>
+<text class="n-title" x="422" y="75">Transcribe</text>
+<text class="n-sub" x="422" y="90">Parakeet + WhisperX 2nd op.</text></g>
+<g class="node">
+<rect class="nd" x="600" y="36" width="156" height="64" rx="10"/>
+<circle cx="616" cy="52" r="3.5" fill="#64d2ff"/>
+<text class="n-tag" x="626" y="55.5" fill="#64d2ff">03 · AI cut</text>
+<text class="n-title" x="614" y="75">Content decision</text>
+<text class="n-sub" x="614" y="90">Gemma-4 12B, exceptions only</text></g>
+<circle class="pin" cx="180" cy="68.0" r="3"/>
+<circle class="pin" cx="216" cy="68.0" r="3"/>
+<path class="wire " d="M180 68.0 L212 68.0" marker-end="url(#ah)"/>
+<circle class="pin" cx="372" cy="68.0" r="3"/>
+<circle class="pin" cx="408" cy="68.0" r="3"/>
+<path class="wire " d="M372 68.0 L404 68.0" marker-end="url(#ah)"/>
+<circle class="pin" cx="564" cy="68.0" r="3"/>
+<circle class="pin" cx="600" cy="68.0" r="3"/>
+<path class="wire " d="M564 68.0 L596 68.0" marker-end="url(#ah)"/>
+<circle class="pin" cx="756" cy="68.0" r="3"/>
+<path class="wire " d="M756 68.0 L796 68.0 L796 140 L12 140 L12 320 L44 320" marker-end="url(#ah)"/>
+<text class="w-lbl" x="800" y="92" text-anchor="end">keep list · retakes · instructions · thinking</text>
+<text class="w-lbl" x="800" y="107" text-anchor="end">plan-&lt;model&gt;.json · silencedetect map</text>
+<text class="w-lbl" x="404" y="131" text-anchor="middle">rebuilt as real trimmable events, never a flat render</text>
+<rect class="gate" x="6" y="238" width="12" height="12" rx="2" transform="rotate(45 12 244)"/>
+<text class="g-lbl" x="26" y="240" text-anchor="start">edit check</text>
+<text class="w-lbl s9" x="26" y="254" text-anchor="start">timeline re-transcribed vs plan</text>
+
+<g class="node">
+<rect class="nd" x="784" y="36" width="168" height="64" rx="10"/>
+<circle cx="800" cy="52" r="3.5" fill="#ffd60a"/>
+<text class="n-tag" x="810" y="55.5" fill="#ffd60a">READ 1 · WHAT</text>
+<text class="n-title" x="798" y="75">Habits + rules</text>
+<text class="n-sub" x="798" y="90">habits.md · ARRANGEMENT-RULES</text></g>
+<g class="node">
+<rect class="nd" x="988" y="36" width="168" height="64" rx="10"/>
+<circle cx="1004" cy="52" r="3.5" fill="#0a84ff"/>
+<text class="n-tag" x="1014" y="55.5" fill="#0a84ff">READ 2 · HOW</text>
+<text class="n-title" x="1002" y="75">Vegas scripts</text>
+<text class="n-sub" x="1002" y="90">BeckyCut / BeckyFX / verbs</text></g>
+<circle class="pin" cx="952" cy="68.0" r="3"/>
+<circle class="pin" cx="988" cy="68.0" r="3"/>
+<path class="wire " d="M952 68.0 L984 68.0" marker-end="url(#ah)"/>
+<text class="w-lbl" x="970" y="59.0" text-anchor="middle">then</text>
+<circle class="pin" cx="868" cy="100" r="3"/>
+<circle class="pin" cx="1072" cy="100" r="3"/>
+<path class="wire read" d="M868 100 L868 178" marker-end="url(#ah-r)"/>
+<text class="w-lbl" x="876" y="146" text-anchor="start">dialed in over months</text>
+<path class="wire read" d="M1072 100 L1072 178" marker-end="url(#ah-r)"/>
+<text class="w-lbl" x="1080" y="146" text-anchor="start">deterministic</text>
+
+<g class="node miss">
+<rect class="nd" x="48" y="288.0" width="150" height="64" rx="10"/>
+<circle cx="64" cy="304.0" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="74" y="307.5" fill="#ff8fa3">JASON 03 · measured</text>
+<text class="n-title" x="62" y="327.0">Audio polish</text>
+<text class="n-sub" x="62" y="342.0">−17 LUFS → −6 dBFS</text>
+<text class="misschip" x="118" y="364" text-anchor="middle" fill="#ff8fa3">MISSING</text></g>
+<g class="node amber">
+<rect class="nd" x="238" y="288.0" width="150" height="64" rx="10"/>
+<circle cx="254" cy="304.0" r="3.5" fill="#ff9f0a"/>
+<text class="n-tag" x="264" y="307.5" fill="#ffb340">JASON 04 · camera only</text>
+<text class="n-title" x="252" y="327.0">Grade</text>
+<text class="n-sub" x="252" y="342.0">under the graphics</text>
+<text class="misschip" x="313" y="364" text-anchor="middle" fill="#ffb340">ORDER DIFFERS</text></g>
+<circle class="pin" cx="198" cy="320" r="3"/>
+<circle class="pin" cx="238" cy="320" r="3"/>
+<path class="wire " d="M198 320 L234 320" marker-end="url(#ah)"/>
+<circle class="pin" cx="388" cy="320" r="3"/>
+<circle class="pin" cx="430" cy="320" r="3"/>
+<path class="wire " d="M388 320 L426 320" marker-end="url(#ah)"/>
+
+<rect class="grp" x="430" y="252" width="712" height="160" rx="12"/>
+<text class="g-head" x="450" y="274" text-anchor="start">04 · GRAPHICS + CAPTIONS</text>
+<text class="w-lbl" x="700" y="274" text-anchor="start">mine: placed by code · his: plan → build → converge</text>
+<g class="node">
+<rect class="nd" x="456" y="288.0" width="160" height="64" rx="10"/>
+<circle cx="472" cy="304.0" r="3.5" fill="#0a84ff"/>
+<text class="n-tag" x="482" y="307.5" fill="#0a84ff">4a</text>
+<text class="n-title" x="470" y="327.0">Assets + inserts</text>
+<text class="n-sub" x="470" y="342.0">shown intent → clip, or MARKERS.txt</text></g>
+<circle class="pin" cx="616" cy="320" r="3"/>
+<g class="node">
+<rect class="nd" x="666" y="288.0" width="160" height="64" rx="10"/>
+<circle cx="682" cy="304.0" r="3.5" fill="#0a84ff"/>
+<text class="n-tag" x="692" y="307.5" fill="#0a84ff">4b</text>
+<text class="n-title" x="680" y="327.0">Censor</text>
+<text class="n-sub" x="680" y="342.0">edge-found in audio, ±1 frame</text></g>
+<circle class="pin" cx="826" cy="320" r="3"/>
+<g class="node miss">
+<rect class="nd" x="916" y="288.0" width="160" height="64" rx="10"/>
+<circle cx="932" cy="304.0" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="942" y="307.5" fill="#ff8fa3">JASON 5c</text>
+<text class="n-title" x="930" y="327.0">Converge</text>
+<text class="n-sub" x="930" y="342.0">fresh-eyes review</text>
+<text class="misschip" x="996" y="364" text-anchor="middle" fill="#ff8fa3">MISSING</text></g>
+<circle class="pin" cx="916" cy="320" r="3"/>
+<circle class="pin" cx="1076" cy="320" r="3"/>
+<path class="wire " d="M616 320 L662 320" marker-end="url(#ah)"/>
+<path class="wire " d="M826 320 L912 320" marker-end="url(#ah)"/>
+<rect class="gate" x="863" y="314" width="12" height="12" rx="2" transform="rotate(45 869 320)"/>
+<text class="g-lbl" x="869" y="344" text-anchor="middle">QA gate?</text>
+<circle class="pin" cx="996" cy="352.0" r="3"/>
+<circle class="pin" cx="746" cy="352.0" r="3"/>
+<path class="wire loop" d="M996 352.0 L996 378 L746 378 L746 356.0" marker-end="url(#ah-l)"/>
+<text class="w-lbl" x="871" y="396" text-anchor="middle">his loop: defects → fix → machine re-check (I have none)</text>
+<circle class="pin" cx="1076" cy="320" r="3"/>
+<circle class="pin" cx="1142" cy="320" r="3"/>
+<path class="wire " d="M1076 320 L1142 320" marker-end="url(#ah)"/>
+<path class="wire " d="M1142 320 L1148 320 L1148 428 L32 428 L32 504 L44 504" marker-end="url(#ah)"/>
+
+<g class="node">
+<rect class="nd" x="48" y="472.0" width="160" height="64" rx="10"/>
+<circle cx="64" cy="488.0" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="74" y="491.5" fill="#30d158">05 · mine only</text>
+<text class="n-title" x="62" y="511.0">Breath check</text>
+<text class="n-sub" x="62" y="526.0">sound labeler + picture</text></g>
+<g class="node">
+<rect class="nd" x="288" y="472.0" width="160" height="64" rx="10"/>
+<circle cx="304" cy="488.0" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="314" y="491.5" fill="#30d158">06 · mine only</text>
+<text class="n-title" x="302" y="511.0">Second listen</text>
+<text class="n-sub" x="302" y="526.0">wordless stretches go</text></g>
+<g class="node">
+<rect class="nd" x="528" y="472.0" width="160" height="64" rx="10"/>
+<circle cx="544" cy="488.0" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="554" y="491.5" fill="#30d158">07 · mine only</text>
+<text class="n-title" x="542" y="511.0">Tighten edges</text>
+<text class="n-sub" x="542" y="526.0">cut onto the voice, per mic</text></g>
+<circle class="pin" cx="208" cy="504" r="3"/>
+<circle class="pin" cx="288" cy="504" r="3"/>
+<circle class="pin" cx="448" cy="504" r="3"/>
+<circle class="pin" cx="528" cy="504" r="3"/>
+<path class="wire " d="M208 504 L284 504" marker-end="url(#ah)"/>
+<path class="wire " d="M448 504 L524 504" marker-end="url(#ah)"/>
+<g class="node miss">
+<rect class="nd" x="168" y="556" width="160" height="64" rx="10"/>
+<circle cx="184" cy="572" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="194" y="575.5" fill="#ff8fa3">JASON 06</text>
+<text class="n-title" x="182" y="595">Sound effects</text>
+<text class="n-sub" x="182" y="610">from placed graphics</text>
+<text class="misschip" x="248" y="634" text-anchor="middle" fill="#ff8fa3">MISSING (bed only)</text></g>
+<g class="node miss">
+<rect class="nd" x="368" y="556" width="160" height="64" rx="10"/>
+<circle cx="384" cy="572" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="394" y="575.5" fill="#ff8fa3">JASON +opt-in</text>
+<text class="n-title" x="382" y="595">Music bed</text>
+<text class="n-sub" x="382" y="610">flat −20 dB</text>
+<text class="misschip" x="448" y="634" text-anchor="middle" fill="#ff8fa3">MISSING</text></g>
+<circle class="pin" cx="688" cy="504" r="3"/>
+<circle class="pin" cx="768" cy="504" r="3"/>
+<path class="wire " d="M688 504 L764 504" marker-end="url(#ah)"/>
+<g class="node">
+<rect class="nd" x="768" y="472.0" width="176" height="64" rx="10"/>
+<circle cx="784" cy="488.0" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="794" y="491.5" fill="#30d158">08 · mine only</text>
+<text class="n-title" x="782" y="511.0">Publish check</text>
+<text class="n-sub" x="782" y="526.0">OCR + vision → regions</text></g>
+<circle class="pin" cx="944" cy="504" r="3"/>
+<circle class="pin" cx="1004" cy="504" r="3"/>
+<path class="wire " d="M944 504 L1000 504" marker-end="url(#ah)"/>
+<g class="node">
+<rect class="nd" x="1004" y="472.0" width="152" height="64" rx="10"/>
+<circle cx="1020" cy="488.0" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="1030" y="491.5" fill="#30d158">09 · mine only</text>
+<text class="n-title" x="1018" y="511.0">Upload copy</text>
+<text class="n-sub" x="1018" y="526.0">titles · desc · chapters</text></g>
+<circle class="pin" cx="1080" cy="536.0" r="3"/>
+<path class="wire loop" d="M1080 536.0 L1080 568" marker-end="url(#ah-l)"/>
+<g class="node">
+<rect class="nd" x="996" y="568" width="160" height="64" rx="10"/>
+<circle cx="1012" cy="584" r="3.5" fill="#98989f"/>
+<text class="n-tag" x="1022" y="587.5" fill="#98989f">second entry</text>
+<text class="n-title" x="1010" y="607">Vertical shorts</text>
+<text class="n-sub" x="1010" y="622">Make-Vertical-Shorts.bat</text></g>
+<text class="w-lbl" x="984" y="604" text-anchor="end">runs after review</text>
+</svg>
+    </div>
+    <div class="legend">
+      <span><i class="sw"></i>every job</span>
+      <span><i class="sw cond"></i>depends on format or footage</span>
+      <span><i class="sw read"></i>a read, not a file</span>
+      <span><i class="sw gate"></i>automatic check that must pass</span>
+      <span><i class="sw red"></i>red overlay = missing from my pipeline (description kept as-is)</span>
+    </div>
+  </figure>
+  <div class="explain">
+    <div><h3>My cut is proven before anything sits on it — and more</h3><p>Same idea as Jason's proof gate: the VEGAS timeline is compared event-by-event against the plan, then its audio is rebuilt, re-transcribed and lined up with the planned words by timeline time. Mine goes further: it also hunts leftovers and cross-checks two ASR signals before calling a word lost.</p></div>
+    <div><h3>His graphics clear a machine check, mine get no QA round</h3><p>He grades under the graphics, then every graphic passes automated QA plus one fresh-eyes review. My hj-starter FX land AFTER the censor and zoom jobs, and nothing re-checks them — the clearest ordering difference between the two lines.</p></div>
+    <div><h3>Where mine is deeper than his</h3><p>Breaths, wordless stretches, waveform-exact edges, on-camera editor instructions, retake confirmation, censor placement, publish safety, upload copy — all deterministic passes his blueprint simply doesn't contain. His polish is a fixed LUFS target; mine is edge geometry and audio measurement.</p></div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="head">
+    <div class="marker" style="--c:var(--teal)"><i></i><b>Steps</b> · his eight steps, mapped onto my run</div>
+    <h2>What goes in, what comes out, what gets checked — in my pipeline</h2>
+    <p class="lead">Each block below keeps Jason's original step description exactly as written, so you can compare one-to-one. Red = I don't do this. Amber = I do it, but wired differently. Green = I do more than he does.</p>
+  </div>
+  <div class="steps">
+    <div class="step different" style="--c:var(--gray)"><div class="no">01<small>automatic</small></div>
+      <div><h3>Intake <span class="pill">his words</span></h3><p>Copied, never moved, never touched. The job is named after what the video is about. The format is read from the footage itself; a landscape clip you call a short becomes the Talking Head Explainer, filled to 9:16 once.</p></div>
+      <dl><dt>In</dt><dd>your raw clip, wherever it landed</dd><dt>Out</dt><dd>a job folder, the format and look picked, a run file any session can resume from, and a list of what must never show when screens are on camera</dd></dl>
+      <p class="stepnote"><b>Mine:</b> the footage is only ever READ (never copied); everything written goes into <code>becky-edit\</code>; fps/duration probed with ffprobe; OBS audio synced by clap first; project named from the folder. <b>I'm missing:</b> the <b>run file</b> mid-job resume concept, and the upfront <b>"what must never show on screen" list</b> (my publish check finds these late, after the edit, instead of at intake).</p></div>
+    <div class="step beyond" style="--c:var(--teal)"><div class="no">02<small>AI cut</small></div>
+      <div><h3>Rough cut <span class="pill">his words</span></h3><p>Transcribed once. Filler, dead air, false starts and rambling get cut; say a line twice and the last take wins. Every boundary is measured and the laid cut is proven against the script. Change the cut later and every graphic, sound and caption re-times itself.</p></div>
+      <dl><dt>Out</dt><dd>the edit decision list and the finished script</dd><dt>Check</dt><dd>every cut measured on the waveform at your timeline's frame rate; on Premiere, the laid dialogue transcribed and matched word for word</dd></dl>
+      <p class="stepnote"><b>Mine (stronger):</b> two-pass transcript (Parakeet + WhisperX second opinion on low confidence), silence map cached, Gemma-4 12B names only exceptions (code confirms every retake against the words), on-camera editor instructions parsed and applied, thinking-islands, viewer-read put-back pass, plan-<code>&lt;model&gt;.json</code> = the EDL. <b>Difference to note:</b> his rule is "last take wins"; mine keeps "the attempt he finishes" and requires the redo to repeat the words. He re-times downstream items on a cut change — I re-run the whole tool (cached, so cheap), which achieves the same determinism.</p></div>
+    <div class="step missing" style="--c:var(--green)"><div class="no">03<small>measured</small></div>
+      <div><h3>Audio polish</h3><p>Measured every time, never a fixed number. Mono lands exactly like stereo. On the explainer, a second voice through a phone or speaker is lifted when it sits more than 3 dB under.</p></div>
+      <dl><dt>Target</dt><dd>kept speech at −17 LUFS into a −6 dBFS limiter</dd><dt>How</dt><dd>measured on every video; live on Premiere, baked on Resolve, CapCut and Final Cut</dd></dl>
+      <p class="stepnote"><b>This is the single biggest result gap.</b> becky-livestream never touches speech loudness: no LUFS measurement, no limiter, no gain normalization anywhere in the run (searched: zero hits). Every cut changes perceived level; his draft arrives broadcast-consistent, mine arrives raw-mic. Build a <code>becky-audiopolish</code> VEGAS pass: measure kept speech LUFS per piece, apply bus/event gain into a limiter, verify by measuring the rendered timeline.</p></div>
+    <div class="step different" style="--c:var(--orange)"><div class="no">04<small>camera only</small></div>
+      <div><h3>Grade <span class="pill">his words</span></h3><p>Before the graphics and underneath them, so the graphic colours never shift. Long-form and the Talking Head Explainer only. Screen-recording footage stays bare. No correction step.</p></div>
+      <dl><dt>Look</dt><dd>Autumn-Rec709 at 80 intensity, 120 saturation</dd><dt>How</dt><dd>adjustment layer on Premiere, colour group on Resolve, one baked LUT on Final Cut</dd></dl>
+      <p class="stepnote"><b>Mine:</b> I DO grade — hj-starter track FX (Beauty Box, AutoLooks, Color Corrector, Color Curves ×2) on the main video track. <b>But the order differs:</b> videovegas.go applies them AFTER the edit check, censor, and zoom jobs — i.e. ON TOP of later timeline changes, and the B-roll/assets inserts ride above that track. His invariant: grade goes down before graphics and underneath them so graphic colors never shift. Move the starter-FX job ahead of the asset/censor/zoom jobs in the sequence.</p></div>
+    <div class="step missing" style="--c:var(--blue)"><div class="no">05<small>graphics</small></div>
+      <div><h3>Graphics and captions <span class="pill">his words</span></h3><p>Long-form gets text animations, push-ins and full-screen scenes on a set cadence. The explainer rotates layouts on hard cuts (split, tight, wide, full, card), planned per sentence. Screen captures are planned, a still of you is picked from your best frames, and on-screen secrets are found and blurred.</p></div>
+      <dl><dt>Stages</dt><dd>storyboard, build, review</dd><dt>Check</dt><dd>an automated QA pass, one fresh-eyes review round, the fixes re-checked by the QA pass</dd></dl>
+      <p class="stepnote"><b>Mine:</b> slow creep 1.11× / still crops ~once a minute ≈ his push-ins on a cadence ✓; assets/B-roll + MARKERS.txt ✓; secrets are FOUND (publish check OCR+vision) but only marked as regions — never BLURRED ✗; no long-form burned-in captions (his captions are a graphic built from the finished script; mine exist only in the vertical shorts tool) ✗; no hero-frame still picker for long-form ✗; and crucially NO storyboard→build→review stage machine and no automated graphics-QA gate — placement is fire-and-forget BeckyFX jobs.</p></div>
+    <div class="step missing" style="--c:var(--green)"><div class="no">06<small>automatic</small></div>
+      <div><h3>Sound effects</h3><p>Planned from the graphics as they sit on the timeline. The explainer has its own map: the literal object on a visible event, face and captions silent. Repeated sounds stay on one layer; stacked cues are held under −1 dBTP.</p></div>
+      <dl><dt>In</dt><dd>the placed graphics</dd><dt>How</dt><dd>planned from every motion event, placed in your app and read back</dd></dl>
+      <p class="stepnote"><b>Mine:</b> the only SFX in my pipeline is the censor hit (with its own audio-edge finder — genuinely better than a blind placement). No whooshes on zooms/crops, no cue under inserted assets, no peak-limiting of stacked cues. A deterministic version fits my philosophy perfectly: every BeckyFX zoom/crop/insert event already knows its time and kind → a table maps kind→sound→level, a dedicated SFX track places them, then read back.</p></div>
+    <div class="step missing" style="--c:var(--violet)"><div class="no">+<small>opt-in</small></div>
+      <div><h3>Music bed <span class="pill">only when asked</span></h3><p>A flat bed under the voice, after SFX and before review. Ducking and fade-in are opt-in on top.</p></div>
+      <dl><dt>Level</dt><dd>−20 dB from the song's sustained entrance, 2 s tail</dd><dt>When</dt><dd>after SFX, before review</dd></dl>
+      <p class="stepnote"><b>Mine:</b> absent from the YouTube workflow (opt-in flag, locked level numbers, its own track — trivially deterministic once audio polish exists to keep the bed honest under −17 LUFS speech).</p></div>
+    <div class="step beyond" style="--c:var(--gray)"><div class="no">07<small>you</small></div>
+      <div><h3>Review <span class="pill">his words</span></h3><p>Taste only: the draft already has zero objective defects. Changes re-render just the part that changed. Anything you change by hand in the app stays changed.</p></div>
+      <dl><dt>In</dt><dd>a draft with zero objective defects</dd><dt>Out</dt><dd>picture lock</dd></dl>
+      <p class="stepnote"><b>Mine:</b> human review on the timeline IS the endpoint — good. But his precondition "zero objective defects" is enforced by 30+ checks across steps 2–6; mine is enforced by the edit check + publish check only (and see the red steps above: un-leveled audio is an objective defect waiting for me). Hand-edit protection: my rerun won't overwrite a project you saved yourself ✓ (same promise as his "stays yours").</p></div>
+    <div class="step missing" style="--c:var(--pink)"><div class="no">08<small>in your app</small></div>
+      <div><h3>Export</h3><p>Premiere exports when you say go, and a built-in encoder steps in wherever an app's own can't hit the numbers. One command then names the final and drops a copy in Downloads. An ad cut or a 4K Shorts file is one flag.</p></div>
+      <dl><dt>Long</dt><dd>3840×2160, CBR 50 (80 at 48 to 60 fps), even from a 1080 timeline</dd><dt>Vertical</dt><dd>1080×1920 CBR 14 for Reels, TikTok and Shorts, plus 2160×3840 for Shorts from 4K</dd><dt>Audio</dt><dd>AAC 320k, bt709</dd></dl>
+      <p class="stepnote"><b>Mine:</b> the long-form run STOPS at the reviewed project — no locked export spec, no render template for the YouTube master (the vertical shorts tool does render via the Voukoder "TikTok NVENC" template, so the plumbing exists). Add a locked-spec render step + one post-review command.</p></div>
+    <div class="step beyond" style="--c:#6ee391"><div class="no">+<small>mine</small></div>
+      <div><h3>Passes his blueprint has no equivalent for</h3><p>Breath check (sound labeler + picture signals; every checked breath cut) · second listen (wordless stretches drop) · tighten (every edge snapped onto the first/last frame of voice, mic-relative levels) · on-camera editor instructions (find→understand→apply, majority-voted) · retake confirmation in code · thinking-island cut · viewer-read put-back pass · censor with audio-derived word edges · publish check (frame OCR + PII patterns + vision questions → regions) · upload copy (titles/description/chapters timed on the EDIT, not the raw) · MARKERS.txt.</p></div>
+      <dl><dt>Meaning</dt><dd>his end result looks finished because of steps 3–6 and 8; my end result listens better because of these. Neither alone is a complete edit.</dd></dl></div>
+  </div>
+</section>
+
+<section id="inside">
+  <div class="head">
+    <div class="marker" style="--c:var(--orange)"><i></i><b>What's inside</b> · my repo, against his layers</div>
+    <h2>Everything the AI reads to edit like this — what am I missing?</h2>
+    <p class="lead">Jason's layers, top to bottom, mapped onto becky-tools. Red chips = the thing he has that my repo doesn't, by name.</p>
+  </div>
+  <div class="repo">
+    <div class="layer" style="--c:var(--pink)"><div class="top"><h3>The rulebook</h3><span class="role">Process</span></div>
+      <p>His: one file read first — the eight steps, formats, every rule learned the hard way, each pointing at the doc that owns it. Mine: <code>CLAUDE.md</code> + <code>SPEC-BECKY-ITERATIVE-VIDEO-LOOP.md</code> + the header comments of <code>livestream/main.go</code> ARE the rulebook, and the numbered-order docstring is genuinely good. Missing: a single canonical "one rule → one owning doc" index; my rules are scattered across SPEC-*, HANDOFF-* and user-feedback files.</p>
+      <div class="files"><code class="hot">CLAUDE.md</code><code class="hot">main.go docstring</code><code class="miss">rulebook index</code></div></div>
+    <div class="layer" style="--c:var(--pink)"><div class="top"><h3>The app table</h3><span class="role">Index</span></div>
+      <p>His: which step runs how in which app, and exactly what to do by hand where an app can't be scripted. Mine: N/A-ish (one app), BUT the same discipline applies to "which step is deterministic code vs which asks a model" — that split lives only in Go comments, not a table an agent can read before touching anything.</p>
+      <div class="files"><code class="miss">step × engine table</code><code class="hot">vegas/*.cs</code></div></div>
+    <div class="layer" style="--c:var(--blue)"><div class="top"><h3>Skills</h3><span class="role">How, per step</span></div>
+      <p>His: one skill per step, full procedure. Mine: each Go module IS a compiled skill (coarse, edges, breath, polish, censor, assets, publish, verify…) — arguably stronger, because procedures execute instead of being re-interpreted. What I lack is skills for HIS steps 3–6/8: audiopolish, graphics-QA/converge, SFX planner, export.</p>
+      <div class="files"><code class="hot">coarse</code><code class="hot">breath</code><code class="hot">polish</code><code class="hot">censor</code><code class="hot">verify</code><code class="miss">audiopolish</code><code class="miss">graphics QA</code><code class="miss">SFX planner</code><code class="miss">export spec</code></div></div>
+    <div class="layer" style="--c:var(--yellow)"><div class="top"><h3>Looks</h3><span class="role">What, the style</span></div>
+      <p>His: EVERY colour, font, position, timing, level and export setting in one folder per look, nothing app-specific living there. Mine: the pieces exist but live in Go constants and his notes — <code>starterFX</code> array, creep 1.11×, looksEvery 60 s, censor −12.1 dB, pads, thresholds, habits.md. There is no "look" artifact a tool loads, so a second style (or reviewing what I've locked) means editing source code.</p>
+      <div class="files"><code class="hot">habits.md</code><code class="hot">ARRANGEMENT-RULES.md</code><code class="miss">hj-starter.look.json</code><code class="miss">locked export specs</code><code class="miss">caption style sheet</code></div></div>
+    <div class="layer" style="--c:var(--green)"><div class="top"><h3>App playbooks</h3><span class="role">Mechanics</span></div>
+      <p>His: how the cut is rebuilt, how traps hide, per app. Mine: <code>install-vegas-scripts.ps1</code>, BeckyCut.cs/BeckyFX.cs, verbs, qwen-vegas-assessment.md — decent coverage of mechanics, thin on the "traps this app hides" catalog (he lists four; my equivalents — GPU sharing, mkv remux dedupe, Parakeet early-word drift — are scattered in code comments).</p>
+      <div class="files"><code class="hot">BeckyCut.cs</code><code class="hot">BeckyFX.cs</code><code class="miss">Vegas traps catalog</code></div></div>
+    <div class="layer" style="--c:var(--green)"><div class="top"><h3>30+ tools</h3><span class="role">Checks, universal</span></div>
+      <p>His: measuring/QA tools that catch mistakes before you see them. Mine: becky-cut, verify, publish, ocr, transcribe, identify, shot tools… comparable count for CUTTING, near-zero for FINISHING (no voice-gain meter, no graphics QA, no framing continuity, no secrets-blur, no export validator).</p>
+      <div class="files"><code class="hot">cut audit≈becky-cut</code><code class="hot">re-transcribe≈verify</code><code class="hot">secrets sweep≈publish</code><code class="miss">voice gain</code><code class="miss">framing continuity</code><code class="miss">hero-frame picker</code><code class="miss">export encoder</code></div></div>
+    <div class="layer" style="--c:var(--violet)"><div class="top"><h3>Job folders</h3><span class="role">Your work</span></div>
+      <p>His: one folder per video with a run file any session can pick up from mid-edit. Mine: <code>becky-edit\</code> beside the footage with cached artifacts (transcript, selection, plan, reports) — resumable by cache-hit, which is the same outcome. Missing: an explicit current-step/state file ("where am I, what's next") that survives a crashed run cleanly.</p>
+      <div class="files"><code class="hot">becky-edit\ cache</code><code class="hot">plan-video.json</code><code class="miss">run file (state pointer)</code></div></div>
+    <div class="layer" style="--c:var(--gray)"><div class="top"><h3>Library + updates</h3><span class="role">Support</span></div>
+      <p>His: SFX pack, LUTs, fonts, setup script, updates that merge without touching your changes. Mine: build-all-tools.bat + get-becky-updates.ps1 ✓; censor sound ✓; but no SFX library, and my "looks" aren't externalized so updates CAN collide with tuned numbers in source.</p>
+      <div class="files"><code class="hot">get-becky-updates.ps1</code><code class="miss">SFX pack</code><code class="miss">externalized settings</code></div></div>
+  </div>
+</section>
+
+<section id="rebuild">
+  <div class="head">
+    <div class="marker" style="--c:var(--violet)"><i></i><b>Going further</b> · the honest math, my version</div>
+    <h2>His listed problems — solved, partially solved, or still open for me</h2>
+  </div>
+  <div class="steps">
+    <div class="step beyond" style="--c:var(--green)"><div class="no">✓<small>solved</small></div>
+      <div><h3>Cuts that land early <span class="pill">his trap #1</span></h3><p>Premiere's scripting rounds every cut twice, so on mixed-frame-rate footage each cut landed about 41 ms early. You only find it by measuring the waveform.</p></div>
+      <dl><dt>Mine</dt><dd>SOLVED and then some: tighten() moves every edge onto the first/last frame of voice using mic-relative levels; verify() re-transcribes the actual timeline output rather than trusting timestamps; Parakeet's early-first-word drift is explicitly compensated.</dd></dl></div>
+    <div class="step beyond" style="--c:var(--green)"><div class="no">✓<small>solved</small></div>
+      <div><h3>The wrong font, silently <span class="pill">his trap #4</span></h3><p>The graphics renderer swaps Helvetica for a lookalike without a warning. Nobody notices until the side-by-side.</p></div>
+      <dl><dt>Mine</dt><dd>N/A→solved by architecture: VEGAS uses the installed FX/caption engines; nothing renders text off-app that could silently substitute. (If I add long-form burned captions, this trap becomes live — budget for a QA check.)</dd></dl></div>
+    <div class="step different" style="--c:var(--orange)"><div class="no">~<small>partial</small></div>
+      <div><h3>Audio that pumps and clicks <span class="pill">his trap #3</span></h3><p>The obvious loudness fix breathes on every pause. Per-clip effects click at every cut.</p></div>
+      <dl><dt>Mine</dt><dd>PARTIALLY avoided: my base is silencedetect removal with edges snapped to voice frames, so most pause-pumping never appears. But because I do NO loudness normalization (step 03), the pumping risk hasn't been met yet — when I add LUFS leveling, this exact trap will arrive. Do it per-piece on the timeline with measured makeup, not a whole-project compressor.</dd></dl></div>
+    <div class="step missing" style="--c:var(--pink)"><div class="no">✗<small>open</small></div>
+      <div><h3>A timeline call that deletes your timeline <span class="pill">his trap #2</span></h3><p>One Resolve scripting call wipes whole clips off the timeline while reporting success.</p></div>
+      <dl><dt>Mine</dt><dd>OPEN CLASS OF BUG, partly mitigated: verify() would catch mass deletion after the fact, and projects are never overwritten. Not mitigated: a pre/post sanity snapshot around each BeckyFX job (event counts + total duration before/after, refuse-save on mismatch). Cheap to add, matches his "checks their own work" doctrine.</dd></dl></div>
+    <div class="step missing" style="--c:var(--pink)"><div class="no">✗<small>open</small></div>
+      <div><h3>The problem his whole page hides <span class="pill">for both of us</span></h3><p>Starts from a diagram; the traps cost hours each; three months of daily building.</p></div>
+      <dl><dt>Mine</dt><dd>I have ALREADY paid the cutting half of this tax (that's why the result "listens" good). The remaining tax is the finishing half — steps 3–6 and 8 — and those are mostly deterministic measurement + placement problems, exactly the kind becky-tools was built for. Estimated order of payoff: audio polish &gt; export specs &gt; graphics QA/order &gt; SFX &gt; music bed.</dd></dl></div>
+  </div>
+  <div class="explain">
+    <div><h3>His starter prompt vs my system — the structural difference</h3><p>His prompt makes Claude Code BUILD the pipeline from scratch on a blank machine, then OPERATE it live through MCP, with one human gate: approve cuts.json before anything is laid. Mine skips the agent-at-runtime entirely: the pipeline is pre-built Go + C# scripts, the model only answers "what to keep", and the only human gate is the final timeline review.</p></div>
+    <div><h3>What his prompt has that mine-equivalent lacks</h3><p>(1) the explicit cut-list approval step before building, (2) environment self-check + "prove the connection inside that project only" handshake, (3) honesty report listing what the run did NOT do, (4) "write non-obvious learnings into CLAUDE.md" memory loop, (5) "if something fails twice, stop and tell me". Items 1, 3 and 5 are one-day adds to becky-livestream and directly attack the frustration cycle.</p></div>
+    <div><h3>Where my prompt philosophy beats his</h3><p>He lets the LLM choose cut times with fixed pads (0.08/0.12 s) and admits words still clip — I derive edges from the waveform. He trusts one WhisperX pass — I use Parakeet + WhisperX second opinion. He asks a giant model to freehand the edit — I ask a small model only for exceptions and confirm them in code. His own closing line concedes it: "anything that CAN be deterministic SHOULD be" is his end-state, not his start-state. Mine starts there.</p></div>
+  </div>
+</section>
+
+<div class="foot"><span>Becky YouTube Editor · mirrored from Claude Video Editor (Jason Cooperson, build 2026.10.19) · red overlays mark my gaps</span><span>becky-tools · workflows/youtube · becky-go/cmd/livestream</span></div>
+</div>
+</body></html>
