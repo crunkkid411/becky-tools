@@ -64,6 +64,12 @@ var SoundLabels []byte
 //go:embed picture_signals.py
 var PictureSignals []byte
 
+// MPGPU is MediaPipe's processing rebuilt around its networks on the graphics
+// card; picture_signals.py --gpu imports it from the same folder.
+//
+//go:embed mp_gpu.py
+var MPGPU []byte
+
 // WhoisPopup is the one "who is this?" window (internal/whois).
 //
 //go:embed whois_popup.py

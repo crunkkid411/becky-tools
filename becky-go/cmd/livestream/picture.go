@@ -152,20 +152,38 @@ func loadPictures(cfg config.Config, media, cachePath string, spans []span) (*pi
 }
 
 // measureFrames runs pyhelpers/picture_signals.py over the spans at fps (one
-// helper call). scratch names the temporary span file. It stays on the processor
-// (tested 2026-10-18): insightface's face detector crashes the process on DirectML
-// on this PC (access violation in det_10g, venv-dml too), and MediaPipe's Python
-// package has no graphics-card mode on Windows.
+// helper call). scratch names the temporary span file. Jordan, 2026-10-19: "We
+// NEED to set it up so it uses the GPU for mediapipe". With PictureGPUPython it
+// runs on the graphics card: insightface on CUDA (DirectML crashed in det_10g,
+// CUDA does not) and MediaPipe's own networks through LiteRT (the Windows
+// mediapipe wheel is built without GPU), 3.5x faster and within MediaPipe's own
+// noise on his footage. If that run fails, the processor run is the fallback.
 func measureFrames(cfg config.Config, media, scratch string, spans []span, fps float64) ([]picFrame, error) {
+	if cfg.PictureGPUPython != "" {
+		frames, err := runPictureSignals(cfg, cfg.PictureGPUPython, media, scratch, spans, fps)
+		if err == nil {
+			return frames, nil
+		}
+		fmt.Fprintf(os.Stderr, "picture check on the graphics card failed (%v); using the processor\n", err)
+	}
+	return runPictureSignals(cfg, cfg.FacePython, media, scratch, spans, fps)
+}
+
+// runPictureSignals is one picture_signals.py run; python == PictureGPUPython adds --gpu.
+func runPictureSignals(cfg config.Config, python, media, scratch string, spans []span, fps float64) ([]picFrame, error) {
+	gpu := python == cfg.PictureGPUPython
 	mesh, objects := mediapipeModel(cfg, "face_landmarker.task"), mediapipeModel(cfg, "efficientdet_lite0_int8.tflite")
 	gestures := mediapipeModel(cfg, "gesture_recognizer.task")
-	for _, f := range []string{cfg.FacePython, poseModel(cfg), mesh, objects, gestures, filepath.Join(cfg.FaceModelRoot, "models", "buffalo_l")} {
+	for _, f := range []string{python, poseModel(cfg), mesh, objects, gestures, filepath.Join(cfg.FaceModelRoot, "models", "buffalo_l")} {
 		if _, err := os.Stat(f); err != nil {
 			return nil, fmt.Errorf("the picture models are missing (%s)", f)
 		}
 	}
 	script, err := pyhelpers.Materialize("picture_signals.py", pyhelpers.PictureSignals)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := pyhelpers.Materialize("mp_gpu.py", pyhelpers.MPGPU); err != nil {
 		return nil, err
 	}
 	spanFile := scratch + ".spans.json"
@@ -175,9 +193,20 @@ func measureFrames(cfg config.Config, media, scratch string, spans []span, fps f
 	}
 	writeJSON(spanFile, js)
 	defer os.Remove(spanFile)
-	cmd := exec.Command(cfg.FacePython, script, "--video", media, "--spans", spanFile, "--fps", fmt.Sprint(fps),
-		"--face-root", cfg.FaceModelRoot, "--pose", poseModel(cfg), "--face-mesh", mesh, "--objects", objects, "--gestures", gestures, "--ffmpeg", cfg.FFmpeg)
+	args := []string{script, "--video", media, "--spans", spanFile, "--fps", fmt.Sprint(fps),
+		"--face-root", cfg.FaceModelRoot, "--pose", poseModel(cfg), "--face-mesh", mesh, "--objects", objects, "--gestures", gestures, "--ffmpeg", cfg.FFmpeg}
+	cmd := exec.Command(python, args...)
 	cmd.Env = crop.ChildEnv(cfg)
+	if gpu {
+		// the venv brings everything it needs: FacePyLib on PYTHONPATH would shadow its numpy/cv2
+		cmd = exec.Command(python, append(args, "--gpu")...)
+		cmd.Env = nil
+		for _, kv := range crop.ChildEnv(cfg) {
+			if !strings.HasPrefix(kv, "PYTHONPATH=") {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, runErr := cmd.Output()

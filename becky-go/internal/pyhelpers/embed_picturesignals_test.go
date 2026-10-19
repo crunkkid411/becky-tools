@@ -20,3 +20,21 @@ func TestPictureSignalsEmbedded(t *testing.T) {
 		}
 	}
 }
+
+// The graphics-card path (2026-10-19): insightface on CUDA, and a network the
+// card cannot run whole goes to the processor - split, the pose detector gave
+// wrong scores and no body was ever found.
+func TestMPGPUEmbedded(t *testing.T) {
+	s, p := string(MPGPU), string(PictureSignals)
+	for _, want := range []string{"if gpu and not self.m.is_fully_accelerated():", "ssd_anchors(224, [8, 16, 32, 32, 32], 5)",
+		"OneEuro(0.05, 80.0, 1.0)", "0.1 * body[:, 3] + 0.9 * self.vis", "def face_matrix("} {
+		if !strings.Contains(s, want) {
+			t.Errorf("mp_gpu.py is missing %q", want)
+		}
+	}
+	for _, want := range []string{"import mp_gpu", `"CUDAExecutionProvider"`, "onnxruntime.preload_dlls()", `"--gpu"`} {
+		if !strings.Contains(p, want) {
+			t.Errorf("picture_signals.py is missing %q", want)
+		}
+	}
+}

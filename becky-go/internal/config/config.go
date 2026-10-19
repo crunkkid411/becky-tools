@@ -17,6 +17,7 @@ type Config struct {
 	DMLTranscribePython string `json:"dml_transcribe_python"` // GPU ASR venv (onnx-asr+DirectML); empty = use sherpa CPU
 	WhisperXExe         string `json:"whisperx_exe"`          // Jordan's own WhisperX install (its venv's whisperx.exe): becky-transcribe's second opinion; empty = single pass
 	FaceDMLPython       string `json:"face_dml_python"`       // GPU face-detection venv (insightface+DirectML); empty = FacePython's CPU-only onnxruntime
+	PictureGPUPython    string `json:"picture_gpu_python"`    // GPU picture venv (insightface on CUDA + MediaPipe networks on LiteRT); empty = FacePython on the processor
 	ParakeetModelDir    string `json:"parakeet_model_dir"`    // sherpa-onnx Parakeet-TDT-0.6B-v3 dir
 	AutoEditor          string `json:"auto_editor"`           // auto-editor binary
 	FFmpeg              string `json:"ffmpeg"`
@@ -247,8 +248,9 @@ func defaults() Config {
 		// WhisperX is used ONLY through Jordan's own install (2026-10-05: "use it
 		// directly because it does not play nice with anything else"): its stable
 		// venv (torch 2.7+cu118), never pip-installed into another environment.
-		WhisperXExe:   firstExisting(`X:\AI-2\whisperX\venv\Scripts\whisperx.exe`),
-		FaceDMLPython: detectFaceDMLPython(),
+		WhisperXExe:      firstExisting(`X:\AI-2\whisperX\venv\Scripts\whisperx.exe`),
+		FaceDMLPython:    detectFaceDMLPython(),
+		PictureGPUPython: detectPictureGPUPython(),
 		ParakeetModelDir: firstExisting(
 			`X:\AI-2\kevs-obsidian-ingestion-engine\models\asr\sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`,
 		),
@@ -499,6 +501,17 @@ func detectFaceDMLPython() string {
 	return ""
 }
 
+// detectPictureGPUPython returns the venv scripts/setup-picture-gpu.ps1 builds
+// (2026-10-19): insightface on CUDA plus MediaPipe's networks on LiteRT's
+// graphics-card path, for becky-livestream's picture check. Empty when it isn't
+// there; the caller then stays on FacePython and the processor.
+func detectPictureGPUPython() string {
+	if p := `X:\AI-2\becky-tools\models\picture\venv-gpu\Scripts\python.exe`; fileExists(p) {
+		return p
+	}
+	return ""
+}
+
 // resolve prefers a binary on PATH, then a known fallback, then the bare name.
 func resolve(name, fallback string) string {
 	if p, err := exec.LookPath(name); err == nil {
@@ -533,6 +546,9 @@ func merge(base, over Config) Config {
 	}
 	if over.FaceDMLPython != "" {
 		base.FaceDMLPython = over.FaceDMLPython
+	}
+	if over.PictureGPUPython != "" {
+		base.PictureGPUPython = over.PictureGPUPython
 	}
 	if over.DMLTranscribePython != "" {
 		base.DMLTranscribePython = over.DMLTranscribePython
