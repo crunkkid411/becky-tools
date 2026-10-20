@@ -9,8 +9,9 @@
 ### NEW — Video edit worktree folder (2026-10-20, local)
 
 `workflows/video-edit/`: one folder per edit step with a README and a JORDAN.md, plus RULEBOOK.md (that pipeline only)
-and the Qwen plan in `plan/`. Not wired yet: the tool reads these once BUILD-PROMPTS #1 lands. Next: A/B the qwen and
-video decision engines on one video so one pipeline remains.
+and the Qwen plan in `plan/`. Not wired yet: the tool reads these once BUILD-PROMPTS #1 lands. Folders are named in run order
+(01_Intake ... 24_Export_NOT-BUILT). To-do: `NEXT.md`; the button `00_CONTINUE - click me.bat` (desktop: "Continue Video Edit Work")
+starts Claude Code on the next job. ROADMAP.md updated with everything since 2026-10-08.
 
 ### NEW — The picture check runs on the graphics card (2026-10-19, local)
 

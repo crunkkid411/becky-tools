@@ -22,7 +22,42 @@ Full notes, one block per feature, are in `research/roadmap/` (01 to 05).
   is kept. Albert's editing rules are a LOOSE template: the numbers that count are yours, measured
   from your own VEGAS projects.
 
-## Start here - the 10 most useful next steps (my ranking)
+## Video editing - where it stands (updated 2026-10-20)
+
+**The video edit work now lives in `workflows/video-edit/`.** Its to-do list is
+`workflows/video-edit/NEXT.md`, and the `00_CONTINUE - click me.bat` button there (also
+"Continue Video Edit Work" on the desktop) starts Claude Code on the next job. Video edit items
+below (section B) point there instead of keeping a second list.
+
+What happened since 2026-10-08:
+- The edit got a second content-decision version: `becky-livestream --video` (YouTube edit,
+  2026-10-13), built the openshorts way: Gemma-4 12B reads whole parts and only names what to
+  remove, code checks every retake. The first Qwen version still exists and still runs. A
+  side-by-side test picks one (NEXT.md).
+- The System One voting edit (`--model systemone`, 2026-10-08) came out worse than just
+  removing silences. Dropped (Jordan, 2026-10-20).
+- Built into the YouTube edit: on-camera instructions followed ("put this at the beginning"),
+  edges tightened onto the voice, thinking-out-loud fragments cut, second listen, censor, zooms on
+  a timer (Jordan: random, needs work), his hj-starter grade, what-he-means-to-show inserts, title /
+  description / chapters, publish check. OBS footage prep with clap sync (`becky-obsprep`). Models on
+  the graphics card (2026-10-18/19).
+- `becky-vertical` (2026-10-13): vertical shorts on the VEGAS timeline with captions, face framing
+  and punch-ins. Used: 3 shorts rendered from the goodbye update.
+- Still missing (all on NEXT.md): audio polish, export at fixed settings, a quality check after
+  the finishing steps, zooms that follow the words, sound effects, music bed, redo-one-step.
+
+### Research done since 2026-10-08, and where it went
+
+| Research | What it found | Where it went |
+|---|---|---|
+| `research/openshorts-reverse-engineered.md` (10-13) | Good results from weak models = a few big decisions with lots of context, code does the rest | **Used:** the YouTube edit's decision version, becky-moment's picker, becky-vertical (layouts, captions, punch-ins, silent-footage fallback), chapters. **Not built:** thumbnails (E1), dubbing/posting (paid). **Not done:** their habit of testing every prompt change against hand-labelled clips before keeping it; belongs with I2/I3 and the side-by-side test |
+| `workflows/video-edit/plan/` (10-19/20) | Qwen's comparison with Jason Cooperson's Claude Video Editor: our cutting is stronger, our finishing half is missing | NEXT.md |
+| `research/footage-library.md` (10-10) | Picture/sound search over footage | Built: becky-mediasearch, becky-shots |
+| `research/embeddinggemma2-and-diarizationlm.md` (10-10) | Speaker double-check | Built: becky-diarfix |
+| `research/kb-final-face-voice-check-2026-10-10.md` | Forensic face/voice check | Forensic work, not editing |
+| `research/system-one-skill-research.md` (10-09) | Local System One, skill picker | Built: becky-decide local, the System One picker |
+
+## Start here - the 10 most useful next steps (my ranking, written 2026-10-08; for video editing use workflows/video-edit/NEXT.md)
 
 1. **One watchdog that actually runs** (A1). Today's watchdogs are all switched off (see A0).
 2. **Your editing numbers, measured from your VEGAS projects overnight** (B6). Every rule below
@@ -192,13 +227,14 @@ You were right: there are several watchdogs, and almost none of them run.
     final loudness -14 LUFS.
   - **S1:** none. **Code:** all (ffmpeg, the transcript). **Data:** the rendered file,
     becky-transcribe.
-- [ ] **B10. Zoom / punch-in on emphasis**
-  - **Partly:** `vegas/BeckyFX.cs` applies your zoom preset to a range (built 2026-10-07, test
-    project in `vegas/edit-learning/fxtest/`).
+- [ ] **B10. Zoom / punch-in on emphasis** - now on workflows/video-edit/NEXT.md ("zooms that follow
+  the words").
+  - **Partly:** the YouTube edit zooms on a timer (Jordan: random); becky-vertical's punch-ins are
+    picked per line by Gemma-4 12B.
   - **S1:** "Is he stressing this word or phrase?" (yes/no + score).
   - **Code:** zoom size and hold limits from B6 (Albert's: 1.2-1.4x normal, 1.6x max, hold 4 s+).
-- [x] **B11. Bleep a swear word** - `vegas/BeckyFX.cs` (bleep + on-screen censor). BUILT, in the
-  fx test project for your review. Not used on a real edit yet.
+- [x] **B11. Bleep a swear word** - `censor.go` + `vegas/BeckyFX.cs` `bleep`. USED in the YouTube
+  edit (goodbye update, 2026-10-14): his Censor 2 sound at -12.1 dB on the word edges.
 - [ ] **B12. Screen-recording windows with zoom to the thing you are talking about**
   (albert-reel-white-screen)
   - **Does:** for tutorials: shows the screen exactly while you narrate an action, then zooms onto
@@ -211,7 +247,8 @@ You were right: there are several watchdogs, and almost none of them run.
   - **Code:** OCR + key patterns (sk-, api_key=, long hex). **Data:** `becky-ocr`.
 - [x] **B14. Captions on the timeline** - `becky-captions`, `becky-subtitle`, `vegas/BeckyCaptions.cs`.
   BUILT. STATE-OF-MASTER still lists "AWAITING JORDAN: one step in VEGAS", so not confirmed used.
-- [ ] **B15. YouTube chapters from the transcript** (HyperEdit)
+- [x] **B15. YouTube chapters from the transcript** - `ytcopy.go` in the YouTube edit, BUILT
+  2026-10-13 (times computed on the finished edit). Earlier plan kept below.
   - **S1:** "Does a new topic start at this sentence?" (yes/no).
   - **Code:** chapter times, the 0:00 first chapter, YouTube's minimum chapter length.
 - [ ] **B16. Logos and portraits when a product or person is named** (open-edits)
@@ -239,8 +276,9 @@ You were right: there are several watchdogs, and almost none of them run.
 ## C. Livestreams and live chat
 
 - [x] **C1. Cut a stream down to the topics you ask for** - `becky-livestream` (Claude, Gemma, Qwen
-  or System One). USED (27-livestream, the apology stream). The System One version is new today:
-  `workflows/livestream/Livestream-Edit_System-One.bat`.
+  or System One). USED (27-livestream, the apology stream). The System One voting version was worse
+  than removing silences and is dropped (2026-10-20); livestreams and YouTube videos become one
+  pipeline (workflows/video-edit/NEXT.md).
 - [x] **C2. Chat replay + "is he reading chat aloud?"** - `becky-livechat`. USED.
 - [x] **C3. "Is he ANSWERING a chat message?"** - `becky-livechat` (new 2026-10-08). USED once: on the
   apology stream it found 73 answers, usually about 16 s after the message. About 68 of them are
@@ -269,8 +307,9 @@ You were right: there are several watchdogs, and almost none of them run.
 
 ## D. Shorts and clipping
 
-- [x] **D1. Shorts from a finished video** - `becky-short`, `becky-moment`, `becky-hits`. BUILT. The
-  state is in `HANDOFF-SHORTS-2026-08-20.md`. Recent use not confirmed.
+- [x] **D1. Shorts from a finished video** - `becky-vertical` (on the VEGAS timeline, from the edited
+  project) + `becky-moment`'s picker. USED 2026-10-13: 3 shorts rendered from the goodbye update.
+  Older burned-in path: `becky-short`, `becky-hits`.
 - [ ] **D2. Hook check on each short**
   - **Does:** the first 3 s must stand alone as a hook. Never cut mid-word.
   - **S1:** "Would this 30-60 s window stand alone, with a hook in the first 3 s?" (score).

@@ -21,6 +21,10 @@ until BUILD-PROMPTS #1), RULEBOOK.md, WORKFLOW-DIAGRAMS.md, and `plan/` (the Qwe
 from the repo root, paths repointed). Decisions recorded: ONE pipeline for all footage, iterate never rebuild,
 D-S1 voting dropped, S05 picked by an A/B of the qwen and video engines (both still in the code: select.go
 was only lightly touched by the --video commits). Docs only, no code change.
+Same day, Jordan: "What do all the letters mean? ... the top folder [should be] the first step" and "i need to just
+fucking click something and have the next claude code pick up". Folders renamed 01_Intake ... 24_Export_NOT-BUILT in run
+order (old S/F codes mapped once at the top of plan/BUILD-PROMPTS.md for agents), `NEXT.md` to-do list, `00_CONTINUE - click
+me.bat` + desktop shortcut, ROADMAP.md caught up (openshorts and other research since 2026-10-08).
 
 ## Picture check on the graphics card: insightface on CUDA, MediaPipe networks through LiteRT (2026-10-19, local)
 

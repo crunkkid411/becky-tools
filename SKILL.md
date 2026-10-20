@@ -772,7 +772,7 @@ Rules learned the hard way:
 # VIDEO EDIT WORKTREE (2026-10-20)
 
 Before changing the video edit pipeline read `workflows/video-edit/RULEBOOK.md`. Each step has a folder there;
-put step-specific notes in its JORDAN.md, never in CLAUDE.md. Build specs: `workflows/video-edit/plan/BUILD-PROMPTS.md`.
+put step-specific notes in its JORDAN.md, never in CLAUDE.md. The to-do list is `workflows/video-edit/NEXT.md`; tick a job there when it is tested. Build specs: `workflows/video-edit/plan/BUILD-PROMPTS.md`.
 
 # YOUTUBE VIDEO EDIT — a raw YouTube recording to a VEGAS edit that follows his on-camera instructions (2026-10-12)
 

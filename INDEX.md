@@ -3,7 +3,7 @@
 **Canonical (read these):**
 - **Video edit pipeline worktree** (2026-10-20): `workflows/video-edit/` - one folder per step (README + JORDAN.md),
   `RULEBOOK.md` (that pipeline only; Jordan's 2026-10-20 decisions: one pipeline, iterate never rebuild),
-  `WORKFLOW-DIAGRAMS.md`, and `plan/` (Qwen's comparison with Jason Cooperson's editor + BUILD-PROMPTS).
+  `NEXT.md` (THE video edit to-do list; `00_CONTINUE - click me.bat` starts Claude Code on its next job), and `plan/`.
 - `CLAUDE.md` — how we work. **NO LONGER** the *current* handoff state (§6) - moved to STATE-OF-MASTER.md and INDEX.md (Jordan, 7-04-2026).
 - `INDEX.md` (this file) - *current* doc map; which file, when. STOP updating in CLAUDE.md; it lives here now.
 - **Topic rules** (2026-10-10) - `topic-rules/<topic>/SKILL.md`: `becky-video-editing-rules`,
