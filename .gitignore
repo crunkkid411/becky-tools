@@ -155,3 +155,7 @@ becky-go/eval/*.json
 /becky-go/arrange
 /becky-go/library
 /becky-go/genre
+
+# sandbox git credentials (NEVER commit — PAT lives only in .git/, ignored)
+.git/credentials
+.github/secrets.env
