@@ -1,5 +1,7 @@
 # becky worktree plan — the repo arranged as the pipeline
 
+> **2026-10-20 - READ FIRST:** this plan moved to `workflows/video-edit/`. Jordan's corrections in `../RULEBOOK.md` outrank it: ONE pipeline for all footage (live chat + music are opt-in switches), iterate never rebuild, the System One voting engine (D-S1) is dropped, and the S05 engine is picked by an A/B (qwen vs video). Folder names that changed: F05-assets became F05-sfx + F05b-music, F06-graphics-qa became F06-qa-gate, V-video-extras is gone (finishing runs on all footage).
+
 This is the layout Jordan asked for: **every step of the edit gets its own
 folder, its own numbered label (matching WORKFLOW-DIAGRAMS.md and
 becky-livestream-worktree.html), its own `JORDAN.md` (what Jordan knows that
@@ -20,7 +22,7 @@ Rules:
 becky-tools/
 ├─ RULEBOOK.md                     ← one file, read first; every rule → owning doc
 ├─ STEPS-AND-ENGINES.md            ← the table: step × deterministic / local model / paid / human
-├─ worktree/                       ← THE MAP (this layout; wrappers, not relocations)
+├─ workflows/video-edit/                       ← THE MAP (this layout; wrappers, not relocations)
 │  ├─ S01-intake/            README.md · JORDAN.md ("where footage lands, naming")
 │  ├─ S01b-obs-sync/         README.md · JORDAN.md ("which OBS quirks are known")
 │  ├─ S02-transcript/        README.md · JORDAN.md (word-list.txt lives here) · PROMPT-corrections.md

@@ -1,5 +1,7 @@
 # BUILD-PROMPTS.md — one build prompt per missing component
 
+> **2026-10-20 - READ FIRST:** this plan moved to `workflows/video-edit/`. Jordan's corrections in `../RULEBOOK.md` outrank it: ONE pipeline for all footage (live chat + music are opt-in switches), iterate never rebuild, the System One voting engine (D-S1) is dropped, and the S05 engine is picked by an A/B (qwen vs video). Folder names that changed: F05-assets became F05-sfx + F05b-music, F06-graphics-qa became F06-qa-gate, V-video-extras is gone (finishing runs on all footage).
+
 Hand ONE block to ONE medium-sized coding agent. Each block is self-contained:
 context it needs, exact deliverable, acceptance checks. Do not summarize them;
 do not let the agent "improve" the spec. Numbering matches the worktree
@@ -17,14 +19,14 @@ $5/month cap enforced in-tool). NEVER modify source footage. Everything written
 goes under `<video folder>\becky-edit\`. All new steps must be cache-aware
 (re-run reuses artifacts) and must update RUN.json (prompt #10's schema). The
 repo already has build rules/checks — don't touch those. Jordan is a video
-editor, not a developer: every new step gets a folder under `worktree/` with
+editor, not a developer: every new step gets a folder under `workflows/video-edit/` with
 README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 
 ---
 
 ## PROMPT 0 — The Rulebook + Steps-and-Engines table (docs only, do first)
 
-> Create two files at the root of this repo.
+> Create these files in `workflows/video-edit/` (RULEBOOK.md already exists there - extend it, never move it to the repo root; skip STEPS-AND-ENGINES.md, WORKFLOW-DIAGRAMS.md already is that table).
 >
 > **1. `RULEBOOK.md`** — the single entry document for any human or AI agent
 > working on becky-tools. Structure: purpose (repurpose Jordan's recorded
@@ -48,7 +50,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > be deterministic MUST be deterministic; models answer narrow questions, code
 > enforces answers; (h) local-first: Qwen3.5-4B + Gemma run free on this PC,
 > System One is hosted and capped at $5/month — prefer local, ask before paid;
-> (i) every step reads its prompts/settings from `worktree/<step>/` if present,
+> (i) every step reads its prompts/settings from `workflows/video-edit/<step>/` if present,
 > falling back to embedded defaults. Then index: WORKFLOW-DIAGRAMS.md (the
 > pipeline), becky-worktree-plan.md (folder map), STEPS-AND-ENGINES.md below,
 > habits.md and ARRANGEMENT-RULES.md (Jordan's taste).
@@ -76,8 +78,8 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > (exceptions pass), instructions.go, polish.go (thinking islands), assets.go
 > (show-intent), moments.go (watch-me pass), together.go (voters), systemone.go
 > (the two MCQ briefs). Refactor so each of these prompts loads at runtime from
-> `worktree/<step-folder>/<PROMPT-name>.md` relative to the repo root (resolve
-> from the exe location upward looking for `worktree/`), falling back to the
+> `workflows/video-edit/<step-folder>/<PROMPT-name>.md` relative to the repo root (resolve
+> from the exe location upward looking for `workflows/video-edit/`), falling back to the
 > current embedded constant when the file is absent. Keep prompt TEXT byte-for-
 > byte identical in the exported files — generate them by dumping the embedded
 > strings at first run if the file is missing (write-once bootstrap), then load.
@@ -139,7 +141,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 >    LRA, and inter-sample clipping count. Heuristic for "already professionally
 >    treated": |integrated − (−16..−14 LUFS)| band AND peak ≤ −1 dBTP AND LRA ≤ 6
 >    AND no clipping AND (source file metadata/folder hint from
->    `worktree/F02-audio-polish/JORDAN.md` says OBS/pro-mic). If treated → log
+>    `workflows/video-edit/F02-audio-polish/JORDAN.md` says OBS/pro-mic). If treated → log
 >    "source pre-treated (measured X LUFS / Y dBTP / Z LRA) — normalizing would
 >    degrade it; SKIPPED" and stop. This skip is a FEATURE: Jordan records with a
 >    live chain (noise removal, compressor, EQ, limiter) that beats any
@@ -159,7 +161,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > 3. Re-measure the rendered result; if integrated outside −17±1 or TP > −6,
 >    retry once with corrected gains, then fail-visible (region + report line),
 >    never silently.
-> 4. Settings live in `worktree/F02-audio-polish/audiopolish.look.json`
+> 4. Settings live in `workflows/video-edit/F02-audio-polish/audiopolish.look.json`
 >    (targets, clamps, treated-band thresholds, limiter FX name) + README.md +
 >    JORDAN.md stub ("OBS mic = treated, expect skip; my pre-treat chain notes").
 > 5. Register step id `F02` in the run meta (PROMPT 10) so `--only F02` works.
@@ -182,7 +184,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > fail-visible.** Neither branch (qwen or --video) currently has ANY post-FX
 > verification; this is the single biggest quality gap in the system.
 >
-> **QA-CHECKS.md** (machine-readable list, lives in `worktree/F06-graphics-qa/`),
+> **QA-CHECKS.md** (machine-readable list, lives in `workflows/video-edit/F06-qa-gate/`),
 > minimum checks, each with a deterministic repair:
 > - every graphic/event fully inside frame bounds (read via Vegas ScriptGen
 >   enumeration through a new BeckyFX.cs verb `enumerate` that dumps the project
@@ -240,7 +242,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > timeline — exactly Jason's step 6 — and the only existing precedent in our
 > codebase is the censor hit, which proves the pattern.
 >
-> - Read `worktree/F05-assets/JORDAN.md` front-matter for the library root
+> - Read `workflows/video-edit/F05-sfx/JORDAN.md` front-matter for the library root
 >   (Jordan is a professional editor and HAS folders of SFX; example structure
 >   `D:\Jordan\SFX\whoosh\*.wav`, `D:\Jordan\SFX\pop\*.wav`, …). Fall back to a
 >   bundled tiny pack if the path is missing, and MARK every placement "no
@@ -276,7 +278,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > `--music-duck` adding −6 dB during speech windows taken from the transcript
 > word times, 150 ms ramps). Runs AFTER SFX (F05a) and BEFORE the final
 > converge pass, matching Jason's ordering ("after SFX and before review").
-> `--music pick` asks System One MCQ to choose from `worktree/F05-assets/music/`
+> `--music pick` asks System One MCQ to choose from `workflows/video-edit/F05b-music/`
 > by mood tag derived from the topic outline already computed in S5 (free reuse).
 > Never clips the limiter (measure combined program again after placement; if
 > > −6 dBTP, lower bed 1 dB and re-measure, max 3 tries).
@@ -326,7 +328,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > Long-form currently has NO render path (vertical shorts already render via
 > Voukoder template "TikTok NVENC"). Add `becky-go/cmd/livestream/exportspec.go`
 > + `--export <preset>` running after picture lock (i.e., after final converge).
-> Locked specs in `worktree/F09-export/export.look.json`:
+> Locked specs in `workflows/video-edit/F09-export/export.look.json`:
 > - `longform`: 1920×1080 (or source res if >1080p downscale to 1080), 30/60 fps
 >   matched to source, H.264 High profile via Voukoder NVENC template you create
 >   programmatically (mirror the vertical tool's existing Voukoder automation),
@@ -351,7 +353,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 
 > Today the publish check (OCR + vision on change frames) runs AFTER the edit —
 > too late: sensitive material should be avoided/blurred from the start. Add to
-> S1 intake: read `worktree/S01-intake/JORDAN.md` section "NEVER SHOW" (a list
+> S1 intake: read `workflows/video-edit/S01-intake/JORDAN.md` section "NEVER SHOW" (a list
 > of patterns: names, faces already tagged by identify DB, address regexes,
 > browser tabs, specific apps). Build `secrets-plan.json`: time ranges where the
 > desktop/screen region could contain them (screen capture track if present, or
@@ -390,7 +392,7 @@ README.md + JORDAN.md stub, and any LLM prompt as an external .md file.
 > All calls: batched, cached by content hash under `becky-edit\s1\`, counted
 > against the existing $5 cap guard, skippable with `--no-s1` (every consumer
 > must have its no-S1 fallback path: default name-match / no prefilter / full
-> vision pass). Write `worktree/S05-decision/systemone-stack/JORDAN.md` noting
+> vision pass). Write `workflows/video-edit/S05-decision/README.md` noting
 > what S1 is now used for so future agents don't re-discover.
 >
 > Acceptance: `--no-s1` produces identical edit decisions on the regression

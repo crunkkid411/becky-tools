@@ -12,6 +12,16 @@
 
 ---
 
+## Video edit worktree folder + Jordan's pipeline decisions (2026-10-20, local)
+
+Jordan, 2026-10-20: keep Qwen's worktree layout but "move it all down a layer" so RULEBOOK.md is not read as a
+rule for all of becky-tools; never add to CLAUDE.md. New `workflows/video-edit/`: 25 step folders (S01-S13, F01-F09,
+S05x live chat and F05b music opt-in) with README + JORDAN.md stubs (stubs say plainly the tool does not read them
+until BUILD-PROMPTS #1), RULEBOOK.md, WORKFLOW-DIAGRAMS.md, and `plan/` (the Qwen docs + Jason's blueprint, moved
+from the repo root, paths repointed). Decisions recorded: ONE pipeline for all footage, iterate never rebuild,
+D-S1 voting dropped, S05 picked by an A/B of the qwen and video engines (both still in the code: select.go
+was only lightly touched by the --video commits). Docs only, no code change.
+
 ## Picture check on the graphics card: insightface on CUDA, MediaPipe networks through LiteRT (2026-10-19, local)
 
 Jordan, 2026-10-19: "We NEED to set it up so it uses the GPU for mediapipe; that one step alone could take

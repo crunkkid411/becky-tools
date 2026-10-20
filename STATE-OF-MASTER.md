@@ -6,6 +6,12 @@
 > the short summary here. **Do NOT let this section grow into a full log**
 > "Awaiting Jordan's Approval" goes at the bottom of this file
 
+### NEW — Video edit worktree folder (2026-10-20, local)
+
+`workflows/video-edit/`: one folder per edit step with a README and a JORDAN.md, plus RULEBOOK.md (that pipeline only)
+and the Qwen plan in `plan/`. Not wired yet: the tool reads these once BUILD-PROMPTS #1 lands. Next: A/B the qwen and
+video decision engines on one video so one pipeline remains.
+
 ### NEW — The picture check runs on the graphics card (2026-10-19, local)
 
 becky-livestream's picture measure (face, mouth, body, gestures, drinks) was the slowest step, all on the
@@ -13,7 +19,7 @@ processor. insightface now runs on CUDA, and MediaPipe's own networks run on the
 Windows mediapipe package has no GPU mode), with MediaPipe's processing rebuilt in `pyhelpers/mp_gpu.py`.
 3.5x faster on his footage, results within MediaPipe's own noise; falls back to the processor if the card run
 fails. Venv: `scripts/setup-picture-gpu.ps1`. Analyze run verified; full YouTube-Edit.bat run: Jordan tests.
-`Claude-Video-Editor(Copy).md` / `-(Copy).html` at the repo root: a blueprint Jordan added for cloud agents.
+`Claude-Video-Editor(Copy).md` / `-(Copy).html` (now in `workflows/video-edit/plan/`): a blueprint Jordan added for cloud agents.
 
 ### YouTube edit uses the graphics card, batches models, saves as it goes; OBS launcher (2026-10-18, local)
 

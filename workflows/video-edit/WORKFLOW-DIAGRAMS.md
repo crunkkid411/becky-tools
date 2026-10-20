@@ -2,8 +2,8 @@
 
 Four pipelines, one binary. This page exists so you can point at a number
 ("step 4b is wrong") instead of typing a novel. The numbered labels below are
-the same numbers used in `becky-worktree-plan.md` (the worktree layout) and in
-`BUILD-PROMPTS.md` (one build prompt per missing step). **Step numbers are the
+the same numbers used in `plan/becky-worktree-plan.md` (the worktree layout) and in
+`plan/BUILD-PROMPTS.md` (one build prompt per missing step). **Step numbers are the
 canonical vocabulary — use them everywhere.**
 
 ```

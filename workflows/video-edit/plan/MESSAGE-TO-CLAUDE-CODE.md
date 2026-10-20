@@ -56,7 +56,7 @@ Read this whole thing before touching anything. Jordan will read it with you.
    step, each with JORDAN.md (his inputs: SFX library paths, move grammar,
    NEVER-show lists, marker colors) and PROMPT-*.md files he can edit directly.
    From now on: any behavior Jordan might want to tune lives in a .md under
-   worktree/, loaded at runtime, hashed into the cache key. Never again say
+   workflows/video-edit/, loaded at runtime, hashed into the cache key. Never again say
    "rebuild the exe to change a prompt."
 3. **RUN.json (--resume/--only/--from/--status) is a prerequisite, not a
    nicety.** Right now "redo just the zooms" means either a full rerun or a
