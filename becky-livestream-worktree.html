@@ -1,0 +1,335 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Becky Livestream Editor · becky-livestream --model qwen|systemone|systemone-stack · worktree diagram</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,700&display=swap">
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0e1014; --bg-2:#12151a; --panel:#171a20; --raised:#1d2027; --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.12);
+    --ink:#f5f5f7; --ink-2:#a1a1aa; --mute:#6e6e76;
+    --blue:#0a84ff; --teal:#64d2ff; --green:#30d158; --orange:#ff9f0a; --pink:#ff375f; --violet:#bf5af2; --yellow:#ffd60a; --gray:#98989f;
+    --display:"SF Pro Display",-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI Variable Display","Segoe UI",sans-serif;
+    --text:"SF Pro Text",-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI Variable Text","Segoe UI",sans-serif;
+    --rounded:"SF Pro Rounded",ui-rounded,-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    --serif:"Playfair Display",Georgia,"Times New Roman",serif;
+    --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{background:var(--bg)}
+  body{color:var(--ink);font-family:var(--text);font-size:15px;line-height:1.55;margin:0;padding-block:0 80px;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(1200px 520px at 78% -8%,rgba(10,132,255,.13),transparent 60%),radial-gradient(900px 420px at -10% 4%,rgba(191,90,242,.08),transparent 60%),var(--bg);background-repeat:no-repeat}
+  .wrap{max-width:1180px;margin:0 auto;padding-inline:32px}
+  code{font-family:var(--mono);font-size:.84em;color:var(--ink);background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px}
+  h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance}
+  h1{font-size:64px;line-height:1;font-weight:700;letter-spacing:-.035em}
+  h2{font-size:32px;line-height:1.1;font-weight:700;letter-spacing:-.022em}
+  h3{font-size:17px;line-height:1.25;font-weight:600;letter-spacing:-.01em}
+  p{margin:0}
+  .lead{color:var(--ink-2);max-width:70ch;font-size:17px;line-height:1.55}
+
+  /* toolbar */
+  .bar{position:sticky;top:0;z-index:10;background:rgba(14,16,20,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;gap:20px;height:52px}
+  .brand{font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:-.01em;white-space:nowrap;display:flex;align-items:center;gap:9px}
+  .rec{width:9px;height:9px;border-radius:50%;background:var(--pink);box-shadow:0 0 0 3px rgba(255,55,95,.18)}
+  .nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;margin-left:auto}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{font-family:var(--text);font-size:13px;font-weight:500;color:var(--ink-2);text-decoration:none;padding:6px 12px;border-radius:999px;white-space:nowrap;transition:background .15s,color .15s}
+  .nav a:hover,.nav a:focus-visible{background:rgba(255,255,255,.08);color:var(--ink);outline:none}
+
+  /* hero */
+  .hero{padding:64px 0 40px;display:grid;grid-template-columns:1.35fr 1fr;gap:48px;align-items:end}
+  .kicker{font-family:var(--mono);font-size:12px;color:var(--mute);margin-bottom:18px;display:flex;flex-wrap:wrap;gap:6px 14px}
+  .kicker span{white-space:nowrap}
+  .hero h1{margin-bottom:22px}
+  .hero h1 em{display:block;font-family:var(--serif);font-style:italic;font-weight:700;font-size:.9em;letter-spacing:-.01em;line-height:1.12;padding-bottom:.06em;background:linear-gradient(90deg,#ffc4a3,#e8896a 35%,#d97757 60%,#b8522f);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+  section{padding:56px 0 0;scroll-margin-top:60px}
+  .head{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:28px}
+  .marker{font-family:var(--mono);font-size:12px;color:var(--mute);display:flex;align-items:center;gap:10px}
+  .marker i{display:inline-block;width:10px;height:14px;background:var(--c,var(--blue));clip-path:polygon(0 0,100% 0,100% 70%,50% 100%,0 70%)}
+  .marker b{color:var(--ink-2);font-weight:500}
+
+  /* graph */
+  .canvas{background:linear-gradient(180deg,#14171d,#111318);border:1px solid var(--line);border-radius:18px;overflow-x:auto;box-shadow:0 30px 80px -40px rgba(0,0,0,.8),inset 0 1px 0 rgba(255,255,255,.04)}
+  .graph{display:block;width:1180px;max-width:none;height:auto}
+  @media (min-width:1244px){.graph{width:100%}}
+  .graph .nd{fill:url(#ndg);stroke:rgba(255,255,255,.1);stroke-width:1}
+  .graph .n-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.02em}
+  .graph .n-title{font-family:var(--display);font-size:16px;font-weight:600;fill:#f5f5f7;letter-spacing:-.01em}
+  .graph .n-sub{font-family:var(--text);font-size:11px;fill:#a1a1aa}
+  .graph .region{fill:rgba(255,255,255,.018);stroke:rgba(255,255,255,.09);stroke-width:1}
+  .graph .r-title{font-family:var(--text);font-size:10.5px;font-weight:600;letter-spacing:.12em;fill:#d1d1d6}
+  .graph .r-sub{font-family:var(--text);font-size:11px;fill:#6e6e76}
+  .graph .grp{fill:rgba(10,132,255,.055);stroke:rgba(10,132,255,.35);stroke-width:1}
+  .graph .g-head{font-family:var(--text);font-size:10.5px;font-weight:600;letter-spacing:.1em;fill:#5eb0ff}
+  .graph .tab{fill:rgba(255,255,255,.05);stroke:rgba(255,255,255,.1)}
+  .graph .tab.on{fill:#0a84ff;stroke:#0a84ff}
+  .graph .tab-t{font-family:var(--text);font-size:10.5px;font-weight:500;fill:#a1a1aa}
+  .graph .tab-t.on{fill:#fff;font-weight:600}
+  .graph .pin{fill:#111318;stroke:#7c7c84;stroke-width:1.2}
+  .graph .jn{fill:#8e8e93}
+  .graph .wire{fill:none;stroke:#62646b;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+  .graph .wire.cond{stroke:#ff9f0a;stroke-dasharray:5 4}
+  .graph .wire.read{stroke:#0a84ff;stroke-dasharray:2 4}
+  .graph .wire.loop{stroke:#55575e}
+  .graph .gate{fill:#30d158;filter:drop-shadow(0 0 5px rgba(48,209,88,.6))}
+  .graph .w-lbl{font-family:var(--text);font-size:11px;fill:#8e8e93}
+  .graph .w-lbl.mono{font-family:var(--mono);font-size:10.5px}
+  .graph .s9{font-size:9.5px}
+  .graph .g-lbl{font-family:var(--text);font-size:11px;font-weight:600;fill:#30d158}
+  .graph .c-org{fill:#ff9f0a}
+  /* RED OVERLAY: a step that is missing from becky-livestream today (30% opacity, text stays readable) */
+  .graph .node.miss rect.nd{fill:rgba(255,55,95,.30);stroke:#ff375f;stroke-width:1.4;stroke-dasharray:6 4}
+  .graph .node.amber rect.nd{fill:rgba(255,159,10,.28);stroke:#ff9f0a;stroke-width:1.4;stroke-dasharray:6 4}
+  .misschip{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.02em}
+
+  .legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:16px;font-size:12.5px;color:var(--ink-2)}
+  .legend span{display:inline-flex;align-items:center;gap:8px}
+  .sw{display:inline-block;width:24px;border-top:1.5px solid #8e8e93}
+  .sw.cond{border-top-style:dashed;border-color:var(--orange)}
+  .sw.read{border-top-style:dotted;border-top-width:2px;border-color:var(--blue)}
+  .sw.gate{width:9px;height:9px;border:0;background:var(--green);transform:rotate(45deg);border-radius:1.5px}
+  .sw.red{width:24px;height:14px;border:1px dashed var(--pink);background:rgba(255,55,95,.3);border-radius:5px;transform:none}
+  .explain{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}
+  .explain h3{font-size:15px;margin-bottom:6px}
+  .explain p{font-size:14px;color:var(--ink-2)}
+
+  /* steps */
+  .steps{border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--panel)}
+  .step{display:grid;grid-template-columns:72px minmax(0,1.15fr) minmax(0,1fr);gap:28px;padding:22px 26px;border-top:1px solid var(--line);position:relative}
+  .step:first-child{border-top:0}
+  .step::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c);opacity:.9}
+  .step .no{font-family:var(--rounded);font-size:30px;font-weight:700;line-height:1;color:var(--c);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .step .no small{display:block;font-family:var(--mono);font-size:10.5px;font-weight:400;color:var(--mute);margin-top:6px;letter-spacing:.02em}
+  .step h3{font-size:20px;margin-bottom:6px}
+  .step p{font-size:14px;color:var(--ink-2)}
+  .step dl{display:grid;grid-template-columns:62px 1fr;gap:7px 12px;margin:0;font-size:13.5px}
+  .step dt{font-family:var(--text);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);padding-top:2px}
+  .step dd{margin:0;color:var(--ink-2)}
+  .pill{display:inline-block;font-family:var(--rounded);font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;background:rgba(255,255,255,.08);color:var(--ink-2);vertical-align:3px;margin-left:8px;letter-spacing:.01em}
+  .step.missing{background:rgba(255,55,95,.30)}
+  .step.missing::after{content:"MISSING FROM BECKY-LIVESTREAM — description kept as-is from Jason's blueprint";position:absolute;right:14px;top:12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.03em;color:#ff8fa3;background:rgba(255,55,95,.25);border:1px solid rgba(255,55,95,.5);padding:3px 10px;border-radius:999px}
+  .step.different{background:rgba(255,159,10,.10)}
+  .step.different::after{content:"IN MY PIPELINE — but wired differently (see the note)";position:absolute;right:14px;top:12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.03em;color:#ffb340;background:rgba(255,159,10,.14);border:1px solid rgba(255,159,10,.4);padding:3px 10px;border-radius:999px}
+  .step.beyond{background:rgba(48,209,88,.07)}
+  .step.beyond::after{content:"MINE ONLY — his pipeline has no equivalent";position:absolute;right:14px;top:12px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.03em;color:#6ee391;background:rgba(48,209,88,.14);border:1px solid rgba(48,209,88,.4);padding:3px 10px;border-radius:999px}
+  .stepnote{grid-column:1/-1;font-size:13px;color:var(--ink-2);border-top:1px dashed var(--line-2);padding-top:10px}
+  .stepnote b{color:var(--ink)}
+
+  /* inside */
+  .repo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .layer{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:10px}
+  .layer.wide{grid-column:1/-1}
+  .layer .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .layer .role{font-family:var(--text);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--c)}
+  .layer h3{font-family:var(--mono);font-size:15px;font-weight:600;letter-spacing:0}
+  .layer p{font-size:14px;color:var(--ink-2)}
+  .files{display:flex;flex-wrap:wrap;gap:6px}
+  .files code{background:transparent;border:1px solid var(--line-2);color:var(--ink-2);padding:3px 8px;border-radius:7px;font-size:11.5px}
+  .files code.hot{color:var(--ink);border-color:color-mix(in srgb,var(--c) 55%,transparent);background:color-mix(in srgb,var(--c) 10%,transparent)}
+  .files code.miss{border-color:rgba(255,55,95,.55);background:rgba(255,55,95,.30);color:#ffd7de}
+
+  .foot{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--mute);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  @media (max-width:900px){
+    h1{font-size:44px}
+    .hero{grid-template-columns:1fr;gap:32px;padding-top:48px}
+    .explain,.repo{grid-template-columns:1fr}
+    .step{grid-template-columns:56px 1fr}
+    .step dl{grid-column:2}
+    .step.missing::after,.step.different::after,.step.beyond::after{position:static;display:inline-block;margin-top:8px}
+  }
+</style></head><body
+<div class="bar"><div class="wrap">
+  <div class="brand"><i class="rec"></i><span class="t">Becky Livestream Editor</span></div>
+  <nav class="nav" aria-label="Sections">
+    <a href="#graph">Pipeline</a><a href="#diff">qwen vs --video</a>
+  </nav>
+</div></div>
+
+<div class="wrap">
+<header class="hero">
+  <div>
+    <div class="kicker"><span>worktree diagram</span><span>by crunkkid411 (Jordan)</span><span>build 2026.10.20</span><span>Windows + Vegas Pro 18</span><span>companion to WORKFLOW-DIAGRAMS.md + BUILD-PROMPTS.md</span></div>
+    <h1>Becky Livestream Editor<em>The Worktree: One Spine, Three Decision Branches</em></h1>
+    <p class="lead">Drawn in Jason Cooperson's blueprint style, but this page draws MY pipeline as a <b>worktree</b>: a shared spine (<code>S1&#8211;S11</code>) every variant runs, with numbered branch modules where they differ (<code>D-QWEN / D-STACK / D-S1</code>). The <code>--video</code> YouTube variant is its own branch (<code>D-VIDEO</code>) &#8212; compared side-by-side below. Point at a number when something is wrong; never type a novel.</p>
+  </div>
+</header>
+
+<section id="graph">
+  <div class="head">
+    <div class="marker" style="--c:var(--blue)"><i></i><b>Pipeline</b> &#183; becky-livestream --model qwen|systemone|systemone-stack, as wired</div>
+    <h2>The whole line on one screen</h2>
+    <p class="lead">Top band = the shared spine. Middle = the three content-decision branches fanned out from step S5. Bottom = the shared finish. Red overlays = steps from Jason's blueprint this workflow does not have (his descriptions kept verbatim). Amber = present but wired differently.</p>
+  </div>
+  <figure style="margin:0">
+    <div class="canvas">
+<svg class="graph" viewBox="0 0 1180 700" role="img" aria-label="The becky-livestream livestream variants as a worktree: shared spine S1-S9, three content-decision branches D-QWEN, D-STACK, D-S1, the visual-moments module 4b that only the livestream branches run, then shared S10-S11 markers and report. Red overlays mark steps from Jason Cooperson's blueprint that this workflow does not have.">
+<defs>
+<linearGradient id="ndg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#23262e"/><stop offset="1" stop-color="#1a1d23"/></linearGradient>
+<pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="rgba(255,255,255,.045)"/></pattern>
+<marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#8e8e93"/></marker>
+<marker id="ah-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#ff9f0a"/></marker>
+<marker id="ah-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#0a84ff"/></marker>
+<marker id="ah-l" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#6e6e76"/></marker>
+</defs>
+<rect width="1180" height="700" fill="url(#dots)"/>
+<rect class="region" x="24" y="28" width="1132" height="128" rx="12"/>
+<text class="r-title" x="44" y="50" text-anchor="start">SHARED SPINE &#183; every variant runs these in this order</text>
+<text class="r-sub" x="470" y="50" text-anchor="start">S-numbers are the canonical vocabulary &#8212; point at one, not a novel</text>
+
+<g class="node"><rect class="nd" x="44" y="64" width="128" height="64" rx="10"/><circle cx="60" cy="80" r="3.5" fill="#98989f"/>
+<text class="n-tag" x="70" y="83.5" fill="#98989f">S1 &#183; green</text><text class="n-title" x="58" y="103">Intake</text><text class="n-sub" x="58" y="118">pick video &#183; probe &#183; read-only</text></g>
+<g class="node"><rect class="nd" x="192" y="64" width="128" height="64" rx="10"/><circle cx="208" cy="80" r="3.5" fill="#98989f"/>
+<text class="n-tag" x="218" y="83.5" fill="#98989f">S1b &#183; OBS only</text><text class="n-title" x="206" y="103">OBS sync</text><text class="n-sub" x="206" y="118">synced.mkv &#183; delays</text></g>
+<g class="node"><rect class="nd" x="340" y="64" width="128" height="64" rx="10"/><circle cx="356" cy="80" r="3.5" fill="#64d2ff"/>
+<text class="n-tag" x="366" y="83.5" fill="#64d2ff">S2 &#183; cached</text><text class="n-title" x="354" y="103">Transcript</text><text class="n-sub" x="354" y="118">Parakeet + WhisperX</text></g>
+<g class="node"><rect class="nd" x="488" y="64" width="128" height="64" rx="10"/><circle cx="504" cy="80" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="514" y="83.5" fill="#30d158">S3 &#183; deterministic</text><text class="n-title" x="502" y="103">becky-cut</text><text class="n-sub" x="502" y="118">silence map --dry-run</text></g>
+<g class="node"><rect class="nd" x="636" y="64" width="128" height="64" rx="10"/><circle cx="652" cy="80" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="662" y="83.5" fill="#30d158">S4 &#183; once, kept</text><text class="n-title" x="650" y="103">Analysis</text><text class="n-sub" x="650" y="118">sound labels + picture</text></g>
+<g class="node amber"><rect class="nd" x="784" y="64" width="128" height="64" rx="10"/><circle cx="800" cy="80" r="3.5" fill="#ff9f0a"/>
+<text class="n-tag" x="810" y="83.5" fill="#ffb340">S5 &#183; THE BRANCH</text><text class="n-title" x="798" y="103">Content decision</text><text class="n-sub" x="798" y="118">see 3 branches below</text></g>
+<g class="node"><rect class="nd" x="932" y="64" width="128" height="64" rx="10"/><circle cx="948" cy="80" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="958" y="83.5" fill="#30d158">S6 &#183; deterministic</text><text class="n-title" x="946" y="103">Cut points</text><text class="n-sub" x="946" y="118">edges.go &#183; frame grid</text></g>
+<g class="node"><rect class="nd" x="1080" y="64" width="76" height="64" rx="10"/><circle cx="1096" cy="80" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="1106" y="83.5" fill="#30d158">S7</text><text class="n-title" x="1094" y="103">Breath</text><text class="n-sub" x="1094" y="118">check+cut</text></g>
+<path class="wire" d="M172 96 L188 96" marker-end="url(#ah)"/>
+<path class="wire" d="M320 96 L336 96" marker-end="url(#ah)"/>
+<path class="wire" d="M468 96 L484 96" marker-end="url(#ah)"/>
+<path class="wire" d="M616 96 L632 96" marker-end="url(#ah)"/>
+<path class="wire" d="M764 96 L780 96" marker-end="url(#ah)"/>
+<path class="wire" d="M912 96 L928 96" marker-end="url(#ah)"/>
+<path class="wire" d="M1060 96 L1076 96" marker-end="url(#ah)"/>
+
+<circle class="pin" cx="848" cy="128" r="3"/>
+<path class="wire cond" d="M848 128 L848 158 L150 158 L150 186" marker-end="url(#ah-c)"/>
+<path class="wire cond" d="M848 128 L848 158 L520 158 L520 186" marker-end="url(#ah-c)"/>
+<path class="wire cond" d="M848 128 L848 158 L900 158 L900 186" marker-end="url(#ah-c)"/>
+<text class="w-lbl" x="330" y="152" text-anchor="middle">--model qwen</text>
+<text class="w-lbl" x="660" y="152" text-anchor="middle">--model systemone-stack</text>
+<text class="w-lbl" x="1010" y="152" text-anchor="middle">--model systemone</text>
+
+<rect class="grp" x="40" y="186" width="330" height="210" rx="12"/>
+<text class="g-head" x="58" y="208" text-anchor="start">D-QWEN &#183; Qwen leads, Gemma reviews</text>
+<g class="node"><rect class="nd" x="58" y="220" width="140" height="60" rx="10"/><circle cx="74" cy="236" r="3.5" fill="#bf5af2"/>
+<text class="n-tag" x="84" y="239.5" fill="#bf5af2">Q1 &#183; local 4B</text><text class="n-title" x="72" y="258">Lead pass</text><text class="n-sub" x="72" y="272">every sentence keep/cut</text></g>
+<g class="node"><rect class="nd" x="218" y="220" width="140" height="60" rx="10"/><circle cx="234" cy="236" r="3.5" fill="#bf5af2"/>
+<text class="n-tag" x="244" y="239.5" fill="#bf5af2">Q2 &#183; reviewer</text><text class="n-title" x="232" y="258">Gemma review</text><text class="n-sub" x="232" y="272">unsure + boundaries only</text></g>
+<path class="wire" d="M198 250 L214 250" marker-end="url(#ah)"/>
+<g class="node"><rect class="nd" x="58" y="300" width="140" height="60" rx="10"/><circle cx="74" cy="316" r="3.5" fill="#ffd60a"/>
+<text class="n-tag" x="84" y="319.5" fill="#ffd60a">Q3 &#183; paid few cents</text><text class="n-title" x="72" y="338">Live-chat map</text><text class="n-sub" x="72" y="352">becky-livechat + posture</text></g>
+<g class="node"><rect class="nd" x="218" y="300" width="140" height="60" rx="10"/><circle cx="234" cy="316" r="3.5" fill="#bf5af2"/>
+<text class="n-tag" x="244" y="319.5" fill="#bf5af2">Q4 &#183; whole edit</text><text class="n-title" x="232" y="338">Context pass</text><text class="n-sub" x="232" y="352">topic start/end sanity</text></g>
+<path class="wire" d="M198 330 L214 330" marker-end="url(#ah)"/>
+<text class="w-lbl s9" x="58" y="382" text-anchor="start">selection-qwen3.5.json &#8594; merges into spine S6.</text>
+
+<rect class="grp" x="400" y="186" width="290" height="210" rx="12"/>
+<text class="g-head" x="418" y="208" text-anchor="start">D-STACK &#183; same as D-QWEN + a data point</text>
+<g class="node"><rect class="nd" x="418" y="220" width="250" height="60" rx="10"/><circle cx="434" cy="236" r="3.5" fill="#ffd60a"/>
+<text class="n-tag" x="444" y="239.5" fill="#ffd60a">X1 &#183; hosted, FIRST</text><text class="n-title" x="432" y="258">System One per sentence</text><text class="n-sub" x="432" y="272">kind-of-talk + belongs? (2 questions)</text></g>
+<g class="node"><rect class="nd" x="418" y="300" width="250" height="60" rx="10"/><circle cx="434" cy="316" r="3.5" fill="#bf5af2"/>
+<text class="n-tag" x="444" y="319.5" fill="#bf5af2">X2 = Q1+Q2 unchanged</text><text class="n-title" x="432" y="338">Qwen decides w/ notes</text><text class="n-sub" x="432" y="352">&#8220;trust it unless context says not to&#8221;</text></g>
+<path class="wire" d="M543 280 L543 296" marker-end="url(#ah)"/>
+<text class="w-lbl s9" x="418" y="382" text-anchor="start">UNDERUTILIZED: S1 answers MCQs cheaply &#8212; today</text>
+<text class="w-lbl s9" x="418" y="394" text-anchor="start">it only decorates the transcript for the voters.</text>
+
+<rect class="grp" x="720" y="186" width="330" height="210" rx="12"/>
+<text class="g-head" x="738" y="208" text-anchor="start">D-S1 &#183; three independent voters</text>
+<g class="node"><rect class="nd" x="738" y="220" width="90" height="60" rx="10"/><circle cx="754" cy="236" r="3.5" fill="#ffd60a"/>
+<text class="n-tag" x="764" y="239.5" fill="#ffd60a">T1a</text><text class="n-title" x="752" y="258">SystemOne</text><text class="n-sub" x="752" y="272">own vote</text></g>
+<g class="node"><rect class="nd" x="848" y="220" width="90" height="60" rx="10"/><circle cx="864" cy="236" r="3.5" fill="#bf5af2"/>
+<text class="n-tag" x="874" y="239.5" fill="#bf5af2">T1b</text><text class="n-title" x="862" y="258">Gemma-4</text><text class="n-sub" x="862" y="272">own vote</text></g>
+<g class="node"><rect class="nd" x="958" y="220" width="90" height="60" rx="10"/><circle cx="974" cy="236" r="3.5" fill="#bf5af2"/>
+<text class="n-tag" x="984" y="239.5" fill="#bf5af2">T1c</text><text class="n-title" x="972" y="258">Qwen3.5</text><text class="n-sub" x="972" y="272">own vote</text></g>
+<g class="node"><rect class="nd" x="848" y="300" width="140" height="60" rx="10"/><circle cx="864" cy="316" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="874" y="319.5" fill="#30d158">T2 &#183; code</text><text class="n-title" x="862" y="338">Majority stands</text><text class="n-sub" x="862" y="352">split + looking-down &#8594; cut</text></g>
+<path class="wire" d="M783 280 L783 296 L844 296 L844 322" marker-end="url(#ah)"/>
+<path class="wire" d="M893 280 L893 296" marker-end="url(#ah)"/>
+<path class="wire" d="M1003 280 L1003 296 L992 296 L992 322" marker-end="url(#ah)"/>
+<text class="w-lbl s9" x="738" y="382" text-anchor="start">Reuses saved votes from earlier runs (free).</text>
+
+<rect class="grp" x="40" y="416" width="1010" height="86" rx="12"/>
+<text class="g-head" x="58" y="438" text-anchor="start">4b &#183; VISUAL MOMENTS &#8212; livestream branches ONLY (--video skips this: &#8220;random movements&#8221;, 2026-10-13)</text>
+<g class="node"><rect class="nd" x="58" y="450" width="150" height="44" rx="10"/><circle cx="74" cy="463" r="3.5" fill="#30d158"/>
+<text class="n-title" x="84" y="470" font-size="12">Signals per 0.1 s</text><text class="n-sub" x="84" y="486">pose &#183; gesture &#183; face-lost</text></g>
+<g class="node"><rect class="nd" x="228" y="450" width="150" height="44" rx="10"/><circle cx="244" cy="463" r="3.5" fill="#bf5af2"/>
+<text class="n-title" x="254" y="470" font-size="12">Gemma-4 12B watches</text><text class="n-sub" x="254" y="486">frames+audio, words around</text></g>
+<g class="node"><rect class="nd" x="398" y="450" width="160" height="44" rx="10"/><circle cx="414" cy="463" r="3.5" fill="#30d158"/>
+<text class="n-title" x="424" y="470" font-size="12">Two agreeing &#8594; put back</text><text class="n-sub" x="424" y="486">never cuts; +face zoom later</text></g>
+<path class="wire" d="M208 472 L224 472" marker-end="url(#ah)"/>
+<path class="wire" d="M378 472 L394 472" marker-end="url(#ah)"/>
+<text class="w-lbl s9" x="588" y="470" text-anchor="start">runs between S6 and S7 on the livestream branches;</text>
+<text class="w-lbl s9" x="588" y="484" text-anchor="start">its moments ride to BeckyFX.cs pipzoom after S9.</text>
+
+<g class="node"><rect class="nd" x="44" y="530" width="150" height="64" rx="10"/><circle cx="60" cy="546" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="70" y="549.5" fill="#30d158">S8 &#183; in app</text><text class="n-title" x="58" y="569">VEGAS build</text><text class="n-sub" x="58" y="584">BeckyKeepList.cs &#183; .veg</text></g>
+<circle class="pin" cx="194" cy="562" r="3"/>
+<rect class="gate" x="228" y="556" width="12" height="12" rx="2" transform="rotate(45 234 562)"/>
+<text class="g-lbl" x="234" y="586" text-anchor="middle">edit check</text>
+<g class="node"><rect class="nd" x="258" y="530" width="150" height="64" rx="10"/><circle cx="274" cy="546" r="3.5" fill="#64d2ff"/>
+<text class="n-tag" x="284" y="549.5" fill="#64d2ff">S9 &#183; proof gate</text><text class="n-title" x="272" y="569">Verify</text><text class="n-sub" x="272" y="584">re-transcribe vs plan</text></g>
+<path class="wire" d="M194 562 L220 562" marker-end="url(#ah)"/>
+<path class="wire" d="M246 562 L254 562" marker-end="url(#ah)"/>
+<g class="node"><rect class="nd" x="472" y="530" width="150" height="64" rx="10"/><circle cx="488" cy="546" r="3.5" fill="#30d158"/>
+<text class="n-tag" x="498" y="549.5" fill="#30d158">S10 &#183; human prep</text><text class="n-title" x="486" y="569">Markers</text><text class="n-sub" x="486" y="584">unsure&#183;chat&#183;loud&#183;publish</text></g>
+<path class="wire" d="M408 562 L468 562" marker-end="url(#ah)"/>
+<g class="node"><rect class="nd" x="686" y="530" width="150" height="64" rx="10"/><circle cx="702" cy="546" r="3.5" fill="#98989f"/>
+<text class="n-tag" x="712" y="549.5" fill="#98989f">S11</text><text class="n-title" x="700" y="569">Report</text><text class="n-sub" x="700" y="584">then YOU review</text></g>
+<path class="wire" d="M622 562 L682 562" marker-end="url(#ah)"/>
+<circle class="pin" cx="836" cy="562" r="3"/>
+<path class="wire" d="M836 562 L860 562" marker-end="url(#ah)"/>
+<g class="node"><rect class="nd" x="860" y="530" width="150" height="64" rx="10" stroke-dasharray="4 4"/><circle cx="876" cy="546" r="3.5" fill="#ff9f0a"/>
+<text class="n-tag" x="886" y="549.5" fill="#ffb340">ORANGE ENDPOINT</text><text class="n-title" x="874" y="569">Timeline review</text><text class="n-sub" x="874" y="584">no render, no grade, no SFX</text></g>
+
+<g class="node miss"><rect class="nd" x="330" y="624" width="150" height="52" rx="10"/><circle cx="346" cy="638" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="356" y="641.5" fill="#ff8fa3">JASON 03</text><text class="n-title" x="344" y="658" font-size="13">Audio polish</text><text class="n-sub" x="344" y="671">&#8722;17 LUFS &#8594; &#8722;6 dBFS limiter</text></g>
+<g class="node miss"><rect class="nd" x="500" y="624" width="150" height="52" rx="10"/><circle cx="516" cy="638" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="526" y="641.5" fill="#ff8fa3">JASON 04</text><text class="n-title" x="514" y="658" font-size="13">Grade</text><text class="n-sub" x="514" y="671">under the graphics, camera only</text></g>
+<g class="node miss"><rect class="nd" x="670" y="624" width="150" height="52" rx="10"/><circle cx="686" cy="638" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="696" y="641.5" fill="#ff8fa3">JASON 05 + 5c</text><text class="n-title" x="684" y="658" font-size="13">Graphics QA loop</text><text class="n-sub" x="684" y="671">QA gate &#8594; fresh eyes &#8594; re-check</text></g>
+<g class="node miss"><rect class="nd" x="840" y="624" width="150" height="52" rx="10"/><circle cx="856" cy="638" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="866" y="641.5" fill="#ff8fa3">JASON 06 &#183; +opt-in</text><text class="n-title" x="854" y="658" font-size="13">SFX + music bed</text><text class="n-sub" x="854" y="671">from placed graphics &#183; &#8722;20 dB</text></g>
+<g class="node miss"><rect class="nd" x="1010" y="624" width="146" height="52" rx="10"/><circle cx="1026" cy="638" r="3.5" fill="#ff375f"/>
+<text class="n-tag" x="1036" y="641.5" fill="#ff8fa3">JASON 08</text><text class="n-title" x="1024" y="658" font-size="13">Export specs</text><text class="n-sub" x="1024" y="671">locked numbers, one command</text></g>
+<text class="w-lbl s9" x="44" y="654" text-anchor="start">This branch ends at review:</text>
+<text class="w-lbl s9" x="44" y="668" text-anchor="start">everything red is missing here too</text>
+</svg>
+    </div>
+    <div class="legend">
+      <span><i class="sw"></i>every job</span>
+      <span><i class="sw cond"></i>a branch (only one runs per invocation)</span>
+      <span><i class="sw read"></i>a read, not a file</span>
+      <span><i class="sw gate"></i>automatic check that must pass</span>
+      <span><i class="sw red"></i>red overlay = missing (Jason's description kept as-is)</span>
+      <span style="color:#ffb340">amber = wired differently</span>
+    </div>
+  </figure>
+  <div class="explain">
+    <div><h3>Same binary, four pipelines</h3><p>Every variant shares intake, transcript, the becky-cut silence map, whole-stream analysis, cut points, breath check, VEGAS build, edit check, markers and report. Only step S5 swaps engines &#8212; that is the worktree.</p></div>
+    <div><h3>What each branch costs</h3><p>D-QWEN runs free on this PC; D-STACK spends a few cents on System One; D-S1 spends a few cents across all three voters. All decisions are cached per model+guidance; <code>--fresh</code> re-decides.</p></div>
+    <div><h3>Where your hunch was right</h3><p>System One IS underused: today it only answers two multiple-choice questions per sentence to decorate the transcript for Qwen/Gemma (stack), or votes as one of three (together). It never touches cut points, breaths, censor, assets, or QA. See BUILD-PROMPTS.md #12.</p></div>
+  </div>
+</section>
+
+<section id="diff">
+  <div class="head">
+    <div class="marker" style="--c:var(--teal)"><i></i><b>Comparison</b> &#183; does --model qwen differ from --video?</div>
+    <h2>Yes &#8212; meaningfully, but NOT by reinventing the wheel</h2>
+    <p class="lead">Verified against the source (becky-go/cmd/livestream): the spine functions (transcribe call, edges.go, breath.go, vegas.go, verify.go) are literally the SAME code paths in both workflows. What differs is step S5 (the decision engine) and everything after S9 (the finishing half).</p>
+  </div>
+  <div class="steps">
+    <div class="step different" style="--c:var(--violet)"><div class="no">S5<small>engine</small></div>
+      <div><h3>Decision philosophy flipped</h3><p><b>--model qwen:</b> Qwen3.5-4B labels EVERY sentence keep/cut, Gemma-E4B reviews only the risky targets, conclude() merges. <b>--video:</b> rewritten 2026-10-13 "the openshorts way" after your verdict that voting every sentence was worse than simply removing silences &#8212; Gemma-4 <b>12B</b> reads parts and names ONLY exceptions (not-for-viewers + retakes), code confirms every retake against the actual words, the hesitation filter is pure code, on-camera instructions are parsed, and the viewer-read may only restore.</p></div>
+      <dl><dt>Meaning</dt><dd>Claude replaced the decision layer wholesale (your sign-off is recorded in coarse.go's header comment) &#8212; it did NOT fork or rewrite the spine. No hidden second implementation exists.</dd></dl></div>
+    <div class="step beyond" style="--c:var(--green)"><div class="no">4b<small>module</small></div>
+      <div><h3>Visual moments run ONLY on the livestream branches</h3><p>The gesture/put-back machinery (moments.go) plus face zooms: active for qwen/stack/systemone, explicitly disabled for --video ("random movements", 2026-10-13). Live-chat detection (Q3) likewise only makes sense for footage that started life as a stream.</p></div>
+      <dl><dt>So</dt><dd>"same steps minus chat removal" is close but incomplete: --video ALSO adds thinking-islands, second listen, tighten, grade, censor, looks/motion, show-intent assets and upload copy &#8212; none of which the qwen branch runs.</dd></dl></div>
+    <div class="step missing" style="--c:var(--pink)"><div class="no">END<small>endpoint</small></div>
+      <div><h3>Both branches still stop at the timeline</h3><p>Neither renders, neither levels audio, neither does SFX/music/QA-converge. The qwen branch additionally has no grade and no censor &#8212; its output is rougher than --video's, deliberately: livestream repurpose edits were meant for human hands from the start.</p></div>
+      <dl><dt>Fix list</dt><dd>identical to the --video gaps: BUILD-PROMPTS.md items #3&#8211;#10 apply to BOTH branches (audiopolish, QA gate, SFX, music, export, run file), because they hang off the SHARED spine, not off a branch.</dd></dl></div>
+  </div>
+</section>
+
+<div class="foot"><span>Becky Livestream Editor &#183; worktree view &#183; companion to becky-livestream-pipeline.html (the --video vs Jason comparison)</span><span>becky-tools &#183; workflows/livestream &#183; becky-go/cmd/livestream</span></div>
+</div>
+</body></html>
