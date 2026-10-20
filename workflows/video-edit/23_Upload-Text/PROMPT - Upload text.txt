@@ -1,0 +1,6 @@
+THE FINISHED VIDEO, line by line, with the time each line plays:
+{VIDEO}
+Write what goes with the upload, in his voice and plain words:
+- titles: 5 title options, at most 70 characters each, specific to what he actually says (a name, a claim, an event), no clickbait he would not stand behind.
+- summary: 2-3 sentences for the top of the description.
+- chapters: 4 to 10 chapters in the order they play. id is the line where the chapter starts (the first chapter starts at the first line); title is at most 6 words.

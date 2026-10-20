@@ -1,0 +1,7 @@
+THE TRANSCRIPT (one part):
+{TRANSCRIPT}
+List every sentence where Jordan means something to be SHOWN on screen that is not him talking to the camera: a clip, a video, a livestream, a post, a screenshot, a message, a picture of something - "saying this", "look at this", "here's what he posted", "he made a video saying..." when he is about to show it.
+- id: the sentence
+- label: 2 to 4 words naming the thing to show, like "blackmail apology" or "kickflip website"
+- what: one short sentence: what should be shown there
+Only places where showing it is clearly his intent. Most parts have none: answer {"show": []}.

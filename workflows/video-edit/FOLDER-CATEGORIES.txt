@@ -1,0 +1,45 @@
+VIDEO EDIT FOLDERS - WHICH CATEGORY EACH ONE BELONGS TO
+For color coding the folder icons. Two columns: CATEGORY and STATUS.
+
+CATEGORIES (one color each):
+  PREP           - gets the footage ready (transcript, silences, measuring)
+  DECIDE AND CUT - decides what stays and where every cut goes
+  VEGAS          - builds and checks the VEGAS project
+  FINISHING      - sound, picture and effects on the finished cut
+  HAND-OFF       - what you get at the end (markers, report, upload text, file)
+
+STATUS (could be a second mark on the icon, e.g. a badge):
+  WORKS          - built and used today
+  OPT-IN         - built or planned, only switched on for some videos
+  NEEDS WORK     - built, but not good enough yet
+  NOT BUILT      - nothing yet
+
+FOLDER                                      CATEGORY         STATUS
+01_Intake                                   PREP             WORKS
+02_OBS-Sync (OBS footage only)              PREP             OPT-IN
+03_Transcript                               PREP             WORKS
+04_Silence-Map                              PREP             WORKS
+05_Analysis                                 PREP             WORKS
+06_Content-Decision                         DECIDE AND CUT   WORKS
+07_Live-Chat (switch on for livestreams)    DECIDE AND CUT   OPT-IN
+08_Cut-Points                               DECIDE AND CUT   WORKS
+09_Visual-Moments (livestreams only today)  DECIDE AND CUT   OPT-IN
+10_Breath-Check                             DECIDE AND CUT   WORKS
+11_Publish-Check                            VEGAS            WORKS
+12_VEGAS-Build                              VEGAS            WORKS
+13_Edit-Check                               VEGAS            WORKS
+14_Audio-Polish_NOT-BUILT                   FINISHING        NOT BUILT
+15_Censor                                   FINISHING        WORKS
+16_Zooms (needs work)                       FINISHING        NEEDS WORK
+17_Grade                                    FINISHING        WORKS
+18_Sound-Effects_NOT-BUILT                  FINISHING        NOT BUILT
+19_Music_NOT-BUILT (switch on when wanted)  FINISHING        NOT BUILT (OPT-IN)
+20_Quality-Check_NOT-BUILT                  FINISHING        NOT BUILT
+21_Markers                                  HAND-OFF         WORKS
+22_Report                                   HAND-OFF         WORKS
+23_Upload-Text                              HAND-OFF         WORKS
+24_Export_NOT-BUILT                         HAND-OFF         NOT BUILT
+
+Not step folders (no category): plan (old planning papers), NEXT.md (to-do
+list), README.md, RULEBOOK.md, FOLDER-CATEGORIES.txt (this file), and the two
+buttons: "00_CONTINUE - click me.bat" and "00_REDO ONE STEP - click me.bat".

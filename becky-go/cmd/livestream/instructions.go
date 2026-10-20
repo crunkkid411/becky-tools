@@ -61,7 +61,7 @@ type modelRead struct {
 	Said      string `json:"request"`
 }
 
-const instrRole = `You are the video editor for Hair Jordan, a YouTuber. You are editing the raw camera recording of one of his YouTube videos. While recording, Jordan sometimes stops talking to his viewers and talks to YOU, his editor, the way he would talk to a human editor: "cut that out", "I forgot to mention something at the beginning", "put this part earlier", "that goes before the part about...", "add a picture of it here".`
+var instrRole = P(dirYouTube, "Who the model is - editor instructions", `You are the video editor for Hair Jordan, a YouTuber. You are editing the raw camera recording of one of his YouTube videos. While recording, Jordan sometimes stops talking to his viewers and talks to YOU, his editor, the way he would talk to a human editor: "cut that out", "I forgot to mention something at the beginning", "put this part earlier", "that goes before the part about...", "add a picture of it here".`)
 
 var findSchema = jsonSchema("instruction_ids", map[string]any{"type": "object", "properties": map[string]any{
 	"ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}}, "required": []string{"ids"}})
@@ -82,6 +82,7 @@ var whereSchema = jsonSchema("place", map[string]any{"type": "object", "properti
 // instructions finds and understands every instruction (cached per guidance).
 func (r *run) instructions(ss []Sentence, fresh bool) []Instruction {
 	path := filepath.Join(r.work, "instructions-"+r.tag+".json")
+	stampPrompts(path, instrRole, promptEditorInstructionsFind, promptEditorInstructionsWhatHeAsked, promptEditorInstructionsWhereItGoes)
 	var saved struct {
 		Sentences int           `json:"sentences"`
 		List      []Instruction `json:"instructions"`
@@ -158,8 +159,7 @@ func findInstructions(spec localModelSpec, ss []Sentence, logf func(string, ...a
 	const size, overlap = 40, 8
 	for a := 0; a < len(ss); a += size - overlap {
 		b := min(a+size, len(ss))
-		user := "THE TRANSCRIPT (one part):\n" + sentenceLines(ss, a, b) +
-			"\nList the ids of EVERY sentence above where Jordan talks to his editor instead of his viewers: telling the editor to cut, move or add something, saying he forgot to mention something that belongs somewhere else, or confirming where a part should go. Sentences he says to his viewers are not listed. Answer {\"ids\": []} when there are none."
+		user := fill(promptEditorInstructionsFind, "{TRANSCRIPT}", sentenceLines(ss, a, b))
 		raw, err := m.chat(instrRole, user, findSchema, 300)
 		var ans struct {
 			IDs []int `json:"ids"`
@@ -231,15 +231,7 @@ func readInstruction(spec localModelSpec, ss []Sentence, g []int) (modelRead, er
 	for _, id := range g {
 		quoted = append(quoted, fmt.Sprintf("[id %d] %s", id, ss[id].Text))
 	}
-	user := "THE TRANSCRIPT:\n" + sentenceLines(ss, a, b) +
-		"\nThese sentences may be Jordan talking to his editor:\n" + strings.Join(quoted, "\n") +
-		"\n\nAnswer in parts:\n" +
-		"- action: what he asks the editor to do. \"move\" = put a part of the video somewhere else (e.g. he forgot to mention something and says it belongs earlier); \"cut\" = take a part out; \"other\" = anything else (add a picture, music, a title...); \"none\" = he is not talking to the editor here.\n" +
-		"- request_ids: the ids of every sentence where he talks to the editor about this, including when he repeats or confirms it and when he points the part out (\"so that's the part\", \"from here\", \"up to here\"). These are cut from the video.\n" +
-		"  He often gives the instruction BEFORE the part (\"put this at the beginning\"), talks through the part to his viewers, and confirms it AFTER (\"so that's the part, I want that to go at the beginning\"). Then the part is everything he says between the two.\n" +
-		"  Not every listed sentence is for the editor: \"oh wait, I forgot to mention\" said to his viewers, followed by more of his story, is part of the video.\n" +
-		"- part_first_id, part_last_id: the first and last id of the part he means (what to move or cut). Not the sentences where he talks to the editor. -1 when there is no such part.\n" +
-		"- request: his request in at most 15 words."
+	user := fill(promptEditorInstructionsWhatHeAsked, "{TRANSCRIPT}", sentenceLines(ss, a, b), "{SENTENCES}", strings.Join(quoted, "\n"))
 	raw, err := m.chat(instrRole, user, whatSchema, 400)
 	if err != nil {
 		return mr, err
@@ -251,9 +243,7 @@ func readInstruction(spec localModelSpec, ss []Sentence, g []int) (modelRead, er
 	if mr.Action != "move" || mr.PartFirst < 0 || mr.PartFirst >= len(ss) {
 		return mr, nil
 	}
-	user = "THE TRANSCRIPT:\n" + sentenceLines(ss, a, b) +
-		fmt.Sprintf("\nJordan asked his editor: \"%s\". The part to move is id %d to id %d:\n\"%s\"\n\n", mr.Said, mr.PartFirst, mr.PartLast, short(spanText(ss, mr.PartFirst, mr.PartLast), 600)) +
-		"Where does that part go? Give after_id: the id of the sentence the part should come right AFTER, so it plays where he meant it to be. Then copy the first 6 words of that sentence into after_words."
+	user = fill(promptEditorInstructionsWhereItGoes, "{TRANSCRIPT}", sentenceLines(ss, a, b), "{ASKED}", mr.Said, "{FIRST}", fmt.Sprint(mr.PartFirst), "{LAST}", fmt.Sprint(mr.PartLast), "{PART}", short(spanText(ss, mr.PartFirst, mr.PartLast), 600))
 	raw, err = m.chat(instrRole, user, whereSchema, 120)
 	if err != nil {
 		return mr, err
@@ -563,3 +553,21 @@ func writeInstructions(b *strings.Builder, list []Instruction, ss []Sentence) {
 	}
 	b.WriteString("\n")
 }
+
+// Prompts Jordan can edit (prompts.go).
+var promptEditorInstructionsFind = P(dirYouTube, "Editor instructions - find", "THE TRANSCRIPT (one part):\n{TRANSCRIPT}"+
+	"\nList the ids of EVERY sentence above where Jordan talks to his editor instead of his viewers: telling the editor to cut, move or add something, saying he forgot to mention something that belongs somewhere else, or confirming where a part should go. Sentences he says to his viewers are not listed. Answer {\"ids\": []} when there are none.")
+
+var promptEditorInstructionsWhatHeAsked = P(dirYouTube, "Editor instructions - what he asked", "THE TRANSCRIPT:\n{TRANSCRIPT}"+
+	"\nThese sentences may be Jordan talking to his editor:\n{SENTENCES}"+
+	"\n\nAnswer in parts:\n"+
+	"- action: what he asks the editor to do. \"move\" = put a part of the video somewhere else (e.g. he forgot to mention something and says it belongs earlier); \"cut\" = take a part out; \"other\" = anything else (add a picture, music, a title...); \"none\" = he is not talking to the editor here.\n"+
+	"- request_ids: the ids of every sentence where he talks to the editor about this, including when he repeats or confirms it and when he points the part out (\"so that's the part\", \"from here\", \"up to here\"). These are cut from the video.\n"+
+	"  He often gives the instruction BEFORE the part (\"put this at the beginning\"), talks through the part to his viewers, and confirms it AFTER (\"so that's the part, I want that to go at the beginning\"). Then the part is everything he says between the two.\n"+
+	"  Not every listed sentence is for the editor: \"oh wait, I forgot to mention\" said to his viewers, followed by more of his story, is part of the video.\n"+
+	"- part_first_id, part_last_id: the first and last id of the part he means (what to move or cut). Not the sentences where he talks to the editor. -1 when there is no such part.\n"+
+	"- request: his request in at most 15 words.")
+
+var promptEditorInstructionsWhereItGoes = P(dirYouTube, "Editor instructions - where it goes", "THE TRANSCRIPT:\n{TRANSCRIPT}"+
+	"\nJordan asked his editor: \"{ASKED}\". The part to move is id {FIRST} to id {LAST}:\n\"{PART}\"\n\n"+
+	"Where does that part go? Give after_id: the id of the sentence the part should come right AFTER, so it plays where he meant it to be. Then copy the first 6 words of that sentence into after_words.")

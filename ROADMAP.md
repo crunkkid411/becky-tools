@@ -30,6 +30,8 @@ Full notes, one block per feature, are in `research/roadmap/` (01 to 05).
 below (section B) point there instead of keeping a second list.
 
 What happened since 2026-10-08:
+- 2026-10-20: you can edit what each model is told (the "PROMPT - ....txt" files in the step folders)
+  and redo one step with the "00_REDO ONE STEP" button.
 - The edit got a second content-decision version: `becky-livestream --video` (YouTube edit,
   2026-10-13), built the openshorts way: Gemma-4 12B reads whole parts and only names what to
   remove, code checks every retake. The first Qwen version still exists and still runs. A

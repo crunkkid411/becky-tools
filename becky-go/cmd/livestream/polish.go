@@ -336,6 +336,7 @@ const thinkBatch = 12
 func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 	is := islands(words, keep)
 	path := filepath.Join(r.work, "thinking-"+r.tag+".json")
+	stampPrompts(path, videoRole, promptThinkingOutLoud)
 	var saved []island
 	if b, err := os.ReadFile(path); err == nil && !fresh && json.Unmarshal(b, &saved) == nil && sameIslands(saved, is) {
 		r.logf("thinking: using the earlier reading (%d short fragments)", len(saved))
@@ -364,9 +365,7 @@ func (r *run) thinking(words []Word, keep []bool, fresh bool) []island {
 				for _, k := range part {
 					fmt.Fprintf(&sb, "[%d] ...%s >>%s<< %s...\n", k, wordsText(words, max(0, is[k].W0-15), is[k].W0-1), is[k].Text, wordsText(words, is[k].W1+1, min(len(words)-1, is[k].W1+12)))
 				}
-				user := "Jordan pauses while he thinks about what to say next. Each line below is a short fragment (between >> <<) that he said on its own, with a pause before and after it, shown with the words around it.\n\n" + sb.String() +
-					"\nFor each fragment decide: is it part of what he tells his viewers - it finishes the sentence before it, starts the sentence after it, answers a question, or is a word he means? Or is it him thinking out loud while he finds his next line - a word or two he drops, a start he abandons, \"whatever\", a filler before he starts over?\n" +
-					"List the ids of the thinking ones only. When unsure, leave it out: it stays in the video. Answer {\"thinking\": []} when none are."
+				user := fill(promptThinkingOutLoud, "{FRAGMENTS}", sb.String())
 				raw, err := m.chat(videoRole, user, thinkSchema, 200)
 				var ans struct {
 					Thinking []int `json:"thinking"`
@@ -404,3 +403,8 @@ func sameIslands(a, b []island) bool {
 	}
 	return true
 }
+
+// Prompts Jordan can edit (prompts.go).
+var promptThinkingOutLoud = P(dirYouTube, "Thinking out loud", "Jordan pauses while he thinks about what to say next. Each line below is a short fragment (between >> <<) that he said on its own, with a pause before and after it, shown with the words around it.\n\n{FRAGMENTS}"+
+	"\nFor each fragment decide: is it part of what he tells his viewers - it finishes the sentence before it, starts the sentence after it, answers a question, or is a word he means? Or is it him thinking out loud while he finds his next line - a word or two he drops, a start he abandons, \"whatever\", a filler before he starts over?\n"+
+	"List the ids of the thinking ones only. When unsure, leave it out: it stays in the video. Answer {\"thinking\": []} when none are.")

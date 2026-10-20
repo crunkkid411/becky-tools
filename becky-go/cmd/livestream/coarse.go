@@ -39,7 +39,7 @@ func (r *run) coarseModel() localModelSpec {
 	return localModelSpec{name: "gemma4", model: gm, server: r.cfg.LlamaServer}
 }
 
-const videoRole = `You are the video editor for Hair Jordan, a YouTuber. You are editing the raw camera recording of one of his YouTube videos into the video he will post. Almost everything he says is to his viewers, and all of that stays in the video.`
+var videoRole = P(dirYouTube, "Who the model is", `You are the video editor for Hair Jordan, a YouTuber. You are editing the raw camera recording of one of his YouTube videos into the video he will post. Almost everything he says is to his viewers, and all of that stays in the video.`)
 
 type retake struct {
 	Abandoned int `json:"abandoned_id"`
@@ -86,6 +86,7 @@ func parts(n int) [][2]int {
 func (r *run) coarse(ss []Sentence, fresh bool) (Selection, error) {
 	spec := r.coarseModel()
 	cachePath := filepath.Join(r.work, "coarse-"+r.tag+".json")
+	stampPrompts(cachePath, videoRole, promptWhatToRemove, promptPutBackCutsTheViewerNeeds)
 	var c coarseCache
 	if b, err := os.ReadFile(cachePath); err != nil || fresh || json.Unmarshal(b, &c) != nil || c.Sentences != len(ss) || c.Model != spec.name {
 		c = coarseCache{Model: spec.name, Sentences: len(ss)}
@@ -175,11 +176,7 @@ func exceptions(spec localModelSpec, ss []Sentence, logf func(string, ...any)) (
 	var rts []retake
 	for _, p := range parts(len(ss)) {
 		a, b := p[0], p[1]
-		user := "THE TRANSCRIPT (one part):\n" + sentenceLines(ss, a, b) +
-			"\nName only the exceptions:\n" +
-			"- not_for_viewers: ids of sentences that are not part of the video he is making: checking the sound or camera (words said only to test it: \"testing\", \"check\", \"talking talking\"), talking to himself while he gets ready, talking to someone off camera, anything after his goodbye. (Talk to his video editor is handled separately - do not list it.)\n" +
-			"- retakes: a sentence he breaks off or flubs and then says again right after. abandoned_id is the attempt he gives up on, redo_id the sentence where he says it again. Only a real second attempt at the same sentence - never two different sentences about the same thing.\n" +
-			"Most parts have no exceptions: then answer {\"not_for_viewers\": [], \"retakes\": []}."
+		user := fill(promptWhatToRemove, "{TRANSCRIPT}", sentenceLines(ss, a, b))
 		raw, err := m.chat(videoRole, user, exceptSchema, 400)
 		var ans struct {
 			Off     []int    `json:"not_for_viewers"`
@@ -307,9 +304,7 @@ func restoreCuts(spec localModelSpec, ss []Sentence, ds []Decision, protect map[
 		if cuts == 0 {
 			continue
 		}
-		user := "ONE PART OF THE EDIT, in order. Lines marked CUT are taken out; the viewer hears the others, one after another:\n" + sb.String() +
-			"\nRead it the way a viewer will hear it. List the ids of CUT lines that must go back because the lines around them do not make sense without them: the answer to a question he just asked, the end of a sentence or a thought, words the next line depends on.\n" +
-			"Never list a line where he talks to his video editor, an attempt he says again right after, or getting ready. Most cuts are right: answer {\"restore\": []} when none must go back."
+		user := fill(promptPutBackCutsTheViewerNeeds, "{EDIT}", sb.String())
 		raw, err := m.chat(videoRole, user, restoreSchema, 200)
 		var ans struct {
 			Restore []int `json:"restore"`
@@ -327,3 +322,14 @@ func restoreCuts(spec localModelSpec, ss []Sentence, ds []Decision, protect map[
 	logf("  %d cut line(s) put back", len(back))
 	return back, nil
 }
+
+// Prompts Jordan can edit (prompts.go).
+var promptWhatToRemove = P(dirYouTube, "What to remove", "THE TRANSCRIPT (one part):\n{TRANSCRIPT}"+
+	"\nName only the exceptions:\n"+
+	"- not_for_viewers: ids of sentences that are not part of the video he is making: checking the sound or camera (words said only to test it: \"testing\", \"check\", \"talking talking\"), talking to himself while he gets ready, talking to someone off camera, anything after his goodbye. (Talk to his video editor is handled separately - do not list it.)\n"+
+	"- retakes: a sentence he breaks off or flubs and then says again right after. abandoned_id is the attempt he gives up on, redo_id the sentence where he says it again. Only a real second attempt at the same sentence - never two different sentences about the same thing.\n"+
+	"Most parts have no exceptions: then answer {\"not_for_viewers\": [], \"retakes\": []}.")
+
+var promptPutBackCutsTheViewerNeeds = P(dirYouTube, "Put back cuts the viewer needs", "ONE PART OF THE EDIT, in order. Lines marked CUT are taken out; the viewer hears the others, one after another:\n{EDIT}"+
+	"\nRead it the way a viewer will hear it. List the ids of CUT lines that must go back because the lines around them do not make sense without them: the answer to a question he just asked, the end of a sentence or a thought, words the next line depends on.\n"+
+	"Never list a line where he talks to his video editor, an attempt he says again right after, or getting ready. Most cuts are right: answer {\"restore\": []} when none must go back.")

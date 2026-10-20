@@ -1,6 +1,9 @@
 ## 5. Index / Doc map — which file, when
 
 **Canonical (read these):**
+- **Editable prompts + redo one step** (2026-10-20): `workflows/video-edit/<step>/PROMPT - <name>.txt` is what becky-livestream
+  tells each model (loader `cmd/livestream/prompts.go`; edited file = that step's saved answers dropped). `--redo 6,10` /
+  `00_REDO ONE STEP - click me.bat` redoes one step (`cmd/livestream/redo.go`). `FOLDER-CATEGORIES.txt` = folder colors.
 - **Video edit pipeline worktree** (2026-10-20): `workflows/video-edit/` - one folder per step (README + JORDAN.md),
   `RULEBOOK.md` (that pipeline only; Jordan's 2026-10-20 decisions: one pipeline, iterate never rebuild),
   `NEXT.md` (THE video edit to-do list; `00_CONTINUE - click me.bat` starts Claude Code on its next job), and `plan/`.

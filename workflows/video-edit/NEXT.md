@@ -6,10 +6,6 @@ One job per session. Tick it only when it was tested on real footage.
 Rules for whoever does a job: read RULEBOOK.md first. Improve the existing code, never rebuild
 it. Talk to Jordan in plain words, never by job number or file code.
 
-- [ ] **Let Jordan read and edit what the models are told.** Each step that asks a model gets its
-  instructions as a plain text file in its folder here; the tool reads it from there (falls back to
-  today's built-in text if the file is missing). Changing the file makes the next run decide again.
-  Build spec: plan/BUILD-PROMPTS.md, "PROMPT 1".
 - [ ] **Side-by-side test of the two content-decision versions** (folder 06). Run both on the same
   video, lay both in VEGAS, Jordan watches and picks. NEEDS JORDAN: he watches.
 - [ ] **One pipeline for all footage.** The winner from the test becomes the only decision version.
@@ -24,7 +20,6 @@ it. Talk to Jordan in plain words, never by job number or file code.
 - [ ] **Quality check, part 2: fresh eyes.** A vision model that did not build the edit looks at each
   zoom and graphic and says keep / fix / remove. Build spec: "PROMPT 5" (fresh-eyes half).
 - [ ] **Zooms that follow the words** (folder 16), not a timer. Build spec: "PROMPT 8".
-- [ ] **Redo one step without a full rerun / resume a crashed run.** Build spec: "PROMPT 10".
 - [ ] **Sound effects** (folder 18), placed from the zooms and graphics. NEEDS JORDAN: his SFX folder.
   Build spec: "PROMPT 6".
 - [ ] **Music bed** (folder 19), on/off switch. Build spec: "PROMPT 7".
@@ -32,3 +27,10 @@ it. Talk to Jordan in plain words, never by job number or file code.
 ## Done
 
 (Move a job here with the date and one plain sentence of what changed.)
+
+- 2026-10-20 - **Jordan can edit what the models are told.** 18 "PROMPT - ....txt" files in the step
+  folders (06 both versions, 09, 10, 11, 23); editing one makes only that step ask again (tested on
+  the goodbye-youtube-update copy: edited the thinking prompt, only thinking re-ran).
+- 2026-10-20 - **Redo one step / carry on a crashed run.** "00_REDO ONE STEP - click me.bat" and
+  `becky-livestream --redo 11`; tested: it redid only the publish check. A crashed run carries on by
+  running again, because every slow step keeps its saved answers.

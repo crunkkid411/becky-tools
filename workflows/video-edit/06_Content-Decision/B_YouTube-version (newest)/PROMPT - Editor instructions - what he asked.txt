@@ -1,0 +1,12 @@
+THE TRANSCRIPT:
+{TRANSCRIPT}
+These sentences may be Jordan talking to his editor:
+{SENTENCES}
+
+Answer in parts:
+- action: what he asks the editor to do. "move" = put a part of the video somewhere else (e.g. he forgot to mention something and says it belongs earlier); "cut" = take a part out; "other" = anything else (add a picture, music, a title...); "none" = he is not talking to the editor here.
+- request_ids: the ids of every sentence where he talks to the editor about this, including when he repeats or confirms it and when he points the part out ("so that's the part", "from here", "up to here"). These are cut from the video.
+  He often gives the instruction BEFORE the part ("put this at the beginning"), talks through the part to his viewers, and confirms it AFTER ("so that's the part, I want that to go at the beginning"). Then the part is everything he says between the two.
+  Not every listed sentence is for the editor: "oh wait, I forgot to mention" said to his viewers, followed by more of his story, is part of the video.
+- part_first_id, part_last_id: the first and last id of the part he means (what to move or cut). Not the sentences where he talks to the editor. -1 when there is no such part.
+- request: his request in at most 15 words.

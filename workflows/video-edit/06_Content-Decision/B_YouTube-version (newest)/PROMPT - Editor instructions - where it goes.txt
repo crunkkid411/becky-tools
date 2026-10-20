@@ -1,0 +1,6 @@
+THE TRANSCRIPT:
+{TRANSCRIPT}
+Jordan asked his editor: "{ASKED}". The part to move is id {FIRST} to id {LAST}:
+"{PART}"
+
+Where does that part go? Give after_id: the id of the sentence the part should come right AFTER, so it plays where he meant it to be. Then copy the first 6 words of that sentence into after_words.

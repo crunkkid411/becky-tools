@@ -1,0 +1,4 @@
+ONE PART OF THE EDIT, in order. Lines marked CUT are taken out; the viewer hears the others, one after another:
+{EDIT}
+Read it the way a viewer will hear it. List the ids of CUT lines that must go back because the lines around them do not make sense without them: the answer to a question he just asked, the end of a sentence or a thought, words the next line depends on.
+Never list a line where he talks to his video editor, an attempt he says again right after, or getting ready. Most cuts are right: answer {"restore": []} when none must go back.

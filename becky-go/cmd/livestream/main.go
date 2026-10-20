@@ -97,6 +97,7 @@ func main() {
 	fresh := flag.Bool("fresh", false, "decide again even if this model already decided with the same guidance")
 	breathsOnly := flag.Bool("breaths-only", false, "redo only the breath check on this model's saved VEGAS project")
 	analyzeOnly := flag.Bool("analyze", false, "only analyze the stream (transcript, silences, sound, picture) and keep it; no model, no VEGAS")
+	redo := flag.String("redo", "", "step numbers (the folders in workflows\\video-edit) whose saved answers are thrown away so they work again, e.g. 10 or 6,10")
 	video := flag.Bool("video", false, "a YouTube video recording, not a livestream: no live chat, and the instructions Jordan gives the editor on camera are followed")
 	flag.Parse()
 
@@ -139,6 +140,9 @@ func main() {
 	if *breathsOnly {
 		r.redoBreaths()
 		return
+	}
+	if *redo != "" {
+		r.redo(*redo)
 	}
 	if !r.analyzeOnly {
 		r.guidance = pickGuidance(*guidance, r.media, r.video)
@@ -499,6 +503,7 @@ func (r *run) workflow(fresh, noVegas bool) {
 // decide runs (or reuses) this model's content decision.
 func (r *run) decide(ss []Sentence, fresh bool) (Selection, error) {
 	path := filepath.Join(r.work, "selection-"+r.tag+".json")
+	stampPrompts(path, systemPrompt, outlinePrompt, readPrompt)
 	var old Selection
 	if b, err := os.ReadFile(path); err == nil && !fresh && json.Unmarshal(b, &old) == nil &&
 		old.Guidance == r.guidance && len(old.Decisions) == len(ss) {

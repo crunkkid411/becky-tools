@@ -1,0 +1,1 @@
+Look at this frame from a livestream. Is the man holding something up toward the camera, for example raising a drink for a toast or showing an object to the viewer? Touching his hair or face does not count. Name a microphone when he holds one. Answer with JSON only: {"holding_up": true or false, "what": "what his hands are doing, at most 8 words"}

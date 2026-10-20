@@ -1,0 +1,3 @@
+THE TRANSCRIPT (one part):
+{TRANSCRIPT}
+List the ids of EVERY sentence above where Jordan talks to his editor instead of his viewers: telling the editor to cut, move or add something, saying he forgot to mention something that belongs somewhere else, or confirming where a part should go. Sentences he says to his viewers are not listed. Answer {"ids": []} when there are none.

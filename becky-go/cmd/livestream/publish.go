@@ -255,12 +255,12 @@ func runOCR(frames []*frameInfo, work string, logf func(string, ...any)) (map[st
 	return addr, nil
 }
 
-const visionPrompt = `Look at this frame from Hair Jordan's livestream. It will be published on YouTube. Answer with JSON only:
+var visionPrompt = P(dirPublish, "What is on screen", `Look at this frame from Hair Jordan's livestream. It will be published on YouTube. Answer with JSON only:
 {"other_creator_content": true if a video, livestream, TikTok, YouTube channel or social media post from ANOTHER person is shown on screen,
  "document_with_names": true if a document, police report, court paper, letter, email, text message or chat that shows people's names is readable,
  "private_info": true if a street address, phone number, email address, license plate, booking or confirmation code or ID number is readable,
  "what": "what is on screen, at most 12 words"}
-Jordan talking to his camera by himself is not a risk.`
+Jordan talking to his camera by himself is not a risk.`)
 
 func parseVision(s string) (*visionReply, error) {
 	i, j := strings.Index(s, "{"), strings.LastIndex(s, "}")
@@ -278,6 +278,7 @@ func parseVision(s string) (*visionReply, error) {
 func publishCheck(media, ffmpeg, ffprobe, gemma, mmproj, server string, pieces []span, work string, logf func(string, ...any)) ([]Finding, []string) {
 	var notes []string
 	cachePath := filepath.Join(work, "publish-cache.json")
+	stampPrompts(cachePath, visionPrompt)
 	cache := map[string]*frameInfo{}
 	if b, err := os.ReadFile(cachePath); err == nil {
 		_ = json.Unmarshal(b, &cache)

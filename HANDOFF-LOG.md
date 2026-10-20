@@ -12,6 +12,21 @@
 
 ---
 
+## Editable prompts + redo one step (2026-10-20, local)
+
+Jordan, 2026-10-20: "do the first one so that I can edit the prompts immediately" + redo one step "allows me to iterate on
+single steps". `cmd/livestream/prompts.go`: `P(dir, name, default)` reads `workflows/video-edit/<dir>/PROMPT - <name>.txt`
+(root `BECKY_VIDEO_EDIT` or `workflows/video-edit` under the repo; skipped under `go test`), writes the built-in
+words byte-identical when missing; `fill()` replaces {CAPS} placeholders (never Sprintf on file text); `stampPrompts(cache,
+prompts...)` keeps `<cache>.prompts` and deletes the cache when the words changed (pre-existing caches kept unless a file was
+edited). All prompt literals in select/context/coarse/instructions/polish/assets/ytcopy/moments/picture/publish moved to
+startup vars (18 files: 06 A/B, 09, 10, 11, 23); diff verified word-for-word identical defaults. `redo.go`: `--redo 6,10`
+deletes those steps' saved answers (3 transcript, 4 silence map, 5 analysis, 6 decision caches, 7 chat, 9 moments, 10 held,
+11 publish). Button `workflows/video-edit/00_REDO ONE STEP - click me.bat`. `FOLDER-CATEGORIES.txt` lists each folder's
+category for Jordan's colored icons. Tests: `prompts_test.go`. Real footage (hardlinked copy of 12_goodbye-youtube-update,
+`--video --no-vegas`): run 1 reused every saved answer (3.5 min) and wrote the 18 files; editing "Thinking out loud" re-ran only
+thinking; `--redo 11` redid only the publish check.
+
 ## Video edit worktree folder + Jordan's pipeline decisions (2026-10-20, local)
 
 Jordan, 2026-10-20: keep Qwen's worktree layout but "move it all down a layer" so RULEBOOK.md is not read as a

@@ -92,11 +92,7 @@ func (r *run) youtubeCopy(ss []Sentence, ds []Decision, pieces []span) {
 	for _, k := range kept {
 		fmt.Fprintf(&sb, "[id %d | %s] %s\n", k.id, clock(k.at), ss[k.id].Text)
 	}
-	user := "THE FINISHED VIDEO, line by line, with the time each line plays:\n" + sb.String() +
-		"\nWrite what goes with the upload, in his voice and plain words:\n" +
-		"- titles: 5 title options, at most 70 characters each, specific to what he actually says (a name, a claim, an event), no clickbait he would not stand behind.\n" +
-		"- summary: 2-3 sentences for the top of the description.\n" +
-		"- chapters: 4 to 10 chapters in the order they play. id is the line where the chapter starts (the first chapter starts at the first line); title is at most 6 words."
+	user := fill(promptUploadText, "{VIDEO}", sb.String())
 	raw, err := m.chat(videoRole, user, copySchema, 900)
 	var ans struct {
 		Titles   []string `json:"titles"`
@@ -140,3 +136,10 @@ func ytClock(t float64) string {
 	}
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
+
+// Prompts Jordan can edit (prompts.go).
+var promptUploadText = P(dirUpload, "Upload text", "THE FINISHED VIDEO, line by line, with the time each line plays:\n{VIDEO}"+
+	"\nWrite what goes with the upload, in his voice and plain words:\n"+
+	"- titles: 5 title options, at most 70 characters each, specific to what he actually says (a name, a claim, an event), no clickbait he would not stand behind.\n"+
+	"- summary: 2-3 sentences for the top of the description.\n"+
+	"- chapters: 4 to 10 chapters in the order they play. id is the line where the chapter starts (the first chapter starts at the first line); title is at most 6 words.")

@@ -287,10 +287,10 @@ func wordsAround(words []Word, t0, t1 float64) (before, after string) {
 // talking and has a big facial expression") and cut both: it treats silence as
 // a reason to cut. The same split fixed the content calls (4B models: ask the
 // parts, code applies the rule - 33% -> 96%).
-const momentPrompt = `This is Jordan, a livestreamer, talking to his camera. Look at the moment between %.1f s and %.1f s (the timestamps on the frames). He does not speak in it.
-Just before it he says: "%s"
-%s
-Small vision models noticed: %s.
+var momentPrompt = P(dirMoments, "What he does", `This is Jordan, a livestreamer, talking to his camera. Look at the moment between {START} s and {END} s (the timestamps on the frames). He does not speak in it.
+Just before it he says: "{BEFORE}"
+{AFTER}
+Small vision models noticed: {SIGNALS}.
 First, for each frame write its timestamp, where his head points (up, level, down), his facial expression and what his hands do, a few words each.
 Then split the moment into the separate things he does, in order (often just one; for example a thumbs up and THEN reaching for a drink are two), and give each ONE label:
 - "reaction": a facial expression that reacts to or punctuates what he said (an excited, shocked, sad, smug or funny face)
@@ -301,7 +301,7 @@ Then split the moment into the separate things he does, in order (often just one
 - "object": reaching for, holding or drinking something
 - "still": sitting still, nothing in particular
 For each action also say whether it goes with what he says just before or right after it (true), or has nothing to do with his words (false).
-End with one line of JSON: {"actions": [{"label": "one of the labels", "what": "what he does, at most 12 words", "fits_line": true or false, "from": first second of it as shown on the frames, "to": last second}, ...]}`
+End with one line of JSON: {"actions": [{"label": "one of the labels", "what": "what he does, at most 12 words", "fits_line": true or false, "from": first second of it as shown on the frames, "to": last second}, ...]}`)
 
 // momentKeeps: the labels that go with his line. Everything else stays cut.
 var momentKeeps = map[string]bool{"reaction": true, "gesture": true, "acting": true}
@@ -380,7 +380,7 @@ func gemmaMoment(r *avlm.Runner, media string, m moment, before, after string) (
 	if after != "" {
 		afterLine = fmt.Sprintf(`Right after it he says: "%s"`, after)
 	}
-	prompt := fmt.Sprintf(momentPrompt, m.A, m.B, before, afterLine, strings.Join(m.Signals, "; "))
+	prompt := fill(momentPrompt, "{START}", fmt.Sprintf("%.1f", m.A), "{END}", fmt.Sprintf("%.1f", m.B), "{BEFORE}", before, "{AFTER}", afterLine, "{SIGNALS}", strings.Join(m.Signals, "; "))
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	fps := math.Min(momentFPS, momentMaxFrames/(w1-w0)) // fits the 8192 context (momentRunner)
@@ -496,6 +496,7 @@ func keepMoments(cfg config.Config, media, work, stem string, ranges []Range, pi
 	}
 	logf("  %d of them show something; Gemma watches each one", len(watch))
 	cachePath := filepath.Join(work, "moments-cache.json")
+	stampPrompts(cachePath, momentPrompt)
 	cache := map[string]moment{}
 	if b, err := os.ReadFile(cachePath); err == nil {
 		_ = json.Unmarshal(b, &cache)

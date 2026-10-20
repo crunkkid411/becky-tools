@@ -119,6 +119,7 @@ var noteFile = regexp.MustCompile(`(?i)(?:[a-z]:\\[^\r\n"<>|]*?|[\w .'()-]+?)\.(
 // showLines finds the lines and matches what he provided (cached per edit).
 func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 	path := filepath.Join(r.work, "show-"+r.tag+".json")
+	stampPrompts(path, videoRole, promptThingsToShowFind, promptThingsToShowPickTheFile)
 	var saved struct {
 		Sentences int        `json:"sentences"`
 		Assets    []string   `json:"assets"`
@@ -143,10 +144,7 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 		if !slices.ContainsFunc(ss[a:b], func(s Sentence) bool { return pointsAt.MatchString(strings.TrimSpace(s.Text)) }) {
 			continue // he points at nothing in this part
 		}
-		user := "THE TRANSCRIPT (one part):\n" + sentenceLines(ss, a, b) +
-			"\nList every sentence where Jordan means something to be SHOWN on screen that is not him talking to the camera: a clip, a video, a livestream, a post, a screenshot, a message, a picture of something - \"saying this\", \"look at this\", \"here's what he posted\", \"he made a video saying...\" when he is about to show it.\n" +
-			"- id: the sentence\n- label: 2 to 4 words naming the thing to show, like \"blackmail apology\" or \"kickflip website\"\n- what: one short sentence: what should be shown there\n" +
-			"Only places where showing it is clearly his intent. Most parts have none: answer {\"show\": []}."
+		user := fill(promptThingsToShowFind, "{TRANSCRIPT}", sentenceLines(ss, a, b))
 		var ans struct {
 			Show []showLine `json:"show"`
 		}
@@ -180,8 +178,8 @@ func (r *run) showLines(ss []Sentence, assets []string, fresh bool) []showLine {
 			names = append(names, filepath.Base(a))
 		}
 		for i := range lines {
-			user := fmt.Sprintf("Jordan says: \"%s\"\nWhat he means to show: %s\n\nThe files he provided for this video:\n%s\n\nWhich file is the thing he means? Answer with its exact name, or \"\" when none of them is.",
-				ss[lines[i].ID].Text, lines[i].What, strings.Join(names, "\n"))
+			user := fill(promptThingsToShowPickTheFile,
+				"{SAYS}", ss[lines[i].ID].Text, "{WHAT}", lines[i].What, "{FILES}", strings.Join(names, "\n"))
 			raw, err := m.chat(videoRole, user, pickSchema, 80)
 			var ans struct {
 				File string `json:"file"`
@@ -363,3 +361,11 @@ func writeMarkers(path string, marked []showLine, ss []Sentence, ms []mark, fps 
 	}
 	return os.WriteFile(path, []byte(sb.String()), 0o644)
 }
+
+// Prompts Jordan can edit (prompts.go).
+var promptThingsToShowFind = P(dirYouTube, "Things to show - find", "THE TRANSCRIPT (one part):\n{TRANSCRIPT}"+
+	"\nList every sentence where Jordan means something to be SHOWN on screen that is not him talking to the camera: a clip, a video, a livestream, a post, a screenshot, a message, a picture of something - \"saying this\", \"look at this\", \"here's what he posted\", \"he made a video saying...\" when he is about to show it.\n"+
+	"- id: the sentence\n- label: 2 to 4 words naming the thing to show, like \"blackmail apology\" or \"kickflip website\"\n- what: one short sentence: what should be shown there\n"+
+	"Only places where showing it is clearly his intent. Most parts have none: answer {\"show\": []}.")
+
+var promptThingsToShowPickTheFile = P(dirYouTube, "Things to show - pick the file", "Jordan says: \"{SAYS}\"\nWhat he means to show: {WHAT}\n\nThe files he provided for this video:\n{FILES}\n\nWhich file is the thing he means? Answer with its exact name, or \"\" when none of them is.")

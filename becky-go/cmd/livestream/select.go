@@ -94,7 +94,7 @@ const rulesVersion = 3
 
 // editorRole is what every model is told; the local models then get topicRule
 // (systemPrompt), Claude gets keepRule (claudeOrder).
-var editorRole = `You are the video editor for Hair Jordan, a YouTuber. You are cutting one of his livestream recordings down to an edited video. You get the transcript one sentence at a time and decide, for every sentence, whether it stays in the edit.
+var editorRole = P(dirQwen, "Who the model is", `You are the video editor for Hair Jordan, a YouTuber. You are cutting one of his livestream recordings down to an edited video. You get the transcript one sentence at a time and decide, for every sentence, whether it stays in the edit.
 
 The editor's GUIDANCE says which topics stay. Everything the guidance does not ask for is cut.
 
@@ -104,7 +104,7 @@ Give every sentence exactly one label:
 - super_chat: reading or thanking for a paid Super Chat, donation or membership
 - break: stepping away, "be right back", waiting, drinking, filler while nothing happens
 - retake: a false start or broken sentence that Jordan says again right after
-- meta: about the stream itself: can you hear me, camera or audio problems, start or end housekeeping, asking viewers to like or subscribe`
+- meta: about the stream itself: can you hear me, camera or audio problems, start or end housekeeping, asking viewers to like or subscribe`)
 
 var keepRule = `
 
@@ -114,18 +114,18 @@ One exception: if Jordan reads a viewer's question and then answers it inside a 
 
 confidence is 0-100: how sure you are about keep. Use a number below 70 when you are unsure, for example where a topic starts or ends, or when a sentence could go either way.`
 
-var topicRule = `
+var topicRule = P(dirQwen, "Topics rule", `
 
 The topics the guidance asks for are listed as numbered WANTED TOPICS. topic is the number of the wanted topic the sentence is part of, or 0 when it is part of none of them. A sentence is part of a topic while Jordan is talking about that topic, even when the sentence itself does not name it.
 A viewer's question that Jordan reads out and then answers inside a wanted topic is labeled narrative, so the answer makes sense. For a retake, label the broken attempt retake and the attempt he finishes narrative.
 
-confidence is 0-100: how sure you are about the topic. Use a number below 70 when you are unsure, for example where a topic starts or ends, or when a sentence could go either way.`
+confidence is 0-100: how sure you are about the topic. Use a number below 70 when you are unsure, for example where a topic starts or ends, or when a sentence could go either way.`)
 
 var systemPrompt = editorRole + topicRule
 
 // outlinePrompt is the outline's own instruction: under systemPrompt Gemma-4
 // once answered a part's outline with a list of labels (2026-10-05).
-var outlinePrompt = `You summarize one part of a livestream transcript by Hair Jordan, a YouTuber, in one short line that names the topics he talks about.`
+var outlinePrompt = P(dirQwen, "Outline", `You summarize one part of a livestream transcript by Hair Jordan, a YouTuber, in one short line that names the topics he talks about.`)
 
 // keeps is the keep rule the local models are not asked to apply themselves.
 func keeps(topic int, label string) bool { return topic > 0 && label == "narrative" }

@@ -1,0 +1,6 @@
+Look at this frame from Hair Jordan's livestream. It will be published on YouTube. Answer with JSON only:
+{"other_creator_content": true if a video, livestream, TikTok, YouTube channel or social media post from ANOTHER person is shown on screen,
+ "document_with_names": true if a document, police report, court paper, letter, email, text message or chat that shows people's names is readable,
+ "private_info": true if a street address, phone number, email address, license plate, booking or confirmation code or ID number is readable,
+ "what": "what is on screen, at most 12 words"}
+Jordan talking to his camera by himself is not a risk.

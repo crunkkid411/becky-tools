@@ -439,7 +439,7 @@ func (h heldCheck) why() string {
 	return strings.Join(parts, "; ")
 }
 
-const heldPrompt = `Look at this frame from a livestream. Is the man holding something up toward the camera, for example raising a drink for a toast or showing an object to the viewer? Touching his hair or face does not count. Name a microphone when he holds one. Answer with JSON only: {"holding_up": true or false, "what": "what his hands are doing, at most 8 words"}`
+var heldPrompt = P(dirBreath, "Holding something up", `Look at this frame from a livestream. Is the man holding something up toward the camera, for example raising a drink for a toast or showing an object to the viewer? Touching his hair or face does not count. Name a microphone when he holds one. Answer with JSON only: {"holding_up": true or false, "what": "what his hands are doing, at most 8 words"}`)
 
 // vegasOpen: VEGAS is running. Gemma then runs on the processor: VEGAS (~3 GB
 // of graphics memory) + Gemma on the GPU (~5.2 GB) does not fit in 8 GB, and an
@@ -499,6 +499,7 @@ func closeGemmaVision() {
 // and says so in the notes: the other one still answers.
 func checkHeld(cfg config.Config, media, work string, times []float64, logf func(string, ...any)) (map[string]heldCheck, []string) {
 	cachePath := filepath.Join(work, "held-cache.json")
+	stampPrompts(cachePath, heldPrompt)
 	cache := map[string]heldCheck{}
 	if b, err := os.ReadFile(cachePath); err == nil {
 		_ = json.Unmarshal(b, &cache)
@@ -614,6 +615,7 @@ type falconLine struct {
 // only loses the frame being looked at; a re-run asks only the rest.
 func gemmaHeld(cfg config.Config, work, dir string, keys []string, logf func(string, ...any)) (map[string]heldCheck, error) {
 	path := filepath.Join(work, "held-gemma.json")
+	stampPrompts(path, heldPrompt)
 	out := map[string]heldCheck{}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &out)

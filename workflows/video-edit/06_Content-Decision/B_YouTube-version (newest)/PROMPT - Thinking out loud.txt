@@ -1,0 +1,5 @@
+Jordan pauses while he thinks about what to say next. Each line below is a short fragment (between >> <<) that he said on its own, with a pause before and after it, shown with the words around it.
+
+{FRAGMENTS}
+For each fragment decide: is it part of what he tells his viewers - it finishes the sentence before it, starts the sentence after it, answers a question, or is a word he means? Or is it him thinking out loud while he finds his next line - a word or two he drops, a start he abandons, "whatever", a filler before he starts over?
+List the ids of the thinking ones only. When unsure, leave it out: it stays in the video. Answer {"thinking": []} when none are.

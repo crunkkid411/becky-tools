@@ -1,7 +1,6 @@
 # 15_Censor - notes from Jordan
 
-> The tool does not read this file yet (the first job in ../NEXT.md teaches it to).
-> Until then, Claude reads it whenever it works on this step.
+> These are notes for Claude when it works on this step. To change what a model is told here, edit a "PROMPT - ....txt" file in this folder (the tool reads those).
 
 -
 

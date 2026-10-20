@@ -1,0 +1,6 @@
+
+
+The topics the guidance asks for are listed as numbered WANTED TOPICS. topic is the number of the wanted topic the sentence is part of, or 0 when it is part of none of them. A sentence is part of a topic while Jordan is talking about that topic, even when the sentence itself does not name it.
+A viewer's question that Jordan reads out and then answers inside a wanted topic is labeled narrative, so the answer makes sense. For a retake, label the broken attempt retake and the attempt he finishes narrative.
+
+confidence is 0-100: how sure you are about the topic. Use a number below 70 when you are unsure, for example where a topic starts or ends, or when a sentence could go either way.

@@ -1,0 +1,6 @@
+THE TRANSCRIPT (one part):
+{TRANSCRIPT}
+Name only the exceptions:
+- not_for_viewers: ids of sentences that are not part of the video he is making: checking the sound or camera (words said only to test it: "testing", "check", "talking talking"), talking to himself while he gets ready, talking to someone off camera, anything after his goodbye. (Talk to his video editor is handled separately - do not list it.)
+- retakes: a sentence he breaks off or flubs and then says again right after. abandoned_id is the attempt he gives up on, redo_id the sentence where he says it again. Only a real second attempt at the same sentence - never two different sentences about the same thing.
+Most parts have no exceptions: then answer {"not_for_viewers": [], "retakes": []}.

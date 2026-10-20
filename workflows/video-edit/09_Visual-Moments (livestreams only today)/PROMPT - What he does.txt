@@ -1,0 +1,15 @@
+This is Jordan, a livestreamer, talking to his camera. Look at the moment between {START} s and {END} s (the timestamps on the frames). He does not speak in it.
+Just before it he says: "{BEFORE}"
+{AFTER}
+Small vision models noticed: {SIGNALS}.
+First, for each frame write its timestamp, where his head points (up, level, down), his facial expression and what his hands do, a few words each.
+Then split the moment into the separate things he does, in order (often just one; for example a thumbs up and THEN reaching for a drink are two), and give each ONE label:
+- "reaction": a facial expression that reacts to or punctuates what he said (an excited, shocked, sad, smug or funny face)
+- "gesture": a gesture to the camera (thumbs up, wave, pointing, hands raised, shrug)
+- "acting": a body movement that acts out what he said (dropping his head in defeat, slumping, throwing his hands up)
+- "grooming": fixing or touching his hair, face or clothes
+- "looking away": reading chat, looking at a phone or screen, looking off to the side
+- "object": reaching for, holding or drinking something
+- "still": sitting still, nothing in particular
+For each action also say whether it goes with what he says just before or right after it (true), or has nothing to do with his words (false).
+End with one line of JSON: {"actions": [{"label": "one of the labels", "what": "what he does, at most 12 words", "fits_line": true or false, "from": first second of it as shown on the frames, "to": last second}, ...]}
